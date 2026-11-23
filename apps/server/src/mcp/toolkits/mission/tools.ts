@@ -27,7 +27,7 @@ const MissionTagInput = Schema.Struct({
 export const MissionToolkit = Toolkit.make(
   Tool.make("t3_mission_tag", {
     description:
-      "For a linked T3 environment only: mark a thread here as joining or leaving a mission there.",
+      "For linked T3 environments only: mark a thread here as joining or leaving a mission.",
     parameters: MissionTagInput,
     success: Schema.Struct({ threadId: ThreadId }),
     failure: OrchestratorMcpFailure,

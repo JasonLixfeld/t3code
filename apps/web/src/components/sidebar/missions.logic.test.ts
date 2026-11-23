@@ -1,7 +1,14 @@
 import { EnvironmentId, type Mission, type MissionLink } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildMissionMenuItems, type MissionHost, parseMissionAddId } from "./missions.logic";
+import {
+  addEachToMission,
+  buildMissionMenuItems,
+  missionAddSummary,
+  type MissionHost,
+  offersRemoveAnyway,
+  parseMissionAddId,
+} from "./missions.logic";
 
 const DESK = EnvironmentId.make("env-desk");
 const LAPTOP = EnvironmentId.make("env-laptop");
@@ -79,5 +86,30 @@ describe("buildMissionMenuItems", () => {
       environmentId: "env:with:colons",
       missionId: "0123456789ab",
     });
+  });
+});
+
+describe("addEachToMission", () => {
+  it("tries every thread after a refusal and sums them up in one line", async () => {
+    const tried: Array<string> = [];
+    const outcome = await addEachToMission(["a", "b", "c", "d"], async (thread) => {
+      tried.push(thread);
+      return thread === "b" ? 'This thread is already in the mission "One".' : null;
+    });
+    expect(tried).toEqual(["a", "b", "c", "d"]);
+    expect(missionAddSummary(outcome)).toBe(
+      '3 added, 1 refused: This thread is already in the mission "One".',
+    );
+    expect(missionAddSummary({ added: 2, refused: [] })).toBeNull();
+  });
+});
+
+describe("offersRemoveAnyway", () => {
+  it("offers it only when the member's machine could not be reached", () => {
+    expect(offersRemoveAnyway({ _tag: "MissionError", message: "", reason: "unreachable" })).toBe(
+      true,
+    );
+    expect(offersRemoveAnyway({ _tag: "MissionError", message: "" })).toBe(false);
+    expect(offersRemoveAnyway(new Error("unreachable"))).toBe(false);
   });
 });

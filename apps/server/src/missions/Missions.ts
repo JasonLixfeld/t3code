@@ -1,6 +1,7 @@
 import {
   type Mission,
   MissionError,
+  missionTag,
   type MissionsSnapshot,
   type ScopedThreadRef,
   ThreadId,
@@ -8,6 +9,7 @@ import {
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -36,14 +38,17 @@ export class Missions extends Context.Service<
       readonly missionId: string;
       readonly member: ScopedThreadRef;
     }) => Effect.Effect<void, MissionError>;
+    /** With `leaveTag`, drops the membership and leaves the member's tag as it is. */
     readonly releaseMember: (input: {
       readonly missionId: string;
       readonly member: ScopedThreadRef;
+      readonly leaveTag?: boolean | undefined;
     }) => Effect.Effect<void, MissionError>;
   }
 >()("t3/missions/Missions") {}
 
-const fail = (message: string) => Effect.fail(new MissionError({ message }));
+const fail = (message: string, reason?: MissionError["reason"]) =>
+  Effect.fail(new MissionError({ message, ...(reason === undefined ? {} : { reason }) }));
 
 const make = Effect.gen(function* () {
   const store = yield* MissionStore;
@@ -85,19 +90,23 @@ const make = Effect.gen(function* () {
     if (member.environmentId === here) {
       return yield* applyMissionTags(member.threadId, change).pipe(Effect.provideContext(local));
     }
-    if (!(yield* links.enabled)) return yield* fail(PeerLinks.LINKED_ENVIRONMENTS_OFF);
+    if (!(yield* links.enabled)) {
+      return yield* fail(PeerLinks.LINKED_ENVIRONMENTS_OFF, "unreachable");
+    }
     const link = yield* links
       .get(member.environmentId)
-      .pipe(Effect.catch((error) => fail(error.message)));
+      .pipe(Effect.catch((error) => fail(error.message, "unreachable")));
     if (Option.isNone(link)) {
       return yield* fail(
         "This machine has no link to the thread's machine. Link them in Settings → Connections first.",
+        "unreachable",
       );
     }
     const { label, access } = link.value;
     if (access !== "full-access") {
       return yield* fail(
         `The link to ${label} has ${access} access. A link below full access may change only threads it started, so relink ${label} with full access to use its threads in a mission.`,
+        "unreachable",
       );
     }
     yield* peers
@@ -117,9 +126,38 @@ const make = Effect.gen(function* () {
         Effect.catch((error) =>
           fail(
             `${label} did not change the thread's mission tag, so nothing changed. ${error.message}`,
+            error.code === "thread_not_found"
+              ? "thread-gone"
+              : error.code === "invalid_request"
+                ? undefined
+                : "unreachable",
           ),
         ),
       );
+  });
+
+  /** Keeps a join only if the store records it; otherwise takes the tag back off the thread. */
+  const recordOrUndo = Effect.fn("Missions.recordOrUndo")(function* (
+    member: ScopedThreadRef,
+    change: MissionTagChange,
+    record: Effect.Effect<boolean>,
+  ) {
+    const recorded = yield* Effect.exit(record);
+    if (Exit.isSuccess(recorded) && recorded.value) return;
+    if (Exit.isFailure(recorded)) {
+      yield* Effect.logError("A mission membership was not saved", recorded.cause);
+    }
+    const why = Exit.isSuccess(recorded)
+      ? "This thread joined another mission meanwhile, so it was not added."
+      : "This machine could not save the mission, so the thread was not added.";
+    yield* tagMember(member, { ...change, kind: "undo" }).pipe(
+      Effect.catch((error) =>
+        fail(
+          `${why} Taking its tag "${missionTag(change.missionId, change.name)}" off again also failed, so remove that tag by hand. ${error.message}`,
+        ),
+      ),
+    );
+    return yield* fail(`${why} Its mission tag was taken off again.`);
   });
 
   const missionNamed = Effect.fn("Missions.find")(function* (missionId: string) {
@@ -142,10 +180,9 @@ const make = Effect.gen(function* () {
     yield* refuseTaken(lead);
     const uuid = yield* random.uuidV4().pipe(Effect.orDie);
     const missionId = uuid.replaceAll("-", "").slice(0, 12);
-    yield* tagMember(lead, { kind: "join", missionId, name: input.name });
-    if (!(yield* store.create({ missionId, name: input.name, lead }))) {
-      return yield* fail("This thread joined another mission meanwhile.");
-    }
+    const change = { kind: "join", missionId, name: input.name } as const;
+    yield* tagMember(lead, change);
+    yield* recordOrUndo(lead, change, store.create({ missionId, name: input.name, lead }));
     return yield* missionNamed(missionId);
   }, lock.withPermits(1));
 
@@ -155,17 +192,15 @@ const make = Effect.gen(function* () {
   }) {
     const mission = yield* missionNamed(input.missionId);
     yield* refuseTaken(input.member);
-    yield* tagMember(input.member, {
-      kind: "join",
-      missionId: mission.missionId,
-      name: mission.name,
-    });
-    yield* store.addMember(mission.missionId, input.member);
+    const change = { kind: "join", missionId: mission.missionId, name: mission.name } as const;
+    yield* tagMember(input.member, change);
+    yield* recordOrUndo(input.member, change, store.addMember(mission.missionId, input.member));
   }, lock.withPermits(1));
 
   const releaseMember = Effect.fn("Missions.releaseMember")(function* (input: {
     readonly missionId: string;
     readonly member: ScopedThreadRef;
+    readonly leaveTag?: boolean | undefined;
   }) {
     const mission = yield* missionNamed(input.missionId);
     const member = mission.members.find(
@@ -177,11 +212,19 @@ const make = Effect.gen(function* () {
     if (member.role === "lead") {
       return yield* fail("A mission keeps its lead thread, so the lead cannot be released.");
     }
-    yield* tagMember(input.member, {
-      kind: "leave",
-      missionId: mission.missionId,
-      name: mission.name,
-    });
+    if (input.leaveTag !== true) {
+      // A thread deleted on its machine has no tag left to change.
+      yield* tagMember(input.member, {
+        kind: "leave",
+        missionId: mission.missionId,
+        name: mission.name,
+      }).pipe(
+        Effect.catchIf(
+          (error) => error.reason === "thread-gone",
+          () => Effect.void,
+        ),
+      );
+    }
     yield* store.removeMember(mission.missionId, input.member);
   }, lock.withPermits(1));
 

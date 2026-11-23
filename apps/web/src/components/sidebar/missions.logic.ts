@@ -123,3 +123,52 @@ export function buildMissionMenuItems(
     },
   ];
 }
+
+/** How a batch of adds went: each thread is tried, whatever happened to the ones before it. */
+export interface MissionAddOutcome {
+  readonly added: number;
+  /** Why each refused thread was refused. */
+  readonly refused: ReadonlyArray<string>;
+}
+
+/** Tries `add` for every thread in turn. `add` answers why it refused, or null when it added. */
+export async function addEachToMission<T>(
+  threads: ReadonlyArray<T>,
+  add: (thread: T) => Promise<string | null>,
+): Promise<MissionAddOutcome> {
+  let added = 0;
+  const refused: Array<string> = [];
+  for (const thread of threads) {
+    const refusal = await add(thread);
+    if (refusal === null) added += 1;
+    else refused.push(refusal);
+  }
+  return { added, refused };
+}
+
+/** One line for the whole batch, or null when nothing was refused. */
+export function missionAddSummary(
+  outcome: MissionAddOutcome,
+  resolve: MessageResolver = m,
+): string | null {
+  if (outcome.refused.length === 0) return null;
+  return resolve(
+    msg("{added} added, {refused} refused: {reasons}", {
+      added: outcome.added,
+      refused: outcome.refused.length,
+      reasons: [...new Set(outcome.refused)].join(" "),
+    }),
+  );
+}
+
+/** A release this machine could not carry to the member's machine, which only "anyway" can finish. */
+export function offersRemoveAnyway(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    error._tag === "MissionError" &&
+    "reason" in error &&
+    error.reason === "unreachable"
+  );
+}

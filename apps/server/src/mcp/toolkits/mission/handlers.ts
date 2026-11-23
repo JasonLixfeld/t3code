@@ -18,7 +18,10 @@ export const layer = McpToolAccess.toLayer(MissionToolkit, {
       }).pipe(
         Effect.mapError(
           (error) =>
-            new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+            new OrchestratorMcpFailure({
+              code: error.reason === "thread-gone" ? "thread_not_found" : "invalid_request",
+              message: error.message,
+            }),
         ),
         Effect.as({ threadId: input.threadId }),
       ),

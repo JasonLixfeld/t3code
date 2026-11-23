@@ -7,6 +7,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as ServerConfig from "../config.ts";
+
 import * as MissionStore from "./MissionStore.ts";
 
 const ref = (environmentId: string, threadId: string) => ({
@@ -108,4 +110,38 @@ it.effect("releasing a member frees it, and the lead stays", () =>
       }),
     ),
   ),
+);
+
+it.effect(
+  "the production store writes missions.sqlite in the state folder, not the main database",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-mission-home-" });
+      const config = ServerConfig.layerTest(process.cwd(), baseDir);
+      const { stateDir, dbPath } = yield* Effect.gen(function* () {
+        yield* Effect.flatMap(MissionStore.MissionStore, (store) =>
+          store.create({ missionId: "m1", name: "Ship it", lead: ref("env-a", "lead") }),
+        ).pipe(Effect.provide(MissionStore.layer));
+        return yield* ServerConfig.ServerConfig;
+      }).pipe(Effect.provide(config));
+
+      const missionsFile = path.join(stateDir, "missions.sqlite");
+      assert.notEqual(missionsFile, dbPath);
+      assert.isTrue(yield* fileSystem.exists(missionsFile));
+      const tablesIn = (filename: string) =>
+        Effect.provide(
+          Effect.flatMap(
+            SqlClient.SqlClient,
+            (sql) =>
+              sql<{ readonly name: string }>`SELECT name FROM sqlite_schema WHERE type = 'table'`,
+          ),
+          NodeSqliteClient.layer({ filename }),
+        ).pipe(Effect.map((rows) => rows.map((row) => row.name)));
+      assert.include(yield* tablesIn(missionsFile), "missions");
+      if (yield* fileSystem.exists(dbPath)) {
+        assert.notInclude(yield* tablesIn(dbPath), "missions");
+      }
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );

@@ -1,8 +1,19 @@
-import { EnvironmentId, ProjectId, ThreadId, type Mission } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import {
+  EnvironmentId,
+  type LocalApi,
+  MissionError,
+  ProjectId,
+  ThreadId,
+  type Mission,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
+import { readLocalApi } from "../../localApi";
+import { useAtomCommand } from "../../state/use-atom-command";
 import type { MissionHost } from "./missions.logic";
 import { MissionsSection } from "./MissionsSection";
 
@@ -72,6 +83,8 @@ vi.mock(import("../../state/server"), async (original) => {
     },
   };
 });
+vi.mock("../../localApi", { spy: true });
+vi.mock("../../state/use-atom-command", { spy: true });
 vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
   useConnectedEnvironmentIds: () => [DESK, LAPTOP],
@@ -106,4 +119,50 @@ it("lists each mission with its lead first, and offers release only for members"
     "LeadThread on LaptopLaptop",
   ]);
   expect(screen.getByRole("button", { name: "Release from mission" }).elements()).toHaveLength(2);
+});
+
+const releaseFailing = (error: MissionError) => {
+  const calls: Array<unknown> = [];
+  vi.mocked(useAtomCommand).mockImplementation(
+    () =>
+      (async (value: { readonly input: { readonly leaveTag?: boolean } }) => {
+        calls.push(value.input);
+        return value.input.leaveTag === true
+          ? AsyncResult.success(undefined)
+          : AsyncResult.failure(Cause.fail(error));
+      }) as never,
+  );
+  vi.mocked(readLocalApi).mockReturnValue({
+    dialogs: { confirm: async () => true },
+  } as unknown as LocalApi);
+  return calls;
+};
+
+it("offers removing anyway only after a release could not reach the member's machine", async () => {
+  const calls = releaseFailing(
+    new MissionError({ message: "Laptop did not answer.", reason: "unreachable" }),
+  );
+  await using screen = await render(<MissionsSection onOpenThread={() => {}} />);
+  const anyway = screen.getByRole("button", { name: "Remove from mission anyway" });
+  expect(anyway.elements()).toHaveLength(0);
+
+  await userEvent.click(screen.getByRole("button", { name: "Release from mission" }).nth(1));
+  await expect.element(anyway).toBeVisible();
+  await userEvent.click(anyway);
+  await vi.waitFor(() => expect(calls).toHaveLength(2));
+  expect(calls[1]).toMatchObject({ leaveTag: true });
+});
+
+it("does not offer removing anyway when the member's machine refused", async () => {
+  releaseFailing(new MissionError({ message: "No." }));
+  await using screen = await render(<MissionsSection onOpenThread={() => {}} />);
+  await userEvent.click(screen.getByRole("button", { name: "Release from mission" }).nth(1));
+  await vi.waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Release from mission" }).nth(1).element(),
+    ).toBeEnabled(),
+  );
+  expect(
+    screen.getByRole("button", { name: "Remove from mission anyway" }).elements(),
+  ).toHaveLength(0);
 });

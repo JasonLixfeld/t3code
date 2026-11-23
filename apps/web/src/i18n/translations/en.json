@@ -12797,7 +12797,6 @@
   "99963c0142e17f00": "For the new {tracker} account.",
   "6d8e4ebc889bace9": "Add account",
   "b1329cd11e627b00": "Could not start the mission",
-  "047ccc6e5f25710b": "Could not add the thread to the mission",
   "1ef76d6b651c0d41": "Could not release the thread",
   "5bee2114267b49ba": "Release from mission",
   "8abc96f81ac55d9d": "Missions",
@@ -12813,5 +12812,8 @@
   "7671402affa732e1": "In a mission",
   "40acdf448ff6ddab": "No link from {machine}",
   "93ecfc2b6717ab09": "Needs full-access link",
-  "eb84c6df689a435c": "Not supported here"
+  "eb84c6df689a435c": "Not supported here",
+  "45dad99822db6a88": "Remove this thread from the mission anyway? Its mission tag stays on {machine} until you remove it there.",
+  "847576636f989498": "Remove from mission anyway",
+  "902d29ef248677bb": "{added} added, {refused} refused: {reasons}"
 }

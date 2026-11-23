@@ -12783,7 +12783,6 @@
   "99963c0142e17f00": "Para la nueva cuenta de {tracker}.",
   "6d8e4ebc889bace9": "Añadir cuenta",
   "b1329cd11e627b00": "No se pudo iniciar la misión",
-  "047ccc6e5f25710b": "No se pudo añadir el hilo a la misión",
   "1ef76d6b651c0d41": "No se pudo liberar el hilo",
   "5bee2114267b49ba": "Liberar de la misión",
   "8abc96f81ac55d9d": "Misiones",
@@ -12799,5 +12798,8 @@
   "7671402affa732e1": "En una misión",
   "40acdf448ff6ddab": "Sin enlace desde {machine}",
   "93ecfc2b6717ab09": "Requiere enlace con acceso completo",
-  "eb84c6df689a435c": "No compatible aquí"
+  "eb84c6df689a435c": "No compatible aquí",
+  "45dad99822db6a88": "¿Quitar este hilo de la misión de todos modos? Su etiqueta de misión se queda en {machine} hasta que la quites allí.",
+  "847576636f989498": "Quitar de la misión de todos modos",
+  "902d29ef248677bb": "{added} añadidos, {refused} rechazados: {reasons}"
 }

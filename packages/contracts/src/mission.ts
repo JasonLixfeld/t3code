@@ -49,15 +49,34 @@ export const MissionMemberInput = Schema.Struct({
   member: ScopedThreadRef,
 });
 
+export const MissionReleaseInput = Schema.Struct({
+  ...MissionMemberInput.fields,
+  /** Drops the membership without touching the member's tag, for a machine that cannot be reached. */
+  leaveTag: Schema.optional(Schema.Boolean),
+});
+
 export class MissionError extends Schema.TaggedError<MissionError>()("MissionError", {
   message: Schema.String,
+  /**
+   * `thread-gone`: the member's machine has no such thread. `unreachable`: this machine cannot
+   * change the member's tag there, so only `leaveTag` can release it.
+   */
+  reason: Schema.optional(Schema.Literals(["thread-gone", "unreachable"])),
 }) {}
 
 export const MISSION_TAG_PREFIX = "mission:";
 export const MISSION_WAS_TAG_PREFIX = "mission-was:";
 const THREAD_TAG_MAX_LENGTH = 64;
 
-const cut = (tag: string) => tag.slice(0, THREAD_TAG_MAX_LENGTH).trimEnd();
+/** Cuts whole code points, so an emoji is never split into a lone surrogate. */
+const cut = (tag: string) => {
+  let kept = "";
+  for (const codePoint of tag) {
+    if (kept.length + codePoint.length > THREAD_TAG_MAX_LENGTH) break;
+    kept += codePoint;
+  }
+  return kept.trimEnd();
+};
 
 /** The label a member thread carries. The id comes first so a cut name or a rename still matches. */
 export const missionTag = (missionId: string, name: string) =>

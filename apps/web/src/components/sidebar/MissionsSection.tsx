@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { create } from "zustand";
 
 import { m } from "../../i18n/messages";
+import { readLocalApi } from "../../localApi";
 import { useEnvironmentIdentities, useConnectedEnvironmentIds } from "../../state/environments";
 import { useProject, useQuietThreadShell } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
@@ -31,10 +32,13 @@ import { Input } from "../ui/input";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
+  addEachToMission,
   buildMissionMenuItems,
+  missionAddSummary,
   type MissionCandidate,
   type MissionHost,
   type MissionMenuId,
+  offersRemoveAnyway,
   parseMissionAddId,
 } from "./missions.logic";
 
@@ -53,17 +57,16 @@ function useMachineLabel(hosts: ReadonlyArray<MissionHost>) {
     environmentId;
 }
 
+/** Why a command did not run, or null when it ran. */
+function failureMessage(result: AtomCommandResult<unknown, unknown>): string | null {
+  if (result._tag !== "Failure") return null;
+  return thrownErrorMessage(squashAtomCommandFailure(result), m) ?? m(msg("An error occurred."));
+}
+
 function reportFailure(title: string, result: AtomCommandResult<unknown, unknown>) {
-  if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return false;
-  toastManager.add(
-    stackedThreadToast({
-      type: "error",
-      title,
-      description:
-        thrownErrorMessage(squashAtomCommandFailure(result), m) ?? m(msg("An error occurred.")),
-    }),
-  );
-  return true;
+  const message = failureMessage(result);
+  if (message === null || isAtomCommandInterrupted(result)) return;
+  toastManager.add(stackedThreadToast({ type: "error", title, description: message }));
 }
 
 /** The Mission entries of a thread menu, and what choosing one does. */
@@ -77,32 +80,32 @@ export function useMissionMenu() {
   return {
     items: (threads: ReadonlyArray<MissionCandidate>) =>
       buildMissionMenuItems(threads, hosts, machineLabel, resolve),
+    /** True when every thread got where it was sent, so the caller may drop its selection. */
     run: async (id: MissionMenuId, threads: ReadonlyArray<ScopedThreadRef>) => {
       const lead = threads[0];
       if (id === "mission-start" && lead !== undefined) {
         const name = await requestMissionName();
-        if (name === null) return;
-        reportFailure(
-          gt("Could not start the mission"),
-          await create({
-            environmentId: lead.environmentId,
-            input: { name, leadThreadId: lead.threadId },
-          }),
-        );
-        return;
+        if (name === null) return false;
+        const result = await create({
+          environmentId: lead.environmentId,
+          input: { name, leadThreadId: lead.threadId },
+        });
+        reportFailure(gt("Could not start the mission"), result);
+        return result._tag === "Success";
       }
       const target = parseMissionAddId(id);
-      if (target === null) return;
-      for (const member of threads) {
-        const failed = reportFailure(
-          gt("Could not add the thread to the mission"),
+      if (target === null) return false;
+      const outcome = await addEachToMission(threads, async (member) =>
+        failureMessage(
           await add({
             environmentId: target.environmentId,
             input: { missionId: target.missionId, member },
           }),
-        );
-        if (failed) return;
-      }
+        ),
+      );
+      const summary = missionAddSummary(outcome, resolve);
+      if (summary !== null) toastManager.add(stackedThreadToast({ type: "error", title: summary }));
+      return summary === null;
     },
   };
 }
@@ -124,18 +127,31 @@ function MemberRow(props: {
   );
   const release = useAtomCommand(serverEnvironment.releaseMissionMember, "mission release member");
   const [releasing, setReleasing] = useState(false);
+  // Set once a release could not reach the member's machine: only then is "anyway" offered.
+  const [stranded, setStranded] = useState(false);
   const title = thread?.title ?? gt("Thread on {machine}", { machine: props.machineLabel });
   const where = project === null ? props.machineLabel : `${props.machineLabel} · ${project.title}`;
-  const onRelease = async () => {
+  const onRelease = async (leaveTag: boolean) => {
     setReleasing(true);
-    reportFailure(
-      gt("Could not release the thread"),
-      await release({
-        environmentId: props.host,
-        input: { missionId: props.missionId, member: props.member.ref },
-      }),
-    );
+    const result = await release({
+      environmentId: props.host,
+      input: { missionId: props.missionId, member: props.member.ref, leaveTag },
+    });
     setReleasing(false);
+    reportFailure(gt("Could not release the thread"), result);
+    if (result._tag === "Failure") {
+      setStranded(offersRemoveAnyway(squashAtomCommandFailure(result)));
+    }
+  };
+  const onRemoveAnyway = async () => {
+    const confirmed = await readLocalApi()?.dialogs.confirm(
+      gt(
+        "Remove this thread from the mission anyway? Its mission tag stays on {machine} until you remove it there.",
+        { machine: props.machineLabel },
+      ),
+      { variant: "destructive" },
+    );
+    if (confirmed === true) await onRelease(true);
   };
   return (
     <li className="group/mission-row list-none">
@@ -164,7 +180,7 @@ function MemberRow(props: {
                   type="button"
                   aria-label={gt("Release from mission")}
                   disabled={!canRelease || releasing}
-                  onClick={() => void onRelease()}
+                  onClick={() => void onRelease(false)}
                   className="inline-flex shrink-0 cursor-pointer items-center rounded-md px-1 text-muted-foreground opacity-0 transition-opacity group-hover/mission-row:opacity-100 hover:text-foreground focus-visible:opacity-100 disabled:cursor-default"
                 >
                   <XIcon className="size-3" />
@@ -177,6 +193,17 @@ function MemberRow(props: {
           </Tooltip>
         ) : null}
       </div>
+      {stranded ? (
+        <Button
+          size="micro"
+          variant="ghost-destructive"
+          className="ms-1"
+          disabled={!canRelease || releasing}
+          onClick={() => void onRemoveAnyway()}
+        >
+          <T>Remove from mission anyway</T>
+        </Button>
+      ) : null}
     </li>
   );
 }
