@@ -656,6 +656,7 @@ export const WS_METHODS = {
   missionsCreate: "missions.create",
   missionsAddMember: "missions.addMember",
   missionsReleaseMember: "missions.releaseMember",
+  missionsForgetMember: "missions.forgetMember",
   missionsLeave: "missions.leave",
 
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
@@ -2403,6 +2404,11 @@ const WsMissionsReleaseMemberRpc = Rpc.make(WS_METHODS.missionsReleaseMember, {
   error: Schema.Union([MissionError, EnvironmentAuthorizationError]),
 });
 
+const WsMissionsForgetMemberRpc = Rpc.make(WS_METHODS.missionsForgetMember, {
+  payload: MissionMemberInput,
+  error: Schema.Union([MissionError, EnvironmentAuthorizationError]),
+});
+
 const WsMissionsLeaveRpc = Rpc.make(WS_METHODS.missionsLeave, {
   payload: MissionLeaveInput,
   error: Schema.Union([MissionError, EnvironmentAuthorizationError]),
@@ -2596,6 +2602,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsMissionsCreateRpc,
   WsMissionsAddMemberRpc,
   WsMissionsReleaseMemberRpc,
+  WsMissionsForgetMemberRpc,
   WsMissionsLeaveRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,

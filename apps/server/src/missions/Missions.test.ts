@@ -465,6 +465,46 @@ it.effect("an add the laptop turns down once it is back says why, until it is di
   );
 });
 
+it.effect.each([
+  { waitsOn: "an add", sentBefore: ["join", "join"] },
+  { waitsOn: "a release", sentBefore: ["join", "release", "release"] },
+] as const)(
+  "forgetting $waitsOn that still waits removes the row and stops asking, and the thread can be added again",
+  ({ waitsOn, sentBefore }) => {
+    const world = makeWorld([lead, laptopMember]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        yield* openSidebar;
+        const mission = yield* createOne;
+        const member = { missionId: mission.missionId, member: laptopMember };
+        if (waitsOn === "a release") {
+          yield* missions.addMember(member);
+          // Only a thread that waits on its machine can be forgotten.
+          yield* missions.forgetMember(member).pipe(Effect.flip);
+        }
+        world.laptop.mode = "offline";
+        yield* waitsOn === "an add" ? missions.addMember(member) : missions.releaseMember(member);
+        // What was sent, and sent again at once.
+        assert.deepEqual(yield* world.nextCalls(sentBefore.length), [...sentBefore]);
+
+        yield* missions.forgetMember(member);
+        assert.equal(stateOf(yield* listed, laptopMember), undefined);
+        world.laptop.mode = "up";
+        yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+        yield* missions.addMember(member);
+        yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+        // The laptop is listed again only now, after the new add, and nothing was sent in between.
+        yield* world.untilAnswered("list");
+        assert.deepEqual(world.laptop.calls, [...sentBefore, "join", "list"]);
+        assert.equal(stateOf(yield* listed, laptopMember), "active");
+        assert.equal((yield* world.laptop.claims!.list(LEAD_ON_LAPTOP)).length, 1);
+      }),
+    );
+  },
+);
+
 it.effect("a link this machine can no longer use leaves its members as last known", () => {
   const world = makeWorld([lead, laptopMember]);
   return withMissions(

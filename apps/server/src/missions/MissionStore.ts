@@ -231,6 +231,10 @@ export class MissionStore extends Context.Service<
       claim: MissionClaim,
     ) => Effect.Effect<void>;
     readonly forgetClaim: (release: Omit<PendingRelease, "missionId">) => Effect.Effect<void>;
+    /** Drops what this lead waits for and last knew about one thread on another machine. */
+    readonly forgetThread: (
+      thread: Pick<PendingAdd, "environmentId" | "threadId">,
+    ) => Effect.Effect<void>;
   }
 >()("t3/missions/MissionStore") {}
 
@@ -496,6 +500,20 @@ const make = Effect.gen(function* () {
         AND generation = ${release.generation}
     `.pipe(Effect.andThen(changed), Effect.asVoid, Effect.orDie);
 
+  const forgetThread = Effect.fn("MissionStore.forgetThread")(function* (
+    thread: Pick<PendingAdd, "environmentId" | "threadId">,
+  ) {
+    const theThread = sql`environment_id = ${thread.environmentId} AND thread_id = ${thread.threadId}`;
+    yield* sql.withTransaction(
+      Effect.all([
+        sql`DELETE FROM pending_adds WHERE ${theThread}`,
+        sql`DELETE FROM pending_releases WHERE ${theThread}`,
+        sql`DELETE FROM known_claims WHERE ${theThread}`,
+      ]),
+    );
+    yield* changed;
+  }, Effect.orDie);
+
   return MissionStore.of({
     changes,
     missions,
@@ -518,6 +536,7 @@ const make = Effect.gen(function* () {
     setKnownClaims,
     rememberClaim,
     forgetClaim,
+    forgetThread,
   });
 });
 

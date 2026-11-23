@@ -118,6 +118,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.missionsCreate]: "missions",
   [WS_METHODS.missionsAddMember]: "missions",
   [WS_METHODS.missionsReleaseMember]: "missions",
+  [WS_METHODS.missionsForgetMember]: "missions",
   [WS_METHODS.missionsLeave]: "missions",
   [WS_METHODS.scheduledTasksSubscribe]: "scheduledTasks",
   [WS_METHODS.scheduledTasksUpsert]: "scheduledTasks",

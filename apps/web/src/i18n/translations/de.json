@@ -12807,6 +12807,8 @@
   "902d29ef248677bb": "{added} hinzugefügt, {refused} abgelehnt: {reasons}",
   "5c8df50e7f9f581f": "Freigabe ausstehend (Rechner offline)",
   "2cff1a69f059c275": "Hinzufügen ausstehend (Rechner offline)",
+  "bdf724200ce4bf7d": "Diesen Thread vergessen? An seinen Rechner wird nichts gesendet. Wenn dieser Rechner zurückkommt und den Thread noch hält, kann ihn dort jemand mit „Mission verlassen“ freigeben.",
+  "3314c6cfaa8eddfd": "Der Thread konnte nicht vergessen werden",
   "685e4d931a6a0f7d": "Letzter bekannter Stand (Rechner offline)",
   "efa2a1e63d7a1c21": "Leitung gelöscht",
   "380a8495b3872071": "Hier nicht erlaubt",

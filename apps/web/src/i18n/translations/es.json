@@ -12802,6 +12802,8 @@
   "902d29ef248677bb": "{added} añadidos, {refused} rechazados: {reasons}",
   "5c8df50e7f9f581f": "Liberación pendiente (máquina sin conexión)",
   "2cff1a69f059c275": "Adición pendiente (máquina sin conexión)",
+  "bdf724200ce4bf7d": "¿Olvidar este hilo? No se envía nada a su máquina. Si esa máquina vuelve y aún retiene el hilo, alguien allí puede liberarlo con «Salir de la misión».",
+  "3314c6cfaa8eddfd": "No se pudo olvidar el hilo",
   "685e4d931a6a0f7d": "Último estado conocido (máquina sin conexión)",
   "efa2a1e63d7a1c21": "Principal eliminado",
   "380a8495b3872071": "No permitido aquí",

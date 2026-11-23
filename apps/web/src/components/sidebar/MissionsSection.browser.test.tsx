@@ -101,7 +101,7 @@ vi.mock(import("../../state/entities"), async (original) => ({
   useProject: (target) => (target === null ? null : ({ title: target.projectId } as never)),
 }));
 
-it("lists each mission with its lead first, and offers release unless something is still pending", async () => {
+it("lists each mission with its lead first, and offers to forget what is still pending", async () => {
   await using screen = await render(<MissionsSection onOpenThread={() => {}} />);
   const rows = screen.container.querySelectorAll("li li");
   expect([...rows].map((row) => row.textContent)).toEqual([
@@ -115,4 +115,5 @@ it("lists each mission with its lead first, and offers release unless something 
   ]);
   expect(screen.getByRole("button", { name: "Release from mission" }).elements()).toHaveLength(2);
   expect(screen.getByRole("button", { name: "Dismiss" }).elements()).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "Forget" }).elements()).toHaveLength(2);
 });

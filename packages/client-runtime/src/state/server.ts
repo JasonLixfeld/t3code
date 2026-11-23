@@ -2016,6 +2016,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:missions:release-member",
       tag: WS_METHODS.missionsReleaseMember,
     }),
+    forgetMissionMember: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:missions:forget-member",
+      tag: WS_METHODS.missionsForgetMember,
+    }),
     leaveMission: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:missions:leave",
       tag: WS_METHODS.missionsLeave,

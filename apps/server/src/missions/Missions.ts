@@ -65,6 +65,11 @@ export class Missions extends Context.Service<
       readonly missionId: string;
       readonly member: ScopedThreadRef;
     }) => Effect.Effect<void, MissionError>;
+    /** Stops waiting on a thread whose add or release its machine has not answered. Sends nothing. */
+    readonly forgetMember: (input: {
+      readonly missionId: string;
+      readonly member: ScopedThreadRef;
+    }) => Effect.Effect<void, MissionError>;
     /**
      * The local user frees a thread on this machine from its Mission, whichever machine leads it.
      * The lead thread of a Mission here stays.
@@ -514,6 +519,28 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const forgetMember = Effect.fn("Missions.forgetMember")(function* (input: {
+    readonly missionId: string;
+    readonly member: ScopedThreadRef;
+  }) {
+    const mission = yield* missionNamed(input.missionId);
+    yield* machineLocks.withLock(
+      input.member.environmentId,
+      Effect.gen(function* () {
+        const { releases, adds } = yield* waiting;
+        const waits = [...releases, ...adds.filter((add) => add.refusal === null)].some(
+          (owed) =>
+            memberKey(owed) === memberKey(input.member) && owed.missionId === mission.missionId,
+        );
+        if (!waits) return yield* fail("This thread is not waiting on its machine.");
+        // Nothing is sent, and the machine leaves the sweep if it owes nothing else. A claim it
+        // still holds, or a join that lands there later, is then invisible to this lead. That
+        // is accepted: Leave mission on that machine frees the thread.
+        yield* store.forgetThread(input.member);
+      }),
+    );
+  });
+
   const watch = Stream.unwrap(
     Effect.gen(function* () {
       // Subscribed before the first read, so a change in between is not missed.
@@ -536,7 +563,14 @@ const make = Effect.gen(function* () {
     }),
   );
 
-  return Missions.of({ watch, create, addMember, releaseMember, leaveHere: claims.leaveHere });
+  return Missions.of({
+    watch,
+    create,
+    addMember,
+    releaseMember,
+    forgetMember,
+    leaveHere: claims.leaveHere,
+  });
 });
 
 export const layer = Layer.effect(Missions, make);

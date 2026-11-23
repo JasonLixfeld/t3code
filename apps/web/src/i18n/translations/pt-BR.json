@@ -12807,6 +12807,8 @@
   "902d29ef248677bb": "{added} adicionadas, {refused} recusadas: {reasons}",
   "5c8df50e7f9f581f": "Liberação pendente (máquina offline)",
   "2cff1a69f059c275": "Adição pendente (máquina offline)",
+  "bdf724200ce4bf7d": "Esquecer esta thread? Nada é enviado à máquina dela. Se essa máquina voltar ainda retendo a thread, alguém lá pode liberá-la com “Sair da missão”.",
+  "3314c6cfaa8eddfd": "Não foi possível esquecer a thread",
   "685e4d931a6a0f7d": "Último estado conhecido (máquina offline)",
   "efa2a1e63d7a1c21": "Principal excluído",
   "380a8495b3872071": "Não permitido aqui",

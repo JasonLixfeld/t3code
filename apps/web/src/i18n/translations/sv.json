@@ -12814,6 +12814,8 @@
   "902d29ef248677bb": "{added} tillagda, {refused} nekade: {reasons}",
   "5c8df50e7f9f581f": "Släpp väntar (datorn är offline)",
   "2cff1a69f059c275": "Tillägg väntar (datorn är offline)",
+  "bdf724200ce4bf7d": "Glömma den här tråden? Inget skickas till dess dator. Om datorn kommer tillbaka och fortfarande håller tråden kan någon där frigöra den med ”Lämna uppdraget”.",
+  "3314c6cfaa8eddfd": "Det gick inte att glömma tråden",
   "685e4d931a6a0f7d": "Senast kända läge (datorn är offline)",
   "efa2a1e63d7a1c21": "Ledaren har tagits bort",
   "380a8495b3872071": "Inte tillåtet här",

@@ -12807,6 +12807,8 @@
   "902d29ef248677bb": "{added} ajoutés, {refused} refusés : {reasons}",
   "5c8df50e7f9f581f": "Retrait en attente (machine hors ligne)",
   "2cff1a69f059c275": "Ajout en attente (machine hors ligne)",
+  "bdf724200ce4bf7d": "Oublier ce fil ? Rien n’est envoyé à sa machine. Si cette machine revient en détenant encore le fil, quelqu’un sur place peut le libérer avec « Quitter la mission ».",
+  "3314c6cfaa8eddfd": "Impossible d’oublier le fil",
   "685e4d931a6a0f7d": "Dernier état connu (machine hors ligne)",
   "efa2a1e63d7a1c21": "Principal supprimé",
   "380a8495b3872071": "Non autorisé ici",

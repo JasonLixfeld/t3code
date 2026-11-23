@@ -155,21 +155,31 @@ function MemberRow(props: {
     serverEnvironment.releaseMissionMember.permissionAtom(props.host),
   );
   const release = useAtomCommand(serverEnvironment.releaseMissionMember, "mission release member");
+  const forget = useAtomCommand(serverEnvironment.forgetMissionMember, "mission forget member");
   const [releasing, setReleasing] = useState(false);
   const title = thread?.title ?? gt("Thread on {machine}", { machine: props.machineLabel });
   const where = project === null ? props.machineLabel : `${props.machineLabel} · ${project.title}`;
   const active = props.member.state === "active";
   // A refused add never joined, so its button only puts the refusal away.
   const dismisses = props.member.state === "add-refused";
+  // Its machine has not answered, and may never: the lead can stop waiting without asking it.
+  const forgets = props.member.state === "add-pending" || props.member.state === "release-pending";
+  const command = {
+    environmentId: props.host,
+    input: { missionId: props.missionId, member: props.member.ref },
+  };
   const onRelease = async () => {
+    if (forgets) {
+      const confirmed = await readLocalApi()?.dialogs.confirm(
+        gt(
+          "Forget this thread? Nothing is sent to its machine. If that machine comes back still holding the thread, someone there can free it with Leave mission.",
+        ),
+      );
+      if (confirmed !== true) return;
+    }
     setReleasing(true);
-    reportFailure(
-      gt("Could not release the thread"),
-      await release({
-        environmentId: props.host,
-        input: { missionId: props.missionId, member: props.member.ref },
-      }),
-    );
+    if (forgets) reportFailure(gt("Could not forget the thread"), await forget(command));
+    else reportFailure(gt("Could not release the thread"), await release(command));
     setReleasing(false);
   };
   return (
@@ -210,15 +220,15 @@ function MemberRow(props: {
                       : where}
           </span>
         </button>
-        {props.member.role === "member" &&
-        props.member.state !== "release-pending" &&
-        props.member.state !== "add-pending" ? (
+        {props.member.role === "member" ? (
           <Tooltip>
             <TooltipTrigger
               render={
                 <button
                   type="button"
-                  aria-label={dismisses ? gt("Dismiss") : gt("Release from mission")}
+                  aria-label={
+                    forgets ? gt("Forget") : dismisses ? gt("Dismiss") : gt("Release from mission")
+                  }
                   disabled={!canRelease || releasing}
                   onClick={() => void onRelease()}
                   className="inline-flex shrink-0 cursor-pointer items-center rounded-md px-1 text-muted-foreground opacity-0 transition-opacity group-hover/mission-row:opacity-100 hover:text-foreground focus-visible:opacity-100 disabled:cursor-default"
@@ -228,7 +238,7 @@ function MemberRow(props: {
               }
             />
             <TooltipPopup side="top">
-              {dismisses ? gt("Dismiss") : <T>Release from mission</T>}
+              {forgets ? gt("Forget") : dismisses ? gt("Dismiss") : <T>Release from mission</T>}
             </TooltipPopup>
           </Tooltip>
         ) : null}
