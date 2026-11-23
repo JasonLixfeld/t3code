@@ -3,6 +3,7 @@ import {
   type EnvironmentId,
   missionTagOf,
   type MissionsSnapshot,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { msg } from "gt-react";
 
@@ -16,10 +17,15 @@ export interface MissionHost {
 
 export interface MissionCandidate {
   readonly environmentId: EnvironmentId;
+  readonly id?: ThreadId;
   readonly tags?: ReadonlyArray<string> | undefined;
 }
 
-export type MissionMenuId = "mission-start" | "mission-add" | `mission-add:${string}`;
+export type MissionMenuId =
+  | "mission-start"
+  | "mission-leave"
+  | "mission-add"
+  | `mission-add:${string}`;
 
 export const isMissionMenuId = (id: string): id is MissionMenuId => id.startsWith("mission-");
 
@@ -66,7 +72,16 @@ function blockLabel(block: MissionBlock, hostLabel: string, resolve: MessageReso
   }
 }
 
-/** "Start mission from this thread" for one thread, and "Add to mission" for one or more. */
+/** The claim this thread's own machine holds for it, when one Mission or another holds it there. */
+export const claimHere = (thread: MissionCandidate, hosts: ReadonlyArray<MissionHost>) =>
+  hosts
+    .find((host) => host.environmentId === thread.environmentId)
+    ?.snapshot.claims.find((claim) => claim.threadId === thread.id);
+
+/**
+ * "Start mission from this thread" and "Leave mission" for one thread, and "Add to mission" for
+ * one or more.
+ */
 export function buildMissionMenuItems(
   threads: ReadonlyArray<MissionCandidate>,
   hosts: ReadonlyArray<MissionHost>,
@@ -101,6 +116,19 @@ export function buildMissionMenuItems(
                 : !canChangeOn(single.environmentId)
                   ? { detail: blockLabel("not-allowed", "", resolve) }
                   : {}),
+          },
+        ]),
+    ...(single === undefined || claimHere(single, hosts) === undefined
+      ? []
+      : [
+          {
+            id: "mission-leave" as const,
+            label: resolve(msg("Leave mission")),
+            icon: "flag",
+            disabled: !canChangeOn(single.environmentId),
+            ...(canChangeOn(single.environmentId)
+              ? {}
+              : { detail: blockLabel("not-allowed", "", resolve) }),
           },
         ]),
     {

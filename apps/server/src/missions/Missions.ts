@@ -52,6 +52,11 @@ export class Missions extends Context.Service<
       readonly missionId: string;
       readonly member: ScopedThreadRef;
     }) => Effect.Effect<void, MissionError>;
+    /**
+     * The local user frees a thread on this machine from its Mission, whichever machine leads it.
+     * The lead sees it as released on its next reconcile. The lead thread of a Mission here stays.
+     */
+    readonly leaveHere: (threadId: ThreadId) => Effect.Effect<void, MissionError>;
     /** Brings this lead's records in line with the claims on these machines (all, by default). */
     readonly reconcile: (environmentIds?: ReadonlyArray<EnvironmentId>) => Effect.Effect<void>;
   }
@@ -104,7 +109,10 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  const snapshot = Effect.all({ missions: store.list, links: missionLinks });
+  const claimsHere = Effect.map(store.allClaims, (claims) =>
+    claims.map(({ threadId, missionId, name }) => ({ threadId, missionId, name })),
+  );
+  const snapshot = Effect.all({ missions: store.list, links: missionLinks, claims: claimsHere });
 
   /**
    * Runs a claim call on the member's own machine. A refusal there, or a link that may not make
@@ -268,6 +276,23 @@ const make = Effect.gen(function* () {
     yield* release(mission.missionId, input.member);
   }, lock.withPermits(1));
 
+  const leaveHere = Effect.fn("Missions.leaveHere")(function* (threadId: ThreadId) {
+    const leads = (yield* store.list).some((mission) =>
+      mission.members.some(
+        (member) =>
+          member.role === "lead" &&
+          member.ref.environmentId === here &&
+          member.ref.threadId === threadId,
+      ),
+    );
+    if (leads) {
+      return yield* fail("A mission keeps its lead thread, so the lead cannot be released.");
+    }
+    const left = yield* claims.leaveHere(threadId);
+    // A lead here catches up at once; a lead elsewhere on its next reconcile.
+    if (left.owner === here) yield* Effect.forkIn(reconcile([here]), background);
+  });
+
   /**
    * The member's machine drops its claim first; only then does the lead drop its record. If that
    * record is not dropped, the thread is free there while this lead still lists it, until the next
@@ -365,7 +390,7 @@ const make = Effect.gen(function* () {
     }),
   );
 
-  return Missions.of({ watch, create, addMember, releaseMember, reconcile });
+  return Missions.of({ watch, create, addMember, releaseMember, leaveHere, reconcile });
 });
 
 export const layer = Layer.effect(Missions, make);

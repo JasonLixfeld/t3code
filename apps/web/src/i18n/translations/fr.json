@@ -12807,5 +12807,8 @@
   "902d29ef248677bb": "{added} ajoutés, {refused} refusés : {reasons}",
   "5c8df50e7f9f581f": "Retrait en attente (machine hors ligne)",
   "bf882e9aca909061": "Retiré",
-  "380a8495b3872071": "Non autorisé ici"
+  "380a8495b3872071": "Non autorisé ici",
+  "6e10cc562b47cf04": "Quitter la mission « {mission} » ? Son fil principal verra ce fil comme retiré.",
+  "2559cb9adf33dbc5": "Impossible de quitter la mission",
+  "57b98f569f27871b": "Quitter la mission"
 }

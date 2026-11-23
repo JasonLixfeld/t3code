@@ -440,6 +440,7 @@ import {
   Mission,
   MissionCreateInput,
   MissionError,
+  MissionLeaveInput,
   MissionMemberInput,
   MissionsSnapshot,
   MissionsSubscribeInput,
@@ -655,6 +656,7 @@ export const WS_METHODS = {
   missionsCreate: "missions.create",
   missionsAddMember: "missions.addMember",
   missionsReleaseMember: "missions.releaseMember",
+  missionsLeave: "missions.leave",
 
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
@@ -2401,6 +2403,11 @@ const WsMissionsReleaseMemberRpc = Rpc.make(WS_METHODS.missionsReleaseMember, {
   error: Schema.Union([MissionError, EnvironmentAuthorizationError]),
 });
 
+const WsMissionsLeaveRpc = Rpc.make(WS_METHODS.missionsLeave, {
+  payload: MissionLeaveInput,
+  error: Schema.Union([MissionError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -2589,6 +2596,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsMissionsCreateRpc,
   WsMissionsAddMemberRpc,
   WsMissionsReleaseMemberRpc,
+  WsMissionsLeaveRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,

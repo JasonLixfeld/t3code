@@ -13,6 +13,7 @@ import { useContext, useEffect, useState } from "react";
 import { create } from "zustand";
 
 import { m } from "../../i18n/messages";
+import { readLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
 import { useEnvironmentIdentities, useConnectedEnvironmentIds } from "../../state/environments";
 import { useProject, useQuietThreadShell } from "../../state/entities";
@@ -35,6 +36,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   addEachToMission,
   buildMissionMenuItems,
+  claimHere,
   missionAddSummary,
   type MissionCandidate,
   type MissionHost,
@@ -78,6 +80,7 @@ export function useMissionMenu() {
   const machineLabel = useMachineLabel(hosts);
   const create = useAtomCommand(serverEnvironment.createMission, "mission create");
   const add = useAtomCommand(serverEnvironment.addMissionMember, "mission add member");
+  const leave = useAtomCommand(serverEnvironment.leaveMission, "mission leave");
   // One source for single and bulk adds: the right to change Missions on the machine that keeps them.
   const canChangeOn = (environmentId: EnvironmentId) =>
     registry.get(serverEnvironment.addMissionMember.permissionAtom(environmentId));
@@ -98,6 +101,22 @@ export function useMissionMenu() {
           input: { missionId: newMissionId(), name, leadThreadId: lead.threadId },
         });
         reportFailure(gt("Could not start the mission"), result);
+        return result._tag === "Success" ? [lead] : [];
+      }
+      const claim =
+        lead === undefined ? undefined : claimHere({ ...lead, id: lead.threadId }, hosts);
+      if (id === "mission-leave" && lead !== undefined && claim !== undefined) {
+        const confirmed = await readLocalApi()?.dialogs.confirm(
+          gt('Leave the mission "{mission}"? Its lead will see this thread as released.', {
+            mission: claim.name,
+          }),
+        );
+        if (confirmed !== true) return [];
+        const result = await leave({
+          environmentId: lead.environmentId,
+          input: { threadId: lead.threadId },
+        });
+        reportFailure(gt("Could not leave the mission"), result);
         return result._tag === "Success" ? [lead] : [];
       }
       const target = parseMissionAddId(id);

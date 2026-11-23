@@ -1,6 +1,8 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   type AuthMcpClientAccess,
   CommandId,
   EnvironmentId,
@@ -9,6 +11,8 @@ import {
   OrchestratorMcpFailure,
   type ScopedThreadRef,
   ThreadId,
+  WS_METHODS,
+  WsRpcGroup,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -18,9 +22,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as RpcTest from "effect/rpc/RpcTest";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
@@ -417,6 +423,77 @@ it.effect(
       }),
     );
   },
+);
+
+it.effect(
+  "a thread its own machine's user leaves shows as released once the lead reconciles",
+  () => {
+    const world = makeWorld([lead, laptopMember]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const mission = yield* createOne;
+        yield* missions.addMember({ missionId: mission.missionId, member: laptopMember });
+        // On the laptop, its own user leaves; the lead's link plays no part.
+        yield* world.laptop.claims!.leaveHere(laptopMember.threadId);
+        assert.deepEqual(world.tags(laptopMember), ["mission-was:0123456789ab:One"]);
+        yield* missions.reconcile([LAPTOP]);
+        assert.deepEqual(membersOf((yield* listed).missions[0]), [
+          ["lead", "active"],
+          ["laptop", "released"],
+        ]);
+      }),
+    );
+  },
+);
+
+it.effect("the lead thread of a mission here cannot leave it", () => {
+  const world = makeWorld([lead]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      yield* createOne;
+      const refused = yield* missions.leaveHere(lead.threadId).pipe(Effect.flip);
+      assert.include(refused.message, "lead cannot be released");
+      assert.deepEqual(world.tags(lead), ["mission:0123456789ab:One"]);
+    }),
+  );
+});
+
+it.effect("only a session that may operate threads can leave a mission over the socket", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RpcAuthorization.RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.missionsLeave
+        > => tag !== WS_METHODS.missionsLeave,
+      ),
+    );
+    const left: Array<string> = [];
+    const handler = group.toLayerHandler(WS_METHODS.missionsLeave, ({ threadId }) =>
+      Effect.sync(() => void left.push(threadId)),
+    );
+    const clientWith = (scopes: Parameters<typeof RpcAuthorization.layer>[0]) =>
+      RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.merge(handler, RpcAuthorization.layer(scopes))),
+      );
+    const input = { threadId: ThreadId.make("thread") };
+    // Agents and links reach this machine only through /mcp; a socket session that only reads is refused.
+    const reader = yield* clientWith([AuthOrchestrationReadScope]);
+    assert.equal(
+      (yield* reader[WS_METHODS.missionsLeave](input).pipe(Effect.flip))._tag,
+      "EnvironmentAuthorizationError",
+    );
+    assert.deepEqual(left, []);
+    const operator = yield* clientWith([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]);
+    yield* operator[WS_METHODS.missionsLeave](input);
+    assert.deepEqual(left, ["thread"]);
+  }).pipe(Effect.scoped),
 );
 
 it.effect("a join the lead cannot record is taken back off the member", () => {

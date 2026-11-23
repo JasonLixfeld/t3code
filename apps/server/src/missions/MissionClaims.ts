@@ -70,6 +70,10 @@ export class MissionClaims extends Context.Service<
       owner: string,
       input: { readonly threadId: ThreadId; readonly claimId: string },
     ) => Effect.Effect<void, MissionError>;
+    /** The local user frees a thread here from whichever Mission holds it, as a release does. */
+    readonly leaveHere: (
+      threadId: ThreadId,
+    ) => Effect.Effect<MissionClaim & { readonly owner: string }, MissionError>;
     /** The owner's claims here, with each thread's tag written again. */
     readonly list: (owner: string) => Effect.Effect<ReadonlyArray<MissionClaim>>;
   }
@@ -150,6 +154,17 @@ const make = Effect.gen(function* () {
     (effect, _owner, input) => locks.withLock(input.threadId, effect),
   );
 
+  const leaveHere = Effect.fn("MissionClaims.leaveHere")(
+    function* (threadId: ThreadId) {
+      const held = (yield* store.allClaims).find((claim) => claim.threadId === threadId);
+      if (held === undefined) return yield* fail("This thread is not in a mission.");
+      yield* store.dropClaim(threadId, { owner: held.owner, claimId: held.claimId });
+      yield* mirror(threadId, { kind: "leave", ...held });
+      return held;
+    },
+    (effect, threadId) => locks.withLock(threadId, effect),
+  );
+
   const list = Effect.fn("MissionClaims.list")(function* (owner: string) {
     const claims = yield* store.claimsOf(owner);
     yield* Effect.forEach(claims, (claim) =>
@@ -158,7 +173,7 @@ const make = Effect.gen(function* () {
     return claims;
   });
 
-  return MissionClaims.of({ join, leave, undo, list });
+  return MissionClaims.of({ join, leave, undo, leaveHere, list });
 });
 
 export const layer = Layer.effect(MissionClaims, make);

@@ -57,6 +57,7 @@ const hosts: ReadonlyArray<MissionHost> = [
     environmentId: DESK,
     snapshot: {
       missions: [ship],
+      claims: [],
       links: [
         { environmentId: LAPTOP, label: "Laptop", fullAccess: true },
         { environmentId: BOX, label: "Build box", fullAccess: false },
@@ -67,6 +68,7 @@ const hosts: ReadonlyArray<MissionHost> = [
     environmentId: LAPTOP,
     snapshot: {
       missions: [audit],
+      claims: [],
       links: [{ environmentId: BOX, label: "Build box", fullAccess: true }],
     },
   },

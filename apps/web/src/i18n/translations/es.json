@@ -12802,5 +12802,8 @@
   "902d29ef248677bb": "{added} añadidos, {refused} rechazados: {reasons}",
   "5c8df50e7f9f581f": "Liberación pendiente (máquina sin conexión)",
   "bf882e9aca909061": "Liberado",
-  "380a8495b3872071": "No permitido aquí"
+  "380a8495b3872071": "No permitido aquí",
+  "6e10cc562b47cf04": "¿Salir de la misión «{mission}»? Su hilo principal verá este hilo como liberado.",
+  "2559cb9adf33dbc5": "No se pudo salir de la misión",
+  "57b98f569f27871b": "Salir de la misión"
 }

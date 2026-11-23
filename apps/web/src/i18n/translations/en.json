@@ -12816,5 +12816,8 @@
   "902d29ef248677bb": "{added} added, {refused} refused: {reasons}",
   "5c8df50e7f9f581f": "Release pending (machine offline)",
   "bf882e9aca909061": "Released",
-  "380a8495b3872071": "Not allowed here"
+  "380a8495b3872071": "Not allowed here",
+  "6e10cc562b47cf04": "Leave the mission \"{mission}\"? Its lead will see this thread as released.",
+  "2559cb9adf33dbc5": "Could not leave the mission",
+  "57b98f569f27871b": "Leave mission"
 }

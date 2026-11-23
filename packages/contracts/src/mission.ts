@@ -34,9 +34,18 @@ export const MissionLink = Schema.Struct({
 });
 export type MissionLink = typeof MissionLink.Type;
 
+/** A thread on this machine that a Mission holds, whichever machine leads it. */
+export const MissionClaimHere = Schema.Struct({
+  threadId: ThreadId,
+  missionId: Schema.String,
+  name: Schema.String,
+});
+export type MissionClaimHere = typeof MissionClaimHere.Type;
+
 export const MissionsSnapshot = Schema.Struct({
   missions: Schema.Array(Mission),
   links: Schema.Array(MissionLink),
+  claims: Schema.Array(MissionClaimHere),
 });
 export type MissionsSnapshot = typeof MissionsSnapshot.Type;
 
@@ -56,6 +65,9 @@ export const MissionMemberInput = Schema.Struct({
   missionId: Schema.String,
   member: ScopedThreadRef,
 });
+
+/** The local user frees a thread on this machine from its Mission. */
+export const MissionLeaveInput = Schema.Struct({ threadId: ThreadId });
 
 export class MissionError extends Schema.TaggedError<MissionError>()("MissionError", {
   message: Schema.String,

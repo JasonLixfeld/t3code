@@ -1,4 +1,4 @@
-import { EnvironmentId, type Mission, type MissionLink } from "@t3tools/contracts";
+import { EnvironmentId, type Mission, type MissionLink, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -25,7 +25,14 @@ const links: ReadonlyArray<MissionLink> = [
   { environmentId: BOX, label: "Box", fullAccess: false },
 ];
 const hosts: ReadonlyArray<MissionHost> = [
-  { environmentId: DESK, snapshot: { missions: [mission], links } },
+  {
+    environmentId: DESK,
+    snapshot: {
+      missions: [mission],
+      links,
+      claims: [{ threadId: ThreadId.make("held"), missionId: "ffffffffffff", name: "Theirs" }],
+    },
+  },
 ];
 const label = (environmentId: EnvironmentId) =>
   environmentId === DESK ? "Desk" : String(environmentId);
@@ -102,6 +109,23 @@ describe("buildMissionMenuItems", () => {
     expect(
       buildMissionMenuItems([{ environmentId: DESK }], hosts, label, nowhere)[0],
     ).toMatchObject({ id: "mission-start", disabled: true, detail: "Not allowed here" });
+  });
+
+  it("offers leaving only for a thread its own machine holds in a mission", () => {
+    const leaveOf = (thread: Parameters<typeof buildMissionMenuItems>[0][number], can = allowed) =>
+      buildMissionMenuItems([thread], hosts, label, can).find(
+        (item) => item.id === "mission-leave",
+      );
+    expect(leaveOf({ environmentId: DESK, id: ThreadId.make("held") })).toMatchObject({
+      label: "Leave mission",
+      disabled: false,
+    });
+    expect(leaveOf({ environmentId: DESK, id: ThreadId.make("free") })).toBeUndefined();
+    expect(leaveOf({ environmentId: LAPTOP, id: ThreadId.make("held") })).toBeUndefined();
+    expect(leaveOf({ environmentId: DESK, id: ThreadId.make("held") }, () => false)).toMatchObject({
+      disabled: true,
+      detail: "Not allowed here",
+    });
   });
 
   it("reads the host and mission back from an add entry", () => {

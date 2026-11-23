@@ -139,6 +139,20 @@ it.effect("a tag that fails to write leaves the claim, and listing writes it aga
   ),
 );
 
+it.effect("the local user leaves whichever mission holds a thread, as a release does", () =>
+  onMachine((claims, machine) =>
+    Effect.gen(function* () {
+      yield* claims.join("link:a", join("aaaa"));
+      const left = yield* claims.leaveHere(threadId);
+      assert.equal(left.owner, "link:a");
+      assert.deepEqual(machine.tags, ["mission-was:aaaa:AAAA"]);
+      assert.deepEqual(yield* claims.list("link:a"), []);
+      const again = yield* claims.leaveHere(threadId).pipe(Effect.flip);
+      assert.equal(again.message, "This thread is not in a mission.");
+    }),
+  ),
+);
+
 const isTag = Schema.is(ThreadTag);
 
 it.each([

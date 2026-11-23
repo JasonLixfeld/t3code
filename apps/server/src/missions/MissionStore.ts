@@ -147,6 +147,8 @@ export class MissionStore extends Context.Service<
       },
     ) => Effect.Effect<MissionClaim | "absent" | "not-yours">;
     readonly claimsOf: (owner: string) => Effect.Effect<ReadonlyArray<MissionClaim>>;
+    /** Every claim on threads here, with the owner that holds it. */
+    readonly allClaims: Effect.Effect<ReadonlyArray<MissionClaim & { readonly owner: string }>>;
   }
 >()("t3/missions/MissionStore") {}
 
@@ -323,6 +325,7 @@ const make = Effect.gen(function* () {
         return (yield* claimRow(input.threadId))!;
       }),
     );
+    if (row.claim_id === input.claimId) yield* changed;
     return { claim: toClaim(row), owner: row.owner };
   }, Effect.orDie);
 
@@ -334,21 +337,23 @@ const make = Effect.gen(function* () {
       readonly claimId?: string | undefined;
     },
   ) {
-    return yield* sql.withTransaction(
-      Effect.gen(function* () {
-        const row = yield* claimRow(threadId);
-        if (row === undefined) return "absent" as const;
-        if (
-          row.owner !== match.owner ||
-          (match.missionId !== undefined && row.mission_id !== match.missionId) ||
-          (match.claimId !== undefined && row.claim_id !== match.claimId)
-        ) {
-          return "not-yours" as const;
-        }
-        yield* sql`DELETE FROM mission_claims WHERE thread_id = ${threadId}`;
-        return toClaim(row);
-      }),
-    );
+    return yield* sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const row = yield* claimRow(threadId);
+          if (row === undefined) return "absent" as const;
+          if (
+            row.owner !== match.owner ||
+            (match.missionId !== undefined && row.mission_id !== match.missionId) ||
+            (match.claimId !== undefined && row.claim_id !== match.claimId)
+          ) {
+            return "not-yours" as const;
+          }
+          yield* sql`DELETE FROM mission_claims WHERE thread_id = ${threadId}`;
+          return toClaim(row);
+        }),
+      )
+      .pipe(Effect.tap((dropped) => (typeof dropped === "string" ? Effect.void : changed)));
   }, Effect.orDie);
 
   const claimsOf = Effect.fn("MissionStore.claimsOf")(function* (owner: string) {
@@ -358,6 +363,14 @@ const make = Effect.gen(function* () {
     `;
     return rows.map(toClaim);
   }, Effect.orDie);
+
+  const allClaims = sql<ClaimRow>`
+    SELECT thread_id, mission_id, mission_name, owner, claim_id FROM mission_claims
+    ORDER BY claimed_at, rowid
+  `.pipe(
+    Effect.map((rows) => rows.map((row) => ({ ...toClaim(row), owner: row.owner }))),
+    Effect.orDie,
+  );
 
   return MissionStore.of({
     changes,
@@ -370,6 +383,7 @@ const make = Effect.gen(function* () {
     claim,
     dropClaim,
     claimsOf,
+    allClaims,
   });
 });
 
