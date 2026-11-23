@@ -114,6 +114,12 @@ const migrations = Migrator.fromRecord({
       )
     `;
   }),
+  "5_AddLinkAndAge": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    // Rows from before have neither, so they read as made under another link, long ago.
+    yield* sql`ALTER TABLE pending_adds ADD COLUMN link_id TEXT NOT NULL DEFAULT ''`;
+    yield* sql`ALTER TABLE pending_adds ADD COLUMN added_at TEXT NOT NULL DEFAULT ''`;
+  }),
 });
 
 interface MissionRow {
@@ -168,6 +174,9 @@ export interface PendingAdd {
   readonly threadId: ThreadId;
   readonly missionId: string;
   readonly intentId: string;
+  /** The link to the thread's machine when the add was made. A link made again is another one. */
+  readonly linkId: string;
+  readonly addedAt: string;
   readonly refusal: string | null;
 }
 
@@ -378,9 +387,10 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { intentId } = input;
         if (intentId !== undefined) {
+          // Whoever sends it: a lead that was linked again is another owner with the same add.
           const spent = yield* sql`
-            SELECT 1 FROM spent_intents WHERE mission_id = ${input.missionId}
-              AND owner = ${input.owner} AND intent_id = ${intentId}
+            SELECT 1 FROM spent_intents
+            WHERE mission_id = ${input.missionId} AND intent_id = ${intentId}
           `;
           if (spent.length > 0) return "intent-spent" as const;
         }
@@ -499,10 +509,12 @@ const make = Effect.gen(function* () {
     readonly thread_id: string;
     readonly mission_id: string;
     readonly intent_id: string;
+    readonly link_id: string;
+    readonly added_at: string;
     readonly refusal: string | null;
   }>`
-    SELECT environment_id, thread_id, mission_id, intent_id, refusal FROM pending_adds
-    ORDER BY rowid
+    SELECT environment_id, thread_id, mission_id, intent_id, link_id, added_at, refusal
+    FROM pending_adds ORDER BY rowid
   `.pipe(
     Effect.map((rows) =>
       rows.map((row): PendingAdd => ({
@@ -510,6 +522,8 @@ const make = Effect.gen(function* () {
         threadId: ThreadId.make(row.thread_id),
         missionId: row.mission_id,
         intentId: row.intent_id,
+        linkId: row.link_id,
+        addedAt: row.added_at,
         refusal: row.refusal,
       })),
     ),
@@ -519,9 +533,9 @@ const make = Effect.gen(function* () {
   const setPendingAdd = (add: PendingAdd) =>
     sql`
       INSERT OR REPLACE INTO pending_adds
-        (environment_id, thread_id, mission_id, intent_id, refusal)
+        (environment_id, thread_id, mission_id, intent_id, link_id, added_at, refusal)
       VALUES (${add.environmentId}, ${add.threadId}, ${add.missionId}, ${add.intentId},
-        ${add.refusal})
+        ${add.linkId}, ${add.addedAt}, ${add.refusal})
     `.pipe(Effect.andThen(changed), Effect.asVoid, Effect.orDie);
 
   const deletePendingAdd = (add: AddKey) =>

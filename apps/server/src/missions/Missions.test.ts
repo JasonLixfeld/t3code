@@ -19,6 +19,7 @@ import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -73,7 +74,8 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     /**
      * `offline`: refuses to connect. `hanging`: never answers. `lostReply`: acts, then drops the
      * reply. `actsThenHangs`: acts, then never replies. `revoked`: answers HTTP 401 to the link.
-     * `denies`: its tool refuses the call.
+     * `denies`: its tool refuses the call. `heldThenOffline`: answers this call once `letGo` is
+     * done, and is offline for every call after it.
      */
     mode: "up" as
       | "up"
@@ -82,7 +84,12 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       | "lostReply"
       | "actsThenHangs"
       | "revoked"
-      | "denies",
+      | "denies"
+      | "heldThenOffline",
+    letGo: undefined as Deferred.Deferred<void> | undefined,
+    /** The link session this lead calls with, and when the link was made. Both change on a re-pair. */
+    session: "lead-session",
+    linkedAt: "2026-01-01T00:00:00.000Z",
     /** Every call this lead made to the laptop, in order. */
     calls: [] as Array<ClaimKind>,
     /** The same calls, to wait on: each is offered as it starts, under the mode set by then. */
@@ -124,15 +131,16 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       readonly generation: string;
       readonly intentId: string;
     };
+    const owner = MissionClaims.linkOwner(laptop.session);
     switch (args.kind) {
       case "join":
-        return Effect.map(claims.join(LEAD_ON_LAPTOP, args), (claim) =>
+        return Effect.map(claims.join(owner, args), (claim) =>
           claim === "intent-spent" ? [] : [claim],
         );
       case "release":
-        return Effect.as(claims.release(LEAD_ON_LAPTOP, args), []);
+        return Effect.as(claims.release(owner, args), []);
       case "list":
-        return claims.list(LEAD_ON_LAPTOP);
+        return claims.list(owner);
     }
   };
   const peers = Layer.mock(PeerMcpClient.PeerMcpClient)({
@@ -147,6 +155,10 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
         });
         if (mode === "offline") return yield* stoppedAnswering;
         if (mode === "hanging") return yield* Effect.never;
+        if (mode === "heldThenOffline") {
+          laptop.mode = "offline";
+          yield* Deferred.await(laptop.letGo!);
+        }
         if (mode === "revoked" || mode === "denies") {
           return yield* new OrchestratorMcpFailure({
             code: "capability_denied",
@@ -180,6 +192,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
               ({
                 label: link.label,
                 access: link.access,
+                linkedAt: DateTime.makeUnsafe(laptop.linkedAt),
                 expiresAt: DateTime.makeUnsafe(
                   link.id === LAPTOP && laptop.linkExpired ? 0 : "2999-01-01T00:00:00.000Z",
                 ),
@@ -205,6 +218,10 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       Effect.flatMap(Queue.take(laptop.acted!), (acted) =>
         acted === kind ? Effect.void : world.untilActed(kind),
       ),
+    /** Runs after each read of the lead's known claims, in the fiber that read them. */
+    afterKnownClaimsRead: Effect.void as Effect.Effect<void>,
+    /** Runs once, after the lead has stopped and before it starts again. */
+    whileStopped: Effect.void as Effect.Effect<void>,
     /** Runs before the lead's next read of its missions; a test holds a snapshot open with it. */
     beforeMissionsRead: Effect.void as Effect.Effect<void>,
     threadsOn,
@@ -238,6 +255,7 @@ const withMissions = <A, E>(
                 missions: Effect.suspend(() => world.beforeMissionsRead).pipe(
                   Effect.andThen(real.missions),
                 ),
+                knownClaims: real.knownClaims.pipe(Effect.tap(() => world.afterKnownClaimsRead)),
               }),
             ),
           ).pipe(
@@ -257,6 +275,7 @@ const withMissions = <A, E>(
     world.laptop.started = yield* Queue.unbounded<ClaimKind>();
     world.laptop.answered = yield* Queue.unbounded<ClaimKind>();
     world.laptop.acted = yield* Queue.unbounded<ClaimKind>();
+    world.laptop.letGo = yield* Deferred.make<void>();
     world.laptop.claims = Context.get(
       yield* Layer.build(claimsOn(LAPTOP)),
       MissionClaims.MissionClaims,
@@ -265,7 +284,13 @@ const withMissions = <A, E>(
       Layer.provide(Layer.mergeAll(claimsOn(HERE), world.threadsOn(HERE), world.layer)),
     );
     return yield* Effect.forEach(sessions, (session) =>
-      Effect.scoped(Effect.provide(session, lead)),
+      Effect.scoped(Effect.provide(session, lead)).pipe(
+        Effect.tap(() => {
+          const stopped = world.whileStopped;
+          world.whileStopped = Effect.void;
+          return stopped;
+        }),
+      ),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
@@ -692,6 +717,107 @@ it.effect(
         const refused = yield* missions.addMember(third).pipe(Effect.flip);
         assert.include(refused.message, "Laptop refused: This link may change only threads");
         assert.equal(stateOf(yield* listed, third.member), undefined);
+      }),
+    );
+  },
+);
+
+it.effect("an add made under one link is not sent again once the machine is linked again", () => {
+  const world = makeWorld([lead, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const mission = yield* createOne;
+      const member = { missionId: mission.missionId, member: laptopMember };
+      world.laptop.mode = "lostReply";
+      yield* missions.addMember(member);
+      // The join landed, and so did the copy sent again at once. No reply got back.
+      yield* world.untilActed("join");
+      yield* world.untilActed("join");
+
+      // The laptop revokes the link, and its user takes the thread out of the mission.
+      world.laptop.mode = "revoked";
+      yield* world.laptop.claims!.leaveHere(laptopMember.threadId);
+      // The two machines are linked again with full access: a new link, a new session there.
+      world.laptop.linkedAt = "2026-02-01T00:00:00.000Z";
+      world.laptop.session = "lead-session-after-relink";
+      world.laptop.mode = "up";
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* eventually((snapshot) => stateOf(snapshot, laptopMember) !== "add-pending");
+
+      const row = (yield* listed).missions[0]!.members[1];
+      assert.equal(row?.state, "add-refused");
+      assert.include(row?.detail, "The link to Laptop was made again since this add");
+      // Reading the laptop's claims is fine. No join went out after the two at the start.
+      assert.equal(world.laptop.calls.filter((kind) => kind === "join").length, 2);
+      assert.deepEqual(yield* world.laptop.claims!.list("link:lead-session-after-relink"), []);
+      assert.deepEqual(world.tags(laptopMember), [WAS_TAG]);
+    }),
+  );
+});
+
+it.effect("an add that waited a week is not sent again", () => {
+  const world = makeWorld([lead, laptopMember]);
+  const member = { missionId: "0123456789ab", member: laptopMember };
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      yield* createOne;
+      world.laptop.mode = "offline";
+      yield* (yield* Missions.Missions).addMember(member);
+      assert.deepEqual(yield* world.nextCalls(2), ["join", "join"]);
+      world.laptop.mode = "up";
+      world.whileStopped = TestClock.adjust(Duration.days(Missions.PENDING_ADD_DAYS + 1));
+    }),
+    Effect.gen(function* () {
+      yield* eventually((snapshot) => stateOf(snapshot, laptopMember) !== "add-pending");
+      const row = (yield* listed).missions[0]!.members[1];
+      assert.equal(row?.state, "add-refused");
+      assert.include(row?.detail, "waited more than 7 days");
+      // Reading the laptop's claims is fine. No join went out after the two at the start.
+      assert.equal(world.laptop.calls.filter((kind) => kind === "join").length, 2);
+      assert.deepEqual(yield* world.laptop.claims!.list(LEAD_ON_LAPTOP), []);
+    }),
+  );
+});
+
+const InSecondRelease = Context.Reference<boolean>("test/InSecondRelease", {
+  defaultValue: () => false,
+});
+
+it.effect(
+  "a release left waiting after another client's release got through can be forgotten",
+  () => {
+    const world = makeWorld([lead, laptopMember]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const mission = yield* createOne;
+        const member = { missionId: mission.missionId, member: laptopMember };
+        yield* missions.addMember(member);
+        world.laptop.mode = "heldThenOffline";
+        const first = yield* Effect.forkChild(missions.releaseMember(member));
+        assert.deepEqual(yield* world.nextCalls(2), ["join", "release"]);
+        // A second client releases the member too. It reads the claim the first has yet to drop.
+        const read = yield* Deferred.make<void>();
+        world.afterKnownClaimsRead = Effect.flatMap(InSecondRelease, (second) =>
+          second ? Effect.asVoid(Deferred.succeed(read, undefined)) : Effect.void,
+        );
+        const second = yield* Effect.forkChild(
+          missions.releaseMember(member).pipe(Effect.provideService(InSecondRelease, true)),
+        );
+        yield* Deferred.await(read);
+        // The laptop answers the first release and is gone before the second is sent.
+        yield* Deferred.succeed(world.laptop.letGo!, undefined);
+        yield* Fiber.join(first);
+        yield* Fiber.join(second);
+        assert.deepEqual(yield* world.laptop.claims!.list(LEAD_ON_LAPTOP), []);
+
+        assert.equal(stateOf(yield* listed, laptopMember), "release-pending");
+        yield* missions.forgetMember(member);
+        assert.equal(stateOf(yield* listed, laptopMember), undefined);
       }),
     );
   },

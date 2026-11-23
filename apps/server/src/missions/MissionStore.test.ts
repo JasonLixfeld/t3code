@@ -63,6 +63,7 @@ it.effect("keeps its own migration history and reopens without migrating again",
           [2, "LastKnown"],
           [3, "PendingAdds"],
           [4, "AddIntents"],
+          [5, "AddLinkAndAge"],
         ],
       );
     }),

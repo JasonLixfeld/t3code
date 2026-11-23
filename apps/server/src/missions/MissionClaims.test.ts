@@ -168,6 +168,11 @@ it.effect("leaving spends every add that stood behind the claim, and only those"
       assert.deepEqual(yield* add("two"), first);
       yield* claims.leaveHere(threadId);
       assert.deepEqual([yield* add("one"), yield* add("two")], ["intent-spent", "intent-spent"]);
+      // The same lead under a new link session is another owner, and its copy is as spent.
+      assert.equal(
+        yield* claims.join("link:b", { ...join("aaaa"), intentId: "one" }),
+        "intent-spent",
+      );
       assert.deepEqual(yield* claims.list("link:a"), []);
       assert.notEqual(yield* add("three"), "intent-spent");
     }),

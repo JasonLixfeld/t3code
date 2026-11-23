@@ -136,6 +136,7 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
       environmentId: LAPTOP,
       label: "Laptop",
       access: "full-access",
+      linkedAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
       expiresAt: DateTime.makeUnsafe("2999-01-01T00:00:00.000Z"),
     };
     const desk = Missions.layer.pipe(

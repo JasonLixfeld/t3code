@@ -44,6 +44,11 @@ import {
 export const MEMBER_CALL_DEADLINE = Duration.seconds(10);
 /** How often a lead asks its linked machines again, while a client watches or a release waits. */
 export const REFRESH_INTERVAL = Duration.seconds(15);
+/**
+ * How long an add may wait for its machine before the lead stops sending it. Well inside the time
+ * a member's machine remembers a spent add, so a lead restored from a backup cannot replay one.
+ */
+export const PENDING_ADD_DAYS = 7;
 
 export class Missions extends Context.Service<
   Missions,
@@ -215,6 +220,13 @@ const make = Effect.gen(function* () {
         });
       }
     }
+    // A release can outlive the cached claim it was sent for. It still shows, so it can be forgotten.
+    for (const { environmentId, threadId } of releasing) {
+      const ref = { environmentId, threadId };
+      if (!members.has(memberKey(ref))) {
+        members.set(memberKey(ref), { ref, role: "member", state: "release-pending" });
+      }
+    }
     for (const add of waiting.adds) {
       if (add.missionId !== mission.missionId || members.has(memberKey(add))) continue;
       members.set(memberKey(add), {
@@ -296,7 +308,23 @@ const make = Effect.gen(function* () {
         `The link to ${label} expired. Link it again with a new pairing code from ${label}.`,
       );
     }
-    return label;
+    // Linking a machine again makes a new record, with a new session there.
+    return { label, linkId: DateTime.formatIso(link.value.linkedAt) };
+  });
+
+  /**
+   * Why a pending add may not be sent any more, if so. A link made again has a new session on
+   * the thread's machine, where an add made under the old one no longer counts as spent by it.
+   */
+  const staleAdd = Effect.fn("Missions.staleAdd")(function* (add: PendingAdd) {
+    const now = yield* DateTime.now;
+    if (add.addedAt < DateTime.formatIso(DateTime.subtract(now, { days: PENDING_ADD_DAYS }))) {
+      return `This add waited more than ${PENDING_ADD_DAYS} days for the thread's machine, so it was not sent again. Add the thread again.`;
+    }
+    const link = yield* linkTo(add.environmentId).pipe(Effect.orElseSucceed(() => undefined));
+    return link === undefined || link.linkId === add.linkId
+      ? undefined
+      : `The link to ${link.label} was made again since this add, so it was not sent again. Add the thread again.`;
   });
 
   /**
@@ -321,7 +349,7 @@ const make = Effect.gen(function* () {
           return yield* claims.list(here);
       }
     }
-    const label = yield* linkTo(environmentId).pipe(
+    const { label } = yield* linkTo(environmentId).pipe(
       Effect.catch((error) =>
         setAnswering(environmentId, false).pipe(
           Effect.andThen(Effect.fail(new Unreachable({ message: error.message }))),
@@ -401,6 +429,11 @@ const make = Effect.gen(function* () {
           if (add.environmentId !== environmentId || add.refusal !== null) continue;
           if (mission === undefined) yield* store.clearPendingAdd(add);
           else {
+            const stale = yield* staleAdd(add);
+            if (stale !== undefined) {
+              yield* store.setPendingAdd({ ...add, refusal: stale });
+              continue;
+            }
             yield* sendJoin(mission, add).pipe(
               Effect.catchTags({
                 MissionError: (error) => store.setPendingAdd({ ...add, refusal: error.message }),
@@ -480,19 +513,12 @@ const make = Effect.gen(function* () {
   }) {
     const mission = yield* missionNamed(input.missionId);
     const { environmentId } = input.member;
-    // A link this machine cannot use refuses the add at once, before anything waits on it.
-    if (environmentId !== here) yield* linkTo(environmentId);
-    const add = {
-      ...input.member,
-      missionId: mission.missionId,
-      intentId: yield* random.uuidV4().pipe(Effect.orDie),
-      refusal: null,
-    };
+    const intentId = yield* random.uuidV4().pipe(Effect.orDie);
     const setSending = (isSending: boolean) =>
       Ref.update(sending, (current) => {
         const next = new Set(current);
-        if (isSending) next.add(add.intentId);
-        else next.delete(add.intentId);
+        if (isSending) next.add(intentId);
+        else next.delete(intentId);
         return next;
       });
     yield* setSending(true);
@@ -500,24 +526,36 @@ const make = Effect.gen(function* () {
       .withLock(
         environmentId,
         Effect.gen(function* () {
-          // Written before anything is sent. If this call is cut off, or the server stops, the
-          // add is still there to send again. This machine's own threads need none.
-          if (environmentId !== here) yield* store.setPendingAdd(add);
-          // A release of this thread that still waits is finished first. The join then makes a
-          // new claim, which that release cannot match if an earlier copy of it arrives late.
-          for (const release of yield* store.pendingReleases) {
-            if (memberKey(release) === memberKey(input.member)) yield* sendRelease(release);
-          }
-          yield* sendJoin(mission, add);
-        }).pipe(
-          Effect.catchTags({
-            // Nobody knows whether the join landed. The add stays, and is sent again, until the
-            // thread's machine says what became of it.
-            MissionMemberUnreachable: () => refresh,
-            MissionError: (error) =>
-              store.clearPendingAdd(add).pipe(Effect.andThen(Effect.fail(error))),
-          }),
-        ),
+          // A link this machine cannot use refuses the add here, before anything is written.
+          const linkId = environmentId === here ? "" : (yield* linkTo(environmentId)).linkId;
+          const add = {
+            ...input.member,
+            missionId: mission.missionId,
+            intentId,
+            linkId,
+            addedAt: DateTime.formatIso(yield* DateTime.now),
+            refusal: null,
+          };
+          yield* Effect.gen(function* () {
+            // Written before anything is sent. If this call is cut off, or the server stops, the
+            // add is still there to send again. This machine's own threads need none.
+            if (environmentId !== here) yield* store.setPendingAdd(add);
+            // A release of this thread that still waits is finished first. The join then makes
+            // a new claim, which that release cannot match if an earlier copy arrives late.
+            for (const release of yield* store.pendingReleases) {
+              if (memberKey(release) === memberKey(input.member)) yield* sendRelease(release);
+            }
+            yield* sendJoin(mission, add);
+          }).pipe(
+            Effect.catchTags({
+              // Nobody knows whether the join landed. The add stays, and is sent again, until
+              // the thread's machine says what became of it.
+              MissionMemberUnreachable: () => refresh,
+              MissionError: (error) =>
+                store.clearPendingAdd(add).pipe(Effect.andThen(Effect.fail(error))),
+            }),
+          );
+        }),
       )
       .pipe(Effect.ensuring(setSending(false).pipe(Effect.andThen(storeChanged))));
   });
