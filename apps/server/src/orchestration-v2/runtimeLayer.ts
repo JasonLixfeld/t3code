@@ -56,6 +56,8 @@ import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as MissionStore from "../missions/MissionStore.ts";
+import * as Missions from "../missions/Missions.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
 import * as WorkflowRuntime from "../workflows/WorkflowRuntime.ts";
@@ -327,6 +329,10 @@ const layerWorkflowsProvided = WorkflowRuntime.layer.pipe(
   // Layers memoize by reference, so these are the links Settings and agents use.
   Layer.provide(PeerMcpClient.layer.pipe(Layer.provideMerge(PeerLinks.layer))),
 );
+const layerMissionsProvided = Missions.layer.pipe(
+  Layer.provide(Layer.merge(MissionStore.layer, layerThreadManagementProvided)),
+  Layer.provide(PeerMcpClient.layer.pipe(Layer.provideMerge(PeerLinks.layer))),
+);
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
 );
@@ -439,6 +445,7 @@ export const layerProduction = Layer.mergeAll(
   layerThreadLaunchProvided,
   layerScheduledTaskProvided,
   layerWorkflowsProvided,
+  layerMissionsProvided,
   layerScratchThreadPromotionProvided,
   layerSecretRequestsProvided,
   layerFeedbackStoreProvided,

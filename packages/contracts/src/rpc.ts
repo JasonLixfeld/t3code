@@ -437,6 +437,14 @@ import {
   WorkflowRunsSubscribeInput,
 } from "./workflow.ts";
 import {
+  Mission,
+  MissionCreateInput,
+  MissionError,
+  MissionMemberInput,
+  MissionsSnapshot,
+  MissionsSubscribeInput,
+} from "./mission.ts";
+import {
   ScheduledTaskDeleteInput,
   ScheduledTaskDeleteResult,
   ScheduledTaskError,
@@ -642,6 +650,11 @@ export const WS_METHODS = {
   workflowsGetDefinition: "workflows.getDefinition",
   workflowsSaveDefinition: "workflows.saveDefinition",
   workflowsDeleteDefinition: "workflows.deleteDefinition",
+
+  missionsSubscribe: "missions.subscribe",
+  missionsCreate: "missions.create",
+  missionsAddMember: "missions.addMember",
+  missionsReleaseMember: "missions.releaseMember",
 
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
@@ -2365,6 +2378,29 @@ const WsWorkflowsDeleteDefinitionRpc = Rpc.make(WS_METHODS.workflowsDeleteDefini
   error: EnvironmentAuthorizationError,
 });
 
+const WsMissionsSubscribeRpc = Rpc.make(WS_METHODS.missionsSubscribe, {
+  payload: MissionsSubscribeInput,
+  success: MissionsSnapshot,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsMissionsCreateRpc = Rpc.make(WS_METHODS.missionsCreate, {
+  payload: MissionCreateInput,
+  success: Mission,
+  error: Schema.Union([MissionError, EnvironmentAuthorizationError]),
+});
+
+const WsMissionsAddMemberRpc = Rpc.make(WS_METHODS.missionsAddMember, {
+  payload: MissionMemberInput,
+  error: Schema.Union([MissionError, EnvironmentAuthorizationError]),
+});
+
+const WsMissionsReleaseMemberRpc = Rpc.make(WS_METHODS.missionsReleaseMember, {
+  payload: MissionMemberInput,
+  error: Schema.Union([MissionError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -2549,6 +2585,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsWorkflowsGetDefinitionRpc,
   WsWorkflowsSaveDefinitionRpc,
   WsWorkflowsDeleteDefinitionRpc,
+  WsMissionsSubscribeRpc,
+  WsMissionsCreateRpc,
+  WsMissionsAddMemberRpc,
+  WsMissionsReleaseMemberRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,
