@@ -12804,7 +12804,8 @@
   "40acdf448ff6ddab": "Sem link de {machine}",
   "93ecfc2b6717ab09": "Requer link com acesso total",
   "eb84c6df689a435c": "Não compatível aqui",
-  "45dad99822db6a88": "Remover esta thread da missão mesmo assim? A tag da missão fica em {machine} até você removê-la lá.",
-  "847576636f989498": "Remover da missão mesmo assim",
-  "902d29ef248677bb": "{added} adicionadas, {refused} recusadas: {reasons}"
+  "902d29ef248677bb": "{added} adicionadas, {refused} recusadas: {reasons}",
+  "5c8df50e7f9f581f": "Liberação pendente (máquina offline)",
+  "bf882e9aca909061": "Liberada",
+  "380a8495b3872071": "Não permitido aqui"
 }

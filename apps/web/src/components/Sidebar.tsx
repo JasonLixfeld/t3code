@@ -2440,12 +2440,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       );
       if (clicked._tag === "Failure" || clicked.value === null) return;
       if (isMissionMenuId(clicked.value)) {
-        const allLanded = await missionMenu.run(
+        const landed = await missionMenu.run(
           clicked.value,
           selectedThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
         );
-        // A refused thread stays selected, so the user can see it and try again.
-        if (allLanded) clearSelection();
+        // Refused threads stay selected, so the user can see them and try again.
+        removeFromSelection(landed.map(scopedThreadKey));
         return;
       }
       const actionTargets =

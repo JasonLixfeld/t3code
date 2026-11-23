@@ -12811,7 +12811,8 @@
   "40acdf448ff6ddab": "Ingen länk från {machine}",
   "93ecfc2b6717ab09": "Kräver länk med full åtkomst",
   "eb84c6df689a435c": "Stöds inte här",
-  "45dad99822db6a88": "Ta bort tråden från uppdraget ändå? Dess uppdragstagg ligger kvar på {machine} tills du tar bort den där.",
-  "847576636f989498": "Ta bort från uppdraget ändå",
-  "902d29ef248677bb": "{added} tillagda, {refused} nekade: {reasons}"
+  "902d29ef248677bb": "{added} tillagda, {refused} nekade: {reasons}",
+  "5c8df50e7f9f581f": "Släpp väntar (datorn är offline)",
+  "bf882e9aca909061": "Släppt",
+  "380a8495b3872071": "Inte tillåtet här"
 }

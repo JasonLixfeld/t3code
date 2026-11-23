@@ -8,6 +8,12 @@ export const MissionMember = Schema.Struct({
   ref: ScopedThreadRef,
   role: Schema.Literals(["lead", "member"]),
   addedAt: Schema.String,
+  /**
+   * `release-pending`: released here while the member's machine was unreachable; the lead finishes
+   * it when that machine answers again. `released`: the member's machine no longer holds the claim.
+   * Neither counts as a member.
+   */
+  state: Schema.Literals(["active", "release-pending", "released"]),
 });
 export type MissionMember = typeof MissionMember.Type;
 
@@ -40,6 +46,8 @@ export const MissionsSubscribeInput = Schema.Struct({});
 const MissionName = ThreadTag;
 
 export const MissionCreateInput = Schema.Struct({
+  /** Chosen by the client, so a retry after a lost reply finds the Mission it already made. */
+  missionId: Schema.String.check(Schema.isPattern(/^[0-9a-f]{12}$/)),
   name: MissionName,
   leadThreadId: ThreadId,
 });
@@ -49,19 +57,8 @@ export const MissionMemberInput = Schema.Struct({
   member: ScopedThreadRef,
 });
 
-export const MissionReleaseInput = Schema.Struct({
-  ...MissionMemberInput.fields,
-  /** Drops the membership without touching the member's tag, for a machine that cannot be reached. */
-  leaveTag: Schema.optional(Schema.Boolean),
-});
-
 export class MissionError extends Schema.TaggedError<MissionError>()("MissionError", {
   message: Schema.String,
-  /**
-   * `thread-gone`: the member's machine has no such thread. `unreachable`: this machine cannot
-   * change the member's tag there, so only `leaveTag` can release it.
-   */
-  reason: Schema.optional(Schema.Literals(["thread-gone", "unreachable"])),
 }) {}
 
 export const MISSION_TAG_PREFIX = "mission:";
@@ -83,6 +80,10 @@ export const missionTag = (missionId: string, name: string) =>
   cut(`${MISSION_TAG_PREFIX}${missionId}:${name}`);
 export const missionWasTag = (missionId: string, name: string) =>
   cut(`${MISSION_WAS_TAG_PREFIX}${missionId}:${name}`);
+
+/** Mission tags mirror claims, so only the Missions code may write them. */
+export const isMissionTag = (tag: string) =>
+  tag.startsWith(MISSION_TAG_PREFIX) || tag.startsWith(MISSION_WAS_TAG_PREFIX);
 
 /** The Mission a thread's tags say it belongs to, if any. */
 export const missionTagOf = (tags: ReadonlyArray<string> | undefined) =>

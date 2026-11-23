@@ -2040,6 +2040,7 @@ export const layerWsRpc = (
               ? { "orchestration_v2.source_thread_id": command.sourceThreadId }
               : {}),
           }).pipe(
+            Effect.andThen(Missions.refuseClientMissionTag(command)),
             Effect.andThen(
               startup
                 .enqueueCommand(

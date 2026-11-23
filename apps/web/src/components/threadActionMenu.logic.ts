@@ -132,6 +132,8 @@ export interface ThreadActionMenuState {
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
+  // Mission entries check the machine that keeps the Mission, not the thread's.
+  if (action.startsWith("mission-")) return false;
   return ![
     "find",
     "new-thread-on-branch",

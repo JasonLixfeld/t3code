@@ -12804,7 +12804,8 @@
   "40acdf448ff6ddab": "Aucun lien depuis {machine}",
   "93ecfc2b6717ab09": "Lien à accès complet requis",
   "eb84c6df689a435c": "Non pris en charge ici",
-  "45dad99822db6a88": "Retirer quand même ce fil de la mission ? Son tag de mission reste sur {machine} jusqu’à ce que vous l’y supprimiez.",
-  "847576636f989498": "Retirer quand même de la mission",
-  "902d29ef248677bb": "{added} ajoutés, {refused} refusés : {reasons}"
+  "902d29ef248677bb": "{added} ajoutés, {refused} refusés : {reasons}",
+  "5c8df50e7f9f581f": "Retrait en attente (machine hors ligne)",
+  "bf882e9aca909061": "Retiré",
+  "380a8495b3872071": "Non autorisé ici"
 }

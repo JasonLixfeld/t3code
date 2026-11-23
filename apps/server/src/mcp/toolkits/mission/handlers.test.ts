@@ -1,13 +1,17 @@
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, type MissionError, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { McpSchema, McpServer } from "effect/ai";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
+import * as MissionClaims from "../../../missions/MissionClaims.ts";
+import * as MissionStore from "../../../missions/MissionStore.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
@@ -55,77 +59,123 @@ const mcpClient = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 
-const tagOnce = (scope: McpInvocationContext.McpInvocationScope, threadId = userThread) => {
-  const tags = new Map<ThreadId, Array<string>>([
-    [userThread, []],
-    [agentHere.thread.threadId, []],
-  ]);
-  const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
-    getThreadShell: (threadId) =>
-      Effect.succeed(
-        tags.has(threadId)
-          ? { ...liveThreadShell(threadId, { runtimeMode: "auto" }), tags: tags.get(threadId) }
-          : null,
-      ),
-    dispatch: (command) =>
-      Effect.sync(() => {
-        if (command.type === "thread.tag.set" && command.tagged) {
-          tags.get(command.threadId)!.push(command.tag);
-        }
-        return {} as never;
-      }),
-  });
-  return McpServer.McpServer.pipe(
-    Effect.flatMap((server) =>
-      server.callTool({
-        name: "t3_mission_tag",
-        arguments: { threadId, change: "join", missionId: "m1", name: "Ship" },
-      }),
-    ),
-    Effect.map(({ content }) => ({
-      answer: content.map((part) => (part.type === "text" ? part.text : "")).join(""),
-      tags: tags.get(userThread),
-    })),
-    Effect.provideService(McpSchema.McpServerClient, mcpClient),
-    Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-    Effect.provide(
-      McpHttpServer.toolkitRegistration(MissionToolkit, MissionHandlers.layer).pipe(
-        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-        Layer.provideMerge(Layer.merge(threads, NodeCrypto.layer)),
-      ),
-    ),
-  );
-};
-
-it.effect("a full-access link tags a thread it did not start", () =>
+/**
+ * Calls the tool once on a machine whose one user thread starts with `tags`. With `startedByLink`,
+ * that thread was started by the calling link, so the link's fence lets it through.
+ */
+const callOnce = (
+  scope: McpInvocationContext.McpInvocationScope,
+  args: Record<string, unknown>,
+  options: {
+    readonly startedByLink?: boolean;
+    readonly before?: (
+      claims: MissionClaims.MissionClaims["Service"],
+    ) => Effect.Effect<unknown, MissionError>;
+  } = {},
+) =>
   Effect.gen(function* () {
-    const { tags } = yield* tagOnce(linkedClient("full-access"));
+    const fileSystem = yield* FileSystem.FileSystem;
+    const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-mission-tool-" });
+    const tags: Array<string> = [];
+    const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
+      getThreadShell: (threadId) =>
+        Effect.sync(() =>
+          threadId === userThread || threadId === agentHere.thread.threadId
+            ? {
+                ...liveThreadShell(threadId, { runtimeMode: "auto" }),
+                ...(options.startedByLink === true
+                  ? {
+                      linkOrigin: {
+                        sessionId: "link",
+                        label: "T3 Code · Desk",
+                        access: "auto" as const,
+                      },
+                    }
+                  : {}),
+                tags: [...tags],
+              }
+            : null,
+        ),
+      dispatch: (command) =>
+        Effect.sync(() => {
+          if (command.type === "thread.tag.set") {
+            if (command.tagged) tags.push(command.tag);
+            else tags.splice(tags.indexOf(command.tag), 1);
+          }
+          return {} as never;
+        }),
+    });
+    const machine = Layer.merge(threads, NodeCrypto.layer);
+    const claims = Context.get(
+      yield* Layer.build(
+        MissionClaims.layer.pipe(
+          Layer.provide(MissionStore.layerFromPath(`${directory}/missions.sqlite`)),
+          Layer.provide(machine),
+        ),
+      ),
+      MissionClaims.MissionClaims,
+    );
+    if (options.before !== undefined) yield* options.before(claims);
+    const { content } = yield* McpServer.McpServer.pipe(
+      Effect.flatMap((server) => server.callTool({ name: "t3_mission_tag", arguments: args })),
+      Effect.provideService(McpSchema.McpServerClient, mcpClient),
+      Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+      Effect.provide(
+        McpHttpServer.toolkitRegistration(MissionToolkit, MissionHandlers.layer).pipe(
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+          Layer.provideMerge(
+            Layer.merge(machine, Layer.succeed(MissionClaims.MissionClaims, claims)),
+          ),
+        ),
+      ),
+    );
+    return {
+      answer: content.map((part) => (part.type === "text" ? part.text : "")).join(""),
+      tags,
+      // Read before the machine's database closes.
+      otherLeadClaims: yield* claims.list("env-other-lead"),
+    };
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+
+const joinShip = { kind: "join", threadId: userThread, missionId: "m1", name: "Ship" };
+
+it.effect("a full-access link claims and tags a thread it did not start", () =>
+  Effect.gen(function* () {
+    const { tags } = yield* callOnce(linkedClient("full-access"), joinShip);
     assert.deepEqual(tags, ["mission:m1:Ship"]);
   }),
 );
 
 it.effect("a link below full access is fenced off the user's threads", () =>
   Effect.gen(function* () {
-    const { answer, tags } = yield* tagOnce(linkedClient("auto"));
+    const { answer, tags } = yield* callOnce(linkedClient("auto"), joinShip);
     assert.include(answer, "capability_denied");
     assert.deepEqual(tags, []);
   }),
 );
 
-it.effect("an agent on this machine is not offered the tool and cannot call it", () =>
+it.effect("a fenced link that started a thread cannot strip another lead's claim", () =>
   Effect.gen(function* () {
-    const refused = yield* tagOnce(agentHere).pipe(Effect.flip);
-    assert.include(refused.message, "Tool 't3_mission_tag' not found");
+    const { answer, tags, otherLeadClaims } = yield* callOnce(
+      linkedClient("auto"),
+      { kind: "leave", threadId: userThread, missionId: "m1" },
+      {
+        startedByLink: true,
+        before: (claims) =>
+          claims.join("env-other-lead", { threadId: userThread, missionId: "m1", name: "Ship" }),
+      },
+    );
+    assert.include(answer, "Only the mission that holds this thread can release it.");
+    assert.deepEqual(tags, ["mission:m1:Ship"]);
+    assert.equal(otherLeadClaims.length, 1);
   }),
 );
 
-it.effect(
-  "a thread its machine does not have answers thread_not_found, so the lead can drop it",
-  () =>
-    Effect.gen(function* () {
-      const { answer } = yield* tagOnce(linkedClient("full-access"), ThreadId.make("thread:gone"));
-      assert.include(answer, "thread_not_found");
-    }),
+it.effect("an agent on this machine is not offered the tool and cannot call it", () =>
+  Effect.gen(function* () {
+    const refused = yield* callOnce(agentHere, joinShip).pipe(Effect.flip);
+    assert.include(refused.message, "Tool 't3_mission_tag' not found");
+  }),
 );
 
 it.effect("over /mcp, only a linked environment's session lists t3_mission_tag", () =>
@@ -143,7 +193,13 @@ it.effect("over /mcp, only a linked environment's session lists t3_mission_tag",
         ),
       ).pipe(
         Layer.provide(Layer.succeedContext(settingsContext)),
-        Layer.provide(Layer.merge(liveThreadsLayer, NodeCrypto.layer)),
+        Layer.provide(
+          Layer.mergeAll(
+            liveThreadsLayer,
+            NodeCrypto.layer,
+            Layer.mock(MissionClaims.MissionClaims)({}),
+          ),
+        ),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) => Effect.succeed(token === "agentToken" ? agentHere : undefined),

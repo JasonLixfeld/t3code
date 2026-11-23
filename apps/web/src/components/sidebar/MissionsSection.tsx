@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
@@ -6,13 +6,14 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, Mission, MissionMember, ScopedThreadRef } from "@t3tools/contracts";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { XIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { create } from "zustand";
 
 import { m } from "../../i18n/messages";
-import { readLocalApi } from "../../localApi";
+import { cn } from "../../lib/utils";
 import { useEnvironmentIdentities, useConnectedEnvironmentIds } from "../../state/environments";
 import { useProject, useQuietThreadShell } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
@@ -38,7 +39,6 @@ import {
   type MissionCandidate,
   type MissionHost,
   type MissionMenuId,
-  offersRemoveAnyway,
   parseMissionAddId,
 } from "./missions.logic";
 
@@ -73,28 +73,35 @@ function reportFailure(title: string, result: AtomCommandResult<unknown, unknown
 export function useMissionMenu() {
   const gt = useGT();
   const resolve = useMessages();
+  const registry = useContext(RegistryContext);
   const hosts = useMissionHosts();
   const machineLabel = useMachineLabel(hosts);
   const create = useAtomCommand(serverEnvironment.createMission, "mission create");
   const add = useAtomCommand(serverEnvironment.addMissionMember, "mission add member");
+  // One source for single and bulk adds: the right to change Missions on the machine that keeps them.
+  const canChangeOn = (environmentId: EnvironmentId) =>
+    registry.get(serverEnvironment.addMissionMember.permissionAtom(environmentId));
   return {
     items: (threads: ReadonlyArray<MissionCandidate>) =>
-      buildMissionMenuItems(threads, hosts, machineLabel, resolve),
-    /** True when every thread got where it was sent, so the caller may drop its selection. */
-    run: async (id: MissionMenuId, threads: ReadonlyArray<ScopedThreadRef>) => {
+      buildMissionMenuItems(threads, hosts, machineLabel, canChangeOn, resolve),
+    /** The threads that got where they were sent; the rest stay selected. */
+    run: async (
+      id: MissionMenuId,
+      threads: ReadonlyArray<ScopedThreadRef>,
+    ): Promise<ReadonlyArray<ScopedThreadRef>> => {
       const lead = threads[0];
       if (id === "mission-start" && lead !== undefined) {
         const name = await requestMissionName();
-        if (name === null) return false;
+        if (name === null) return [];
         const result = await create({
           environmentId: lead.environmentId,
-          input: { name, leadThreadId: lead.threadId },
+          input: { missionId: newMissionId(), name, leadThreadId: lead.threadId },
         });
         reportFailure(gt("Could not start the mission"), result);
-        return result._tag === "Success";
+        return result._tag === "Success" ? [lead] : [];
       }
       const target = parseMissionAddId(id);
-      if (target === null) return false;
+      if (target === null) return [];
       const outcome = await addEachToMission(threads, async (member) =>
         failureMessage(
           await add({
@@ -105,10 +112,13 @@ export function useMissionMenu() {
       );
       const summary = missionAddSummary(outcome, resolve);
       if (summary !== null) toastManager.add(stackedThreadToast({ type: "error", title: summary }));
-      return summary === null;
+      return outcome.added;
     },
   };
 }
+
+/** Twelve hex digits, as Mission ids in tags are. */
+const newMissionId = () => SecureRandom.uuidV4Unsafe().replaceAll("-", "").slice(0, 12);
 
 function MemberRow(props: {
   readonly host: EnvironmentId;
@@ -127,31 +137,19 @@ function MemberRow(props: {
   );
   const release = useAtomCommand(serverEnvironment.releaseMissionMember, "mission release member");
   const [releasing, setReleasing] = useState(false);
-  // Set once a release could not reach the member's machine: only then is "anyway" offered.
-  const [stranded, setStranded] = useState(false);
   const title = thread?.title ?? gt("Thread on {machine}", { machine: props.machineLabel });
   const where = project === null ? props.machineLabel : `${props.machineLabel} · ${project.title}`;
-  const onRelease = async (leaveTag: boolean) => {
+  const active = props.member.state === "active";
+  const onRelease = async () => {
     setReleasing(true);
-    const result = await release({
-      environmentId: props.host,
-      input: { missionId: props.missionId, member: props.member.ref, leaveTag },
-    });
-    setReleasing(false);
-    reportFailure(gt("Could not release the thread"), result);
-    if (result._tag === "Failure") {
-      setStranded(offersRemoveAnyway(squashAtomCommandFailure(result)));
-    }
-  };
-  const onRemoveAnyway = async () => {
-    const confirmed = await readLocalApi()?.dialogs.confirm(
-      gt(
-        "Remove this thread from the mission anyway? Its mission tag stays on {machine} until you remove it there.",
-        { machine: props.machineLabel },
-      ),
-      { variant: "destructive" },
+    reportFailure(
+      gt("Could not release the thread"),
+      await release({
+        environmentId: props.host,
+        input: { missionId: props.missionId, member: props.member.ref },
+      }),
     );
-    if (confirmed === true) await onRelease(true);
+    setReleasing(false);
   };
   return (
     <li className="group/mission-row list-none">
@@ -162,7 +160,12 @@ function MemberRow(props: {
           onClick={() => props.onOpen(props.member.ref)}
           className="flex min-w-0 flex-1 cursor-pointer flex-col text-left disabled:cursor-default"
         >
-          <span className="flex min-w-0 items-center gap-1.5 text-sm text-sidebar-foreground">
+          <span
+            className={cn(
+              "flex min-w-0 items-center gap-1.5 text-sm",
+              active ? "text-sidebar-foreground" : "text-sidebar-muted-foreground",
+            )}
+          >
             {props.member.role === "lead" ? (
               <span className="shrink-0 text-2xs font-medium text-sidebar-muted-foreground uppercase">
                 <T context="the thread that leads a mission">Lead</T>
@@ -170,9 +173,15 @@ function MemberRow(props: {
             ) : null}
             <span className="truncate">{title}</span>
           </span>
-          <span className="truncate text-2xs text-sidebar-muted-foreground">{where}</span>
+          <span className="truncate text-2xs text-sidebar-muted-foreground">
+            {props.member.state === "release-pending"
+              ? gt("Release pending (machine offline)")
+              : props.member.state === "released"
+                ? gt("Released", { $context: "a thread no longer in a mission" })
+                : where}
+          </span>
         </button>
-        {props.member.role === "member" ? (
+        {props.member.role === "member" && active ? (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -180,7 +189,7 @@ function MemberRow(props: {
                   type="button"
                   aria-label={gt("Release from mission")}
                   disabled={!canRelease || releasing}
-                  onClick={() => void onRelease(false)}
+                  onClick={() => void onRelease()}
                   className="inline-flex shrink-0 cursor-pointer items-center rounded-md px-1 text-muted-foreground opacity-0 transition-opacity group-hover/mission-row:opacity-100 hover:text-foreground focus-visible:opacity-100 disabled:cursor-default"
                 >
                   <XIcon className="size-3" />
@@ -193,17 +202,6 @@ function MemberRow(props: {
           </Tooltip>
         ) : null}
       </div>
-      {stranded ? (
-        <Button
-          size="micro"
-          variant="ghost-destructive"
-          className="ms-1"
-          disabled={!canRelease || releasing}
-          onClick={() => void onRemoveAnyway()}
-        >
-          <T>Remove from mission anyway</T>
-        </Button>
-      ) : null}
     </li>
   );
 }

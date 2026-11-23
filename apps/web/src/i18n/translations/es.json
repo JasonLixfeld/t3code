@@ -12799,7 +12799,8 @@
   "40acdf448ff6ddab": "Sin enlace desde {machine}",
   "93ecfc2b6717ab09": "Requiere enlace con acceso completo",
   "eb84c6df689a435c": "No compatible aquí",
-  "45dad99822db6a88": "¿Quitar este hilo de la misión de todos modos? Su etiqueta de misión se queda en {machine} hasta que la quites allí.",
-  "847576636f989498": "Quitar de la misión de todos modos",
-  "902d29ef248677bb": "{added} añadidos, {refused} rechazados: {reasons}"
+  "902d29ef248677bb": "{added} añadidos, {refused} rechazados: {reasons}",
+  "5c8df50e7f9f581f": "Liberación pendiente (máquina sin conexión)",
+  "bf882e9aca909061": "Liberado",
+  "380a8495b3872071": "No permitido aquí"
 }

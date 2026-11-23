@@ -3,9 +3,8 @@ import * as Fiber from "effect/Fiber";
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
-import * as SecureRandom from "effect/crypto/SecureRandom";
 
-import { MissionTagChangeKind } from "../../../missions/MissionTags.ts";
+import { MissionClaimKind, MissionClaims } from "../../../missions/MissionClaims.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
@@ -17,25 +16,38 @@ const shownOnlyToLinks = (): boolean => {
   return scope?.client?.linked === true;
 };
 
+/** `join` needs threadId, missionId and name; `leave` threadId and missionId; `undo` threadId and claimId. */
 const MissionTagInput = Schema.Struct({
-  threadId: ThreadId,
-  change: MissionTagChangeKind,
-  missionId: Schema.String,
-  name: Schema.String,
+  kind: MissionClaimKind,
+  threadId: Schema.optional(ThreadId),
+  missionId: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
+  claimId: Schema.optional(Schema.String),
+});
+
+export const MissionClaimResult = Schema.Struct({
+  claims: Schema.Array(
+    Schema.Struct({
+      threadId: ThreadId,
+      missionId: Schema.String,
+      name: Schema.String,
+      claimId: Schema.String,
+    }),
+  ),
 });
 
 export const MissionToolkit = Toolkit.make(
   Tool.make("t3_mission_tag", {
     description:
-      "For linked T3 environments only: mark a thread here as joining or leaving a mission.",
+      "For a linked T3 environment only: mark a thread here as joining or leaving a mission there.",
     parameters: MissionTagInput,
-    success: Schema.Struct({ threadId: ThreadId }),
+    success: MissionClaimResult,
     failure: OrchestratorMcpFailure,
     failureMode: "return",
     dependencies: [
       McpInvocationContext.McpInvocationContext,
       ThreadManagementService.ThreadManagementService,
-      SecureRandom.SecureRandom,
+      MissionClaims,
     ],
   })
     .annotate(Tool.Destructive, false)

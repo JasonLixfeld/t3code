@@ -441,7 +441,6 @@ import {
   MissionCreateInput,
   MissionError,
   MissionMemberInput,
-  MissionReleaseInput,
   MissionsSnapshot,
   MissionsSubscribeInput,
 } from "./mission.ts";
@@ -2398,7 +2397,7 @@ const WsMissionsAddMemberRpc = Rpc.make(WS_METHODS.missionsAddMember, {
 });
 
 const WsMissionsReleaseMemberRpc = Rpc.make(WS_METHODS.missionsReleaseMember, {
-  payload: MissionReleaseInput,
+  payload: MissionMemberInput,
   error: Schema.Union([MissionError, EnvironmentAuthorizationError]),
 });
 

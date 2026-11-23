@@ -12804,7 +12804,8 @@
   "40acdf448ff6ddab": "Keine Verbindung von {machine}",
   "93ecfc2b6717ab09": "Braucht Vollzugriff-Verbindung",
   "eb84c6df689a435c": "Hier nicht unterstützt",
-  "45dad99822db6a88": "Diesen Thread trotzdem aus der Mission entfernen? Sein Missions-Tag bleibt auf {machine}, bis du es dort entfernst.",
-  "847576636f989498": "Trotzdem aus der Mission entfernen",
-  "902d29ef248677bb": "{added} hinzugefügt, {refused} abgelehnt: {reasons}"
+  "902d29ef248677bb": "{added} hinzugefügt, {refused} abgelehnt: {reasons}",
+  "5c8df50e7f9f581f": "Freigabe ausstehend (Rechner offline)",
+  "bf882e9aca909061": "Freigegeben",
+  "380a8495b3872071": "Hier nicht erlaubt"
 }

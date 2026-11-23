@@ -38,7 +38,7 @@ export function parseMissionAddId(
   };
 }
 
-export type MissionBlock = "in-mission" | "no-link" | "fenced";
+export type MissionBlock = "in-mission" | "no-link" | "fenced" | "not-allowed";
 
 /**
  * Why a thread cannot join a Mission kept on `host`. A thread on another machine needs the host's
@@ -61,6 +61,8 @@ function blockLabel(block: MissionBlock, hostLabel: string, resolve: MessageReso
       return resolve(msg("No link from {machine}", { machine: hostLabel }));
     case "fenced":
       return resolve(msg("Needs full-access link"));
+    case "not-allowed":
+      return resolve(msg("Not allowed here"));
   }
 }
 
@@ -69,6 +71,8 @@ export function buildMissionMenuItems(
   threads: ReadonlyArray<MissionCandidate>,
   hosts: ReadonlyArray<MissionHost>,
   machineLabel: (environmentId: EnvironmentId) => string,
+  /** Whether this client may change the Missions a machine keeps; one source for every path. */
+  canChangeOn: (environmentId: EnvironmentId) => boolean,
   resolve: MessageResolver = m,
 ): ReadonlyArray<ContextMenuItem<MissionMenuId>> {
   const inMission = threads.some((thread) => missionTagOf(thread.tags) !== undefined);
@@ -89,12 +93,14 @@ export function buildMissionMenuItems(
             label: resolve(msg("Start mission from this thread")),
             icon: "flag",
             separatorBefore: true,
-            disabled: inMission || startHost === undefined,
+            disabled: inMission || startHost === undefined || !canChangeOn(single.environmentId),
             ...(inMission
               ? { detail: resolve(msg("In a mission")) }
               : startHost === undefined
                 ? { detail: resolve(msg("Not supported here")) }
-                : {}),
+                : !canChangeOn(single.environmentId)
+                  ? { detail: blockLabel("not-allowed", "", resolve) }
+                  : {}),
           },
         ]),
     {
@@ -110,9 +116,9 @@ export function buildMissionMenuItems(
           : {}),
       children: missions.map(({ host, mission }) => {
         const hostLabel = machineLabel(host.environmentId);
-        const block = threads
-          .map((thread) => missionBlock(thread, host))
-          .find((reason) => reason !== null);
+        const block = canChangeOn(host.environmentId)
+          ? threads.map((thread) => missionBlock(thread, host)).find((reason) => reason !== null)
+          : "not-allowed";
         return {
           id: `${ADD_PREFIX}${host.environmentId}:${mission.missionId}` as const,
           label: mission.name,
@@ -125,8 +131,8 @@ export function buildMissionMenuItems(
 }
 
 /** How a batch of adds went: each thread is tried, whatever happened to the ones before it. */
-export interface MissionAddOutcome {
-  readonly added: number;
+export interface MissionAddOutcome<T> {
+  readonly added: ReadonlyArray<T>;
   /** Why each refused thread was refused. */
   readonly refused: ReadonlyArray<string>;
 }
@@ -135,12 +141,12 @@ export interface MissionAddOutcome {
 export async function addEachToMission<T>(
   threads: ReadonlyArray<T>,
   add: (thread: T) => Promise<string | null>,
-): Promise<MissionAddOutcome> {
-  let added = 0;
+): Promise<MissionAddOutcome<T>> {
+  const added: Array<T> = [];
   const refused: Array<string> = [];
   for (const thread of threads) {
     const refusal = await add(thread);
-    if (refusal === null) added += 1;
+    if (refusal === null) added.push(thread);
     else refused.push(refusal);
   }
   return { added, refused };
@@ -148,27 +154,15 @@ export async function addEachToMission<T>(
 
 /** One line for the whole batch, or null when nothing was refused. */
 export function missionAddSummary(
-  outcome: MissionAddOutcome,
+  outcome: MissionAddOutcome<unknown>,
   resolve: MessageResolver = m,
 ): string | null {
   if (outcome.refused.length === 0) return null;
   return resolve(
     msg("{added} added, {refused} refused: {reasons}", {
-      added: outcome.added,
+      added: outcome.added.length,
       refused: outcome.refused.length,
       reasons: [...new Set(outcome.refused)].join(" "),
     }),
-  );
-}
-
-/** A release this machine could not carry to the member's machine, which only "anyway" can finish. */
-export function offersRemoveAnyway(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "_tag" in error &&
-    error._tag === "MissionError" &&
-    "reason" in error &&
-    error.reason === "unreachable"
   );
 }

@@ -62,6 +62,7 @@ import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
 import * as FeedbackHandlers from "./toolkits/feedback/handlers.ts";
 import { FeedbackToolkit } from "./toolkits/feedback/tools.ts";
+import * as MissionClaims from "../missions/MissionClaims.ts";
 import * as MissionHandlers from "./toolkits/mission/handlers.ts";
 import { MissionToolkit } from "./toolkits/mission/tools.ts";
 import * as Feedback from "../feedback/FeedbackService.ts";
@@ -1451,7 +1452,9 @@ export const layerTools = Layer.mergeAll(
   layerAttachmentToolkit,
   layerProjectRegistration,
   layerFeedbackToolkit,
-  toolkitRegistration(MissionToolkit, MissionHandlers.layer),
+  toolkitRegistration(MissionToolkit, MissionHandlers.layer).pipe(
+    Layer.provide(MissionClaims.layerLive),
+  ),
   layerEnvironmentToolkit,
   layerThemeToolkit,
   layerPreviewControlsRegistration,

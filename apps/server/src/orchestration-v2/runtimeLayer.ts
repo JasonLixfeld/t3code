@@ -56,7 +56,7 @@ import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import * as MissionStore from "../missions/MissionStore.ts";
+import * as MissionClaims from "../missions/MissionClaims.ts";
 import * as Missions from "../missions/Missions.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
@@ -330,7 +330,7 @@ const layerWorkflowsProvided = WorkflowRuntime.layer.pipe(
   Layer.provide(PeerMcpClient.layer.pipe(Layer.provideMerge(PeerLinks.layer))),
 );
 const layerMissionsProvided = Missions.layer.pipe(
-  Layer.provide(Layer.merge(MissionStore.layer, layerThreadManagementProvided)),
+  Layer.provide(MissionClaims.layerLive.pipe(Layer.provide(layerThreadManagementProvided))),
   Layer.provide(PeerMcpClient.layer.pipe(Layer.provideMerge(PeerLinks.layer))),
 );
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(

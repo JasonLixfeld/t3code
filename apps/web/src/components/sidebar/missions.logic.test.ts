@@ -6,7 +6,6 @@ import {
   buildMissionMenuItems,
   missionAddSummary,
   type MissionHost,
-  offersRemoveAnyway,
   parseMissionAddId,
 } from "./missions.logic";
 
@@ -30,9 +29,10 @@ const hosts: ReadonlyArray<MissionHost> = [
 ];
 const label = (environmentId: EnvironmentId) =>
   environmentId === DESK ? "Desk" : String(environmentId);
+const allowed = () => true;
 
 const addChild = (threads: Parameters<typeof buildMissionMenuItems>[0]) =>
-  buildMissionMenuItems(threads, hosts, label).find((item) => item.id === "mission-add")!
+  buildMissionMenuItems(threads, hosts, label, allowed).find((item) => item.id === "mission-add")!
     .children![0]!;
 
 describe("buildMissionMenuItems", () => {
@@ -58,6 +58,7 @@ describe("buildMissionMenuItems", () => {
       [{ environmentId: DESK, tags: ["mission:abc:Other"] }],
       hosts,
       label,
+      allowed,
     );
     expect([start, add].map((item) => [item!.id, item!.disabled, item!.detail])).toEqual([
       ["mission-start", true, "In a mission"],
@@ -66,19 +67,41 @@ describe("buildMissionMenuItems", () => {
   });
 
   it("starts missions only for one thread on a machine that runs them", () => {
-    expect(buildMissionMenuItems([{ environmentId: DESK }], hosts, label)[0]).toMatchObject({
+    expect(
+      buildMissionMenuItems([{ environmentId: DESK }], hosts, label, allowed)[0],
+    ).toMatchObject({
       id: "mission-start",
       disabled: false,
     });
-    expect(buildMissionMenuItems([{ environmentId: LAPTOP }], hosts, label)[0]).toMatchObject({
+    expect(
+      buildMissionMenuItems([{ environmentId: LAPTOP }], hosts, label, allowed)[0],
+    ).toMatchObject({
       id: "mission-start",
       disabled: true,
     });
     expect(
-      buildMissionMenuItems([{ environmentId: DESK }, { environmentId: DESK }], hosts, label).map(
-        (item) => item.id,
-      ),
+      buildMissionMenuItems(
+        [{ environmentId: DESK }, { environmentId: DESK }],
+        hosts,
+        label,
+        allowed,
+      ).map((item) => item.id),
     ).toEqual(["mission-add"]);
+  });
+
+  it("refuses single and bulk adds alike where this client may not change missions", () => {
+    const nowhere = () => false;
+    for (const threads of [
+      [{ environmentId: DESK }],
+      [{ environmentId: DESK }, { environmentId: LAPTOP }],
+    ]) {
+      const items = buildMissionMenuItems(threads, hosts, label, nowhere);
+      const add = items.find((item) => item.id === "mission-add")!;
+      expect(add.children![0]).toMatchObject({ disabled: true, detail: "Not allowed here" });
+    }
+    expect(
+      buildMissionMenuItems([{ environmentId: DESK }], hosts, label, nowhere)[0],
+    ).toMatchObject({ id: "mission-start", disabled: true, detail: "Not allowed here" });
   });
 
   it("reads the host and mission back from an add entry", () => {
@@ -90,26 +113,17 @@ describe("buildMissionMenuItems", () => {
 });
 
 describe("addEachToMission", () => {
-  it("tries every thread after a refusal and sums them up in one line", async () => {
+  it("tries every thread after a refusal, keeps the refused ones apart, and sums up in one line", async () => {
     const tried: Array<string> = [];
     const outcome = await addEachToMission(["a", "b", "c", "d"], async (thread) => {
       tried.push(thread);
       return thread === "b" ? 'This thread is already in the mission "One".' : null;
     });
     expect(tried).toEqual(["a", "b", "c", "d"]);
+    expect(outcome.added).toEqual(["a", "c", "d"]);
     expect(missionAddSummary(outcome)).toBe(
       '3 added, 1 refused: This thread is already in the mission "One".',
     );
-    expect(missionAddSummary({ added: 2, refused: [] })).toBeNull();
-  });
-});
-
-describe("offersRemoveAnyway", () => {
-  it("offers it only when the member's machine could not be reached", () => {
-    expect(offersRemoveAnyway({ _tag: "MissionError", message: "", reason: "unreachable" })).toBe(
-      true,
-    );
-    expect(offersRemoveAnyway({ _tag: "MissionError", message: "" })).toBe(false);
-    expect(offersRemoveAnyway(new Error("unreachable"))).toBe(false);
+    expect(missionAddSummary({ added: ["a", "b"], refused: [] })).toBeNull();
   });
 });
