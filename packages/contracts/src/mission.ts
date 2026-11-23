@@ -7,13 +7,12 @@ import { ThreadTag } from "./threadTags.ts";
 export const MissionMember = Schema.Struct({
   ref: ScopedThreadRef,
   role: Schema.Literals(["lead", "member"]),
-  addedAt: Schema.String,
   /**
+   * `offline`: the member's machine does not answer, so this is what it last said.
    * `release-pending`: released here while the member's machine was unreachable; the lead finishes
-   * it when that machine answers again. `released`: the member's machine no longer holds the claim.
-   * Neither counts as a member.
+   * it when that machine answers again.
    */
-  state: Schema.Literals(["active", "release-pending", "released"]),
+  state: Schema.Literals(["active", "offline", "release-pending"]),
 });
 export type MissionMember = typeof MissionMember.Type;
 
@@ -51,12 +50,14 @@ export type MissionsSnapshot = typeof MissionsSnapshot.Type;
 
 export const MissionsSubscribeInput = Schema.Struct({});
 
+/** Twelve hex digits. The id goes into each member's tag, where a colon ends it. */
+export const MissionId = Schema.String.check(Schema.isPattern(/^[0-9a-f]{12}$/));
 /** The name goes into each member's tag, so it follows the tag rules. */
-const MissionName = ThreadTag;
+export const MissionName = ThreadTag;
 
 export const MissionCreateInput = Schema.Struct({
   /** Chosen by the client, so a retry after a lost reply finds the Mission it already made. */
-  missionId: Schema.String.check(Schema.isPattern(/^[0-9a-f]{12}$/)),
+  missionId: MissionId,
   name: MissionName,
   leadThreadId: ThreadId,
 });

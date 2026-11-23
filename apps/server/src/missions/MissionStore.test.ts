@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -11,9 +11,14 @@ import * as ServerConfig from "../config.ts";
 
 import * as MissionStore from "./MissionStore.ts";
 
-const ref = (environmentId: string, threadId: string) => ({
-  environmentId: EnvironmentId.make(environmentId),
-  threadId: ThreadId.make(threadId),
+const lead = ThreadId.make("lead");
+const member = ThreadId.make("member");
+const claimFor = (threadId: ThreadId, missionId: string, generation: string) => ({
+  threadId,
+  missionId,
+  name: missionId.toUpperCase(),
+  owner: "env-a",
+  generation,
 });
 
 const withDatabase = <A, E>(use: (filename: string) => Effect.Effect<A, E>) =>
@@ -35,13 +40,11 @@ const usingStore = <A, E>(
 it.effect("keeps its own migration history and reopens without migrating again", () =>
   withDatabase((filename) =>
     Effect.gen(function* () {
-      yield* usingStore(filename, (store) =>
-        store.create({ missionId: "m1", name: "Ship it", lead: ref("env-a", "lead") }),
-      );
-      const reopened = yield* usingStore(filename, (store) => store.list);
+      yield* usingStore(filename, (store) => store.createMission(claimFor(lead, "m1", "g1")));
+      const reopened = yield* usingStore(filename, (store) => store.missions);
       assert.deepEqual(
         reopened.map((mission) => mission.name),
-        ["Ship it"],
+        ["M1"],
       );
       const recorded = yield* Effect.provide(
         Effect.gen(function* () {
@@ -55,61 +58,61 @@ it.effect("keeps its own migration history and reopens without migrating again",
       );
       assert.deepEqual(
         recorded.map((row) => [row.migration_id, row.name]),
-        [
-          [1, "Missions"],
-          [2, "Claims"],
-        ],
+        [[1, "Missions"]],
       );
     }),
   ),
 );
 
-it.effect("lists the lead first and refuses a thread that is already in a mission", () =>
-  withDatabase((filename) =>
-    usingStore(filename, (store) =>
-      Effect.gen(function* () {
-        const lead = ref("env-a", "lead");
-        const member = ref("env-b", "member");
-        assert.isTrue(yield* store.create({ missionId: "m1", name: "One", lead }));
-        assert.isTrue(yield* store.addMember("m1", member));
-        assert.isTrue(
-          yield* store.create({ missionId: "m2", name: "Two", lead: ref("env-a", "other") }),
-        );
+it.effect(
+  "starting a mission adds it with its lead's claim, a retry returns it, and a refusal changes nothing",
+  () =>
+    withDatabase((filename) =>
+      usingStore(filename, (store) =>
+        Effect.gen(function* () {
+          const first = yield* store.createMission(claimFor(lead, "m1", "g1"));
+          assert.deepEqual(yield* store.claim(lead), {
+            threadId: lead,
+            missionId: "m1",
+            name: "M1",
+            role: "lead",
+            generation: "g1",
+          });
+          assert.deepEqual(yield* store.createMission(claimFor(lead, "m1", "g2")), first);
+          assert.equal((yield* store.claim(lead))?.generation, "g1");
 
-        assert.isFalse(yield* store.addMember("m2", member));
-        assert.isFalse(yield* store.create({ missionId: "m3", name: "Three", lead: member }));
-        const missions = yield* store.list;
-        assert.deepEqual(
-          missions.map((mission) => mission.missionId),
-          ["m1", "m2"],
-        );
-        assert.deepEqual(
-          missions[0]!.members.map((entry) => [entry.ref.threadId, entry.role]),
-          [
-            ["lead", "lead"],
-            ["member", "member"],
-          ],
-        );
-        assert.equal((yield* store.missionOf(member))?.missionId, "m1");
-      }),
+          const memberClaim = yield* store.join(claimFor(member, "m1", "g3"));
+          const sameId = yield* store.createMission(claimFor(member, "m1", "g4")).pipe(Effect.flip);
+          assert.equal(sameId.message, "Another mission already uses this id.");
+          const leadTaken = yield* store
+            .createMission(claimFor(lead, "m2", "g5"))
+            .pipe(Effect.flip);
+          assert.include(leadTaken.message, 'already in the mission "M1"');
+          yield* store.createMission(claimFor(member, "m3", "g6")).pipe(Effect.flip);
+
+          assert.deepEqual(yield* store.missions, [first]);
+          assert.deepEqual(yield* store.claim(member), memberClaim);
+        }),
+      ),
     ),
-  ),
 );
 
-it.effect("releasing a member frees it, and the lead stays", () =>
+it.effect("a release drops only the member claim that its generation, mission and owner name", () =>
   withDatabase((filename) =>
     usingStore(filename, (store) =>
       Effect.gen(function* () {
-        const lead = ref("env-a", "lead");
-        const member = ref("env-b", "member");
-        yield* store.create({ missionId: "m1", name: "One", lead });
-        yield* store.addMember("m1", member);
+        yield* store.createMission(claimFor(lead, "m1", "g1"));
+        const held = yield* store.join(claimFor(member, "m1", "g2"));
+        const release = { threadId: member, missionId: "m1", owner: "env-a", generation: "g2" };
+        yield* store.release({ ...release, generation: "g0" });
+        yield* store.release({ ...release, missionId: "m2" });
+        yield* store.release({ ...release, owner: "link:other" });
+        yield* store.release({ ...release, threadId: lead, generation: "g1" });
+        assert.deepEqual(yield* store.claimsOf("env-a"), [(yield* store.claim(lead))!, held]);
 
-        yield* store.removeMember("m1", member);
-        yield* store.removeMember("m1", lead);
-        assert.isUndefined(yield* store.missionOf(member));
-        assert.equal((yield* store.missionOf(lead))?.missionId, "m1");
-        assert.isTrue(yield* store.addMember("m1", member));
+        yield* store.release(release);
+        assert.isUndefined(yield* store.claim(member));
+        assert.equal((yield* store.leave(lead).pipe(Effect.flip)).message.includes("lead"), true);
       }),
     ),
   ),
@@ -125,7 +128,7 @@ it.effect(
       const config = ServerConfig.layerTest(process.cwd(), baseDir);
       const { stateDir, dbPath } = yield* Effect.gen(function* () {
         yield* Effect.flatMap(MissionStore.MissionStore, (store) =>
-          store.create({ missionId: "m1", name: "Ship it", lead: ref("env-a", "lead") }),
+          store.createMission(claimFor(lead, "m1", "g1")),
         ).pipe(Effect.provide(MissionStore.layer));
         return yield* ServerConfig.ServerConfig;
       }).pipe(Effect.provide(config));

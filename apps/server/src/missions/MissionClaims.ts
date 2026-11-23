@@ -16,9 +16,9 @@ import * as Schema from "effect/Schema";
 
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as MissionStore from "./MissionStore.ts";
-import type { MissionClaim } from "./MissionStore.ts";
+import type { MissionClaim, MissionRecord } from "./MissionStore.ts";
 
-export const MissionClaimKind = Schema.Literals(["join", "leave", "undo", "list"]);
+export const MissionClaimKind = Schema.Literals(["join", "release", "list"]);
 
 /**
  * Who holds a claim: this machine's environment id for a lead here, else the link session that
@@ -26,55 +26,64 @@ export const MissionClaimKind = Schema.Literals(["join", "leave", "undo", "list"
  */
 export const linkOwner = (sessionId: string) => `link:${sessionId}`;
 
-type TagChange = {
-  readonly kind: "join" | "leave" | "undo";
-  readonly missionId: string;
-  readonly name: string;
+const wasTagOf = (liveTag: string) => {
+  const rest = liveTag.slice(MISSION_TAG_PREFIX.length);
+  const split = rest.indexOf(":");
+  return missionWasTag(rest.slice(0, split), rest.slice(split + 1));
 };
 
-/** The tag edits that mirror a claim change. Adds come first, so a release marks before it unmarks. */
-const planMissionTags = (tags: ReadonlyArray<string>, change: TagChange) => {
-  const live = tags.filter((tag) => tag.startsWith(`${MISSION_TAG_PREFIX}${change.missionId}:`));
-  const was = missionWasTag(change.missionId, change.name);
-  switch (change.kind) {
-    case "join":
-      return {
-        add: live.length > 0 ? [] : [missionTag(change.missionId, change.name)],
-        remove: tags.filter((tag) =>
-          tag.startsWith(`${MISSION_WAS_TAG_PREFIX}${change.missionId}:`),
-        ),
-      };
-    case "leave":
-      return { add: tags.includes(was) ? [] : [was], remove: live };
-    case "undo":
-      return { add: [], remove: live };
-  }
+/**
+ * The edits that make a thread's tags say what its claim says: the claim's `mission:` tag, and
+ * every other `mission:` tag turned into `mission-was:`. Adds come first, so a release marks
+ * before it unmarks.
+ */
+const planMissionTags = (tags: ReadonlyArray<string>, claim: MissionClaim | undefined) => {
+  const ofClaim = (prefix: string) =>
+    claim === undefined ? [] : tags.filter((tag) => tag.startsWith(`${prefix}${claim.missionId}:`));
+  const live = ofClaim(MISSION_TAG_PREFIX);
+  const stray = tags.filter((tag) => tag.startsWith(MISSION_TAG_PREFIX) && !live.includes(tag));
+  const add = new Set([
+    ...(claim === undefined || live.length > 0 ? [] : [missionTag(claim.missionId, claim.name)]),
+    ...stray.map(wasTagOf).filter((was) => !tags.includes(was)),
+  ]);
+  return [
+    ...[...add].map((tag) => ({ tag, tagged: true })),
+    ...[...stray, ...ofClaim(MISSION_WAS_TAG_PREFIX)].map((tag) => ({ tag, tagged: false })),
+  ];
 };
 
-/** The member's side: the claims on threads here, which no other machine can change. */
+/**
+ * The claims on threads here, which no other machine can change. Every change to a thread's
+ * claim, and the tag write that follows it, runs under that thread's one lock.
+ */
 export class MissionClaims extends Context.Service<
   MissionClaims,
   {
+    /** Starts a Mission led by a thread here. Asking again with the same id and lead returns it. */
+    readonly create: (
+      owner: string,
+      input: { readonly missionId: string; readonly name: string; readonly leadThreadId: ThreadId },
+    ) => Effect.Effect<MissionRecord, MissionError>;
     /** Joining again into the same Mission for the same owner returns the claim it already has. */
     readonly join: (
       owner: string,
       input: { readonly threadId: ThreadId; readonly missionId: string; readonly name: string },
     ) => Effect.Effect<MissionClaim, MissionError>;
-    /** Succeeds when no claim is left; refuses a claim another owner or Mission holds. */
-    readonly leave: (
+    /** Drops the member claim that one join made, if this owner still holds it. Else a no-op. */
+    readonly release: (
       owner: string,
-      input: { readonly threadId: ThreadId; readonly missionId: string },
-    ) => Effect.Effect<void, MissionError>;
-    /** Takes back only the claim that one join made. */
-    readonly undo: (
-      owner: string,
-      input: { readonly threadId: ThreadId; readonly claimId: string },
-    ) => Effect.Effect<void, MissionError>;
-    /** The local user frees a thread here from whichever Mission holds it, as a release does. */
-    readonly leaveHere: (
-      threadId: ThreadId,
-    ) => Effect.Effect<MissionClaim & { readonly owner: string }, MissionError>;
-    /** The owner's claims here, with each thread's tag written again. */
+      input: {
+        readonly threadId: ThreadId;
+        readonly missionId: string;
+        readonly generation: string;
+      },
+    ) => Effect.Effect<void>;
+    /** The local user frees a thread here from whichever Mission holds it. A lead thread stays. */
+    readonly leaveHere: (threadId: ThreadId) => Effect.Effect<void, MissionError>;
+    /**
+     * The owner's claims here. Writes the tags of those threads again, and of every thread whose
+     * tags a failed write left behind its claim.
+     */
     readonly list: (owner: string) => Effect.Effect<ReadonlyArray<MissionClaim>>;
   }
 >()("t3/missions/MissionClaims") {}
@@ -87,28 +96,56 @@ const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const locks = yield* KeyedLock.make<ThreadId>();
 
-  // A failed tag write leaves the claim right; the next `list` writes the live tag again.
-  const mirror = Effect.fn("MissionClaims.mirror")(
-    function* (threadId: ThreadId, change: TagChange) {
+  /** Call only while holding the thread's lock: it reads the claim it writes the tags for. */
+  const syncTags = Effect.fn("MissionClaims.syncTags")(
+    function* (threadId: ThreadId) {
+      const claim = yield* store.claim(threadId);
       const shell = yield* threads.getThreadShell(threadId);
-      if (shell === null || shell.deletedAt !== null) return;
-      const plan = planMissionTags(shell.tags ?? [], change);
-      const edits = [
-        ...plan.add.map((tag) => ({ tag, tagged: true })),
-        ...plan.remove.map((tag) => ({ tag, tagged: false })),
-      ];
-      for (const edit of edits) {
-        const id = yield* random.uuidV4();
-        yield* threads.dispatch({
-          type: "thread.tag.set",
-          commandId: CommandId.make(`server:mission-tag:${id}`),
-          threadId,
-          tag: edit.tag,
-          tagged: edit.tagged,
-        });
+      if (shell !== null && shell.deletedAt === null) {
+        for (const edit of planMissionTags(shell.tags ?? [], claim)) {
+          const id = yield* random.uuidV4();
+          yield* threads.dispatch({
+            type: "thread.tag.set",
+            commandId: CommandId.make(`server:mission-tag:${id}`),
+            threadId,
+            ...edit,
+          });
+        }
       }
+      yield* store.tagsSynced(threadId);
     },
-    Effect.catchCause((cause) => Effect.logWarning("A mission tag was not written", cause)),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("A mission tag was not written; the next list writes it", cause),
+    ),
+  );
+
+  const requireThread = Effect.fn("MissionClaims.requireThread")(function* (threadId: ThreadId) {
+    const shell = yield* threads
+      .getThreadShell(threadId)
+      .pipe(Effect.catch((error) => fail(`The thread could not be read: ${error.message}`)));
+    if (shell === null || shell.deletedAt !== null)
+      return yield* fail("That thread was not found.");
+  });
+
+  const generation = random.uuidV4().pipe(Effect.orDie);
+
+  const create = Effect.fn("MissionClaims.create")(
+    function* (
+      owner: string,
+      input: { readonly missionId: string; readonly name: string; readonly leadThreadId: ThreadId },
+    ) {
+      yield* requireThread(input.leadThreadId);
+      const mission = yield* store.createMission({
+        threadId: input.leadThreadId,
+        missionId: input.missionId,
+        name: input.name,
+        owner,
+        generation: yield* generation,
+      });
+      yield* syncTags(input.leadThreadId);
+      return mission;
+    },
+    (effect, _owner, input) => locks.withLock(input.leadThreadId, effect),
   );
 
   const join = Effect.fn("MissionClaims.join")(
@@ -116,64 +153,49 @@ const make = Effect.gen(function* () {
       owner: string,
       input: { readonly threadId: ThreadId; readonly missionId: string; readonly name: string },
     ) {
-      const shell = yield* threads
-        .getThreadShell(input.threadId)
-        .pipe(Effect.catch((error) => fail(`The thread could not be read: ${error.message}`)));
-      if (shell === null || shell.deletedAt !== null)
-        return yield* fail("That thread was not found.");
-      const claimId = yield* random.uuidV4().pipe(Effect.orDie);
-      const held = yield* store.claim({ ...input, owner, claimId });
-      if (held.owner !== owner || held.claim.missionId !== input.missionId) {
-        return yield* fail(
-          `This thread is already in another mission ("${held.claim.name}"). Release it from that mission first.`,
-        );
-      }
-      yield* mirror(input.threadId, { kind: "join", ...input });
-      return held.claim;
+      yield* requireThread(input.threadId);
+      const claim = yield* store.join({ ...input, owner, generation: yield* generation });
+      yield* syncTags(input.threadId);
+      return claim;
     },
     (effect, _owner, input) => locks.withLock(input.threadId, effect),
   );
 
-  const notYours = "Only the mission that holds this thread can release it.";
-
-  const leave = Effect.fn("MissionClaims.leave")(
-    function* (owner: string, input: { readonly threadId: ThreadId; readonly missionId: string }) {
-      const dropped = yield* store.dropClaim(input.threadId, { owner, missionId: input.missionId });
-      if (dropped === "not-yours") return yield* fail(notYours);
-      if (dropped !== "absent") yield* mirror(input.threadId, { kind: "leave", ...dropped });
-    },
-    (effect, _owner, input) => locks.withLock(input.threadId, effect),
-  );
-
-  const undo = Effect.fn("MissionClaims.undo")(
-    function* (owner: string, input: { readonly threadId: ThreadId; readonly claimId: string }) {
-      const dropped = yield* store.dropClaim(input.threadId, { owner, claimId: input.claimId });
-      if (dropped === "not-yours") return yield* fail(notYours);
-      if (dropped !== "absent") yield* mirror(input.threadId, { kind: "undo", ...dropped });
+  const release = Effect.fn("MissionClaims.release")(
+    function* (
+      owner: string,
+      input: {
+        readonly threadId: ThreadId;
+        readonly missionId: string;
+        readonly generation: string;
+      },
+    ) {
+      yield* store.release({ ...input, owner });
+      yield* syncTags(input.threadId);
     },
     (effect, _owner, input) => locks.withLock(input.threadId, effect),
   );
 
   const leaveHere = Effect.fn("MissionClaims.leaveHere")(
     function* (threadId: ThreadId) {
-      const held = (yield* store.allClaims).find((claim) => claim.threadId === threadId);
-      if (held === undefined) return yield* fail("This thread is not in a mission.");
-      yield* store.dropClaim(threadId, { owner: held.owner, claimId: held.claimId });
-      yield* mirror(threadId, { kind: "leave", ...held });
-      return held;
+      yield* store.leave(threadId);
+      yield* syncTags(threadId);
     },
     (effect, threadId) => locks.withLock(threadId, effect),
   );
 
   const list = Effect.fn("MissionClaims.list")(function* (owner: string) {
-    const claims = yield* store.claimsOf(owner);
-    yield* Effect.forEach(claims, (claim) =>
-      locks.withLock(claim.threadId, mirror(claim.threadId, { kind: "join", ...claim })),
-    );
-    return claims;
+    const threadIds = new Set([
+      ...(yield* store.claimsOf(owner)).map((claim) => claim.threadId),
+      ...(yield* store.unsyncedTags),
+    ]);
+    yield* Effect.forEach(threadIds, (threadId) => locks.withLock(threadId, syncTags(threadId)), {
+      discard: true,
+    });
+    return yield* store.claimsOf(owner);
   });
 
-  return MissionClaims.of({ join, leave, undo, leaveHere, list });
+  return MissionClaims.of({ create, join, release, leaveHere, list });
 });
 
 export const layer = Layer.effect(MissionClaims, make);

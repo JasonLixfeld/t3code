@@ -12,8 +12,8 @@ const needs = <A>(value: A | undefined, field: string) =>
     : Effect.succeed(value);
 
 // Only a linked environment's session can call it (see `shownOnlyToLinks`). `writesThreads`
-// holds a link below full access to the threads it started; the claim's owner check then holds
-// every link to the claims it made itself.
+// holds a link below full access to the threads it started; a release then drops only a claim
+// its own caller holds.
 export const layer = McpToolAccess.toLayer(MissionToolkit, {
   t3_mission_tag: McpToolAccess.writesThreads(
     (input) => [input.threadId],
@@ -35,16 +35,11 @@ export const layer = McpToolAccess.toLayer(MissionToolkit, {
                 name: yield* needs(input.name, "name"),
               }),
             ];
-          case "leave":
-            yield* claims.leave(owner, {
+          case "release":
+            yield* claims.release(owner, {
               threadId,
               missionId: yield* needs(input.missionId, "missionId"),
-            });
-            return [];
-          case "undo":
-            yield* claims.undo(owner, {
-              threadId,
-              claimId: yield* needs(input.claimId, "claimId"),
+              generation: yield* needs(input.generation, "generation"),
             });
             return [];
         }

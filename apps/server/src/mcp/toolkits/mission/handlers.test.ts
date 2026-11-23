@@ -12,6 +12,7 @@ import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
 import * as MissionClaims from "../../../missions/MissionClaims.ts";
 import * as MissionStore from "../../../missions/MissionStore.ts";
+import type { MissionClaim } from "../../../missions/MissionStore.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
@@ -65,12 +66,13 @@ const mcpClient = McpSchema.McpServerClient.of({
  */
 const callOnce = (
   scope: McpInvocationContext.McpInvocationScope,
-  args: Record<string, unknown>,
+  /** Built from the claim `before` made, when the call has to name it. */
+  args: Record<string, unknown> | ((before: MissionClaim) => Record<string, unknown>),
   options: {
     readonly startedByLink?: boolean;
     readonly before?: (
       claims: MissionClaims.MissionClaims["Service"],
-    ) => Effect.Effect<unknown, MissionError>;
+    ) => Effect.Effect<MissionClaim, MissionError>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -115,9 +117,14 @@ const callOnce = (
       ),
       MissionClaims.MissionClaims,
     );
-    if (options.before !== undefined) yield* options.before(claims);
+    const before = options.before === undefined ? undefined : yield* options.before(claims);
     const { content } = yield* McpServer.McpServer.pipe(
-      Effect.flatMap((server) => server.callTool({ name: "t3_mission_tag", arguments: args })),
+      Effect.flatMap((server) =>
+        server.callTool({
+          name: "t3_mission_tag",
+          arguments: typeof args === "function" ? args(before!) : args,
+        }),
+      ),
       Effect.provideService(McpSchema.McpServerClient, mcpClient),
       Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
       Effect.provide(
@@ -137,12 +144,25 @@ const callOnce = (
     };
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
-const joinShip = { kind: "join", threadId: userThread, missionId: "m1", name: "Ship" };
+const SHIP = "0123456789ab";
+const joinShip = { kind: "join", threadId: userThread, missionId: SHIP, name: "Ship" };
 
 it.effect("a full-access link claims and tags a thread it did not start", () =>
   Effect.gen(function* () {
     const { tags } = yield* callOnce(linkedClient("full-access"), joinShip);
-    assert.deepEqual(tags, ["mission:m1:Ship"]);
+    assert.deepEqual(tags, [`mission:${SHIP}:Ship`]);
+  }),
+);
+
+it.effect("a mission id or name that a mission could not be started with is refused", () =>
+  Effect.gen(function* () {
+    for (const broken of [{ missionId: "ship:it" }, { name: "two\nlines" }]) {
+      const refused = yield* callOnce(linkedClient("full-access"), {
+        ...joinShip,
+        ...broken,
+      }).pipe(Effect.flip);
+      assert.include(refused.message, "Invalid parameters for tool 't3_mission_tag'");
+    }
   }),
 );
 
@@ -156,17 +176,21 @@ it.effect("a link below full access is fenced off the user's threads", () =>
 
 it.effect("a fenced link that started a thread cannot strip another lead's claim", () =>
   Effect.gen(function* () {
-    const { answer, tags, otherLeadClaims } = yield* callOnce(
+    const { tags, otherLeadClaims } = yield* callOnce(
       linkedClient("auto"),
-      { kind: "leave", threadId: userThread, missionId: "m1" },
+      (held) => ({
+        kind: "release",
+        threadId: userThread,
+        missionId: SHIP,
+        generation: held.generation,
+      }),
       {
         startedByLink: true,
         before: (claims) =>
-          claims.join("env-other-lead", { threadId: userThread, missionId: "m1", name: "Ship" }),
+          claims.join("env-other-lead", { threadId: userThread, missionId: SHIP, name: "Ship" }),
       },
     );
-    assert.include(answer, "Only the mission that holds this thread can release it.");
-    assert.deepEqual(tags, ["mission:m1:Ship"]);
+    assert.deepEqual(tags, [`mission:${SHIP}:Ship`]);
     assert.equal(otherLeadClaims.length, 1);
   }),
 );

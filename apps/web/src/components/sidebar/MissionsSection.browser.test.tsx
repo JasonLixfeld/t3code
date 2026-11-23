@@ -18,39 +18,17 @@ const ship: Mission = {
   name: "Ship v2 release",
   createdAt: "2026-11-23T00:00:00.000Z",
   members: [
-    { ref: ref(DESK, "lead"), role: "lead", addedAt: "2026-11-23T00:00:00.000Z", state: "active" },
-    {
-      ref: ref(DESK, "docs"),
-      role: "member",
-      addedAt: "2026-11-23T00:01:00.000Z",
-      state: "active",
-    },
-    {
-      ref: ref(LAPTOP, "ios"),
-      role: "member",
-      addedAt: "2026-11-23T00:02:00.000Z",
-      state: "active",
-    },
-    {
-      ref: ref(LAPTOP, "old"),
-      role: "member",
-      addedAt: "2026-11-23T00:03:00.000Z",
-      state: "release-pending",
-    },
+    { ref: ref(DESK, "lead"), role: "lead", state: "active" },
+    { ref: ref(DESK, "docs"), role: "member", state: "active" },
+    { ref: ref(LAPTOP, "ios"), role: "member", state: "offline" },
+    { ref: ref(LAPTOP, "old"), role: "member", state: "release-pending" },
   ],
 };
 const audit: Mission = {
   missionId: "ba9876543210",
   name: "Security audit",
   createdAt: "2026-11-23T00:00:00.000Z",
-  members: [
-    {
-      ref: ref(LAPTOP, "audit"),
-      role: "lead",
-      addedAt: "2026-11-23T00:00:00.000Z",
-      state: "active",
-    },
-  ],
+  members: [{ ref: ref(LAPTOP, "audit"), role: "lead", state: "active" }],
 };
 const hosts: ReadonlyArray<MissionHost> = [
   {
@@ -121,13 +99,13 @@ vi.mock(import("../../state/entities"), async (original) => ({
   useProject: (target) => (target === null ? null : ({ title: target.projectId } as never)),
 }));
 
-it("lists each mission with its lead first, and offers release only for active members", async () => {
+it("lists each mission with its lead first, and offers release unless one is already pending", async () => {
   await using screen = await render(<MissionsSection onOpenThread={() => {}} />);
   const rows = screen.container.querySelectorAll("li li");
   expect([...rows].map((row) => row.textContent)).toEqual([
     "LeadPlan the v2 releaseDesk · t3code",
     "Update the release notesDesk · docs-site",
-    "Fix the iOS share sheetLaptop · mobile",
+    "Fix the iOS share sheetLast known (machine offline)",
     "Thread on LaptopRelease pending (machine offline)",
     "LeadThread on LaptopLaptop",
   ]);

@@ -3,21 +3,23 @@ import {
   isMissionTag,
   type Mission,
   MissionError,
+  type MissionMember,
   type OrchestrationV2Command,
   OrchestrationV2DispatchCommandError,
   type MissionsSnapshot,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -25,12 +27,17 @@ import { MissionClaimResult } from "../mcp/toolkits/mission/tools.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
 import { MissionClaims } from "./MissionClaims.ts";
-import { type MissionClaim, MissionStore } from "./MissionStore.ts";
+import {
+  type MissionClaim,
+  type MissionRecord,
+  MissionStore,
+  type PendingRelease,
+} from "./MissionStore.ts";
 
 /** How long a lead waits on a member's machine before it treats the outcome as unknown. */
 export const MEMBER_CALL_DEADLINE = Duration.seconds(10);
-/** Links change outside Missions; the list is read again this often, so menu reasons follow. */
-const LINKS_REREAD = Duration.seconds(15);
+/** How often a lead asks its linked machines again, while a client watches or a release waits. */
+export const REFRESH_INTERVAL = Duration.seconds(15);
 
 export class Missions extends Context.Service<
   Missions,
@@ -47,18 +54,16 @@ export class Missions extends Context.Service<
       readonly missionId: string;
       readonly member: ScopedThreadRef;
     }) => Effect.Effect<void, MissionError>;
-    /** Marks the member release-pending when its machine cannot be reached. */
+    /** Leaves the release pending when the member's machine cannot be reached. */
     readonly releaseMember: (input: {
       readonly missionId: string;
       readonly member: ScopedThreadRef;
     }) => Effect.Effect<void, MissionError>;
     /**
      * The local user frees a thread on this machine from its Mission, whichever machine leads it.
-     * The lead sees it as released on its next reconcile. The lead thread of a Mission here stays.
+     * The lead thread of a Mission here stays.
      */
     readonly leaveHere: (threadId: ThreadId) => Effect.Effect<void, MissionError>;
-    /** Brings this lead's records in line with the claims on these machines (all, by default). */
-    readonly reconcile: (environmentIds?: ReadonlyArray<EnvironmentId>) => Effect.Effect<void>;
   }
 >()("t3/missions/Missions") {}
 
@@ -77,9 +82,21 @@ type ClaimCall =
       readonly missionId: string;
       readonly name: string;
     }
-  | { readonly kind: "leave"; readonly threadId: ThreadId; readonly missionId: string }
-  | { readonly kind: "undo"; readonly threadId: ThreadId; readonly claimId: string }
+  | {
+      readonly kind: "release";
+      readonly threadId: ThreadId;
+      readonly missionId: string;
+      readonly generation: string;
+    }
   | { readonly kind: "list" };
+
+/** The claims a machine holds for this lead, as it last said. */
+interface Machine {
+  readonly claims: ReadonlyArray<MissionClaim>;
+  readonly reachable: boolean;
+}
+
+const memberKey = (ref: ScopedThreadRef) => JSON.stringify([ref.environmentId, ref.threadId]);
 
 const make = Effect.gen(function* () {
   const store = yield* MissionStore;
@@ -88,8 +105,27 @@ const make = Effect.gen(function* () {
   const peers = yield* PeerMcpClient.PeerMcpClient;
   const here = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
   const background = yield* Effect.scope;
-  // One change at a time. Each member call inside it is bounded by MEMBER_CALL_DEADLINE.
-  const lock = yield* Semaphore.make(1);
+  // One call at a time per machine, so what is remembered of it follows the order of its answers.
+  const machineLocks = yield* KeyedLock.make<EnvironmentId>();
+  const linked = yield* Ref.make<ReadonlyMap<EnvironmentId, Machine>>(new Map());
+  const watchers = yield* Ref.make(0);
+  const changed = PubSub.publish(store.changes, undefined);
+
+  // This machine's own claims are read each time, so only linked machines are remembered.
+  const remember = (environmentId: EnvironmentId, update: (machine: Machine) => Machine) =>
+    environmentId === here
+      ? Effect.void
+      : Ref.update(linked, (machines) =>
+          new Map(machines).set(
+            environmentId,
+            update(machines.get(environmentId) ?? { claims: [], reachable: true }),
+          ),
+        ).pipe(Effect.andThen(changed));
+
+  const machines = Effect.gen(function* () {
+    const local: Machine = { claims: yield* store.claimsOf(here), reachable: true };
+    return new Map([[here, local], ...(yield* Ref.get(linked))]);
+  });
 
   const missionLinks = Effect.gen(function* () {
     if (!(yield* links.enabled)) return [];
@@ -109,10 +145,61 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  const claimsHere = Effect.map(store.allClaims, (claims) =>
-    claims.map(({ threadId, missionId, name }) => ({ threadId, missionId, name })),
-  );
-  const snapshot = Effect.all({ missions: store.list, links: missionLinks, claims: claimsHere });
+  /**
+   * A Mission's members are computed, never stored: the claims each machine holds for it. A claim
+   * for a Mission this lead does not know is left alone, because a lead restored from a backup
+   * would otherwise free valid members. Claims made under an earlier link session stop appearing
+   * here after a re-pair; the member's own Leave frees those.
+   */
+  const assemble = Effect.gen(function* () {
+    const held = yield* machines;
+    const pending = yield* store.pendingReleases;
+    return (mission: MissionRecord): Mission => {
+      const lead = { environmentId: here, threadId: mission.leadThreadId };
+      const members = new Map<string, MissionMember>([
+        [memberKey(lead), { ref: lead, role: "lead", state: "active" }],
+      ]);
+      const releasing = pending.filter((release) => release.missionId === mission.missionId);
+      for (const [environmentId, machine] of held) {
+        for (const claim of machine.claims) {
+          if (claim.missionId !== mission.missionId || claim.role === "lead") continue;
+          const ref = { environmentId, threadId: claim.threadId };
+          const isReleasing = releasing.some(
+            (release) =>
+              memberKey(release) === memberKey(ref) && release.generation === claim.generation,
+          );
+          members.set(memberKey(ref), {
+            ref,
+            role: "member",
+            state: isReleasing ? "release-pending" : machine.reachable ? "active" : "offline",
+          });
+        }
+      }
+      // After a restart nothing is remembered of an offline machine, yet its release still waits.
+      for (const { environmentId, threadId } of releasing) {
+        const ref = { environmentId, threadId };
+        if (!members.has(memberKey(ref))) {
+          members.set(memberKey(ref), { ref, role: "member", state: "release-pending" });
+        }
+      }
+      return {
+        missionId: mission.missionId,
+        name: mission.name,
+        createdAt: mission.createdAt,
+        members: [...members.values()],
+      };
+    };
+  });
+
+  const snapshot = Effect.all({
+    missions: Effect.all([store.missions, assemble]).pipe(
+      Effect.map(([missions, toMission]) => missions.map(toMission)),
+    ),
+    links: missionLinks,
+    claims: Effect.map(store.allClaims, (held) =>
+      held.map(({ threadId, missionId, name }) => ({ threadId, missionId, name })),
+    ),
+  });
 
   /**
    * Runs a claim call on the member's own machine. A refusal there, or a link that may not make
@@ -126,11 +213,8 @@ const make = Effect.gen(function* () {
       switch (call.kind) {
         case "join":
           return [yield* claims.join(here, call)];
-        case "leave":
-          yield* claims.leave(here, call);
-          return [];
-        case "undo":
-          yield* claims.undo(here, call);
+        case "release":
+          yield* claims.release(here, call);
           return [];
         case "list":
           return yield* claims.list(here);
@@ -169,57 +253,84 @@ const make = Effect.gen(function* () {
     if (Option.isNone(answered)) {
       return yield* new Unreachable({ label, message: `${label} did not answer in time.` });
     }
-    return answered.value.claims as ReadonlyArray<MissionClaim>;
+    return answered.value.claims;
   });
 
-  const unknownOutcome = Effect.fn("Missions.unknownOutcome")(function* (
-    environmentId: EnvironmentId,
-    error: Unreachable,
-  ): Effect.fn.Return<never, MissionError> {
-    yield* Effect.forkIn(reconcile([environmentId]), background);
-    return yield* fail(`${error.message} This machine checks again when ${error.label} answers.`);
+  /** Call only under the machine's lock. An answer settles the release, whatever it found there. */
+  const sendRelease = Effect.fn("Missions.sendRelease")(function* (release: PendingRelease) {
+    yield* onMember(release.environmentId, { kind: "release", ...release });
+    yield* store.clearPendingRelease(release);
+    yield* remember(release.environmentId, (machine) => ({
+      ...machine,
+      claims: machine.claims.filter(
+        (claim) => claim.threadId !== release.threadId || claim.generation !== release.generation,
+      ),
+    }));
   });
 
-  /** Keeps a join only if the lead records it; otherwise takes back that one claim. */
-  const recordOrUndo = Effect.fn("Missions.recordOrUndo")(function* (
-    member: ScopedThreadRef,
-    claim: MissionClaim,
-    record: Effect.Effect<boolean>,
-  ) {
-    const recorded = yield* Effect.exit(record);
-    if (Exit.isSuccess(recorded) && recorded.value) return;
-    if (Exit.isFailure(recorded)) {
-      yield* Effect.logError("A mission membership was not saved", recorded.cause);
-    }
-    yield* onMember(member.environmentId, {
-      kind: "undo",
-      threadId: member.threadId,
-      claimId: claim.claimId,
-    }).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("A claim was not taken back; reconcile adds or drops it", error),
+  const refreshMachine = (environmentId: EnvironmentId) =>
+    machineLocks.withLock(
+      environmentId,
+      Effect.gen(function* () {
+        for (const release of yield* store.pendingReleases) {
+          if (release.environmentId === environmentId) yield* sendRelease(release);
+        }
+        const held = yield* onMember(environmentId, { kind: "list" });
+        yield* remember(environmentId, () => ({ claims: held, reachable: true }));
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.logInfo("A mission member machine did not answer", error).pipe(
+            Effect.andThen(
+              remember(environmentId, (machine) => ({ ...machine, reachable: false })),
+            ),
+          ),
+        ),
       ),
     );
-    return yield* fail(
-      Exit.isSuccess(recorded)
-        ? "This thread joined another mission meanwhile, so it was not added."
-        : "This machine could not save the mission, so the thread was not added.",
-    );
-  });
+
+  const sweep = Effect.gen(function* () {
+    yield* claims.list(here);
+    const asked =
+      (yield* store.missions).length === 0
+        ? []
+        : [
+            ...(yield* missionLinks)
+              .filter((link) => link.fullAccess)
+              .map((link) => link.environmentId),
+            ...(yield* Ref.get(linked)).keys(),
+            ...(yield* store.pendingReleases).map((release) => release.environmentId),
+          ];
+    yield* Effect.forEach(new Set(asked), refreshMachine, {
+      concurrency: "unbounded",
+      discard: true,
+    });
+    // Links change outside Missions; watchers read them again after every sweep.
+    yield* changed;
+  }).pipe(
+    Effect.withSpan("Missions.sweep"),
+    Effect.catchCause((cause) => Effect.logError("Mission claims were not read again", cause)),
+  );
+
+  // One sweep at a time for the whole server. Requests made during a sweep share the next one.
+  const sweepRequests = yield* Queue.sliding<void>(1);
+  const refresh = Queue.offer(sweepRequests, undefined).pipe(Effect.asVoid);
+  yield* Queue.take(sweepRequests).pipe(
+    Effect.andThen(sweep),
+    Effect.forever,
+    Effect.forkIn(background),
+  );
+  yield* Effect.sleep(REFRESH_INTERVAL).pipe(
+    Effect.andThen(Effect.all([Ref.get(watchers), store.pendingReleases])),
+    Effect.flatMap(([watching, pending]) =>
+      watching > 0 || pending.length > 0 ? refresh : Effect.void,
+    ),
+    Effect.forever,
+    Effect.forkIn(background),
+  );
 
   const missionNamed = Effect.fn("Missions.find")(function* (missionId: string) {
-    const mission = (yield* store.list).find((candidate) => candidate.missionId === missionId);
+    const mission = (yield* store.missions).find((candidate) => candidate.missionId === missionId);
     return mission ?? (yield* fail("That mission was not found."));
-  });
-
-  const refuseTakenElsewhere = Effect.fn("Missions.refuseTaken")(function* (
-    ref: ScopedThreadRef,
-    missionId: string,
-  ) {
-    const taken = yield* store.missionOf(ref);
-    if (taken !== undefined && taken.missionId !== missionId) {
-      return yield* fail(`This thread is already in the mission "${taken.name}".`);
-    }
   });
 
   const create = Effect.fn("Missions.create")(function* (input: {
@@ -227,170 +338,91 @@ const make = Effect.gen(function* () {
     readonly name: string;
     readonly leadThreadId: ThreadId;
   }) {
-    const lead = { environmentId: here, threadId: input.leadThreadId };
-    yield* refuseTakenElsewhere(lead, input.missionId);
-    const claim = yield* claims.join(here, { ...input, threadId: input.leadThreadId });
-    yield* recordOrUndo(
-      lead,
-      claim,
-      store.create({ missionId: input.missionId, name: input.name, lead }),
-    );
-    return yield* missionNamed(input.missionId);
-  }, lock.withPermits(1));
+    const mission = yield* claims.create(here, input);
+    return (yield* assemble)(mission);
+  });
 
   const addMember = Effect.fn("Missions.addMember")(function* (input: {
     readonly missionId: string;
     readonly member: ScopedThreadRef;
   }) {
     const mission = yield* missionNamed(input.missionId);
-    yield* refuseTakenElsewhere(input.member, mission.missionId);
-    const [claim] = yield* onMember(input.member.environmentId, {
-      kind: "join",
-      threadId: input.member.threadId,
-      missionId: mission.missionId,
-      name: mission.name,
-    }).pipe(
-      Effect.catchTags({
-        MissionMemberUnreachable: (error) => unknownOutcome(input.member.environmentId, error),
-      }),
-    );
-    yield* recordOrUndo(input.member, claim!, store.addMember(mission.missionId, input.member));
-  }, lock.withPermits(1));
+    const { environmentId, threadId } = input.member;
+    yield* machineLocks
+      .withLock(
+        environmentId,
+        Effect.gen(function* () {
+          const [claim] = yield* onMember(environmentId, {
+            kind: "join",
+            threadId,
+            missionId: mission.missionId,
+            name: mission.name,
+          });
+          if (claim === undefined)
+            return yield* fail("The thread's machine answered with no claim.");
+          // Adding again takes back a release of the same claim that still waits for this machine.
+          yield* store.clearPendingRelease({
+            environmentId,
+            threadId,
+            generation: claim.generation,
+          });
+          yield* remember(environmentId, (machine) => ({
+            reachable: true,
+            claims: [...machine.claims.filter((held) => held.threadId !== threadId), claim],
+          }));
+        }),
+      )
+      .pipe(
+        Effect.catchTags({
+          MissionMemberUnreachable: (error) =>
+            refresh.pipe(
+              Effect.andThen(
+                fail(`${error.message} This machine checks again when ${error.label} answers.`),
+              ),
+            ),
+        }),
+      );
+  });
 
   const releaseMember = Effect.fn("Missions.releaseMember")(function* (input: {
     readonly missionId: string;
     readonly member: ScopedThreadRef;
   }) {
     const mission = yield* missionNamed(input.missionId);
-    const member = mission.members.find(
-      (candidate) =>
-        candidate.ref.environmentId === input.member.environmentId &&
-        candidate.ref.threadId === input.member.threadId,
-    );
-    if (member === undefined || member.state === "released") {
-      return yield* fail("That thread is not in this mission.");
-    }
-    if (member.role === "lead") {
+    const { environmentId, threadId } = input.member;
+    const claim = (yield* machines)
+      .get(environmentId)
+      ?.claims.find((held) => held.threadId === threadId && held.missionId === mission.missionId);
+    if (claim === undefined) return yield* fail("That thread is not in this mission.");
+    if (claim.role === "lead") {
       return yield* fail("A mission keeps its lead thread, so the lead cannot be released.");
     }
-    yield* release(mission.missionId, input.member);
-  }, lock.withPermits(1));
-
-  const leaveHere = Effect.fn("Missions.leaveHere")(function* (threadId: ThreadId) {
-    const leads = (yield* store.list).some((mission) =>
-      mission.members.some(
-        (member) =>
-          member.role === "lead" &&
-          member.ref.environmentId === here &&
-          member.ref.threadId === threadId,
-      ),
+    const release = { ...input.member, missionId: mission.missionId, generation: claim.generation };
+    yield* machineLocks.withLock(environmentId, sendRelease(release)).pipe(
+      Effect.catchTags({
+        MissionMemberUnreachable: () =>
+          store.addPendingRelease(release).pipe(Effect.andThen(refresh)),
+      }),
     );
-    if (leads) {
-      return yield* fail("A mission keeps its lead thread, so the lead cannot be released.");
-    }
-    const left = yield* claims.leaveHere(threadId);
-    // A lead here catches up at once; a lead elsewhere on its next reconcile.
-    if (left.owner === here) yield* Effect.forkIn(reconcile([here]), background);
-  });
-
-  /**
-   * The member's machine drops its claim first; only then does the lead drop its record. If that
-   * record is not dropped, the thread is free there while this lead still lists it, until the next
-   * reconcile marks it released.
-   */
-  const release = Effect.fn("Missions.release")(function* (
-    missionId: string,
-    member: ScopedThreadRef,
-  ): Effect.fn.Return<void, MissionError> {
-    const left = yield* onMember(member.environmentId, {
-      kind: "leave",
-      threadId: member.threadId,
-      missionId,
-    }).pipe(
-      Effect.as(true),
-      Effect.catchTags({ MissionMemberUnreachable: () => Effect.succeed(false) }),
-    );
-    if (!left) return yield* store.setMemberState(missionId, member, "release-pending");
-    yield* store
-      .removeMember(missionId, member)
-      .pipe(
-        Effect.catchCause((cause) =>
-          Effect.logError("A released member was not dropped here", cause).pipe(
-            Effect.andThen(Effect.forkIn(reconcile([member.environmentId]), background)),
-          ),
-        ),
-      );
-  });
-
-  /**
-   * A claim with no active record gets one; an active record with no claim is marked released;
-   * a pending release is finished. Machines that do not answer are left for the next time.
-   */
-  const reconcileMachine = Effect.fn("Missions.reconcileMachine")(
-    function* (environmentId: EnvironmentId): Effect.fn.Return<void, MissionError | Unreachable> {
-      const held = yield* onMember(environmentId, { kind: "list" });
-      const missions = yield* store.list;
-      for (const claim of held) {
-        const ref = { environmentId, threadId: claim.threadId };
-        const mission = missions.find((candidate) => candidate.missionId === claim.missionId);
-        const record = mission?.members.find((member) => member.ref.threadId === claim.threadId);
-        if (mission === undefined) {
-          yield* onMember(environmentId, {
-            kind: "undo",
-            threadId: claim.threadId,
-            claimId: claim.claimId,
-          });
-        } else if (record?.state === "release-pending") {
-          yield* release(mission.missionId, ref);
-        } else if (record?.state !== "active") {
-          yield* store.addMember(mission.missionId, ref);
-        }
-      }
-      for (const mission of missions) {
-        for (const member of mission.members) {
-          if (member.ref.environmentId !== environmentId || member.state === "released") continue;
-          if (held.some((claim) => claim.threadId === member.ref.threadId)) continue;
-          yield* member.state === "release-pending"
-            ? store.removeMember(mission.missionId, member.ref)
-            : store.setMemberState(mission.missionId, member.ref, "released");
-        }
-      }
-    },
-    Effect.catch((error) => Effect.logInfo("A mission member machine was not reconciled", error)),
-  );
-
-  const reconcile = Effect.fn("Missions.reconcile")(function* (
-    environmentIds?: ReadonlyArray<EnvironmentId>,
-  ): Effect.fn.Return<void> {
-    const machines = environmentIds ?? [
-      here,
-      ...(yield* store.list).flatMap((mission) =>
-        mission.members
-          .filter((member) => member.state !== "released")
-          .map((member) => member.ref.environmentId),
-      ),
-    ];
-    for (const environmentId of new Set(machines)) {
-      yield* lock.withPermits(1)(reconcileMachine(environmentId));
-    }
   });
 
   const watch = Stream.unwrap(
     Effect.gen(function* () {
       // Subscribed before the first read, so a change in between is not missed.
       const changes = yield* PubSub.subscribe(store.changes);
-      // A client asking for the list is a refresh: reconcile behind it.
-      yield* Effect.forkIn(reconcile(), background);
+      const first = yield* Effect.acquireRelease(
+        Ref.modify(watchers, (count) => [count === 0, count + 1]),
+        () => Ref.update(watchers, (count) => count - 1),
+      );
+      if (first) yield* refresh;
       return Stream.concat(
         Stream.fromEffect(snapshot),
-        Stream.merge(Stream.fromSubscription(changes), Stream.tick(LINKS_REREAD)).pipe(
-          Stream.mapEffect(() => snapshot),
-        ),
+        Stream.fromSubscription(changes).pipe(Stream.mapEffect(() => snapshot)),
       ).pipe(Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)));
     }),
   );
 
-  return Missions.of({ watch, create, addMember, releaseMember, leaveHere, reconcile });
+  return Missions.of({ watch, create, addMember, releaseMember, leaveHere: claims.leaveHere });
 });
 
 export const layer = Layer.effect(Missions, make);

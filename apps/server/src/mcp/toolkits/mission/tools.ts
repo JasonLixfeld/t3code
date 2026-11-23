@@ -1,4 +1,4 @@
-import { OrchestratorMcpFailure, ThreadId } from "@t3tools/contracts";
+import { MissionId, MissionName, OrchestratorMcpFailure, ThreadId } from "@t3tools/contracts";
 import * as Fiber from "effect/Fiber";
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
@@ -16,13 +16,13 @@ const shownOnlyToLinks = (): boolean => {
   return scope?.client?.linked === true;
 };
 
-/** `join` needs threadId, missionId and name; `leave` threadId and missionId; `undo` threadId and claimId. */
+/** `join` needs threadId, missionId and name; `release` threadId, missionId and generation. */
 const MissionTagInput = Schema.Struct({
   kind: MissionClaimKind,
   threadId: Schema.optional(ThreadId),
-  missionId: Schema.optional(Schema.String),
-  name: Schema.optional(Schema.String),
-  claimId: Schema.optional(Schema.String),
+  missionId: Schema.optional(MissionId),
+  name: Schema.optional(MissionName),
+  generation: Schema.optional(Schema.String),
 });
 
 export const MissionClaimResult = Schema.Struct({
@@ -31,7 +31,8 @@ export const MissionClaimResult = Schema.Struct({
       threadId: ThreadId,
       missionId: Schema.String,
       name: Schema.String,
-      claimId: Schema.String,
+      role: Schema.Literals(["lead", "member"]),
+      generation: Schema.String,
     }),
   ),
 });

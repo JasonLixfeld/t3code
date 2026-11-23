@@ -195,12 +195,12 @@ function MemberRow(props: {
           <span className="truncate text-2xs text-sidebar-muted-foreground">
             {props.member.state === "release-pending"
               ? gt("Release pending (machine offline)")
-              : props.member.state === "released"
-                ? gt("Released", { $context: "a thread no longer in a mission" })
+              : props.member.state === "offline"
+                ? gt("Last known (machine offline)")
                 : where}
           </span>
         </button>
-        {props.member.role === "member" && active ? (
+        {props.member.role === "member" && props.member.state !== "release-pending" ? (
           <Tooltip>
             <TooltipTrigger
               render={
