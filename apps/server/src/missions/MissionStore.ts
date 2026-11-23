@@ -83,6 +83,37 @@ const migrations = Migrator.fromRecord({
     // The machines a lead asks are now those with a known claim, a pending add or a pending release.
     yield* sql`DROP TABLE known_machines`;
   }),
+  "4_AddIntents": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    // One row per thread and Mission now, so an add to one Mission never replaces another's.
+    yield* sql`ALTER TABLE pending_adds RENAME TO pending_adds_by_thread`;
+    yield* sql`
+      CREATE TABLE pending_adds (
+        environment_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        mission_id TEXT NOT NULL,
+        intent_id TEXT NOT NULL,
+        refusal TEXT,
+        PRIMARY KEY (environment_id, thread_id, mission_id)
+      )
+    `;
+    yield* sql`
+      INSERT INTO pending_adds (environment_id, thread_id, mission_id, intent_id, refusal)
+      SELECT environment_id, thread_id, mission_id, lower(hex(randomblob(16))), refusal
+      FROM pending_adds_by_thread
+    `;
+    yield* sql`DROP TABLE pending_adds_by_thread`;
+    yield* sql`ALTER TABLE claims ADD COLUMN intent_id TEXT`;
+    yield* sql`
+      CREATE TABLE spent_intents (
+        mission_id TEXT NOT NULL,
+        owner TEXT NOT NULL,
+        intent_id TEXT NOT NULL,
+        spent_at TEXT NOT NULL,
+        PRIMARY KEY (mission_id, owner, intent_id)
+      )
+    `;
+  }),
 });
 
 interface MissionRow {
@@ -98,8 +129,9 @@ interface ClaimRow {
   readonly role: MissionClaim["role"];
   readonly owner: string;
   readonly generation: string;
+  readonly intent_id: string | null;
 }
-interface KnownClaimRow extends Omit<ClaimRow, "role" | "owner"> {
+interface KnownClaimRow extends Omit<ClaimRow, "role" | "owner" | "intent_id"> {
   readonly environment_id: string;
 }
 interface PendingReleaseRow {
@@ -127,15 +159,22 @@ export interface MissionClaim {
 }
 
 /**
- * A join this lead sent whose outcome it does not know yet. `refusal` is why the member's machine
- * turned it down, once it answered; the row then stays until the user dismisses it.
+ * An add this lead means to make, written before its join is sent. `intentId` names this one add
+ * in every copy of the join. `refusal` is why the member's machine turned it down, once it
+ * answered; the row then stays until the user dismisses it.
  */
 export interface PendingAdd {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly missionId: string;
+  readonly intentId: string;
   readonly refusal: string | null;
 }
+
+type AddKey = Pick<PendingAdd, "environmentId" | "threadId" | "missionId">;
+
+/** How long a member's machine remembers an add whose claim was dropped. */
+const SPENT_INTENT_DAYS = 30;
 
 /** A release this lead sent that the member's machine has not answered yet. */
 export interface PendingRelease {
@@ -151,6 +190,8 @@ interface ClaimInput {
   readonly name: string;
   readonly owner: string;
   readonly generation: string;
+  /** The lead's add this join belongs to. Absent for a lead's own claim and a join made here. */
+  readonly intentId?: string | undefined;
 }
 
 const toMission = (row: MissionRow): MissionRecord => ({
@@ -160,7 +201,7 @@ const toMission = (row: MissionRow): MissionRecord => ({
   createdAt: row.created_at,
 });
 
-const toClaim = (row: Omit<ClaimRow, "owner">): MissionClaim => ({
+const toClaim = (row: Omit<ClaimRow, "owner" | "intent_id">): MissionClaim => ({
   threadId: ThreadId.make(row.thread_id),
   missionId: row.mission_id,
   name: row.mission_name,
@@ -193,8 +234,13 @@ export class MissionStore extends Context.Service<
      * has any claim. Asking again with the same id and lead returns the Mission it already made.
      */
     readonly createMission: (lead: ClaimInput) => Effect.Effect<MissionRecord, MissionError>;
-    /** The claim this owner already holds for this Mission, or a new one. Refuses any other claim. */
-    readonly join: (input: ClaimInput) => Effect.Effect<MissionClaim, MissionError>;
+    /**
+     * The claim this owner already holds for this Mission, or a new one. Refuses any other claim.
+     * `intent-spent`: the claim this add made was dropped since, so the add may not make another.
+     */
+    readonly join: (
+      input: ClaimInput,
+    ) => Effect.Effect<MissionClaim | "intent-spent", MissionError>;
     /** Drops the member claim that one join made, if this owner still holds it. */
     readonly release: (input: Omit<ClaimInput, "name">) => Effect.Effect<void>;
     /** Drops the thread's claim, whoever holds it. Refuses a lead's claim. */
@@ -211,11 +257,11 @@ export class MissionStore extends Context.Service<
       release: Omit<PendingRelease, "missionId">,
     ) => Effect.Effect<void>;
     readonly pendingAdds: Effect.Effect<ReadonlyArray<PendingAdd>>;
-    /** Records the add, or what became of it. One row per thread: a later add replaces it. */
+    /** Records the add, or what became of it. One row per thread and Mission. */
     readonly setPendingAdd: (add: PendingAdd) => Effect.Effect<void>;
-    readonly clearPendingAdd: (
-      add: Pick<PendingAdd, "environmentId" | "threadId">,
-    ) => Effect.Effect<void>;
+    readonly clearPendingAdd: (add: AddKey) => Effect.Effect<void>;
+    /** Replaces a pending add with the claim its join made, both or neither. */
+    readonly settleAdd: (add: AddKey, claim: MissionClaim) => Effect.Effect<void>;
     /**
      * What each linked machine last said it holds for this lead. A copy to show while a machine
      * is away: only that machine's answer is the truth.
@@ -226,15 +272,9 @@ export class MissionStore extends Context.Service<
       environmentId: EnvironmentId,
       claims: ReadonlyArray<MissionClaim>,
     ) => Effect.Effect<void>;
-    readonly rememberClaim: (
-      environmentId: EnvironmentId,
-      claim: MissionClaim,
-    ) => Effect.Effect<void>;
     readonly forgetClaim: (release: Omit<PendingRelease, "missionId">) => Effect.Effect<void>;
-    /** Drops what this lead waits for and last knew about one thread on another machine. */
-    readonly forgetThread: (
-      thread: Pick<PendingAdd, "environmentId" | "threadId">,
-    ) => Effect.Effect<void>;
+    /** Drops what this lead waits for and last knew about one thread, in one Mission only. */
+    readonly forgetThread: (thread: AddKey) => Effect.Effect<void>;
   }
 >()("t3/missions/MissionStore") {}
 
@@ -258,18 +298,31 @@ const make = Effect.gen(function* () {
 
   const claimRow = (threadId: ThreadId) =>
     sql<ClaimRow>`
-      SELECT thread_id, mission_id, mission_name, role, owner, generation FROM claims
+      SELECT thread_id, mission_id, mission_name, role, owner, generation, intent_id FROM claims
       WHERE thread_id = ${threadId}
     `.pipe(Effect.map((rows) => rows[0]));
+
+  /** The add that made this claim may not make another. Old entries go, so the table stays small. */
+  const spendIntent = Effect.fn("MissionStore.spendIntent")(function* (held: ClaimRow) {
+    if (held.intent_id === null) return;
+    const spentAt = yield* DateTime.now;
+    const oldest = DateTime.formatIso(DateTime.subtract(spentAt, { days: SPENT_INTENT_DAYS }));
+    yield* sql`DELETE FROM spent_intents WHERE spent_at < ${oldest}`;
+    yield* sql`
+      INSERT OR IGNORE INTO spent_intents (mission_id, owner, intent_id, spent_at)
+      VALUES (${held.mission_id}, ${held.owner}, ${held.intent_id}, ${DateTime.formatIso(spentAt)})
+    `;
+  });
 
   const markUnsynced = (threadId: ThreadId) =>
     sql`INSERT OR IGNORE INTO unsynced_tags (thread_id) VALUES (${threadId})`;
 
   const insertClaim = (input: ClaimInput, role: MissionClaim["role"], claimedAt: string) =>
     sql`
-      INSERT INTO claims (thread_id, mission_id, mission_name, role, owner, generation, claimed_at)
+      INSERT INTO claims
+        (thread_id, mission_id, mission_name, role, owner, generation, claimed_at, intent_id)
       VALUES (${input.threadId}, ${input.missionId}, ${input.name}, ${role}, ${input.owner},
-        ${input.generation}, ${claimedAt})
+        ${input.generation}, ${claimedAt}, ${input.intentId ?? null})
     `.pipe(
       Effect.andThen(markUnsynced(input.threadId)),
       Effect.as<MissionClaim>({
@@ -323,22 +376,46 @@ const make = Effect.gen(function* () {
     const claimedAt = yield* now;
     return yield* change(
       Effect.gen(function* () {
+        const { intentId } = input;
+        if (intentId !== undefined) {
+          const spent = yield* sql`
+            SELECT 1 FROM spent_intents WHERE mission_id = ${input.missionId}
+              AND owner = ${input.owner} AND intent_id = ${intentId}
+          `;
+          if (spent.length > 0) return "intent-spent" as const;
+        }
         const held = yield* claimRow(input.threadId);
         if (held === undefined) return yield* insertClaim(input, "member", claimedAt);
-        return held.owner === input.owner && held.mission_id === input.missionId
-          ? toClaim(held)
-          : heldElsewhere(held);
+        if (held.owner !== input.owner || held.mission_id !== input.missionId) {
+          return heldElsewhere(held);
+        }
+        // A later add of a thread already in takes the claim over, so a drop spends both adds.
+        if (intentId !== undefined && held.intent_id !== intentId) {
+          yield* spendIntent(held);
+          yield* sql`UPDATE claims SET intent_id = ${intentId} WHERE thread_id = ${input.threadId}`;
+        }
+        return toClaim(held);
       }),
     );
   });
 
   const release = Effect.fn("MissionStore.release")(function* (input: Omit<ClaimInput, "name">) {
     yield* sql.withTransaction(
-      sql`
-        DELETE FROM claims
-        WHERE thread_id = ${input.threadId} AND mission_id = ${input.missionId}
-          AND generation = ${input.generation} AND owner = ${input.owner} AND role = 'member'
-      `.pipe(Effect.andThen(markUnsynced(input.threadId))),
+      Effect.gen(function* () {
+        const held = yield* claimRow(input.threadId);
+        if (
+          held === undefined ||
+          held.mission_id !== input.missionId ||
+          held.generation !== input.generation ||
+          held.owner !== input.owner ||
+          held.role !== "member"
+        ) {
+          return;
+        }
+        yield* spendIntent(held);
+        yield* sql`DELETE FROM claims WHERE thread_id = ${input.threadId}`;
+        yield* markUnsynced(input.threadId);
+      }),
     );
     yield* changed;
   }, Effect.orDie);
@@ -351,6 +428,7 @@ const make = Effect.gen(function* () {
         if (held.role === "lead") {
           return refuse("A mission keeps its lead thread, so the lead cannot be released.");
         }
+        yield* spendIntent(held);
         yield* sql`DELETE FROM claims WHERE thread_id = ${threadId}`;
         yield* markUnsynced(threadId);
       }),
@@ -364,14 +442,14 @@ const make = Effect.gen(function* () {
 
   const claimsOf = Effect.fn("MissionStore.claimsOf")(function* (owner: string) {
     const rows = yield* sql<ClaimRow>`
-      SELECT thread_id, mission_id, mission_name, role, owner, generation FROM claims
+      SELECT thread_id, mission_id, mission_name, role, owner, generation, intent_id FROM claims
       WHERE owner = ${owner} ORDER BY claimed_at, rowid
     `;
     return rows.map(toClaim);
   }, Effect.orDie);
 
   const allClaims = sql<ClaimRow>`
-    SELECT thread_id, mission_id, mission_name, role, owner, generation FROM claims
+    SELECT thread_id, mission_id, mission_name, role, owner, generation, intent_id FROM claims
     ORDER BY claimed_at, rowid
   `.pipe(
     Effect.map((rows) => rows.map(toClaim)),
@@ -420,15 +498,18 @@ const make = Effect.gen(function* () {
     readonly environment_id: string;
     readonly thread_id: string;
     readonly mission_id: string;
+    readonly intent_id: string;
     readonly refusal: string | null;
   }>`
-    SELECT environment_id, thread_id, mission_id, refusal FROM pending_adds ORDER BY rowid
+    SELECT environment_id, thread_id, mission_id, intent_id, refusal FROM pending_adds
+    ORDER BY rowid
   `.pipe(
     Effect.map((rows) =>
       rows.map((row): PendingAdd => ({
         environmentId: EnvironmentId.make(row.environment_id),
         threadId: ThreadId.make(row.thread_id),
         missionId: row.mission_id,
+        intentId: row.intent_id,
         refusal: row.refusal,
       })),
     ),
@@ -437,15 +518,21 @@ const make = Effect.gen(function* () {
 
   const setPendingAdd = (add: PendingAdd) =>
     sql`
-      INSERT OR REPLACE INTO pending_adds (environment_id, thread_id, mission_id, refusal)
-      VALUES (${add.environmentId}, ${add.threadId}, ${add.missionId}, ${add.refusal})
+      INSERT OR REPLACE INTO pending_adds
+        (environment_id, thread_id, mission_id, intent_id, refusal)
+      VALUES (${add.environmentId}, ${add.threadId}, ${add.missionId}, ${add.intentId},
+        ${add.refusal})
     `.pipe(Effect.andThen(changed), Effect.asVoid, Effect.orDie);
 
-  const clearPendingAdd = (add: Pick<PendingAdd, "environmentId" | "threadId">) =>
+  const deletePendingAdd = (add: AddKey) =>
     sql`
       DELETE FROM pending_adds
       WHERE environment_id = ${add.environmentId} AND thread_id = ${add.threadId}
-    `.pipe(Effect.andThen(changed), Effect.asVoid, Effect.orDie);
+        AND mission_id = ${add.missionId}
+    `;
+
+  const clearPendingAdd = (add: AddKey) =>
+    deletePendingAdd(add).pipe(Effect.andThen(changed), Effect.asVoid, Effect.orDie);
 
   const knownClaims = sql<KnownClaimRow>`
     SELECT environment_id, thread_id, mission_id, mission_name, generation FROM known_claims
@@ -486,12 +573,15 @@ const make = Effect.gen(function* () {
     yield* changed;
   }, Effect.orDie);
 
-  const rememberClaim = (environmentId: EnvironmentId, held: MissionClaim) =>
-    insertKnownClaim(environmentId, held).pipe(
-      Effect.andThen(changed),
-      Effect.asVoid,
-      Effect.orDie,
+  const settleAdd = Effect.fn("MissionStore.settleAdd")(function* (
+    add: AddKey,
+    held: MissionClaim,
+  ) {
+    yield* sql.withTransaction(
+      deletePendingAdd(add).pipe(Effect.andThen(insertKnownClaim(add.environmentId, held))),
     );
+    yield* changed;
+  }, Effect.orDie);
 
   const forgetClaim = (release: Omit<PendingRelease, "missionId">) =>
     sql`
@@ -500,10 +590,9 @@ const make = Effect.gen(function* () {
         AND generation = ${release.generation}
     `.pipe(Effect.andThen(changed), Effect.asVoid, Effect.orDie);
 
-  const forgetThread = Effect.fn("MissionStore.forgetThread")(function* (
-    thread: Pick<PendingAdd, "environmentId" | "threadId">,
-  ) {
-    const theThread = sql`environment_id = ${thread.environmentId} AND thread_id = ${thread.threadId}`;
+  const forgetThread = Effect.fn("MissionStore.forgetThread")(function* (thread: AddKey) {
+    const theThread = sql`environment_id = ${thread.environmentId}
+      AND thread_id = ${thread.threadId} AND mission_id = ${thread.missionId}`;
     yield* sql.withTransaction(
       Effect.all([
         sql`DELETE FROM pending_adds WHERE ${theThread}`,
@@ -534,7 +623,7 @@ const make = Effect.gen(function* () {
     clearPendingAdd,
     knownClaims,
     setKnownClaims,
-    rememberClaim,
+    settleAdd,
     forgetClaim,
     forgetThread,
   });

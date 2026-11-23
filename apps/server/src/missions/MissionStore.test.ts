@@ -62,6 +62,7 @@ it.effect("keeps its own migration history and reopens without migrating again",
           [1, "Missions"],
           [2, "LastKnown"],
           [3, "PendingAdds"],
+          [4, "AddIntents"],
         ],
       );
     }),
@@ -112,7 +113,8 @@ it.effect("a release drops only the member claim that its generation, mission an
         yield* store.release({ ...release, missionId: "m2" });
         yield* store.release({ ...release, owner: "link:other" });
         yield* store.release({ ...release, threadId: lead, generation: "g1" });
-        assert.deepEqual(yield* store.claimsOf("env-a"), [(yield* store.claim(lead))!, held]);
+        const both: ReadonlyArray<unknown> = [yield* store.claim(lead), held];
+        assert.deepEqual(yield* store.claimsOf("env-a"), both);
 
         yield* store.release(release);
         assert.isUndefined(yield* store.claim(member));

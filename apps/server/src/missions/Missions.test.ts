@@ -70,14 +70,27 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   const tags = new Map(threads.map((thread) => [keyOf(thread), [] as Array<string>]));
   const laptop = {
     claims: undefined as Claims | undefined,
-    /** `offline`: refuses to connect. `hanging`: never answers. `lostReply`: acts, then drops the reply. */
-    mode: "up" as "up" | "offline" | "hanging" | "lostReply",
+    /**
+     * `offline`: refuses to connect. `hanging`: never answers. `lostReply`: acts, then drops the
+     * reply. `actsThenHangs`: acts, then never replies. `revoked`: answers HTTP 401 to the link.
+     * `denies`: its tool refuses the call.
+     */
+    mode: "up" as
+      | "up"
+      | "offline"
+      | "hanging"
+      | "lostReply"
+      | "actsThenHangs"
+      | "revoked"
+      | "denies",
     /** Every call this lead made to the laptop, in order. */
     calls: [] as Array<ClaimKind>,
     /** The same calls, to wait on: each is offered as it starts, under the mode set by then. */
     started: undefined as Queue.Queue<ClaimKind> | undefined,
     /** The calls the laptop answered, each offered once its answer is ready. */
     answered: undefined as Queue.Queue<ClaimKind> | undefined,
+    /** The calls the laptop carried out, whether or not its reply got through. */
+    acted: undefined as Queue.Queue<ClaimKind> | undefined,
     /** The lead's link to the laptop has run out. */
     linkExpired: false,
   };
@@ -109,10 +122,13 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       readonly missionId: string;
       readonly name: string;
       readonly generation: string;
+      readonly intentId: string;
     };
     switch (args.kind) {
       case "join":
-        return Effect.map(claims.join(LEAD_ON_LAPTOP, args), (claim) => [claim]);
+        return Effect.map(claims.join(LEAD_ON_LAPTOP, args), (claim) =>
+          claim === "intent-spent" ? [] : [claim],
+        );
       case "release":
         return Effect.as(claims.release(LEAD_ON_LAPTOP, args), []);
       case "list":
@@ -131,13 +147,24 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
         });
         if (mode === "offline") return yield* stoppedAnswering;
         if (mode === "hanging") return yield* Effect.never;
+        if (mode === "revoked" || mode === "denies") {
+          return yield* new OrchestratorMcpFailure({
+            code: "capability_denied",
+            message:
+              mode === "revoked"
+                ? PeerMcpClient.LINK_NOT_ACCEPTED
+                : "This link may change only threads it started.",
+          });
+        }
         const claims = yield* answer(laptop.claims!, input.arguments).pipe(
           Effect.mapError(
             (error) =>
               new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
           ),
         );
+        yield* Queue.offer(laptop.acted!, input.arguments.kind);
         if (mode === "lostReply") return yield* stoppedAnswering;
+        if (mode === "actsThenHangs") return yield* Effect.never;
         yield* Queue.offer(laptop.answered!, input.arguments.kind);
         return { claims };
       })) as never,
@@ -172,6 +199,11 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     untilAnswered: (kind: ClaimKind): Effect.Effect<void> =>
       Effect.flatMap(Queue.take(laptop.answered!), (answered) =>
         answered === kind ? Effect.void : world.untilAnswered(kind),
+      ),
+    /** Waits until the laptop has carried out a call of this kind, reply or no reply. */
+    untilActed: (kind: ClaimKind): Effect.Effect<void> =>
+      Effect.flatMap(Queue.take(laptop.acted!), (acted) =>
+        acted === kind ? Effect.void : world.untilActed(kind),
       ),
     /** Runs before the lead's next read of its missions; a test holds a snapshot open with it. */
     beforeMissionsRead: Effect.void as Effect.Effect<void>,
@@ -224,6 +256,7 @@ const withMissions = <A, E>(
       );
     world.laptop.started = yield* Queue.unbounded<ClaimKind>();
     world.laptop.answered = yield* Queue.unbounded<ClaimKind>();
+    world.laptop.acted = yield* Queue.unbounded<ClaimKind>();
     world.laptop.claims = Context.get(
       yield* Layer.build(claimsOn(LAPTOP)),
       MissionClaims.MissionClaims,
@@ -249,6 +282,12 @@ const stateOf = (snapshot: MissionsSnapshot, thread: ScopedThreadRef) =>
 const createOne = Effect.flatMap(Missions.Missions, (missions) =>
   missions.create({ missionId: "0123456789ab", name: "One", leadThreadId: lead.threadId }),
 );
+
+/** Waits for a snapshot that matches, starting with the one a new client gets at once. */
+const eventually = (matches: (snapshot: MissionsSnapshot) => boolean) =>
+  Effect.flatMap(Missions.Missions, (missions) =>
+    missions.watch.pipe(Stream.filter(matches), Stream.runHead, Effect.asVoid),
+  );
 
 /**
  * A client that keeps watching, as an open sidebar does. Answers a wait for the next snapshot
@@ -500,6 +539,159 @@ it.effect.each([
         assert.deepEqual(world.laptop.calls, [...sentBefore, "join", "list"]);
         assert.equal(stateOf(yield* listed, laptopMember), "active");
         assert.equal((yield* world.laptop.claims!.list(LEAD_ON_LAPTOP)).length, 1);
+      }),
+    );
+  },
+);
+
+it.effect("an add cut off after the laptop made the claim is still there after a restart", () => {
+  const world = makeWorld([lead, laptopMember]);
+  const member = { missionId: "0123456789ab", member: laptopMember };
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      yield* createOne;
+      world.laptop.mode = "actsThenHangs";
+      const adding = yield* Effect.forkChild((yield* Missions.Missions).addMember(member));
+      yield* world.untilActed("join");
+      // The client that asked goes away before any reply or timeout.
+      yield* Fiber.interrupt(adding);
+      world.laptop.mode = "offline";
+    }),
+    Effect.gen(function* () {
+      assert.equal(stateOf(yield* listed, laptopMember), "add-pending");
+      world.laptop.mode = "up";
+      yield* eventually((snapshot) => stateOf(snapshot, laptopMember) === "active");
+      assert.equal((yield* world.laptop.claims!.list(LEAD_ON_LAPTOP)).length, 1);
+    }),
+  );
+});
+
+it.effect("a join sent again after the thread left is turned down, so the thread stays out", () => {
+  const world = makeWorld([lead, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const mission = yield* createOne;
+      const member = { missionId: mission.missionId, member: laptopMember };
+      world.laptop.mode = "lostReply";
+      yield* missions.addMember(member);
+      // The join landed twice over: the add, and the copy sent again at once. No reply got back.
+      yield* world.untilActed("join");
+      yield* world.untilActed("join");
+      assert.equal((yield* world.laptop.claims!.list(LEAD_ON_LAPTOP)).length, 1);
+
+      // The laptop's user takes the thread out, and the lead still sends the join again.
+      yield* world.laptop.claims!.leaveHere(laptopMember.threadId);
+      world.laptop.mode = "up";
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* world.untilActed("join");
+      assert.deepEqual(yield* world.laptop.claims!.list(LEAD_ON_LAPTOP), []);
+      assert.deepEqual(world.tags(laptopMember), [WAS_TAG]);
+      yield* eventually((snapshot) => stateOf(snapshot, laptopMember) === undefined);
+
+      // A new add by the user is a new intent, so it brings the thread in again.
+      yield* missions.addMember(member);
+      assert.equal(stateOf(yield* listed, laptopMember), "active");
+    }),
+  );
+});
+
+it.effect("forgetting a thread in one mission leaves another mission's claim on it alone", () => {
+  const otherLead = ref(HERE, "other-lead");
+  const world = makeWorld([lead, otherLead, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      yield* openSidebar;
+      const one = yield* createOne;
+      const two = yield* missions.create({
+        missionId: "ba9876543210",
+        name: "Two",
+        leadThreadId: otherLead.threadId,
+      });
+      yield* missions.addMember({ missionId: one.missionId, member: laptopMember });
+      world.laptop.mode = "offline";
+      yield* missions.addMember({ missionId: two.missionId, member: laptopMember });
+      assert.deepEqual(membersOf((yield* listed).missions[1]), [
+        ["env-here/other-lead", "active"],
+        ["env-laptop/laptop", "add-pending"],
+      ]);
+
+      yield* missions.forgetMember({ missionId: two.missionId, member: laptopMember });
+      const after = yield* listed;
+      assert.deepEqual(membersOf(after.missions[1]), [["env-here/other-lead", "active"]]);
+      assert.equal(stateOf(after, laptopMember), "offline");
+      // The laptop still holds a known claim, so it is still asked.
+      world.laptop.mode = "up";
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* eventually((snapshot) => stateOf(snapshot, laptopMember) === "active");
+    }),
+  );
+});
+
+it.effect(
+  "a join that lands after its add was forgotten shows again when the laptop is asked",
+  () => {
+    const kept = ref(LAPTOP, "kept");
+    const world = makeWorld([lead, kept, laptopMember]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        yield* openSidebar;
+        const mission = yield* createOne;
+        const member = { missionId: mission.missionId, member: laptopMember };
+        // Another member there keeps the laptop among the machines the lead asks.
+        yield* missions.addMember({ missionId: mission.missionId, member: kept });
+        world.laptop.mode = "offline";
+        yield* missions.addMember(member);
+        yield* missions.forgetMember(member);
+        assert.equal(stateOf(yield* listed, laptopMember), undefined);
+
+        // The claim is real once the join lands, so the lead lists it again.
+        yield* world.laptop.claims!.join(LEAD_ON_LAPTOP, {
+          threadId: laptopMember.threadId,
+          missionId: mission.missionId,
+          name: mission.name,
+        });
+        world.laptop.mode = "up";
+        yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+        yield* eventually((snapshot) => stateOf(snapshot, laptopMember) === "active");
+      }),
+    );
+  },
+);
+
+it.effect(
+  "a link the laptop no longer accepts is no answer, and a refusal by its tool is one",
+  () => {
+    const second = ref(LAPTOP, "second");
+    const world = makeWorld([lead, laptopMember, second, ref(LAPTOP, "third")]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const mission = yield* createOne;
+        const member = { missionId: mission.missionId, member: laptopMember };
+        yield* missions.addMember(member);
+        yield* missions.addMember({ missionId: mission.missionId, member: second });
+
+        world.laptop.mode = "revoked";
+        yield* missions.releaseMember(member);
+        const revoked = yield* listed;
+        assert.equal(stateOf(revoked, laptopMember), "release-pending");
+        assert.equal(stateOf(revoked, second), "offline");
+        yield* missions.forgetMember(member);
+        assert.equal(stateOf(yield* listed, laptopMember), undefined);
+
+        world.laptop.mode = "denies";
+        const third = { missionId: mission.missionId, member: ref(LAPTOP, "third") };
+        const refused = yield* missions.addMember(third).pipe(Effect.flip);
+        assert.include(refused.message, "Laptop refused: This link may change only threads");
+        assert.equal(stateOf(yield* listed, third.member), undefined);
       }),
     );
   },

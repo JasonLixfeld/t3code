@@ -65,6 +65,14 @@ const planMissionTags = (tags: ReadonlyArray<string>, claim: MissionClaim | unde
   ];
 };
 
+interface JoinInput {
+  readonly threadId: ThreadId;
+  readonly missionId: string;
+  readonly name: string;
+  /** Names one add on the lead, the same in every copy of its join. */
+  readonly intentId?: string | undefined;
+}
+
 /**
  * The claims on threads here, which no other machine can change. Every change to a thread's
  * claim, and the tag write that follows it, runs under that thread's one lock. The tags are this
@@ -78,12 +86,15 @@ export class MissionClaims extends Context.Service<
       owner: string,
       input: { readonly missionId: string; readonly name: string; readonly leadThreadId: ThreadId },
     ) => Effect.Effect<MissionRecord, MissionError>;
-    /** Joining again into the same Mission for the same owner returns the claim it already has. */
+    /**
+     * Joining again into the same Mission for the same owner returns the claim it already has.
+     * `intent-spent`: the claim this add made was dropped here since, so the thread stays out.
+     */
     readonly join: <E = never>(
       owner: string,
-      input: { readonly threadId: ThreadId; readonly missionId: string; readonly name: string },
+      input: JoinInput,
       access?: ThreadAccess<E>,
-    ) => Effect.Effect<MissionClaim, MissionError | E>;
+    ) => Effect.Effect<MissionClaim | "intent-spent", MissionError | E>;
     /** Drops the member claim that one join made, if this owner still holds it. Else a no-op. */
     readonly release: <E = never>(
       owner: string,
@@ -183,11 +194,7 @@ const make = Effect.gen(function* () {
   );
 
   const join = Effect.fn("MissionClaims.join")(
-    function* <E>(
-      owner: string,
-      input: { readonly threadId: ThreadId; readonly missionId: string; readonly name: string },
-      access?: ThreadAccess<E>,
-    ) {
+    function* <E>(owner: string, input: JoinInput, access?: ThreadAccess<E>) {
       const claim = yield* threadCommands.withLock(
         input.threadId,
         Effect.gen(function* () {

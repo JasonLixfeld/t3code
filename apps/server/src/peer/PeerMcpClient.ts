@@ -92,6 +92,10 @@ const linkedEnvironmentsOffThere = new OrchestratorMcpFailure({
     "The linked environment has Linked environments turned off. Turn it on in its Settings → Labs.",
 });
 
+/** What a call fails with when the peer answers HTTP 401: it no longer accepts this link. */
+export const LINK_NOT_ACCEPTED =
+  "The linked environment no longer accepts this link. It may have been revoked there; link it again.";
+
 const stoppedAnswering = new OrchestratorMcpFailure({
   code: "orchestration_error",
   message: "The linked environment stopped answering.",
@@ -172,7 +176,7 @@ const make = Effect.gen(function* () {
           code: initialized.status === 401 ? "capability_denied" : "orchestration_error",
           message:
             initialized.status === 401
-              ? "The linked environment no longer accepts this link. It may have been revoked there; link it again."
+              ? LINK_NOT_ACCEPTED
               : `The linked environment refused to start an MCP session (HTTP ${initialized.status}).`,
         });
       }
@@ -244,8 +248,7 @@ const make = Effect.gen(function* () {
       if (response.status === 401) {
         return yield* new OrchestratorMcpFailure({
           code: "capability_denied",
-          message:
-            "The linked environment no longer accepts this link. It may have been revoked there; link it again.",
+          message: LINK_NOT_ACCEPTED,
         });
       }
       if (response.status === 403) return yield* linkedEnvironmentsOffThere;

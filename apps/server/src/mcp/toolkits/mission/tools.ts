@@ -16,13 +16,17 @@ const shownOnlyToLinks = (): boolean => {
   return scope?.client?.linked === true;
 };
 
-/** `join` needs threadId, missionId and name; `release` threadId, missionId and generation. */
+/**
+ * `join` needs threadId, missionId and name; `release` threadId, missionId and generation. A join
+ * may name its add with intentId. It answers with no claim when that add's claim was dropped.
+ */
 const MissionTagInput = Schema.Struct({
   kind: MissionClaimKind,
   threadId: Schema.optional(ThreadId),
   missionId: Schema.optional(MissionId),
   name: Schema.optional(MissionName),
   generation: Schema.optional(Schema.String),
+  intentId: Schema.optional(Schema.String),
 });
 
 export const MissionClaimResult = Schema.Struct({

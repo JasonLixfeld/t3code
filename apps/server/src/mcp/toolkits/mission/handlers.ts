@@ -28,18 +28,19 @@ export const layer = McpToolAccess.toLayer(MissionToolkit, {
         if (input.kind === "list") return yield* claims.list(owner);
         const threadId = yield* needs(input.threadId, "threadId");
         switch (input.kind) {
-          case "join":
-            return [
-              yield* claims.join(
-                owner,
-                {
-                  threadId,
-                  missionId: yield* needs(input.missionId, "missionId"),
-                  name: yield* needs(input.name, "name"),
-                },
-                mayChange,
-              ),
-            ];
+          case "join": {
+            const joined = yield* claims.join(
+              owner,
+              {
+                threadId,
+                missionId: yield* needs(input.missionId, "missionId"),
+                name: yield* needs(input.name, "name"),
+                intentId: input.intentId,
+              },
+              mayChange,
+            );
+            return joined === "intent-spent" ? [] : [joined];
+          }
           case "release":
             yield* claims.release(
               owner,

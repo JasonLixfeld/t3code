@@ -16,6 +16,7 @@ import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecuto
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as MissionClaims from "./MissionClaims.ts";
 import * as MissionStore from "./MissionStore.ts";
+import type { MissionClaim } from "./MissionStore.ts";
 
 const threadId = ThreadId.make("thread:member");
 
@@ -94,6 +95,11 @@ const onMachine = <A, E>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 const join = (missionId: string) => ({ threadId, missionId, name: missionId.toUpperCase() });
+/** The claim a join made, in a test where its add cannot have been spent. */
+const claimOf = (joined: MissionClaim | "intent-spent") => {
+  if (joined === "intent-spent") throw new Error("the add was already spent");
+  return joined;
+};
 
 it.effect("two leads joining one thread at once leave it in exactly one mission", () =>
   onMachine((claims, machine) =>
@@ -115,8 +121,8 @@ it.effect("two leads joining one thread at once leave it in exactly one mission"
 it.effect("joining again for the same mission and lead returns the claim it already made", () =>
   onMachine((claims, machine) =>
     Effect.gen(function* () {
-      const first = yield* claims.join("link:a", join("aaaa"));
-      const again = yield* claims.join("link:a", join("aaaa"));
+      const first = claimOf(yield* claims.join("link:a", join("aaaa")));
+      const again = claimOf(yield* claims.join("link:a", join("aaaa")));
       assert.equal(again.generation, first.generation);
       assert.deepEqual(machine.tags, ["mission:aaaa:AAAA"]);
     }),
@@ -126,9 +132,9 @@ it.effect("joining again for the same mission and lead returns the claim it alre
 it.effect("a release that arrives late does not drop the claim a later join made", () =>
   onMachine((claims, machine) =>
     Effect.gen(function* () {
-      const first = yield* claims.join("link:a", join("aaaa"));
+      const first = claimOf(yield* claims.join("link:a", join("aaaa")));
       yield* claims.leaveHere(threadId);
-      const second = yield* claims.join("link:a", join("aaaa"));
+      const second = claimOf(yield* claims.join("link:a", join("aaaa")));
       yield* claims.release("link:a", {
         threadId,
         missionId: "aaaa",
@@ -149,6 +155,21 @@ it.effect("a release that arrives late does not drop the claim a later join made
       });
       assert.deepEqual(yield* claims.list("link:a"), []);
       assert.deepEqual(machine.tags, ["mission-was:aaaa:AAAA"]);
+    }),
+  ),
+);
+
+it.effect("leaving spends every add that stood behind the claim, and only those", () =>
+  onMachine((claims) =>
+    Effect.gen(function* () {
+      const add = (intentId: string) => claims.join("link:a", { ...join("aaaa"), intentId });
+      const first = yield* add("one");
+      // A second add of the thread while it is in takes the same claim over.
+      assert.deepEqual(yield* add("two"), first);
+      yield* claims.leaveHere(threadId);
+      assert.deepEqual([yield* add("one"), yield* add("two")], ["intent-spent", "intent-spent"]);
+      assert.deepEqual(yield* claims.list("link:a"), []);
+      assert.notEqual(yield* add("three"), "intent-spent");
     }),
   ),
 );

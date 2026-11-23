@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Context from "effect/Context";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -91,6 +92,7 @@ type ClaimCall =
       readonly threadId: ThreadId;
       readonly missionId: string;
       readonly name: string;
+      readonly intentId: string;
     }
   | {
       readonly kind: "release";
@@ -128,6 +130,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const links = yield* PeerLinks.PeerLinks;
   const peers = yield* PeerMcpClient.PeerMcpClient;
+  const random = yield* SecureRandom.SecureRandom;
   const here = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
   const background = yield* Effect.scope;
   // One call at a time per machine, so what is remembered of it follows the order of its answers.
@@ -135,6 +138,9 @@ const make = Effect.gen(function* () {
   // Empty after a restart: a machine counts as away until it answers again.
   const answering = yield* Ref.make<ReadonlySet<EnvironmentId>>(new Set());
   const watchers = yield* Ref.make(0);
+  // The adds whose first join is on its way now. Their rows exist already, and are not shown as
+  // pending until that call ends without an answer.
+  const sending = yield* Ref.make<ReadonlySet<string>>(new Set());
 
   const setAnswering = (environmentId: EnvironmentId, answers: boolean) =>
     Ref.update(answering, (current) => {
@@ -228,10 +234,15 @@ const make = Effect.gen(function* () {
   });
 
   const waiting = Effect.all({ releases: store.pendingReleases, adds: store.pendingAdds });
+  const shown = Effect.gen(function* () {
+    const { releases, adds } = yield* waiting;
+    const underWay = yield* Ref.get(sending);
+    return { releases, adds: adds.filter((add) => !underWay.has(add.intentId)) };
+  });
 
   const snapshot = Effect.gen(function* () {
     const held = yield* machines;
-    const owed = yield* waiting;
+    const owed = yield* shown;
     return {
       missions: yield* Effect.forEach(yield* store.missions, (mission) =>
         missionView(mission, held, owed),
@@ -259,6 +270,7 @@ const make = Effect.gen(function* () {
     yield* PubSub.publish(views, next);
     return next;
   }).pipe(publishing.withPermits(1));
+  const storeChanged = PubSub.publish(store.changes, undefined);
   const storeChanges = yield* PubSub.subscribe(store.changes);
   yield* Stream.fromSubscription(storeChanges).pipe(
     Stream.runForEach(() => publish),
@@ -298,8 +310,10 @@ const make = Effect.gen(function* () {
   ): Effect.fn.Return<ReadonlyArray<MissionClaim>, MissionError | Unreachable> {
     if (environmentId === here) {
       switch (call.kind) {
-        case "join":
-          return [yield* claims.join(here, call)];
+        case "join": {
+          const joined = yield* claims.join(here, call);
+          return joined === "intent-spent" ? [] : [joined];
+        }
         case "release":
           yield* claims.release(here, call);
           return [];
@@ -323,9 +337,11 @@ const make = Effect.gen(function* () {
         success: MissionClaimResult,
       })
       .pipe(Effect.timeoutOption(MEMBER_CALL_DEADLINE), Effect.result);
-    // Transport and link failures say nothing about what happened there; refusals do.
+    // Transport failures, and a peer that no longer accepts the link, say nothing about what
+    // happened there. A refusal from the tool does.
     const unreachable = Result.isFailure(answered)
-      ? answered.failure.code === "orchestration_error"
+      ? answered.failure.code === "orchestration_error" ||
+        answered.failure.message === PeerMcpClient.LINK_NOT_ACCEPTED
         ? answered.failure.message
         : undefined
       : Option.isNone(answered.success)
@@ -352,22 +368,24 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Call only under the machine's lock. A claim settles the add. A join is safe to send again:
-   * the member's machine answers a second one with the claim the first one made.
+   * Call only under the machine's lock. Any answer settles the add: the claim it made, or no
+   * claim when the thread has left since, which spends the add there. A join is safe to send
+   * again, because every copy names the same add and gets the one claim that add made.
    */
   const sendJoin = Effect.fn("Missions.sendJoin")(function* (
     mission: MissionRecord,
-    member: ScopedThreadRef,
+    add: Omit<PendingAdd, "refusal">,
   ) {
-    const [claim] = yield* onMember(member.environmentId, {
+    const [claim] = yield* onMember(add.environmentId, {
       kind: "join",
-      threadId: member.threadId,
+      threadId: add.threadId,
       missionId: mission.missionId,
       name: mission.name,
+      intentId: add.intentId,
     });
-    if (claim === undefined) return yield* fail("The thread's machine answered with no claim.");
-    yield* store.clearPendingAdd(member);
-    if (member.environmentId !== here) yield* store.rememberClaim(member.environmentId, claim);
+    // This machine's own threads have no pending row, and their claims are read, not remembered.
+    if (add.environmentId === here) return;
+    yield* claim === undefined ? store.clearPendingAdd(add) : store.settleAdd(add, claim);
   });
 
   const refreshMachine = (environmentId: EnvironmentId, discover: boolean) =>
@@ -453,7 +471,7 @@ const make = Effect.gen(function* () {
     readonly leadThreadId: ThreadId;
   }) {
     const mission = yield* claims.create(here, input);
-    return yield* missionView(mission, yield* machines, yield* waiting);
+    return yield* missionView(mission, yield* machines, yield* shown);
   });
 
   const addMember = Effect.fn("Missions.addMember")(function* (input: {
@@ -464,26 +482,44 @@ const make = Effect.gen(function* () {
     const { environmentId } = input.member;
     // A link this machine cannot use refuses the add at once, before anything waits on it.
     if (environmentId !== here) yield* linkTo(environmentId);
-    yield* machineLocks.withLock(
-      environmentId,
-      Effect.gen(function* () {
-        // A release of this thread that still waits is finished first. The join then makes a new
-        // claim, which that release cannot match if an earlier copy of it arrives late.
-        for (const release of yield* store.pendingReleases) {
-          if (memberKey(release) === memberKey(input.member)) yield* sendRelease(release);
-        }
-        yield* sendJoin(mission, input.member);
-      }).pipe(
-        Effect.catchTags({
-          // Nobody knows whether the join landed. The add waits, and is sent again, until the
-          // thread's machine says what became of it.
-          MissionMemberUnreachable: () =>
-            store
-              .setPendingAdd({ ...input.member, missionId: mission.missionId, refusal: null })
-              .pipe(Effect.andThen(refresh)),
-        }),
-      ),
-    );
+    const add = {
+      ...input.member,
+      missionId: mission.missionId,
+      intentId: yield* random.uuidV4().pipe(Effect.orDie),
+      refusal: null,
+    };
+    const setSending = (isSending: boolean) =>
+      Ref.update(sending, (current) => {
+        const next = new Set(current);
+        if (isSending) next.add(add.intentId);
+        else next.delete(add.intentId);
+        return next;
+      });
+    yield* setSending(true);
+    yield* machineLocks
+      .withLock(
+        environmentId,
+        Effect.gen(function* () {
+          // Written before anything is sent. If this call is cut off, or the server stops, the
+          // add is still there to send again. This machine's own threads need none.
+          if (environmentId !== here) yield* store.setPendingAdd(add);
+          // A release of this thread that still waits is finished first. The join then makes a
+          // new claim, which that release cannot match if an earlier copy of it arrives late.
+          for (const release of yield* store.pendingReleases) {
+            if (memberKey(release) === memberKey(input.member)) yield* sendRelease(release);
+          }
+          yield* sendJoin(mission, add);
+        }).pipe(
+          Effect.catchTags({
+            // Nobody knows whether the join landed. The add stays, and is sent again, until the
+            // thread's machine says what became of it.
+            MissionMemberUnreachable: () => refresh,
+            MissionError: (error) =>
+              store.clearPendingAdd(add).pipe(Effect.andThen(Effect.fail(error))),
+          }),
+        ),
+      )
+      .pipe(Effect.ensuring(setSending(false).pipe(Effect.andThen(storeChanged))));
   });
 
   const releaseMember = Effect.fn("Missions.releaseMember")(function* (input: {
@@ -533,10 +569,10 @@ const make = Effect.gen(function* () {
             memberKey(owed) === memberKey(input.member) && owed.missionId === mission.missionId,
         );
         if (!waits) return yield* fail("This thread is not waiting on its machine.");
-        // Nothing is sent, and the machine leaves the sweep if it owes nothing else. A claim it
-        // still holds, or a join that lands there later, is then invisible to this lead. That
-        // is accepted: Leave mission on that machine frees the thread.
-        yield* store.forgetThread(input.member);
+        // Nothing is sent, and only this Mission's rows for the thread go. A claim the machine
+        // still holds, or a join that lands there later, is real: it shows again whenever that
+        // machine is swept, and Leave mission there frees the thread.
+        yield* store.forgetThread({ ...input.member, missionId: mission.missionId });
       }),
     );
   });

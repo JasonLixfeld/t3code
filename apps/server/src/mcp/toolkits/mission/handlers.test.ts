@@ -68,12 +68,14 @@ const mcpClient = McpSchema.McpServerClient.of({
 const callOnce = (
   scope: McpInvocationContext.McpInvocationScope,
   /** Built from the claim `before` made, when the call has to name it. */
-  args: Record<string, unknown> | ((before: MissionClaim) => Record<string, unknown>),
+  args:
+    | Record<string, unknown>
+    | ((before: MissionClaim | "intent-spent" | undefined) => Record<string, unknown>),
   options: {
     readonly startedByLink?: boolean;
     readonly before?: (
       claims: MissionClaims.MissionClaims["Service"],
-    ) => Effect.Effect<MissionClaim, MissionError>;
+    ) => Effect.Effect<MissionClaim | "intent-spent", MissionError>;
     /** Tag writes fail while `before` runs, so it leaves a thread whose tags are behind its claim. */
     readonly tagWritesFailBefore?: boolean;
     /** The user raises the thread to full access right after the tool's first look at it. */
@@ -131,7 +133,7 @@ const callOnce = (
       Effect.flatMap((server) =>
         server.callTool({
           name: "t3_mission_tag",
-          arguments: typeof args === "function" ? args(before!) : args,
+          arguments: typeof args === "function" ? args(before) : args,
         }),
       ),
       Effect.provideService(McpSchema.McpServerClient, mcpClient),
@@ -191,7 +193,7 @@ it.effect("a fenced link that started a thread cannot strip another lead's claim
         kind: "release",
         threadId: userThread,
         missionId: SHIP,
-        generation: held.generation,
+        generation: typeof held === "object" ? held.generation : "none",
       }),
       {
         startedByLink: true,

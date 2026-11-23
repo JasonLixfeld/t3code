@@ -155,6 +155,7 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
           Layer.mock(ServerEnvironment.ServerEnvironment)({
             getEnvironmentId: Effect.succeed(DESK),
           }),
+          NodeCrypto.layer,
         ),
       ),
     );
