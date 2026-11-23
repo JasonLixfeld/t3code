@@ -55,6 +55,20 @@ const migrations = Migrator.fromRecord({
       )
     `;
   }),
+  "2_LastKnown": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE known_machines (environment_id TEXT PRIMARY KEY)`;
+    yield* sql`
+      CREATE TABLE known_claims (
+        environment_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        mission_id TEXT NOT NULL,
+        mission_name TEXT NOT NULL,
+        generation TEXT NOT NULL,
+        PRIMARY KEY (environment_id, thread_id)
+      )
+    `;
+  }),
 });
 
 interface MissionRow {
@@ -70,6 +84,9 @@ interface ClaimRow {
   readonly role: MissionClaim["role"];
   readonly owner: string;
   readonly generation: string;
+}
+interface KnownClaimRow extends Omit<ClaimRow, "role" | "owner"> {
+  readonly environment_id: string;
 }
 interface PendingReleaseRow {
   readonly environment_id: string;
@@ -118,7 +135,7 @@ const toMission = (row: MissionRow): MissionRecord => ({
   createdAt: row.created_at,
 });
 
-const toClaim = (row: ClaimRow): MissionClaim => ({
+const toClaim = (row: Omit<ClaimRow, "owner">): MissionClaim => ({
   threadId: ThreadId.make(row.thread_id),
   missionId: row.mission_id,
   name: row.mission_name,
@@ -168,6 +185,22 @@ export class MissionStore extends Context.Service<
     readonly clearPendingRelease: (
       release: Omit<PendingRelease, "missionId">,
     ) => Effect.Effect<void>;
+    /**
+     * The linked machines this lead asks for claims, each with what it last said it holds for
+     * this lead. A copy to show while a machine is away: only that machine's answer is the truth.
+     */
+    readonly knownMachines: Effect.Effect<ReadonlyMap<EnvironmentId, ReadonlyArray<MissionClaim>>>;
+    readonly askMachine: (environmentId: EnvironmentId) => Effect.Effect<void>;
+    /** Replaces what a machine last said. One that holds nothing and owes no release is forgotten. */
+    readonly setKnownClaims: (
+      environmentId: EnvironmentId,
+      claims: ReadonlyArray<MissionClaim>,
+    ) => Effect.Effect<void>;
+    readonly rememberClaim: (
+      environmentId: EnvironmentId,
+      claim: MissionClaim,
+    ) => Effect.Effect<void>;
+    readonly forgetClaim: (release: Omit<PendingRelease, "missionId">) => Effect.Effect<void>;
   }
 >()("t3/missions/MissionStore") {}
 
@@ -349,6 +382,70 @@ const make = Effect.gen(function* () {
         AND generation = ${pending.generation}
     `.pipe(Effect.andThen(changed), Effect.asVoid, Effect.orDie);
 
+  const knownMachines = Effect.gen(function* () {
+    const machines = yield* sql<{ readonly environment_id: string }>`
+      SELECT environment_id FROM known_machines ORDER BY rowid
+    `;
+    const held = yield* sql<KnownClaimRow>`
+      SELECT environment_id, thread_id, mission_id, mission_name, generation FROM known_claims
+      ORDER BY rowid
+    `;
+    return new Map(
+      machines.map((machine) => [
+        EnvironmentId.make(machine.environment_id),
+        held
+          .filter((row) => row.environment_id === machine.environment_id)
+          .map((row) => toClaim({ ...row, role: "member" })),
+      ]),
+    );
+  }).pipe(Effect.orDie);
+
+  const askMachine = (environmentId: EnvironmentId) =>
+    sql`INSERT OR IGNORE INTO known_machines (environment_id) VALUES (${environmentId})`.pipe(
+      Effect.asVoid,
+      Effect.orDie,
+    );
+
+  const insertKnownClaim = (environmentId: EnvironmentId, held: MissionClaim) =>
+    sql`
+      INSERT OR REPLACE INTO known_claims
+        (environment_id, thread_id, mission_id, mission_name, generation)
+      VALUES (${environmentId}, ${held.threadId}, ${held.missionId}, ${held.name},
+        ${held.generation})
+    `;
+
+  const setKnownClaims = Effect.fn("MissionStore.setKnownClaims")(function* (
+    environmentId: EnvironmentId,
+    claims: ReadonlyArray<MissionClaim>,
+  ) {
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`DELETE FROM known_claims WHERE environment_id = ${environmentId}`;
+        yield* Effect.forEach(claims, (held) => insertKnownClaim(environmentId, held));
+        if (claims.length > 0) return;
+        yield* sql`
+          DELETE FROM known_machines WHERE environment_id = ${environmentId} AND NOT EXISTS
+            (SELECT 1 FROM pending_releases WHERE environment_id = ${environmentId})
+        `;
+      }),
+    );
+    yield* changed;
+  }, Effect.orDie);
+
+  const rememberClaim = (environmentId: EnvironmentId, held: MissionClaim) =>
+    insertKnownClaim(environmentId, held).pipe(
+      Effect.andThen(changed),
+      Effect.asVoid,
+      Effect.orDie,
+    );
+
+  const forgetClaim = (release: Omit<PendingRelease, "missionId">) =>
+    sql`
+      DELETE FROM known_claims
+      WHERE environment_id = ${release.environmentId} AND thread_id = ${release.threadId}
+        AND generation = ${release.generation}
+    `.pipe(Effect.andThen(changed), Effect.asVoid, Effect.orDie);
+
   return MissionStore.of({
     changes,
     missions,
@@ -364,6 +461,11 @@ const make = Effect.gen(function* () {
     pendingReleases,
     addPendingRelease,
     clearPendingRelease,
+    knownMachines,
+    askMachine,
+    setKnownClaims,
+    rememberClaim,
+    forgetClaim,
   });
 });
 

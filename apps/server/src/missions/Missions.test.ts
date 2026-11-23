@@ -146,6 +146,8 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   });
   return {
     tags: (thread: ScopedThreadRef) => tags.get(keyOf(thread)),
+    /** The thread's own user deletes it. */
+    remove: (thread: ScopedThreadRef) => tags.delete(keyOf(thread)),
     laptop,
     /** The next calls this lead starts on the laptop, waiting for each. */
     nextCalls: (count: number) => Queue.takeN(laptop.started!, count),
@@ -159,9 +161,10 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   };
 };
 
+/** Runs each session on a freshly started lead, over the same files and the same laptop. */
 const withMissions = <A, E>(
   world: ReturnType<typeof makeWorld>,
-  use: Effect.Effect<A, E, Missions.Missions | Scope.Scope>,
+  ...sessions: ReadonlyArray<Effect.Effect<A, E, Missions.Missions | Scope.Scope>>
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -179,9 +182,11 @@ const withMissions = <A, E>(
       yield* Layer.build(claimsOn(LAPTOP)),
       MissionClaims.MissionClaims,
     );
-    return yield* Effect.provide(
-      use,
-      Missions.layer.pipe(Layer.provide(Layer.merge(claimsOn(HERE), world.layer))),
+    const lead = Missions.layer.pipe(
+      Layer.provide(Layer.mergeAll(claimsOn(HERE), world.threadsOn(HERE), world.layer)),
+    );
+    return yield* Effect.forEach(sessions, (session) =>
+      Effect.scoped(Effect.provide(session, lead)),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
@@ -478,62 +483,109 @@ it.effect(
   },
 );
 
+it.effect("a thread added again keeps its claim when the release sent before arrives late", () => {
+  const world = makeWorld([lead, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const mission = yield* createOne;
+      const member = { missionId: mission.missionId, member: laptopMember };
+      yield* missions.addMember(member);
+      const [first] = yield* world.laptop.claims!.list(LEAD_ON_LAPTOP);
+      world.laptop.mode = "hanging";
+      const releasing = yield* Effect.forkChild(missions.releaseMember(member));
+      yield* TestClock.adjust(Missions.MEMBER_CALL_DEADLINE);
+      yield* Fiber.join(releasing);
+      // The release, and the retry that follows it at once and hangs as well. The retry at the
+      // next interval is refused a connection, so the laptop still holds the claim.
+      world.laptop.mode = "offline";
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      assert.deepEqual(yield* world.nextCalls(4), ["join", "release", "release", "release"]);
+      assert.deepEqual(yield* world.laptop.claims!.list(LEAD_ON_LAPTOP), [first!]);
+      assert.equal(stateOf(yield* listed, laptopMember), "release-pending");
+
+      world.laptop.mode = "up";
+      yield* missions.addMember(member);
+      // Only now does the release that timed out reach the laptop.
+      yield* world.laptop.claims!.release(LEAD_ON_LAPTOP, {
+        threadId: laptopMember.threadId,
+        missionId: mission.missionId,
+        generation: first!.generation,
+      });
+      const [again] = yield* world.laptop.claims!.list(LEAD_ON_LAPTOP);
+      assert.notEqual(again?.generation, first!.generation);
+      assert.deepEqual(world.tags(laptopMember), [TAG]);
+      assert.equal(stateOf(yield* listed, laptopMember), "active");
+    }),
+  );
+});
+
 it.effect(
-  "a thread added again stays a member, whatever becomes of the release sent before",
+  "after a restart, an offline machine's members are still listed and can be released",
   () => {
     const world = makeWorld([lead, laptopMember]);
+    const member = { missionId: "0123456789ab", member: laptopMember };
     return withMissions(
       world,
       Effect.gen(function* () {
-        const missions = yield* Missions.Missions;
-        yield* openSidebar;
-        const mission = yield* createOne;
-        const member = { missionId: mission.missionId, member: laptopMember };
-        yield* missions.addMember(member);
-        const [first] = yield* world.laptop.claims!.list(LEAD_ON_LAPTOP);
+        yield* createOne;
+        yield* (yield* Missions.Missions).addMember(member);
         world.laptop.mode = "offline";
+      }),
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const until = yield* openSidebar;
+        assert.equal(stateOf(yield* listed, laptopMember), "offline");
         yield* missions.releaseMember(member);
-        // The release, then the check that follows it at once.
-        assert.deepEqual(yield* world.nextCalls(3), ["join", "release", "release"]);
         assert.equal(stateOf(yield* listed, laptopMember), "release-pending");
 
-        // Added again before the laptop heard of the release: the release is taken back.
         world.laptop.mode = "up";
-        yield* missions.addMember(member);
         yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
-        assert.deepEqual(yield* world.nextCalls(2), ["join", "list"]);
-        assert.equal(stateOf(yield* listed, laptopMember), "active");
-
-        // The laptop's user frees the thread and the lead adds it once more. Only then does the
-        // release sent at the start arrive.
-        yield* world.laptop.claims!.leaveHere(laptopMember.threadId);
-        yield* missions.addMember(member);
-        yield* world.laptop.claims!.release(LEAD_ON_LAPTOP, {
-          threadId: laptopMember.threadId,
-          missionId: mission.missionId,
-          generation: first!.generation,
-        });
-        assert.equal((yield* world.laptop.claims!.list(LEAD_ON_LAPTOP)).length, 1);
-        assert.deepEqual(world.tags(laptopMember), [TAG]);
-        assert.equal(stateOf(yield* listed, laptopMember), "active");
+        yield* until((snapshot) => stateOf(snapshot, laptopMember) === undefined);
+        assert.deepEqual(yield* world.laptop.claims!.list(LEAD_ON_LAPTOP), []);
       }),
     );
   },
 );
 
-it.effect("many watching clients share one sweep, at the start and on each interval", () => {
-  const world = makeWorld([lead]);
+it.effect("a mission whose lead thread was deleted stays, and its members can be released", () => {
+  const world = makeWorld([lead, localMember]);
   return withMissions(
     world,
     Effect.gen(function* () {
-      yield* createOne;
+      const missions = yield* Missions.Missions;
+      const mission = yield* createOne;
+      yield* missions.addMember({ missionId: mission.missionId, member: localMember });
+      world.remove(lead);
+      assert.deepEqual(membersOf((yield* listed).missions[0]), [
+        ["env-here/lead", "deleted"],
+        ["env-here/local", "active"],
+      ]);
+      yield* missions.releaseMember({ missionId: mission.missionId, member: localMember });
+      assert.deepEqual(world.tags(localMember), [WAS_TAG]);
+      assert.deepEqual(membersOf((yield* listed).missions[0]), [["env-here/lead", "deleted"]]);
+    }),
+  );
+});
+
+it.effect("many watching clients share one sweep, at the start and on each interval", () => {
+  const world = makeWorld([lead, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const mission = yield* createOne;
+      yield* (yield* Missions.Missions).addMember({
+        missionId: mission.missionId,
+        member: laptopMember,
+      });
       yield* Effect.forEach([1, 2, 3, 4, 5], () => openSidebar, { concurrency: "unbounded" });
-      assert.deepEqual(yield* world.nextCalls(1), ["list"]);
+      assert.deepEqual(yield* world.nextCalls(2), ["join", "list"]);
       yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
       assert.deepEqual(yield* world.nextCalls(1), ["list"]);
       yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
       assert.deepEqual(yield* world.nextCalls(1), ["list"]);
-      assert.deepEqual(world.laptop.calls, ["list", "list", "list"]);
+      assert.deepEqual(world.laptop.calls, ["join", "list", "list", "list"]);
     }),
   );
 });

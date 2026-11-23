@@ -61,14 +61,16 @@ describe("buildMissionMenuItems", () => {
       disabled: true,
       detail: "No link from Desk",
     });
-    const [start, add] = buildMissionMenuItems(
-      [{ environmentId: DESK, tags: ["mission:abc:Other"] }],
+    // The claim its own machine holds decides, not a tag the thread carries.
+    const held = buildMissionMenuItems(
+      [{ environmentId: DESK, id: ThreadId.make("held") }],
       hosts,
       label,
       allowed,
     );
-    expect([start, add].map((item) => [item!.id, item!.disabled, item!.detail])).toEqual([
+    expect(held.map((item) => [item.id, item.disabled, item.detail])).toEqual([
       ["mission-start", true, "In a mission"],
+      ["mission-leave", false, undefined],
       ["mission-add", true, "In a mission"],
     ]);
   });

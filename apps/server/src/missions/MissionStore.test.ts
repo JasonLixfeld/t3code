@@ -58,7 +58,10 @@ it.effect("keeps its own migration history and reopens without migrating again",
       );
       assert.deepEqual(
         recorded.map((row) => [row.migration_id, row.name]),
-        [[1, "Missions"]],
+        [
+          [1, "Missions"],
+          [2, "LastKnown"],
+        ],
       );
     }),
   ),

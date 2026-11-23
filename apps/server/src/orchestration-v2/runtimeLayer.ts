@@ -330,7 +330,8 @@ const layerWorkflowsProvided = WorkflowRuntime.layer.pipe(
   Layer.provide(PeerMcpClient.layer.pipe(Layer.provideMerge(PeerLinks.layer))),
 );
 const layerMissionsProvided = Missions.layer.pipe(
-  Layer.provide(MissionClaims.layerLive.pipe(Layer.provide(layerThreadManagementProvided))),
+  Layer.provide(MissionClaims.layerLive),
+  Layer.provide(layerThreadManagementProvided),
   Layer.provide(PeerMcpClient.layer.pipe(Layer.provideMerge(PeerLinks.layer))),
 );
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(

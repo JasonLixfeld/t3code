@@ -11,8 +11,9 @@ export const MissionMember = Schema.Struct({
    * `offline`: the member's machine does not answer, so this is what it last said.
    * `release-pending`: released here while the member's machine was unreachable; the lead finishes
    * it when that machine answers again.
+   * `deleted`: the lead thread no longer exists. The Mission and its members stay.
    */
-  state: Schema.Literals(["active", "offline", "release-pending"]),
+  state: Schema.Literals(["active", "offline", "release-pending", "deleted"]),
 });
 export type MissionMember = typeof MissionMember.Type;
 
@@ -97,7 +98,3 @@ export const missionWasTag = (missionId: string, name: string) =>
 /** Mission tags mirror claims, so only the Missions code may write them. */
 export const isMissionTag = (tag: string) =>
   tag.startsWith(MISSION_TAG_PREFIX) || tag.startsWith(MISSION_WAS_TAG_PREFIX);
-
-/** The Mission a thread's tags say it belongs to, if any. */
-export const missionTagOf = (tags: ReadonlyArray<string> | undefined) =>
-  tags?.find((tag) => tag.startsWith(MISSION_TAG_PREFIX));

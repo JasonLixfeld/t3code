@@ -73,18 +73,26 @@ const callOnce = (
     readonly before?: (
       claims: MissionClaims.MissionClaims["Service"],
     ) => Effect.Effect<MissionClaim, MissionError>;
+    /** Tag writes fail while `before` runs, so it leaves a thread whose tags are behind its claim. */
+    readonly tagWritesFailBefore?: boolean;
+    /** The user raises the thread to full access right after the tool's first look at it. */
+    readonly modeRisesAfterFirstLook?: boolean;
   } = {},
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-mission-tool-" });
     const tags: Array<string> = [];
+    let tagWritesFail = options.tagWritesFailBefore === true;
+    let runtimeMode: "auto" | "full-access" = "auto";
     const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
       getThreadShell: (threadId) =>
-        Effect.sync(() =>
-          threadId === userThread || threadId === agentHere.thread.threadId
+        Effect.sync(() => {
+          const modeNow = runtimeMode;
+          if (options.modeRisesAfterFirstLook === true) runtimeMode = "full-access";
+          return threadId === userThread || threadId === agentHere.thread.threadId
             ? {
-                ...liveThreadShell(threadId, { runtimeMode: "auto" }),
+                ...liveThreadShell(threadId, { runtimeMode: modeNow }),
                 ...(options.startedByLink === true
                   ? {
                       linkOrigin: {
@@ -96,10 +104,11 @@ const callOnce = (
                   : {}),
                 tags: [...tags],
               }
-            : null,
-        ),
+            : null;
+        }),
       dispatch: (command) =>
         Effect.sync(() => {
+          if (tagWritesFail) throw new Error("disk full");
           if (command.type === "thread.tag.set") {
             if (command.tagged) tags.push(command.tag);
             else tags.splice(tags.indexOf(command.tag), 1);
@@ -108,16 +117,15 @@ const callOnce = (
         }),
     });
     const machine = Layer.merge(threads, NodeCrypto.layer);
-    const claims = Context.get(
-      yield* Layer.build(
-        MissionClaims.layer.pipe(
-          Layer.provide(MissionStore.layerFromPath(`${directory}/missions.sqlite`)),
-          Layer.provide(machine),
-        ),
+    const member = yield* Layer.build(
+      MissionClaims.layer.pipe(
+        Layer.provideMerge(MissionStore.layerFromPath(`${directory}/missions.sqlite`)),
+        Layer.provide(machine),
       ),
-      MissionClaims.MissionClaims,
     );
+    const claims = Context.get(member, MissionClaims.MissionClaims);
     const before = options.before === undefined ? undefined : yield* options.before(claims);
+    tagWritesFail = false;
     const { content } = yield* McpServer.McpServer.pipe(
       Effect.flatMap((server) =>
         server.callTool({
@@ -140,7 +148,7 @@ const callOnce = (
       answer: content.map((part) => (part.type === "text" ? part.text : "")).join(""),
       tags,
       // Read before the machine's database closes.
-      otherLeadClaims: yield* claims.list("env-other-lead"),
+      held: yield* Context.get(member, MissionStore.MissionStore).allClaims,
     };
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
@@ -176,7 +184,7 @@ it.effect("a link below full access is fenced off the user's threads", () =>
 
 it.effect("a fenced link that started a thread cannot strip another lead's claim", () =>
   Effect.gen(function* () {
-    const { tags, otherLeadClaims } = yield* callOnce(
+    const { tags, held } = yield* callOnce(
       linkedClient("auto"),
       (held) => ({
         kind: "release",
@@ -191,7 +199,36 @@ it.effect("a fenced link that started a thread cannot strip another lead's claim
       },
     );
     assert.deepEqual(tags, [`mission:${SHIP}:Ship`]);
-    assert.equal(otherLeadClaims.length, 1);
+    assert.equal(held.length, 1);
+  }),
+);
+
+it.effect("a fenced link that lists its claims writes no tag on a thread it does not own", () =>
+  Effect.gen(function* () {
+    const { answer, tags, held } = yield* callOnce(
+      linkedClient("auto"),
+      { kind: "list" },
+      {
+        tagWritesFailBefore: true,
+        before: (claims) =>
+          claims.join("env-other-lead", { threadId: userThread, missionId: SHIP, name: "Ship" }),
+      },
+    );
+    assert.equal(answer, '{"claims":[]}');
+    assert.equal(held.length, 1);
+    assert.deepEqual(tags, []);
+  }),
+);
+
+it.effect("a join is refused when the thread's mode rose while it waited for the lock", () =>
+  Effect.gen(function* () {
+    const { answer, tags, held } = yield* callOnce(linkedClient("auto"), joinShip, {
+      startedByLink: true,
+      modeRisesAfterFirstLook: true,
+    });
+    assert.include(answer, "runtime_mode_escalation_denied");
+    assert.deepEqual(held, []);
+    assert.deepEqual(tags, []);
   }),
 );
 

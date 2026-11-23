@@ -197,7 +197,11 @@ function MemberRow(props: {
               ? gt("Release pending (machine offline)")
               : props.member.state === "offline"
                 ? gt("Last known (machine offline)")
-                : where}
+                : props.member.state === "deleted"
+                  ? gt("Lead deleted", {
+                      $context: "the thread that led a mission no longer exists",
+                    })
+                  : where}
           </span>
         </button>
         {props.member.role === "member" && props.member.state !== "release-pending" ? (

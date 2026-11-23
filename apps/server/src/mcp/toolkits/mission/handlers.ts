@@ -12,8 +12,8 @@ const needs = <A>(value: A | undefined, field: string) =>
     : Effect.succeed(value);
 
 // Only a linked environment's session can call it (see `shownOnlyToLinks`). `writesThreads`
-// holds a link below full access to the threads it started; a release then drops only a claim
-// its own caller holds.
+// holds a link below full access to the threads it started, and the claim code makes that check
+// again under the thread's lock. A release drops only a claim its own caller holds.
 export const layer = McpToolAccess.toLayer(MissionToolkit, {
   t3_mission_tag: McpToolAccess.writesThreads(
     (input) => [input.threadId],
@@ -21,6 +21,7 @@ export const layer = McpToolAccess.toLayer(MissionToolkit, {
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const claims = yield* MissionClaims;
+        const mayChange = yield* McpToolAccess.threadWriteAccess;
         // The owner comes from the authenticated caller, never from the input.
         const owner =
           scope.client === undefined ? scope.environmentId : linkOwner(scope.client.sessionId);
@@ -29,26 +30,36 @@ export const layer = McpToolAccess.toLayer(MissionToolkit, {
         switch (input.kind) {
           case "join":
             return [
-              yield* claims.join(owner, {
-                threadId,
-                missionId: yield* needs(input.missionId, "missionId"),
-                name: yield* needs(input.name, "name"),
-              }),
+              yield* claims.join(
+                owner,
+                {
+                  threadId,
+                  missionId: yield* needs(input.missionId, "missionId"),
+                  name: yield* needs(input.name, "name"),
+                },
+                mayChange,
+              ),
             ];
           case "release":
-            yield* claims.release(owner, {
-              threadId,
-              missionId: yield* needs(input.missionId, "missionId"),
-              generation: yield* needs(input.generation, "generation"),
-            });
+            yield* claims.release(
+              owner,
+              {
+                threadId,
+                missionId: yield* needs(input.missionId, "missionId"),
+                generation: yield* needs(input.generation, "generation"),
+              },
+              mayChange,
+            );
             return [];
         }
       }).pipe(
         Effect.map((claims) => ({ claims })),
-        Effect.mapError(
-          (error) =>
-            new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
-        ),
+        Effect.catchTags({
+          MissionError: (error) =>
+            Effect.fail(
+              new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+            ),
+        }),
       ),
   ),
 });

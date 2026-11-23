@@ -1,0 +1,195 @@
+import { NodeHttpServer } from "@effect/platform-node";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, it } from "@effect/vitest";
+import { EnvironmentId, type MissionsSnapshot, ThreadId } from "@t3tools/contracts";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as NetAddress from "effect/net/NetAddress";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
+
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
+import * as MissionHandlers from "../mcp/toolkits/mission/handlers.ts";
+import { MissionToolkit } from "../mcp/toolkits/mission/tools.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
+import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as MissionClaims from "./MissionClaims.ts";
+import * as MissionStore from "./MissionStore.ts";
+import * as Missions from "./Missions.ts";
+
+const DESK = EnvironmentId.make("env-desk");
+const LAPTOP = EnvironmentId.make("env-laptop");
+const LINK_TOKEN = "desk-link-token";
+const LINK_SESSION = "desk-link-session";
+const TAG = "mission:0123456789ab:One";
+
+/** One machine's threads: each id maps to the tags it carries. */
+const threadsWith = (tags: Map<string, Array<string>>) =>
+  Layer.mock(ThreadManagement.ThreadManagementService)({
+    getThreadShell: (threadId) =>
+      Effect.sync(() => {
+        const current = tags.get(threadId);
+        return current === undefined ? null : { ...liveThreadShell(threadId), tags: [...current] };
+      }),
+    dispatch: (command) =>
+      Effect.sync(() => {
+        if (command.type !== "thread.tag.set") throw new Error(`unexpected ${command.type}`);
+        const current = tags.get(command.threadId)!;
+        if (command.tagged) current.push(command.tag);
+        else current.splice(current.indexOf(command.tag), 1);
+        return {} as never;
+      }),
+  });
+
+/**
+ * Real on both machines: Missions, MissionClaims and MissionStore. Real between them: the peer
+ * MCP client, HTTP, and the laptop's `/mcp` transport with its tool registration, argument
+ * validation and thread access checks. Faked: each machine's threads, the link record and its
+ * token (`PeerLinks`), and who a bearer token is (`McpClientAuthenticator`).
+ */
+it.effect("join, list, release and leave go through the laptop's real /mcp", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-missions-mcp-" });
+    const deskTags = new Map([["lead", [] as Array<string>]]);
+    const laptopTags = new Map([
+      ["added", [] as Array<string>],
+      ["found", [] as Array<string>],
+    ]);
+    const claimsOn = (machine: string, tags: Map<string, Array<string>>) =>
+      MissionClaims.layer.pipe(
+        Layer.provideMerge(MissionStore.layerFromPath(`${directory}/${machine}.sqlite`)),
+        Layer.provide(Layer.merge(threadsWith(tags), NodeCrypto.layer)),
+      );
+
+    const laptopClaims = Context.get(
+      yield* Layer.build(claimsOn("laptop", laptopTags)),
+      MissionClaims.MissionClaims,
+    );
+    const settings = yield* Layer.build(ServerSettings.layerTest());
+    yield* Context.get(settings, ServerSettings.ServerSettingsService).updateSettings({
+      linkedEnvironmentsEnabled: true,
+    });
+    const laptopMcp = McpHttpServer.layerMcpTransport(
+      Layer.mergeAll(
+        McpHttpServer.toolkitRegistration(MissionToolkit, MissionHandlers.layer),
+        McpHttpServer.layerToolSearch,
+      ),
+    ).pipe(
+      Layer.provide(Layer.succeedContext(settings)),
+      Layer.provide(
+        Layer.mergeAll(
+          threadsWith(laptopTags),
+          NodeCrypto.layer,
+          Layer.succeed(MissionClaims.MissionClaims, laptopClaims),
+        ),
+      ),
+      Layer.provide(
+        Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+          resolve: () => Effect.undefined,
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(McpHttpServer.McpClientAuthenticator)({
+          authenticate: (request) =>
+            Effect.succeed(
+              request.headers.authorization === `Bearer ${LINK_TOKEN}`
+                ? {
+                    environmentId: LAPTOP,
+                    requestNamespace: `client:${LINK_SESSION}`,
+                    thread: undefined,
+                    client: {
+                      sessionId: LINK_SESSION,
+                      label: "T3 Code · Desk",
+                      access: "full-access" as const,
+                      linked: true,
+                    },
+                    capabilities: new Set(["orchestration" as const]),
+                    issuedAt: 0,
+                  }
+                : undefined,
+            ),
+        }),
+      ),
+    );
+    yield* HttpRouter.serve(laptopMcp, { disableListenLog: true, disableLogger: true }).pipe(
+      Layer.build,
+    );
+    const { address } = yield* HttpServer.HttpServer;
+    if (NetAddress.isUnixPathAddress(address)) return assert.fail("The test server has no port.");
+    const laptopUrl = (yield* Effect.fromResult(NetAddress.toUrl(address))).origin;
+
+    const link = { environmentId: LAPTOP, label: "Laptop", access: "full-access" };
+    const desk = Missions.layer.pipe(
+      Layer.provide(claimsOn("desk", deskTags)),
+      Layer.provide(threadsWith(deskTags)),
+      Layer.provide(PeerMcpClient.layer.pipe(Layer.provide(FetchHttpClient.layer))),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(PeerLinks.PeerLinks)({
+            enabled: Effect.succeed(true),
+            names: Effect.succeed([{ environmentId: LAPTOP, label: "Laptop" }]),
+            get: () => Effect.succeedSome(link as never),
+            resolve: () => Effect.succeed({ link, url: laptopUrl, token: LINK_TOKEN } as never),
+            recordOutcome: () => Effect.void,
+            recordExpiry: () => Effect.void,
+          }),
+          Layer.mock(ServerEnvironment.ServerEnvironment)({
+            getEnvironmentId: Effect.succeed(DESK),
+          }),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const membersWhen = (matches: (threadIds: ReadonlyArray<string>) => boolean) =>
+        missions.watch.pipe(
+          Stream.map((snapshot: MissionsSnapshot) =>
+            snapshot.missions[0]!.members.map((member) => member.ref.threadId as string),
+          ),
+          Stream.filter(matches),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+      const mission = yield* missions.create({
+        missionId: "0123456789ab",
+        name: "One",
+        leadThreadId: ThreadId.make("lead"),
+      });
+      const added = { environmentId: LAPTOP, threadId: ThreadId.make("added") };
+      const found = { environmentId: LAPTOP, threadId: ThreadId.make("found") };
+
+      yield* missions.addMember({ missionId: mission.missionId, member: added });
+      assert.deepEqual(laptopTags.get("added"), [TAG]);
+
+      // A claim this lead holds there but has not heard of: only `list` can show it.
+      yield* laptopClaims.join(MissionClaims.linkOwner(LINK_SESSION), {
+        threadId: found.threadId,
+        missionId: mission.missionId,
+        name: mission.name,
+      });
+      assert.deepEqual(yield* membersWhen((threadIds) => threadIds.includes("found")), [
+        "lead",
+        "added",
+        "found",
+      ]);
+
+      yield* missions.releaseMember({ missionId: mission.missionId, member: added });
+      assert.deepEqual(laptopTags.get("added"), ["mission-was:0123456789ab:One"]);
+
+      // The laptop's own user leaves the other thread; the lead hears of it when it lists again.
+      yield* laptopClaims.leaveHere(found.threadId);
+      assert.deepEqual(yield* membersWhen((threadIds) => !threadIds.includes("found")), ["lead"]);
+    }).pipe(Effect.provide(desk));
+  }).pipe(Effect.provide(Layer.merge(NodeHttpServer.layerTest, NodeServices.layer)), Effect.scoped),
+);

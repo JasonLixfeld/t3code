@@ -5,15 +5,18 @@ import {
   missionWasTag,
   MISSION_TAG_PREFIX,
   MISSION_WAS_TAG_PREFIX,
+  type OrchestrationV2ThreadShell,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import { DispatchModeLimit } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as MissionStore from "./MissionStore.ts";
 import type { MissionClaim, MissionRecord } from "./MissionStore.ts";
@@ -25,6 +28,15 @@ export const MissionClaimKind = Schema.Literals(["join", "release", "list"]);
  * asked. A member's machine knows a linked lead only by its session, never by an id it sends.
  */
 export const linkOwner = (sessionId: string) => `link:${sessionId}`;
+
+/** How often this machine writes again the mission tags that an earlier write left behind. */
+export const TAG_REPAIR_INTERVAL = Duration.minutes(1);
+
+/**
+ * Refuses a caller that may not change this thread. It runs under the thread's lock, just before
+ * the claim changes, because the thread's modes can rise while the call waits for that lock.
+ */
+export type ThreadAccess<E> = (thread: OrchestrationV2ThreadShell) => Effect.Effect<void, E>;
 
 const wasTagOf = (liveTag: string) => {
   const rest = liveTag.slice(MISSION_TAG_PREFIX.length);
@@ -54,7 +66,8 @@ const planMissionTags = (tags: ReadonlyArray<string>, claim: MissionClaim | unde
 
 /**
  * The claims on threads here, which no other machine can change. Every change to a thread's
- * claim, and the tag write that follows it, runs under that thread's one lock.
+ * claim, and the tag write that follows it, runs under that thread's one lock. The tags are this
+ * machine's own record of the claim, so it writes them itself, whoever asked for the change.
  */
 export class MissionClaims extends Context.Service<
   MissionClaims,
@@ -65,25 +78,24 @@ export class MissionClaims extends Context.Service<
       input: { readonly missionId: string; readonly name: string; readonly leadThreadId: ThreadId },
     ) => Effect.Effect<MissionRecord, MissionError>;
     /** Joining again into the same Mission for the same owner returns the claim it already has. */
-    readonly join: (
+    readonly join: <E = never>(
       owner: string,
       input: { readonly threadId: ThreadId; readonly missionId: string; readonly name: string },
-    ) => Effect.Effect<MissionClaim, MissionError>;
+      access?: ThreadAccess<E>,
+    ) => Effect.Effect<MissionClaim, MissionError | E>;
     /** Drops the member claim that one join made, if this owner still holds it. Else a no-op. */
-    readonly release: (
+    readonly release: <E = never>(
       owner: string,
       input: {
         readonly threadId: ThreadId;
         readonly missionId: string;
         readonly generation: string;
       },
-    ) => Effect.Effect<void>;
+      access?: ThreadAccess<E>,
+    ) => Effect.Effect<void, MissionError | E>;
     /** The local user frees a thread here from whichever Mission holds it. A lead thread stays. */
     readonly leaveHere: (threadId: ThreadId) => Effect.Effect<void, MissionError>;
-    /**
-     * The owner's claims here. Writes the tags of those threads again, and of every thread whose
-     * tags a failed write left behind its claim.
-     */
+    /** The owner's claims here. Reads only. */
     readonly list: (owner: string) => Effect.Effect<ReadonlyArray<MissionClaim>>;
   }
 >()("t3/missions/MissionClaims") {}
@@ -96,7 +108,10 @@ const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const locks = yield* KeyedLock.make<ThreadId>();
 
-  /** Call only while holding the thread's lock: it reads the claim it writes the tags for. */
+  /**
+   * Call only while holding the thread's lock: it reads the claim it writes the tags for. The
+   * caller's mode limit is dropped, because the claim change already passed its access check.
+   */
   const syncTags = Effect.fn("MissionClaims.syncTags")(
     function* (threadId: ThreadId) {
       const claim = yield* store.claim(threadId);
@@ -114,17 +129,32 @@ const make = Effect.gen(function* () {
       }
       yield* store.tagsSynced(threadId);
     },
+    Effect.provideService(DispatchModeLimit, undefined),
     Effect.catchCause((cause) =>
-      Effect.logWarning("A mission tag was not written; the next list writes it", cause),
+      Effect.logWarning("A mission tag was not written; this machine writes it again later", cause),
     ),
   );
 
-  const requireThread = Effect.fn("MissionClaims.requireThread")(function* (threadId: ThreadId) {
-    const shell = yield* threads
+  yield* Effect.sleep(TAG_REPAIR_INTERVAL).pipe(
+    Effect.andThen(store.unsyncedTags),
+    Effect.flatMap(
+      Effect.forEach((threadId) => locks.withLock(threadId, syncTags(threadId)), { discard: true }),
+    ),
+    Effect.catchCause((cause) => Effect.logWarning("Mission tags were not repaired", cause)),
+    Effect.forever,
+    Effect.forkScoped,
+  );
+
+  const readThread = (threadId: ThreadId) =>
+    threads
       .getThreadShell(threadId)
       .pipe(Effect.catch((error) => fail(`The thread could not be read: ${error.message}`)));
+
+  const requireThread = Effect.fn("MissionClaims.requireThread")(function* (threadId: ThreadId) {
+    const shell = yield* readThread(threadId);
     if (shell === null || shell.deletedAt !== null)
       return yield* fail("That thread was not found.");
+    return shell;
   });
 
   const generation = random.uuidV4().pipe(Effect.orDie);
@@ -149,11 +179,13 @@ const make = Effect.gen(function* () {
   );
 
   const join = Effect.fn("MissionClaims.join")(
-    function* (
+    function* <E>(
       owner: string,
       input: { readonly threadId: ThreadId; readonly missionId: string; readonly name: string },
+      access?: ThreadAccess<E>,
     ) {
-      yield* requireThread(input.threadId);
+      const shell = yield* requireThread(input.threadId);
+      if (access !== undefined) yield* access(shell);
       const claim = yield* store.join({ ...input, owner, generation: yield* generation });
       yield* syncTags(input.threadId);
       return claim;
@@ -162,14 +194,19 @@ const make = Effect.gen(function* () {
   );
 
   const release = Effect.fn("MissionClaims.release")(
-    function* (
+    function* <E>(
       owner: string,
       input: {
         readonly threadId: ThreadId;
         readonly missionId: string;
         readonly generation: string;
       },
+      access?: ThreadAccess<E>,
     ) {
+      if (access !== undefined) {
+        const shell = yield* readThread(input.threadId);
+        if (shell !== null && shell.deletedAt === null) yield* access(shell);
+      }
       yield* store.release({ ...input, owner });
       yield* syncTags(input.threadId);
     },
@@ -184,18 +221,7 @@ const make = Effect.gen(function* () {
     (effect, threadId) => locks.withLock(threadId, effect),
   );
 
-  const list = Effect.fn("MissionClaims.list")(function* (owner: string) {
-    const threadIds = new Set([
-      ...(yield* store.claimsOf(owner)).map((claim) => claim.threadId),
-      ...(yield* store.unsyncedTags),
-    ]);
-    yield* Effect.forEach(threadIds, (threadId) => locks.withLock(threadId, syncTags(threadId)), {
-      discard: true,
-    });
-    return yield* store.claimsOf(owner);
-  });
-
-  return MissionClaims.of({ create, join, release, leaveHere, list });
+  return MissionClaims.of({ create, join, release, leaveHere, list: store.claimsOf });
 });
 
 export const layer = Layer.effect(MissionClaims, make);

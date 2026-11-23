@@ -1,13 +1,15 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { type MissionError, missionTag, ThreadId, ThreadTag } from "@t3tools/contracts";
+import { missionTag, ThreadId, ThreadTag } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as MissionClaims from "./MissionClaims.ts";
@@ -18,8 +20,8 @@ const threadId = ThreadId.make("thread:member");
 interface Machine {
   readonly tags: Array<string>;
   failTags: boolean;
-  /** Runs once, right after `list` has read the owner's claims and before it takes a lock. */
-  afterClaimsRead: Effect.Effect<void, MissionError>;
+  /** Every tag write that landed, to wait on. */
+  readonly written: Queue.Queue<string>;
 }
 
 /** One machine's claims over one thread, whose tags `failTags` can stop being written. */
@@ -30,7 +32,11 @@ const onMachine = <A, E>(
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claims-" });
-    const machine: Machine = { tags: [], failTags: false, afterClaimsRead: Effect.void };
+    const machine: Machine = {
+      tags: [],
+      failTags: false,
+      written: yield* Queue.unbounded<string>(),
+    };
     const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
       getThreadShell: (id) =>
         Effect.yieldNow.pipe(
@@ -49,28 +55,12 @@ const onMachine = <A, E>(
           if (machine.failTags) return Effect.fail(new Error("disk full") as never);
           if (command.tagged) machine.tags.push(command.tag);
           else machine.tags.splice(machine.tags.indexOf(command.tag), 1);
-          return Effect.succeed({} as never);
+          return Effect.as(Queue.offer(machine.written, command.tag), {} as never);
         }),
     });
-    const store = Layer.effect(
-      MissionStore.MissionStore,
-      Effect.map(MissionStore.MissionStore, (real) =>
-        MissionStore.MissionStore.of({
-          ...real,
-          claimsOf: (owner) =>
-            real.claimsOf(owner).pipe(
-              Effect.tap(() => {
-                const landing = machine.afterClaimsRead;
-                machine.afterClaimsRead = Effect.void;
-                return Effect.ignore(landing);
-              }),
-            ),
-        }),
-      ),
-    ).pipe(Layer.provide(MissionStore.layerFromPath(path.join(directory, "missions.sqlite"))));
     const context = yield* Layer.build(
       MissionClaims.layer.pipe(
-        Layer.provide(store),
+        Layer.provide(MissionStore.layerFromPath(path.join(directory, "missions.sqlite"))),
         Layer.provide(Layer.merge(threads, NodeCrypto.layer)),
       ),
     );
@@ -137,33 +127,28 @@ it.effect("a release that arrives late does not drop the claim a later join made
   ),
 );
 
-it.effect("a leave that lands after list read the claims is not undone by list", () =>
-  onMachine((claims, machine) =>
-    Effect.gen(function* () {
-      yield* claims.join("link:a", join("aaaa"));
-      machine.afterClaimsRead = claims.leaveHere(threadId);
-      assert.deepEqual(yield* claims.list("link:a"), []);
-      assert.deepEqual(machine.tags, ["mission-was:aaaa:AAAA"]);
-    }),
-  ),
-);
-
-it.effect("a tag that fails to write is written by the next list, whoever asks", () =>
+it.effect("a tag that fails to write is written again by this machine, never by a list", () =>
   onMachine((claims, machine) =>
     Effect.gen(function* () {
       machine.failTags = true;
       yield* claims.join("link:a", join("aaaa"));
-      assert.deepEqual(machine.tags, []);
       machine.failTags = false;
-      assert.deepEqual(yield* claims.list("link:b"), []);
+      assert.equal((yield* claims.list("link:a")).length, 1);
+      assert.deepEqual(machine.tags, []);
+      yield* TestClock.adjust(MissionClaims.TAG_REPAIR_INTERVAL);
+      yield* Queue.take(machine.written);
       assert.deepEqual(machine.tags, ["mission:aaaa:AAAA"]);
 
       machine.failTags = true;
       yield* claims.leaveHere(threadId);
       assert.deepEqual(machine.tags, ["mission:aaaa:AAAA"]);
       machine.failTags = false;
-      yield* claims.list("link:b");
+      yield* TestClock.adjust(MissionClaims.TAG_REPAIR_INTERVAL);
       // The release mark lands before the live tag goes.
+      assert.deepEqual(yield* Queue.takeN(machine.written, 2), [
+        "mission-was:aaaa:AAAA",
+        "mission:aaaa:AAAA",
+      ]);
       assert.deepEqual(machine.tags, ["mission-was:aaaa:AAAA"]);
     }),
   ),

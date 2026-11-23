@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   type OrchestrationV2LinkOrigin,
+  type OrchestrationV2ThreadShell,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   type ProviderInteractionMode,
@@ -234,6 +235,18 @@ export const writesThreads = <P, A, E, R>(
       }),
     () => writingCaller,
   );
+
+/**
+ * The check `writesThreads` makes on each target, for a handler that changes a thread outside the
+ * orchestrator to make again under its own lock: the modes can rise while it waits for that lock.
+ */
+export const threadWriteAccess = Effect.map(
+  writingCaller,
+  (caller) => (target: OrchestrationV2ThreadShell) =>
+    assertTargetWithinLimits(caller.limits, target).pipe(
+      Effect.andThen(assertSameLink(caller, target)),
+    ),
+);
 
 const escalationDenied = (refusal: DispatchModeRefusal) =>
   new OrchestratorMcpFailure({
