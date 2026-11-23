@@ -159,6 +159,8 @@ function MemberRow(props: {
   const title = thread?.title ?? gt("Thread on {machine}", { machine: props.machineLabel });
   const where = project === null ? props.machineLabel : `${props.machineLabel} · ${project.title}`;
   const active = props.member.state === "active";
+  // A refused add never joined, so its button only puts the refusal away.
+  const dismisses = props.member.state === "add-refused";
   const onRelease = async () => {
     setReleasing(true);
     reportFailure(
@@ -195,22 +197,28 @@ function MemberRow(props: {
           <span className="truncate text-2xs text-sidebar-muted-foreground">
             {props.member.state === "release-pending"
               ? gt("Release pending (machine offline)")
-              : props.member.state === "offline"
-                ? gt("Last known (machine offline)")
-                : props.member.state === "deleted"
-                  ? gt("Lead deleted", {
-                      $context: "the thread that led a mission no longer exists",
-                    })
-                  : where}
+              : props.member.state === "add-pending"
+                ? gt("Add pending (machine offline)")
+                : props.member.state === "add-refused"
+                  ? props.member.detail
+                  : props.member.state === "offline"
+                    ? gt("Last known (machine offline)")
+                    : props.member.state === "deleted"
+                      ? gt("Lead deleted", {
+                          $context: "the thread that led a mission no longer exists",
+                        })
+                      : where}
           </span>
         </button>
-        {props.member.role === "member" && props.member.state !== "release-pending" ? (
+        {props.member.role === "member" &&
+        props.member.state !== "release-pending" &&
+        props.member.state !== "add-pending" ? (
           <Tooltip>
             <TooltipTrigger
               render={
                 <button
                   type="button"
-                  aria-label={gt("Release from mission")}
+                  aria-label={dismisses ? gt("Dismiss") : gt("Release from mission")}
                   disabled={!canRelease || releasing}
                   onClick={() => void onRelease()}
                   className="inline-flex shrink-0 cursor-pointer items-center rounded-md px-1 text-muted-foreground opacity-0 transition-opacity group-hover/mission-row:opacity-100 hover:text-foreground focus-visible:opacity-100 disabled:cursor-default"
@@ -220,7 +228,7 @@ function MemberRow(props: {
               }
             />
             <TooltipPopup side="top">
-              <T>Release from mission</T>
+              {dismisses ? gt("Dismiss") : <T>Release from mission</T>}
             </TooltipPopup>
           </Tooltip>
         ) : null}

@@ -17,6 +17,8 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -31,6 +33,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
@@ -73,6 +76,10 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     calls: [] as Array<ClaimKind>,
     /** The same calls, to wait on: each is offered as it starts, under the mode set by then. */
     started: undefined as Queue.Queue<ClaimKind> | undefined,
+    /** The calls the laptop answered, each offered once its answer is ready. */
+    answered: undefined as Queue.Queue<ClaimKind> | undefined,
+    /** The lead's link to the laptop has run out. */
+    linkExpired: false,
   };
   const threadsOn = (environmentId: EnvironmentId) =>
     Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -131,6 +138,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
           ),
         );
         if (mode === "lostReply") return yield* stoppedAnswering;
+        yield* Queue.offer(laptop.answered!, input.arguments.kind);
         return { claims };
       })) as never,
   });
@@ -140,17 +148,33 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     get: (environmentId) =>
       Effect.succeed(
         Option.fromUndefinedOr(LINKS.find((link) => link.id === environmentId)).pipe(
-          Option.map((link) => ({ label: link.label, access: link.access }) as never),
+          Option.map(
+            (link) =>
+              ({
+                label: link.label,
+                access: link.access,
+                expiresAt: DateTime.makeUnsafe(
+                  link.id === LAPTOP && laptop.linkExpired ? 0 : "2999-01-01T00:00:00.000Z",
+                ),
+              }) as never,
+          ),
         ),
       ),
   });
-  return {
+  const world = {
     tags: (thread: ScopedThreadRef) => tags.get(keyOf(thread)),
     /** The thread's own user deletes it. */
     remove: (thread: ScopedThreadRef) => tags.delete(keyOf(thread)),
     laptop,
     /** The next calls this lead starts on the laptop, waiting for each. */
     nextCalls: (count: number) => Queue.takeN(laptop.started!, count),
+    /** Waits until the laptop has answered a call of this kind. */
+    untilAnswered: (kind: ClaimKind): Effect.Effect<void> =>
+      Effect.flatMap(Queue.take(laptop.answered!), (answered) =>
+        answered === kind ? Effect.void : world.untilAnswered(kind),
+      ),
+    /** Runs before the lead's next read of its missions; a test holds a snapshot open with it. */
+    beforeMissionsRead: Effect.void as Effect.Effect<void>,
     threadsOn,
     layer: Layer.mergeAll(
       peers,
@@ -159,6 +183,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       NodeCrypto.layer,
     ),
   };
+  return world;
 };
 
 /** Runs each session on a freshly started lead, over the same files and the same laptop. */
@@ -173,11 +198,32 @@ const withMissions = <A, E>(
     const claimsOn = (environmentId: EnvironmentId) =>
       MissionClaims.layer.pipe(
         Layer.provideMerge(
-          MissionStore.layerFromPath(path.join(directory, `${environmentId}.sqlite`)),
+          Layer.effect(
+            MissionStore.MissionStore,
+            Effect.map(MissionStore.MissionStore, (real) =>
+              MissionStore.MissionStore.of({
+                ...real,
+                missions: Effect.suspend(() => world.beforeMissionsRead).pipe(
+                  Effect.andThen(real.missions),
+                ),
+              }),
+            ),
+          ).pipe(
+            Layer.provide(
+              MissionStore.layerFromPath(path.join(directory, `${environmentId}.sqlite`)),
+            ),
+          ),
         ),
-        Layer.provide(Layer.merge(world.threadsOn(environmentId), NodeCrypto.layer)),
+        Layer.provide(
+          Layer.mergeAll(
+            world.threadsOn(environmentId),
+            NodeCrypto.layer,
+            ThreadCommandExecutor.layer,
+          ),
+        ),
       );
     world.laptop.started = yield* Queue.unbounded<ClaimKind>();
+    world.laptop.answered = yield* Queue.unbounded<ClaimKind>();
     world.laptop.claims = Context.get(
       yield* Layer.build(claimsOn(LAPTOP)),
       MissionClaims.MissionClaims,
@@ -336,19 +382,146 @@ it.effect("a join whose reply was lost is listed once the laptop answers again",
       const until = yield* openSidebar;
       const mission = yield* createOne;
       world.laptop.mode = "lostReply";
-      const unknown = yield* missions
-        .addMember({ missionId: mission.missionId, member: laptopMember })
-        .pipe(Effect.flip);
-      assert.include(unknown.message, "checks again when Laptop answers");
-      // The check that follows at once gets no reply either, and nothing remembers to try again.
-      assert.deepEqual(yield* world.nextCalls(2), ["join", "list"]);
+      yield* missions.addMember({ missionId: mission.missionId, member: laptopMember });
+      // The join is sent again at once, and that reply is lost as well.
+      assert.deepEqual(yield* world.nextCalls(2), ["join", "join"]);
+      assert.equal(stateOf(yield* listed, laptopMember), "add-pending");
 
       world.laptop.mode = "up";
       yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
       yield* until((snapshot) => stateOf(snapshot, laptopMember) === "active");
-      // A retry of the same add finds the claim it already made.
-      yield* missions.addMember({ missionId: mission.missionId, member: laptopMember });
+      // Every one of those joins found the claim the first one made.
       assert.equal((yield* world.laptop.claims!.list(LEAD_ON_LAPTOP)).length, 1);
+    }),
+  );
+});
+
+it.effect(
+  "an add that timed out is sent again after a restart, so a join that lands late is seen",
+  () => {
+    const world = makeWorld([lead, laptopMember]);
+    const member = { missionId: "0123456789ab", member: laptopMember };
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        yield* createOne;
+        world.laptop.mode = "hanging";
+        const adding = yield* Effect.forkChild((yield* Missions.Missions).addMember(member));
+        yield* TestClock.adjust(Missions.MEMBER_CALL_DEADLINE);
+        yield* Fiber.await(adding);
+        world.laptop.mode = "up";
+      }),
+      Effect.gen(function* () {
+        // The laptop answers the restarted lead, and the join that timed out has not landed there.
+        yield* openSidebar;
+        yield* world.untilAnswered("list");
+        // Only now does that join land.
+        yield* world.laptop.claims!.join(LEAD_ON_LAPTOP, {
+          threadId: laptopMember.threadId,
+          missionId: member.missionId,
+          name: "One",
+        });
+        yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+        assert.equal(stateOf(yield* listed, laptopMember), "active");
+        assert.equal((yield* world.laptop.claims!.list(LEAD_ON_LAPTOP)).length, 1);
+        assert.deepEqual(world.tags(laptopMember), [TAG]);
+      }),
+    );
+  },
+);
+
+it.effect("an add the laptop turns down once it is back says why, until it is dismissed", () => {
+  const world = makeWorld([lead, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const until = yield* openSidebar;
+      const mission = yield* createOne;
+      const member = { missionId: mission.missionId, member: laptopMember };
+      world.laptop.mode = "offline";
+      yield* missions.addMember(member);
+      yield* until((snapshot) => stateOf(snapshot, laptopMember) === "add-pending");
+      // Another lead takes the thread before the laptop is back.
+      yield* world.laptop.claims!.join("link:another-lead", {
+        threadId: laptopMember.threadId,
+        missionId: "ffffffffffff",
+        name: "Theirs",
+      });
+      world.laptop.mode = "up";
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* until((snapshot) => stateOf(snapshot, laptopMember) === "add-refused");
+      const refused = (yield* listed).missions[0]!.members[1]!;
+      assert.include(
+        refused.detail,
+        'Laptop refused: This thread is already in the mission "Theirs"',
+      );
+
+      const sent = world.laptop.calls.length;
+      yield* missions.releaseMember(member);
+      assert.equal(stateOf(yield* listed, laptopMember), undefined);
+      assert.equal(world.laptop.calls.length, sent);
+    }),
+  );
+});
+
+it.effect("a link this machine can no longer use leaves its members as last known", () => {
+  const world = makeWorld([lead, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const until = yield* openSidebar;
+      const mission = yield* createOne;
+      yield* missions.addMember({ missionId: mission.missionId, member: laptopMember });
+      world.laptop.linkExpired = true;
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* until((snapshot) => stateOf(snapshot, laptopMember) === "offline");
+      // Nothing was sent over a link that had run out.
+      assert.deepEqual(world.laptop.calls, ["join"]);
+      const refused = yield* missions
+        .addMember({ missionId: mission.missionId, member: ref(LAPTOP, "another") })
+        .pipe(Effect.flip);
+      assert.include(refused.message, "The link to Laptop expired");
+    }),
+  );
+});
+
+it.effect("a new watcher never gets an older snapshot after a newer one", () => {
+  const [a, b, c] = [ref(HERE, "a"), ref(HERE, "b"), ref(HERE, "c")];
+  const world = makeWorld([lead, a, b, c]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const mission = yield* createOne;
+      for (const member of [a, b, c]) {
+        yield* missions.addMember({ missionId: mission.missionId, member });
+      }
+      // One snapshot is held open after it read the members and before it reads the missions.
+      const held = yield* Deferred.make<void>();
+      const letGo = yield* Deferred.make<void>();
+      world.beforeMissionsRead = Effect.suspend(() => {
+        world.beforeMissionsRead = Effect.void;
+        return Deferred.succeed(held, undefined).pipe(Effect.andThen(Deferred.await(letGo)));
+      });
+      yield* missions.leaveHere(c.threadId);
+      yield* Deferred.await(held);
+      // A member leaves while that snapshot is open, and a client starts watching.
+      yield* missions.leaveHere(b.threadId);
+      const seen = yield* Queue.unbounded<ReturnType<typeof membersOf>>();
+      yield* missions.watch.pipe(
+        Stream.runForEach((snapshot) => Queue.offer(seen, membersOf(snapshot.missions[0]))),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.succeed(letGo, undefined);
+      const withoutB = [
+        ["env-here/lead", "active"],
+        ["env-here/a", "active"],
+      ];
+      assert.deepEqual(yield* Queue.take(seen), withoutB);
+      yield* missions.leaveHere(a.threadId);
+      assert.deepEqual(yield* Queue.take(seen), [["env-here/lead", "active"]]);
     }),
   );
 });

@@ -8,12 +8,19 @@ export const MissionMember = Schema.Struct({
   ref: ScopedThreadRef,
   role: Schema.Literals(["lead", "member"]),
   /**
-   * `offline`: the member's machine does not answer, so this is what it last said.
-   * `release-pending`: released here while the member's machine was unreachable; the lead finishes
-   * it when that machine answers again.
-   * `deleted`: the lead thread no longer exists. The Mission and its members stay.
+   * `offline`: its machine does not answer, so this is what it last said. `deleted`: the lead
+   * thread is gone. `release-pending`, `add-pending`: that machine has not answered the release
+   * or the add yet. `add-refused`: it turned the add down, and `detail` says why.
    */
-  state: Schema.Literals(["active", "offline", "release-pending", "deleted"]),
+  state: Schema.Literals([
+    "active",
+    "offline",
+    "release-pending",
+    "deleted",
+    "add-pending",
+    "add-refused",
+  ]),
+  detail: Schema.optional(Schema.String),
 });
 export type MissionMember = typeof MissionMember.Type;
 

@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { EnvironmentId, type MissionsSnapshot, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -18,6 +19,7 @@ import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as MissionHandlers from "../mcp/toolkits/mission/handlers.ts";
 import { MissionToolkit } from "../mcp/toolkits/mission/tools.ts";
+import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
@@ -68,7 +70,9 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
     const claimsOn = (machine: string, tags: Map<string, Array<string>>) =>
       MissionClaims.layer.pipe(
         Layer.provideMerge(MissionStore.layerFromPath(`${directory}/${machine}.sqlite`)),
-        Layer.provide(Layer.merge(threadsWith(tags), NodeCrypto.layer)),
+        Layer.provide(
+          Layer.mergeAll(threadsWith(tags), NodeCrypto.layer, ThreadCommandExecutor.layer),
+        ),
       );
 
     const laptopClaims = Context.get(
@@ -128,7 +132,12 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
     if (NetAddress.isUnixPathAddress(address)) return assert.fail("The test server has no port.");
     const laptopUrl = (yield* Effect.fromResult(NetAddress.toUrl(address))).origin;
 
-    const link = { environmentId: LAPTOP, label: "Laptop", access: "full-access" };
+    const link = {
+      environmentId: LAPTOP,
+      label: "Laptop",
+      access: "full-access",
+      expiresAt: DateTime.makeUnsafe("2999-01-01T00:00:00.000Z"),
+    };
     const desk = Missions.layer.pipe(
       Layer.provide(claimsOn("desk", deskTags)),
       Layer.provide(threadsWith(deskTags)),

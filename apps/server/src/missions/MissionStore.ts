@@ -69,6 +69,20 @@ const migrations = Migrator.fromRecord({
       )
     `;
   }),
+  "3_PendingAdds": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      CREATE TABLE pending_adds (
+        environment_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        mission_id TEXT NOT NULL,
+        refusal TEXT,
+        PRIMARY KEY (environment_id, thread_id)
+      )
+    `;
+    // The machines a lead asks are now those with a known claim, a pending add or a pending release.
+    yield* sql`DROP TABLE known_machines`;
+  }),
 });
 
 interface MissionRow {
@@ -110,6 +124,17 @@ export interface MissionClaim {
   readonly name: string;
   readonly role: "lead" | "member";
   readonly generation: string;
+}
+
+/**
+ * A join this lead sent whose outcome it does not know yet. `refusal` is why the member's machine
+ * turned it down, once it answered; the row then stays until the user dismisses it.
+ */
+export interface PendingAdd {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly missionId: string;
+  readonly refusal: string | null;
 }
 
 /** A release this lead sent that the member's machine has not answered yet. */
@@ -185,13 +210,18 @@ export class MissionStore extends Context.Service<
     readonly clearPendingRelease: (
       release: Omit<PendingRelease, "missionId">,
     ) => Effect.Effect<void>;
+    readonly pendingAdds: Effect.Effect<ReadonlyArray<PendingAdd>>;
+    /** Records the add, or what became of it. One row per thread: a later add replaces it. */
+    readonly setPendingAdd: (add: PendingAdd) => Effect.Effect<void>;
+    readonly clearPendingAdd: (
+      add: Pick<PendingAdd, "environmentId" | "threadId">,
+    ) => Effect.Effect<void>;
     /**
-     * The linked machines this lead asks for claims, each with what it last said it holds for
-     * this lead. A copy to show while a machine is away: only that machine's answer is the truth.
+     * What each linked machine last said it holds for this lead. A copy to show while a machine
+     * is away: only that machine's answer is the truth.
      */
-    readonly knownMachines: Effect.Effect<ReadonlyMap<EnvironmentId, ReadonlyArray<MissionClaim>>>;
-    readonly askMachine: (environmentId: EnvironmentId) => Effect.Effect<void>;
-    /** Replaces what a machine last said. One that holds nothing and owes no release is forgotten. */
+    readonly knownClaims: Effect.Effect<ReadonlyMap<EnvironmentId, ReadonlyArray<MissionClaim>>>;
+    /** Replaces what a machine last said. */
     readonly setKnownClaims: (
       environmentId: EnvironmentId,
       claims: ReadonlyArray<MissionClaim>,
@@ -382,29 +412,54 @@ const make = Effect.gen(function* () {
         AND generation = ${pending.generation}
     `.pipe(Effect.andThen(changed), Effect.asVoid, Effect.orDie);
 
-  const knownMachines = Effect.gen(function* () {
-    const machines = yield* sql<{ readonly environment_id: string }>`
-      SELECT environment_id FROM known_machines ORDER BY rowid
-    `;
-    const held = yield* sql<KnownClaimRow>`
-      SELECT environment_id, thread_id, mission_id, mission_name, generation FROM known_claims
-      ORDER BY rowid
-    `;
-    return new Map(
-      machines.map((machine) => [
-        EnvironmentId.make(machine.environment_id),
-        held
-          .filter((row) => row.environment_id === machine.environment_id)
-          .map((row) => toClaim({ ...row, role: "member" })),
-      ]),
-    );
-  }).pipe(Effect.orDie);
+  const pendingAdds = sql<{
+    readonly environment_id: string;
+    readonly thread_id: string;
+    readonly mission_id: string;
+    readonly refusal: string | null;
+  }>`
+    SELECT environment_id, thread_id, mission_id, refusal FROM pending_adds ORDER BY rowid
+  `.pipe(
+    Effect.map((rows) =>
+      rows.map((row): PendingAdd => ({
+        environmentId: EnvironmentId.make(row.environment_id),
+        threadId: ThreadId.make(row.thread_id),
+        missionId: row.mission_id,
+        refusal: row.refusal,
+      })),
+    ),
+    Effect.orDie,
+  );
 
-  const askMachine = (environmentId: EnvironmentId) =>
-    sql`INSERT OR IGNORE INTO known_machines (environment_id) VALUES (${environmentId})`.pipe(
-      Effect.asVoid,
-      Effect.orDie,
-    );
+  const setPendingAdd = (add: PendingAdd) =>
+    sql`
+      INSERT OR REPLACE INTO pending_adds (environment_id, thread_id, mission_id, refusal)
+      VALUES (${add.environmentId}, ${add.threadId}, ${add.missionId}, ${add.refusal})
+    `.pipe(Effect.andThen(changed), Effect.asVoid, Effect.orDie);
+
+  const clearPendingAdd = (add: Pick<PendingAdd, "environmentId" | "threadId">) =>
+    sql`
+      DELETE FROM pending_adds
+      WHERE environment_id = ${add.environmentId} AND thread_id = ${add.threadId}
+    `.pipe(Effect.andThen(changed), Effect.asVoid, Effect.orDie);
+
+  const knownClaims = sql<KnownClaimRow>`
+    SELECT environment_id, thread_id, mission_id, mission_name, generation FROM known_claims
+    ORDER BY rowid
+  `.pipe(
+    Effect.map((rows) => {
+      const machines = new Map<EnvironmentId, Array<MissionClaim>>();
+      for (const row of rows) {
+        const machine = EnvironmentId.make(row.environment_id);
+        machines.set(machine, [
+          ...(machines.get(machine) ?? []),
+          toClaim({ ...row, role: "member" }),
+        ]);
+      }
+      return machines;
+    }),
+    Effect.orDie,
+  );
 
   const insertKnownClaim = (environmentId: EnvironmentId, held: MissionClaim) =>
     sql`
@@ -422,11 +477,6 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* sql`DELETE FROM known_claims WHERE environment_id = ${environmentId}`;
         yield* Effect.forEach(claims, (held) => insertKnownClaim(environmentId, held));
-        if (claims.length > 0) return;
-        yield* sql`
-          DELETE FROM known_machines WHERE environment_id = ${environmentId} AND NOT EXISTS
-            (SELECT 1 FROM pending_releases WHERE environment_id = ${environmentId})
-        `;
       }),
     );
     yield* changed;
@@ -461,8 +511,10 @@ const make = Effect.gen(function* () {
     pendingReleases,
     addPendingRelease,
     clearPendingRelease,
-    knownMachines,
-    askMachine,
+    pendingAdds,
+    setPendingAdd,
+    clearPendingAdd,
+    knownClaims,
     setKnownClaims,
     rememberClaim,
     forgetClaim,

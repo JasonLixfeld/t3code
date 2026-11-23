@@ -17,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { DispatchModeLimit } from "../orchestration-v2/DispatchModeLimit.ts";
+import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as MissionStore from "./MissionStore.ts";
 import type { MissionClaim, MissionRecord } from "./MissionStore.ts";
@@ -33,8 +34,8 @@ export const linkOwner = (sessionId: string) => `link:${sessionId}`;
 export const TAG_REPAIR_INTERVAL = Duration.minutes(1);
 
 /**
- * Refuses a caller that may not change this thread. It runs under the thread's lock, just before
- * the claim changes, because the thread's modes can rise while the call waits for that lock.
+ * Refuses a caller that may not change this thread. It runs just before the claim changes, under
+ * the orchestrator's lock on the thread, so the thread's modes cannot rise in between.
  */
 export type ThreadAccess<E> = (thread: OrchestrationV2ThreadShell) => Effect.Effect<void, E>;
 
@@ -107,6 +108,9 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const random = yield* SecureRandom.SecureRandom;
   const locks = yield* KeyedLock.make<ThreadId>();
+  // The orchestrator's lock on a thread, which a mode change takes too. It is not reentrant, and a
+  // tag write dispatches under it, so it is held only across an access check and its claim write.
+  const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
 
   /**
    * Call only while holding the thread's lock: it reads the claim it writes the tags for. The
@@ -184,9 +188,14 @@ const make = Effect.gen(function* () {
       input: { readonly threadId: ThreadId; readonly missionId: string; readonly name: string },
       access?: ThreadAccess<E>,
     ) {
-      const shell = yield* requireThread(input.threadId);
-      if (access !== undefined) yield* access(shell);
-      const claim = yield* store.join({ ...input, owner, generation: yield* generation });
+      const claim = yield* threadCommands.withLock(
+        input.threadId,
+        Effect.gen(function* () {
+          const shell = yield* requireThread(input.threadId);
+          if (access !== undefined) yield* access(shell);
+          return yield* store.join({ ...input, owner, generation: yield* generation });
+        }),
+      );
       yield* syncTags(input.threadId);
       return claim;
     },
@@ -203,11 +212,16 @@ const make = Effect.gen(function* () {
       },
       access?: ThreadAccess<E>,
     ) {
-      if (access !== undefined) {
-        const shell = yield* readThread(input.threadId);
-        if (shell !== null && shell.deletedAt === null) yield* access(shell);
-      }
-      yield* store.release({ ...input, owner });
+      yield* threadCommands.withLock(
+        input.threadId,
+        Effect.gen(function* () {
+          if (access !== undefined) {
+            const shell = yield* readThread(input.threadId);
+            if (shell !== null && shell.deletedAt === null) yield* access(shell);
+          }
+          yield* store.release({ ...input, owner });
+        }),
+      );
       yield* syncTags(input.threadId);
     },
     (effect, _owner, input) => locks.withLock(input.threadId, effect),
@@ -227,4 +241,8 @@ const make = Effect.gen(function* () {
 export const layer = Layer.effect(MissionClaims, make);
 
 /** The one instance /mcp and the lead's own calls share: the same layer value is built once. */
-export const layerLive = layer.pipe(Layer.provideMerge(MissionStore.layer));
+export const layerLive = layer.pipe(
+  Layer.provideMerge(MissionStore.layer),
+  // The same layer value the orchestrator is built with, so both take the one lock per thread.
+  Layer.provide(ThreadCommandExecutor.layer),
+);

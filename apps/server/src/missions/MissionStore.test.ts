@@ -61,6 +61,7 @@ it.effect("keeps its own migration history and reopens without migrating again",
         [
           [1, "Missions"],
           [2, "LastKnown"],
+          [3, "PendingAdds"],
         ],
       );
     }),

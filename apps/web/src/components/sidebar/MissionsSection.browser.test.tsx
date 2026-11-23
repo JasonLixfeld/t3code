@@ -22,6 +22,8 @@ const ship: Mission = {
     { ref: ref(DESK, "docs"), role: "member", state: "active" },
     { ref: ref(LAPTOP, "ios"), role: "member", state: "offline" },
     { ref: ref(LAPTOP, "old"), role: "member", state: "release-pending" },
+    { ref: ref(LAPTOP, "new"), role: "member", state: "add-pending" },
+    { ref: ref(LAPTOP, "taken"), role: "member", state: "add-refused", detail: "Laptop refused." },
   ],
 };
 const audit: Mission = {
@@ -99,7 +101,7 @@ vi.mock(import("../../state/entities"), async (original) => ({
   useProject: (target) => (target === null ? null : ({ title: target.projectId } as never)),
 }));
 
-it("lists each mission with its lead first, and offers release unless one is already pending", async () => {
+it("lists each mission with its lead first, and offers release unless something is still pending", async () => {
   await using screen = await render(<MissionsSection onOpenThread={() => {}} />);
   const rows = screen.container.querySelectorAll("li li");
   expect([...rows].map((row) => row.textContent)).toEqual([
@@ -107,7 +109,10 @@ it("lists each mission with its lead first, and offers release unless one is alr
     "Update the release notesDesk · docs-site",
     "Fix the iOS share sheetLast known (machine offline)",
     "Thread on LaptopRelease pending (machine offline)",
+    "Thread on LaptopAdd pending (machine offline)",
+    "Thread on LaptopLaptop refused.",
     "LeadThread on LaptopLaptop",
   ]);
   expect(screen.getByRole("button", { name: "Release from mission" }).elements()).toHaveLength(2);
+  expect(screen.getByRole("button", { name: "Dismiss" }).elements()).toHaveLength(1);
 });

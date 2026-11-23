@@ -13,6 +13,7 @@ import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 import * as MissionClaims from "../../../missions/MissionClaims.ts";
 import * as MissionStore from "../../../missions/MissionStore.ts";
 import type { MissionClaim } from "../../../missions/MissionStore.ts";
+import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
@@ -116,7 +117,7 @@ const callOnce = (
           return {} as never;
         }),
     });
-    const machine = Layer.merge(threads, NodeCrypto.layer);
+    const machine = Layer.mergeAll(threads, NodeCrypto.layer, ThreadCommandExecutor.layer);
     const member = yield* Layer.build(
       MissionClaims.layer.pipe(
         Layer.provideMerge(MissionStore.layerFromPath(`${directory}/missions.sqlite`)),

@@ -4,6 +4,7 @@ import { missionTag, ThreadId, ThreadTag } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -11,6 +12,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as MissionClaims from "./MissionClaims.ts";
 import * as MissionStore from "./MissionStore.ts";
@@ -22,6 +24,10 @@ interface Machine {
   failTags: boolean;
   /** Every tag write that landed, to wait on. */
   readonly written: Queue.Queue<string>;
+  /** The orchestrator's lock on each thread, which a mode change there takes. */
+  readonly threadCommands: ThreadCommandExecutor.ThreadCommandExecutor["Service"];
+  /** What happened to the thread, in order. */
+  readonly events: Array<string>;
 }
 
 /** One machine's claims over one thread, whose tags `failTags` can stop being written. */
@@ -36,6 +42,8 @@ const onMachine = <A, E>(
       tags: [],
       failTags: false,
       written: yield* Queue.unbounded<string>(),
+      threadCommands: yield* ThreadCommandExecutor.make,
+      events: [],
     };
     const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
       getThreadShell: (id) =>
@@ -58,10 +66,28 @@ const onMachine = <A, E>(
           return Effect.as(Queue.offer(machine.written, command.tag), {} as never);
         }),
     });
+    const store = Layer.effect(
+      MissionStore.MissionStore,
+      Effect.map(MissionStore.MissionStore, (real) =>
+        MissionStore.MissionStore.of({
+          ...real,
+          join: (input) =>
+            real
+              .join(input)
+              .pipe(Effect.tap(() => Effect.sync(() => machine.events.push("claim written")))),
+        }),
+      ),
+    ).pipe(Layer.provide(MissionStore.layerFromPath(path.join(directory, "missions.sqlite"))));
     const context = yield* Layer.build(
       MissionClaims.layer.pipe(
-        Layer.provide(MissionStore.layerFromPath(path.join(directory, "missions.sqlite"))),
-        Layer.provide(Layer.merge(threads, NodeCrypto.layer)),
+        Layer.provide(store),
+        Layer.provide(
+          Layer.mergeAll(
+            threads,
+            NodeCrypto.layer,
+            Layer.succeed(ThreadCommandExecutor.ThreadCommandExecutor, machine.threadCommands),
+          ),
+        ),
       ),
     );
     return yield* use(Context.get(context, MissionClaims.MissionClaims), machine);
@@ -123,6 +149,28 @@ it.effect("a release that arrives late does not drop the claim a later join made
       });
       assert.deepEqual(yield* claims.list("link:a"), []);
       assert.deepEqual(machine.tags, ["mission-was:aaaa:AAAA"]);
+    }),
+  ),
+);
+
+it.effect("a mode change waits while a join checks its caller and writes the claim", () =>
+  onMachine((claims, machine) =>
+    Effect.gen(function* () {
+      // How the orchestrator changes a thread's mode: under its own lock on that thread.
+      const raiseMode = machine.threadCommands.withLock(
+        threadId,
+        Effect.sync(() => machine.events.push("mode raised")),
+      );
+      const raising: Array<Fiber.Fiber<number>> = [];
+      // The caller passes the check, and the user raises the mode at that very moment.
+      yield* claims.join("link:a", join("aaaa"), () =>
+        raiseMode.pipe(
+          Effect.forkChild({ startImmediately: true }),
+          Effect.map((fiber) => void raising.push(fiber)),
+        ),
+      );
+      yield* Fiber.join(raising[0]!);
+      assert.deepEqual(machine.events, ["claim written", "mode raised"]);
     }),
   ),
 );
