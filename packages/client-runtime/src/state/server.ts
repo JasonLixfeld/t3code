@@ -1480,6 +1480,23 @@ export function createServerEnvironmentAtoms<R, E>(
       sources.map(({ environmentId, atom }) => ({ environmentId, result: get(atom) })),
     ).pipe(Atom.withLabel(`environment-data:server:workflows:live-across:${environmentIdsKey}`));
   });
+  const missionsLive = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:server:missions:live",
+    tag: WS_METHODS.missionsSubscribe,
+  });
+  // Keyed by a JSON array of environment ids: every machine keeps the Missions its leads run.
+  const missionsLiveAcross = Atom.family((environmentIdsKey: string) => {
+    const sources = (JSON.parse(environmentIdsKey) as EnvironmentId[]).map((environmentId) => ({
+      environmentId,
+      atom: missionsLive({ environmentId, input: {} }),
+    }));
+    return Atom.make((get) =>
+      sources.flatMap(({ environmentId, atom }) => {
+        const snapshot = Option.getOrUndefined(AsyncResult.value(get(atom)));
+        return snapshot === undefined ? [] : [{ environmentId, snapshot }];
+      }),
+    ).pipe(Atom.withLabel(`environment-data:server:missions:live-across:${environmentIdsKey}`));
+  });
   // One change of a run or file at a time per target, so a double click does not act twice.
   const workflowRunConcurrency = {
     mode: "singleFlight" as const,
@@ -1640,6 +1657,7 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     workflowsLive,
     workflowsLiveAcross,
+    missionsLiveAcross,
     workflowRun: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:workflows:run",
       tag: WS_METHODS.workflowsGet,
@@ -1985,6 +2003,18 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.workflowsDeleteDefinition,
       scheduler: workflowDefinitionScheduler,
       concurrency: workflowDefinitionConcurrency,
+    }),
+    createMission: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:missions:create",
+      tag: WS_METHODS.missionsCreate,
+    }),
+    addMissionMember: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:missions:add-member",
+      tag: WS_METHODS.missionsAddMember,
+    }),
+    releaseMissionMember: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:missions:release-member",
+      tag: WS_METHODS.missionsReleaseMember,
     }),
     createGuestShare: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:guest-share:create",
