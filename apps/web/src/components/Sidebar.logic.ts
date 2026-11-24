@@ -21,8 +21,6 @@ import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/sh
 import {
   type ContextMenuItem,
   type EnvironmentId,
-  type Mission,
-  type MissionMember,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
@@ -57,7 +55,6 @@ import { isModelPickerOpen, subscribeToModelPickerVisibility } from "../modelPic
 import { shortcutModifierStore } from "../shortcutModifierState";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
-import type { MissionHost } from "./sidebar/missions.logic";
 
 export function shouldNavigateAfterThreadPark(input: {
   readonly threadKey: string;
@@ -1102,77 +1099,6 @@ export function groupSidebarThreadsByProject<
     folderByProject.get(`${thread.environmentId}:${thread.projectId}`)?.threads.push(thread);
   }
   return folders.filter((folder) => folder.threads.length > 0 || keepEmpty(folder.group));
-}
-
-/** A row in a Mission: drawn as its thread's own row when this client has the thread. */
-export interface SidebarMissionEntry<T> {
-  readonly member: MissionMember;
-  readonly thread: T | null;
-}
-
-export interface SidebarMission<T> {
-  /** The lead's machine and the Mission id, as its collapse state is kept. */
-  readonly key: string;
-  readonly host: EnvironmentId;
-  readonly mission: Mission;
-  readonly lead: SidebarMissionEntry<T>;
-  readonly members: ReadonlyArray<SidebarMissionEntry<T>>;
-}
-
-/**
- * The Missions the sidebar lists, and `threadKeys`, the threads they show. Every other list
- * leaves those out. A settled or archived member leaves its Mission's list and goes back to
- * the others, unless its add or release still waits, so its Forget stays in reach. A refused
- * add never joined: its thread stays in the other lists, and the Mission shows only the refusal.
- */
-export function groupSidebarMissions<
-  T extends Pick<SidebarThreadSummary, "environmentId" | "id" | "settledOverride" | "archivedAt">,
->(
-  hosts: ReadonlyArray<MissionHost>,
-  threads: readonly T[],
-): {
-  readonly missions: ReadonlyArray<SidebarMission<T>>;
-  readonly threadKeys: ReadonlySet<string>;
-} {
-  const threadByKey = new Map(
-    threads.map((thread) => [
-      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      thread,
-    ]),
-  );
-  const threadKeys = new Set<string>();
-  const missions = hosts.flatMap((host) =>
-    host.snapshot.missions.flatMap((mission): Array<SidebarMission<T>> => {
-      const entries = mission.members.flatMap((member): Array<SidebarMissionEntry<T>> => {
-        const key = scopedThreadKey(member.ref);
-        const shown = member.state !== "deleted" && member.state !== "add-refused";
-        const thread = shown ? (threadByKey.get(key) ?? null) : null;
-        if (
-          member.role === "member" &&
-          (member.state === "active" || member.state === "offline") &&
-          thread !== null &&
-          (thread.settledOverride === "settled" || thread.archivedAt !== null)
-        ) {
-          return [];
-        }
-        if (thread !== null) threadKeys.add(key);
-        return [{ member, thread }];
-      });
-      const [lead, ...members] = entries;
-      return lead?.member.role === "lead"
-        ? [
-            {
-              key: `${host.environmentId}:${mission.missionId}`,
-              host: host.environmentId,
-              mission,
-              lead,
-              members,
-            },
-          ]
-        : [];
-    }),
-  );
-  return { missions, threadKeys };
 }
 
 export type SidebarV2TopStatusKind =

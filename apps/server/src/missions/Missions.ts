@@ -411,11 +411,13 @@ const make = Effect.gen(function* () {
     mission: MissionRecord,
     add: Omit<PendingAdd, "refusal">,
   ) {
+    // Read again under the machine's lock: a rename since the add began must not be lost.
+    const { name } = yield* missionNamed(mission.missionId);
     const [claim] = yield* onMember(add.environmentId, {
       kind: "join",
       threadId: add.threadId,
       missionId: mission.missionId,
-      name: mission.name,
+      name,
       intentId: add.intentId,
     });
     // This machine's own threads have no pending row, and their claims are read, not remembered.
@@ -480,16 +482,20 @@ const make = Effect.gen(function* () {
   // Set by whoever wants the machines' claims read again; a sweep without it only sends again
   // what still waits for an answer.
   const discoverNext = yield* Ref.make(false);
-  /** Each Mission takes its lead thread's title as its name, on the lead's claims here too. */
+  /**
+   * Each Mission takes its lead thread's title as its name. The claims here are checked against
+   * it every time, so a stop between the two writes heals on the next sweep.
+   */
   const followLeadTitles = Effect.gen(function* () {
     for (const mission of yield* store.missions) {
       const shell = yield* threads
         .getThreadShell(mission.leadThreadId)
         .pipe(Effect.orElseSucceed(() => null));
-      if (shell === null || shell.deletedAt !== null) continue;
-      const name = missionNameFromTitle(shell.title);
-      if (name === mission.name) continue;
-      yield* store.renameMission(mission.missionId, name);
+      const name =
+        shell === null || shell.deletedAt !== null
+          ? mission.name
+          : missionNameFromTitle(shell.title);
+      if (name !== mission.name) yield* store.renameMission(mission.missionId, name);
       yield* claims.rename(here, { missionId: mission.missionId, name });
     }
   });

@@ -23,6 +23,10 @@ const threadId = ThreadId.make("thread:member");
 interface Machine {
   readonly tags: Array<string>;
   failTags: boolean;
+  /** Tag writes this refuses, while it says so. */
+  refuses: (tag: string) => boolean;
+  /** Runs at each read of the thread, before it is read. */
+  onRead: Effect.Effect<void>;
   /** Every tag write that landed, to wait on. */
   readonly written: Queue.Queue<string>;
   /** The orchestrator's lock on each thread, which a mode change there takes. */
@@ -42,13 +46,16 @@ const onMachine = <A, E>(
     const machine: Machine = {
       tags: [],
       failTags: false,
+      refuses: () => false,
+      onRead: Effect.void,
       written: yield* Queue.unbounded<string>(),
       threadCommands: yield* ThreadCommandExecutor.make,
       events: [],
     };
     const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
       getThreadShell: (id) =>
-        Effect.yieldNow.pipe(
+        Effect.suspend(() => machine.onRead).pipe(
+          Effect.andThen(Effect.yieldNow),
           Effect.andThen(
             Effect.sync(
               () =>
@@ -61,7 +68,9 @@ const onMachine = <A, E>(
       dispatch: (command) =>
         Effect.suspend(() => {
           if (command.type !== "thread.tag.set") throw new Error(`unexpected ${command.type}`);
-          if (machine.failTags) return Effect.fail(new Error("disk full") as never);
+          if (machine.failTags || machine.refuses(command.tag)) {
+            return Effect.fail(new Error("disk full") as never);
+          }
           if (command.tagged) machine.tags.push(command.tag);
           else machine.tags.splice(machine.tags.indexOf(command.tag), 1);
           return Effect.as(Queue.offer(machine.written, command.tag), {} as never);
@@ -224,6 +233,33 @@ it.effect("a tag that fails to write is written again by this machine, never by 
         "mission:aaaa:AAAA",
       ]);
       assert.deepEqual(machine.tags, ["mission-was:aaaa:AAAA"]);
+    }),
+  ),
+);
+
+it.effect("a rename that lands while tags are written is still written once it fails", () =>
+  onMachine((claims, machine) =>
+    Effect.gen(function* () {
+      machine.failTags = true;
+      yield* claims.join("link:a", join("aaaa"));
+      machine.failTags = false;
+      machine.refuses = (tag) => tag.endsWith(":Renamed");
+      const renaming: Array<Fiber.Fiber<unknown>> = [];
+      // The rename arrives while the repair holds the thread and has read its old name.
+      machine.onRead = Effect.suspend(() => {
+        machine.onRead = Effect.void;
+        return claims.rename("link:a", { missionId: "aaaa", name: "Renamed" }).pipe(
+          Effect.forkChild({ startImmediately: true }),
+          Effect.map((fiber) => void renaming.push(fiber)),
+        );
+      });
+      yield* TestClock.adjust(MissionClaims.TAG_REPAIR_INTERVAL);
+      assert.equal(yield* Queue.take(machine.written), "mission:aaaa:AAAA");
+      yield* Fiber.join(renaming[0]!);
+      machine.refuses = () => false;
+      yield* TestClock.adjust(MissionClaims.TAG_REPAIR_INTERVAL);
+      assert.equal(yield* Queue.take(machine.written), "mission:aaaa:Renamed");
+      assert.deepEqual(machine.tags, ["mission:aaaa:Renamed"]);
     }),
   ),
 );

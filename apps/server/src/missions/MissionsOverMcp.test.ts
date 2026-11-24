@@ -18,7 +18,7 @@ import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as MissionHandlers from "../mcp/toolkits/mission/handlers.ts";
-import { MissionToolkit } from "../mcp/toolkits/mission/tools.ts";
+import { MissionClaimResult, MissionToolkit } from "../mcp/toolkits/mission/tools.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
@@ -149,7 +149,7 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
     const desk = Missions.layer.pipe(
       Layer.provide(claimsOn("desk", deskTags)),
       Layer.provide(threadsWith(deskTags)),
-      Layer.provide(PeerMcpClient.layer.pipe(Layer.provide(FetchHttpClient.layer))),
+      Layer.provideMerge(PeerMcpClient.layer.pipe(Layer.provide(FetchHttpClient.layer))),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(PeerLinks.PeerLinks)({
@@ -170,6 +170,18 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
 
     yield* Effect.gen(function* () {
       const missions = yield* Missions.Missions;
+      // A build that predates a kind refuses it as a bad request, the way an older member's
+      // build answers `rename`. The lead takes that as a refusal, not as a machine gone away.
+      const unknownKind = yield* (yield* PeerMcpClient.PeerMcpClient)
+        .call({
+          environmentId: LAPTOP,
+          tool: "t3_mission_tag",
+          arguments: { kind: "bogus" },
+          limits: { runtimeMode: "full-access", interactionMode: "default" },
+          success: MissionClaimResult,
+        })
+        .pipe(Effect.flip);
+      assert.equal(unknownKind.code, "invalid_request");
       const membersWhen = (matches: (threadIds: ReadonlyArray<string>) => boolean) =>
         missions.watch.pipe(
           Stream.map((snapshot: MissionsSnapshot) =>

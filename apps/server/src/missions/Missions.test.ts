@@ -89,6 +89,8 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       | "revoked"
       | "denies"
       | "heldThenOffline",
+    /** Answers `rename` as a build from before renames does: a refusal of the kind. */
+    predatesRename: false,
     letGo: undefined as Deferred.Deferred<void> | undefined,
     /** The link session this lead calls with, and when the link was made. Both change on a re-pair. */
     session: "lead-session",
@@ -169,6 +171,12 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
           message: "The linked environment stopped answering.",
         });
         if (mode === "offline") return yield* stoppedAnswering;
+        if (input.arguments.kind === "rename" && laptop.predatesRename) {
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "Invalid parameters for tool 't3_mission_tag'",
+          });
+        }
         if (mode === "hanging") return yield* Effect.never;
         if (mode === "heldThenOffline") {
           laptop.mode = "offline";
@@ -231,6 +239,11 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       Effect.flatMap(Queue.take(laptop.answered!), (answered) =>
         answered === kind ? Effect.void : world.untilAnswered(kind),
       ),
+    /** Waits until this lead has started a call of this kind on the laptop. */
+    untilStarted: (kind: ClaimKind): Effect.Effect<void> =>
+      Effect.flatMap(Queue.take(laptop.started!), (started) =>
+        started === kind ? Effect.void : world.untilStarted(kind),
+      ),
     /** Waits until the laptop has carried out a call of this kind, reply or no reply. */
     untilActed: (kind: ClaimKind): Effect.Effect<void> =>
       Effect.flatMap(Queue.take(laptop.acted!), (acted) =>
@@ -242,6 +255,10 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     whileStopped: Effect.void as Effect.Effect<void>,
     /** Runs before the lead's next read of its missions; a test holds a snapshot open with it. */
     beforeMissionsRead: Effect.void as Effect.Effect<void>,
+    /** Runs before the lead reads the releases it waits on, as an add does under its lock. */
+    beforeReleasesRead: Effect.void as Effect.Effect<void>,
+    /** Runs after the lead renames a mission, before its claims follow. */
+    afterMissionRenamed: Effect.void as Effect.Effect<void>,
     threadsOn,
     layer: Layer.mergeAll(
       peers,
@@ -274,6 +291,13 @@ const withMissions = <A, E>(
                   Effect.andThen(real.missions),
                 ),
                 knownClaims: real.knownClaims.pipe(Effect.tap(() => world.afterKnownClaimsRead)),
+                pendingReleases: Effect.suspend(() => world.beforeReleasesRead).pipe(
+                  Effect.andThen(real.pendingReleases),
+                ),
+                renameMission: (missionId, name) =>
+                  real
+                    .renameMission(missionId, name)
+                    .pipe(Effect.andThen(Effect.suspend(() => world.afterMissionRenamed))),
               }),
             ),
           ).pipe(
@@ -423,6 +447,76 @@ it.effect("a mission is named for its lead's title, and its members' tags follow
       // A released member keeps the name the mission had when it left.
       yield* missions.releaseMember({ missionId: mission.missionId, member: laptopMember });
       assert.deepEqual(world.tags(laptopMember), ["mission-was:0123456789ab:Two"]);
+    }),
+  );
+});
+
+it.effect("an add that a rename overtakes joins under the new name", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const until = yield* openSidebar;
+      const mission = yield* createOne;
+      // The add has read the mission; the lead is renamed before its join is sent.
+      world.beforeReleasesRead = Effect.suspend(() => {
+        world.beforeReleasesRead = Effect.void;
+        world.retitle(lead, "Two");
+        return TestClock.adjust(Missions.REFRESH_INTERVAL).pipe(
+          Effect.andThen(until((snapshot) => snapshot.missions[0]?.name === "Two")),
+        );
+      });
+      yield* missions.addMember({ missionId: mission.missionId, member: localMember });
+      assert.deepEqual(world.tags(localMember), ["mission:0123456789ab:Two"]);
+    }),
+  );
+});
+
+it.effect("claims here that missed a rename take the name on the next sweep", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const until = yield* openSidebar;
+      const mission = yield* createOne;
+      yield* missions.addMember({ missionId: mission.missionId, member: localMember });
+      // The server stops between renaming the mission and renaming its claims.
+      world.afterMissionRenamed = Effect.suspend(() => {
+        world.afterMissionRenamed = Effect.void;
+        return Effect.die("stopped");
+      });
+      world.retitle(lead, "Two");
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* until((snapshot) => snapshot.missions[0]?.name === "Two");
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* until((snapshot) => snapshot.claims.every((claim) => claim.name === "Two"));
+      assert.deepEqual(world.tags(localMember), ["mission:0123456789ab:Two"]);
+    }),
+  );
+});
+
+it.effect("a member's build without renames keeps the old name and stays reachable", () => {
+  const world = makeWorld([lead, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      yield* openSidebar;
+      const mission = yield* createOne;
+      yield* missions.addMember({ missionId: mission.missionId, member: laptopMember });
+      world.laptop.predatesRename = true;
+      world.retitle(lead, "Two");
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* world.untilStarted("rename");
+      // The next sweep's first call shows the one before it is done.
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* world.untilStarted("list");
+      const snapshot = yield* listed;
+      assert.equal(snapshot.missions[0]?.name, "Two");
+      assert.equal(stateOf(snapshot, laptopMember), "active");
+      assert.deepEqual(world.tags(laptopMember), [TAG]);
     }),
   );
 });

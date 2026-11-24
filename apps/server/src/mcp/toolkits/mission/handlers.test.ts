@@ -80,6 +80,7 @@ const callOnce = (
     readonly tagWritesFailBefore?: boolean;
     /** The user raises the thread to full access right after the tool's first look at it. */
     readonly modeRisesAfterFirstLook?: boolean;
+    readonly runtimeMode?: "auto" | "full-access";
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -87,7 +88,7 @@ const callOnce = (
     const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-mission-tool-" });
     const tags: Array<string> = [];
     let tagWritesFail = options.tagWritesFailBefore === true;
-    let runtimeMode: "auto" | "full-access" = "auto";
+    let runtimeMode = options.runtimeMode ?? "auto";
     const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
       getThreadShell: (threadId) =>
         Effect.sync(() => {
@@ -232,6 +233,75 @@ it.effect("a join is refused when the thread's mode rose while it waited for the
     assert.include(answer, "runtime_mode_escalation_denied");
     assert.deepEqual(held, []);
     assert.deepEqual(tags, []);
+  }),
+);
+
+const LINK_OWNER = MissionClaims.linkOwner("link");
+const renameShip = { kind: "rename", missionId: SHIP, name: "Ship it" };
+const joinedBy = (owner: string) => (claims: MissionClaims.MissionClaims["Service"]) =>
+  claims.join(owner, { threadId: userThread, missionId: SHIP, name: "Ship" });
+const namesOf = (held: ReadonlyArray<MissionClaim>) =>
+  held.map((claim) => [claim.missionId, claim.role, claim.name]);
+
+it.effect("a link renames its own claim, and only the name and tag change", () =>
+  Effect.gen(function* () {
+    const { tags, held } = yield* callOnce(linkedClient("full-access"), renameShip, {
+      before: joinedBy(LINK_OWNER),
+    });
+    assert.deepEqual(tags, [`mission:${SHIP}:Ship it`]);
+    assert.deepEqual(namesOf(held), [[SHIP, "member", "Ship it"]]);
+  }),
+);
+
+it.effect("a link, full access or fenced, cannot rename another lead's claim", () =>
+  Effect.gen(function* () {
+    for (const [access, startedByLink] of [
+      ["full-access", false],
+      ["auto", true],
+    ] as const) {
+      const { tags, held } = yield* callOnce(linkedClient(access), renameShip, {
+        startedByLink,
+        before: joinedBy("env-other-lead"),
+      });
+      assert.deepEqual(tags, [`mission:${SHIP}:Ship`]);
+      assert.deepEqual(namesOf(held), [[SHIP, "member", "Ship"]]);
+    }
+  }),
+);
+
+it.effect("a rename with no claim makes none, and one for another mission changes nothing", () =>
+  Effect.gen(function* () {
+    const none = yield* callOnce(linkedClient("full-access"), renameShip);
+    assert.deepEqual([none.tags, none.held], [[], []]);
+    const other = yield* callOnce(
+      linkedClient("full-access"),
+      { ...renameShip, missionId: "ba9876543210" },
+      { before: joinedBy(LINK_OWNER) },
+    );
+    assert.deepEqual(other.tags, [`mission:${SHIP}:Ship`]);
+    assert.deepEqual(namesOf(other.held), [[SHIP, "member", "Ship"]]);
+  }),
+);
+
+it.effect("a rename to a name a mission could not have is refused", () =>
+  Effect.gen(function* () {
+    const refused = yield* callOnce(linkedClient("full-access"), {
+      ...renameShip,
+      name: "two\nlines",
+    }).pipe(Effect.flip);
+    assert.include(refused.message, "Invalid parameters for tool 't3_mission_tag'");
+  }),
+);
+
+it.effect("a link lowered to auto cannot rename its claim on a full-access thread", () =>
+  Effect.gen(function* () {
+    const { tags, held } = yield* callOnce(linkedClient("auto"), renameShip, {
+      startedByLink: true,
+      runtimeMode: "full-access",
+      before: joinedBy(LINK_OWNER),
+    });
+    assert.deepEqual(tags, [`mission:${SHIP}:Ship`]);
+    assert.deepEqual(namesOf(held), [[SHIP, "member", "Ship"]]);
   }),
 );
 

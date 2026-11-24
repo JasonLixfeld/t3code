@@ -36,7 +36,6 @@ import {
   type SidebarListMarker,
   type SidebarSection,
   resolveSidebarDropVerb,
-  groupSidebarMissions,
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
@@ -49,14 +48,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-sort";
 import { resolveProjectExpanded } from "../uiStateStore";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import {
-  EnvironmentId,
-  type MissionMember,
-  ProjectId,
-  ProviderInstanceId,
-  RunId,
-  ThreadId,
-} from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -1838,93 +1830,5 @@ describe("filterSidebarProjectScopeItems", () => {
 
     expect(filter("")).toEqual([ADD_PROJECT_SCOPE_ITEM_VALUE, "all", "p1"]);
     expect(filter("project")).toEqual(["p1"]);
-  });
-});
-
-describe("groupSidebarMissions", () => {
-  const environmentId = EnvironmentId.make("env-desk");
-  const laptop = EnvironmentId.make("env-laptop");
-  const thread = (id: string, settled = false) => ({
-    environmentId,
-    id: ThreadId.make(id),
-    settledOverride: settled ? ("settled" as const) : null,
-    archivedAt: null,
-  });
-  const member = (
-    threadId: string,
-    state: MissionMember["state"],
-    role: MissionMember["role"] = "member",
-    on = environmentId,
-  ): MissionMember => ({
-    ref: { environmentId: on, threadId: ThreadId.make(threadId) },
-    role,
-    state,
-  });
-  const hosts = [
-    {
-      environmentId,
-      snapshot: {
-        links: [],
-        claims: [],
-        missions: [
-          {
-            missionId: "0123456789ab",
-            name: "Lead",
-            createdAt: "2026-11-23T00:00:00.000Z",
-            members: [
-              member("lead", "active", "lead"),
-              member("docs", "active"),
-              member("done", "active"),
-              member("joining", "add-pending"),
-              member("leaving", "release-pending"),
-              member("refused", "add-refused"),
-              member("remote", "offline", "member", laptop),
-            ],
-          },
-        ],
-      },
-    },
-  ];
-  const threads = [
-    thread("lead"),
-    thread("docs"),
-    thread("done", true),
-    thread("joining"),
-    thread("leaving"),
-    thread("refused"),
-  ];
-  const listed = () => groupSidebarMissions(hosts, threads);
-  const entryOf = (threadId: string) =>
-    listed().missions[0]!.members.find((entry) => entry.member.ref.threadId === threadId);
-
-  it("shows the lead and unsettled members only in their mission, and settled ones elsewhere", () => {
-    const { missions, threadKeys } = listed();
-    expect(threadKeys.has("env-desk:lead")).toBe(true);
-    expect(threadKeys.has("env-desk:docs")).toBe(true);
-    expect(threadKeys.has("env-desk:done")).toBe(false);
-    expect(missions[0]!.key).toBe("env-desk:0123456789ab");
-    expect(missions[0]!.lead.thread?.id).toBe("lead");
-    expect(entryOf("done")).toBeUndefined();
-    // A thread this client cannot see keeps the mission's own row.
-    expect(entryOf("remote")?.thread).toBeNull();
-  });
-
-  it("shows a pending add it has the thread for in the mission only, with its own row", () => {
-    expect(entryOf("joining")?.thread?.id).toBe("joining");
-    expect(listed().threadKeys.has("env-desk:joining")).toBe(true);
-  });
-
-  it("shows a pending release it has the thread for in the mission only, with its own row", () => {
-    expect(entryOf("leaving")?.thread?.id).toBe("leaving");
-    expect(listed().threadKeys.has("env-desk:leaving")).toBe(true);
-  });
-
-  it("keeps a refused add's thread in the other lists, and only the refusal in the mission", () => {
-    expect(entryOf("refused")).toMatchObject({ member: { state: "add-refused" }, thread: null });
-    expect(listed().threadKeys.has("env-desk:refused")).toBe(false);
-  });
-
-  it("leaves every thread to the other lists when no mission is listed", () => {
-    expect(groupSidebarMissions([], threads)).toEqual({ missions: [], threadKeys: new Set() });
   });
 });

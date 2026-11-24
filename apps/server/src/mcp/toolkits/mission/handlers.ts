@@ -26,12 +26,17 @@ export const layer = McpToolAccess.toLayer(MissionToolkit, {
         const owner =
           scope.client === undefined ? scope.environmentId : linkOwner(scope.client.sessionId);
         if (input.kind === "list") return yield* claims.list(owner);
-        // Renames only claims this caller already holds, so it changes no thread it could not.
+        // Renames only claims this caller holds, each checked as a join is; a thread the caller
+        // may no longer change keeps the old name.
         if (input.kind === "rename") {
-          return yield* claims.rename(owner, {
-            missionId: yield* needs(input.missionId, "missionId"),
-            name: yield* needs(input.name, "name"),
-          });
+          return yield* claims.rename(
+            owner,
+            {
+              missionId: yield* needs(input.missionId, "missionId"),
+              name: yield* needs(input.name, "name"),
+            },
+            mayChange,
+          );
         }
         const threadId = yield* needs(input.threadId, "threadId");
         switch (input.kind) {

@@ -182,7 +182,6 @@ import {
 import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
-  groupSidebarMissions,
   groupSidebarThreadsByProject,
   sidebarFolderExpansionKeys,
   buildBulkTitleRegenerationContextMenuItem,
@@ -280,8 +279,13 @@ import {
   useDraftTerminalLabels,
   useSidebarDrafts,
 } from "./sidebar/SidebarDraftBlock";
-import { SidebarMissions, useMissionHosts, useMissionMenu } from "./sidebar/MissionsSection";
-import { isMissionMenuId, type MissionHost } from "./sidebar/missions.logic";
+import {
+  SidebarMissions,
+  useMissionHosts,
+  useMissionLeadShells,
+  useMissionMenu,
+} from "./sidebar/MissionsSection";
+import { groupSidebarMissions, isMissionMenuId, type MissionHost } from "./sidebar/missions.logic";
 import {
   SidebarProjectFolderHeader,
   sidebarFolderRowId,
@@ -464,12 +468,21 @@ function useSidebarThreads(input: {
     folderGroups,
     keepEmptyFolders: keepEmpty,
   } = input;
-  const { missions, threadKeys: missionThreadKeys } = groupSidebarMissions(missionHosts, threads);
+  const { missions, threadKeys: missionThreadKeys } = groupSidebarMissions(
+    missionHosts,
+    threads,
+    scopedProjectKeys,
+  );
   const missionExpandedById = useUiStateStore((store) => store.missionExpandedById);
+  const threadsOf = (entries: ReadonlyArray<{ readonly thread: EnvironmentThreadShell | null }>) =>
+    entries.flatMap((entry) => (entry.thread === null ? [] : [entry.thread]));
+  // A lead the project scope hides still heads its mission, but takes no jump slot or search hit.
+  const missionLeads = threadsOf(missions.map((mission) => mission.lead));
   const missionThreads = missions.flatMap((mission) =>
-    [mission.lead, ...((missionExpandedById[mission.key] ?? true) ? mission.members : [])].flatMap(
-      (entry) => (entry.thread === null ? [] : [entry.thread]),
-    ),
+    threadsOf([
+      ...(mission.leadInScope ? [mission.lead] : []),
+      ...((missionExpandedById[mission.key] ?? true) ? mission.members : []),
+    ]),
   );
   const shelfRouteThreadKey = routeRowThreadKey === departingThreadKey ? null : routeRowThreadKey;
   // Folders already separate the work, so boring mode has no Working shelf.
@@ -605,9 +618,7 @@ function useSidebarThreads(input: {
     missionRowCount: missionThreads.length,
     searchableThreads: [
       ...missions.flatMap((mission) =>
-        [mission.lead, ...mission.members].flatMap((entry) =>
-          entry.thread === null ? [] : [entry.thread],
-        ),
+        threadsOf([...(mission.leadInScope ? [mission.lead] : []), ...mission.members]),
       ),
       ...pinnedThreads,
       ...activeThreads,
@@ -639,8 +650,18 @@ function useSidebarThreads(input: {
     visibleSnoozedThreads,
     visibleWorkingThreads,
     orderedThreadKeys: orderedThreads.map(threadShellKey),
-    threadByKey: new Map(orderedThreads.map((thread) => [threadShellKey(thread), thread] as const)),
-    settledThreadKeys: new Set(settledThreads.map(threadShellKey)),
+    threadByKey: new Map(
+      [...missionLeads, ...orderedThreads].map(
+        (thread) => [threadShellKey(thread), thread] as const,
+      ),
+    ),
+    // A settled lead heads its mission; moving on from a settled thread skips it as any other.
+    settledThreadKeys: new Set(
+      [
+        ...settledThreads,
+        ...missionThreads.filter((thread) => thread.settledOverride === "settled"),
+      ].map(threadShellKey),
+    ),
     snoozedThreadKeys: new Set(snoozedThreads.map(threadShellKey)),
     sectionByThreadKey,
     pinnedKeys: pinnedThreads.map(threadShellKey),
@@ -1408,6 +1429,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     keepEmptyFolders: (group) =>
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
   });
+  useMissionLeadShells(missions);
 
   // Ranked across environments as the palette ranks them, so one
   // environment's list does not sit above another's better matches; rows

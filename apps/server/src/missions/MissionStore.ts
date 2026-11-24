@@ -256,12 +256,16 @@ export class MissionStore extends Context.Service<
     readonly leave: (threadId: ThreadId) => Effect.Effect<void, MissionError>;
     /** Names a Mission led here again. Its claims follow through `renameClaims`. */
     readonly renameMission: (missionId: string, name: string) => Effect.Effect<void>;
-    /** Gives this owner's claims in a Mission its new name. Answers the threads it renamed. */
-    readonly renameClaims: (input: {
+    /**
+     * Gives this owner's claim on one thread the Mission's new name, and marks its tags unsynced
+     * with it. Answers whether it changed. Called only under that thread's lock.
+     */
+    readonly renameClaim: (input: {
+      readonly threadId: ThreadId;
       readonly owner: string;
       readonly missionId: string;
       readonly name: string;
-    }) => Effect.Effect<ReadonlyArray<ThreadId>>;
+    }) => Effect.Effect<boolean>;
     readonly claim: (threadId: ThreadId) => Effect.Effect<MissionClaim | undefined>;
     readonly claimsOf: (owner: string) => Effect.Effect<ReadonlyArray<MissionClaim>>;
     readonly allClaims: Effect.Effect<ReadonlyArray<MissionClaim>>;
@@ -460,25 +464,25 @@ const make = Effect.gen(function* () {
       Effect.orDie,
     );
 
-  const renameClaims = Effect.fn("MissionStore.renameClaims")(function* (input: {
+  const renameClaim = Effect.fn("MissionStore.renameClaim")(function* (input: {
+    readonly threadId: ThreadId;
     readonly owner: string;
     readonly missionId: string;
     readonly name: string;
   }) {
     const renamed = yield* sql.withTransaction(
       Effect.gen(function* () {
-        const rows = yield* sql<{ readonly thread_id: string }>`
+        const rows = yield* sql`
           UPDATE claims SET mission_name = ${input.name}
-          WHERE owner = ${input.owner} AND mission_id = ${input.missionId}
-            AND mission_name != ${input.name}
+          WHERE thread_id = ${input.threadId} AND owner = ${input.owner}
+            AND mission_id = ${input.missionId} AND mission_name != ${input.name}
           RETURNING thread_id
         `;
-        const threadIds = rows.map((row) => ThreadId.make(row.thread_id));
-        yield* Effect.forEach(threadIds, markUnsynced);
-        return threadIds;
+        if (rows.length > 0) yield* markUnsynced(input.threadId);
+        return rows.length > 0;
       }),
     );
-    if (renamed.length > 0) yield* changed;
+    if (renamed) yield* changed;
     return renamed;
   }, Effect.orDie);
 
@@ -662,7 +666,7 @@ const make = Effect.gen(function* () {
     release,
     leave,
     renameMission,
-    renameClaims,
+    renameClaim,
     claim,
     claimsOf,
     allClaims,

@@ -1,6 +1,9 @@
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   type ContextMenuItem,
   type EnvironmentId,
+  type Mission,
+  type MissionMember,
   type MissionsSnapshot,
   type ThreadId,
   threadHasMessages,
@@ -8,6 +11,7 @@ import {
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "../../i18n/messages";
+import type { SidebarThreadSummary } from "../../types";
 
 /** The Missions one machine keeps: those whose lead thread is on it. */
 export interface MissionHost {
@@ -29,20 +33,26 @@ export type MissionMenuId =
   | "mission-start"
   | "mission-leave"
   | "mission-add"
-  | `mission-add:${string}`;
+  | `mission-add:${string}`
+  | `mission-release:${string}`;
 
 export const isMissionMenuId = (id: string): id is MissionMenuId => id.startsWith("mission-");
 
 const ADD_PREFIX = "mission-add:";
+const RELEASE_PREFIX = "mission-release:";
 
 /** Mission ids are hex, so the last colon separates them from the host's environment id. */
-export function parseMissionAddId(
-  id: MissionMenuId,
-): { readonly environmentId: EnvironmentId; readonly missionId: string } | null {
-  if (!id.startsWith(ADD_PREFIX)) return null;
-  const rest = id.slice(ADD_PREFIX.length);
+export function parseMissionTarget(id: MissionMenuId): {
+  readonly action: "add" | "release";
+  readonly environmentId: EnvironmentId;
+  readonly missionId: string;
+} | null {
+  const prefix = [ADD_PREFIX, RELEASE_PREFIX].find((candidate) => id.startsWith(candidate));
+  if (prefix === undefined) return null;
+  const rest = id.slice(prefix.length);
   const split = rest.lastIndexOf(":");
   return {
+    action: prefix === ADD_PREFIX ? "add" : "release",
     environmentId: rest.slice(0, split) as EnvironmentId,
     missionId: rest.slice(split + 1),
   };
@@ -110,6 +120,25 @@ export function buildMissionMenuItems(
     single === undefined
       ? undefined
       : hosts.find((host) => host.environmentId === single.environmentId);
+  // The Mission whose lead may release this thread: one it joined, as its lead's machine knows.
+  const heldBy =
+    single === undefined
+      ? undefined
+      : hosts
+          .flatMap((host) =>
+            host.snapshot.missions
+              .filter((mission) =>
+                mission.members.some(
+                  (member) =>
+                    member.role === "member" &&
+                    isJoined(member) &&
+                    member.ref.environmentId === single.environmentId &&
+                    member.ref.threadId === single.id,
+                ),
+              )
+              .map((mission) => ({ host: host.environmentId, missionId: mission.missionId })),
+          )
+          .at(0);
   return [
     ...(single === undefined
       ? []
@@ -133,6 +162,17 @@ export function buildMissionMenuItems(
                   : !canChangeOn(single.environmentId)
                     ? { detail: blockLabel("not-allowed", "", resolve) }
                     : {}),
+          },
+        ]),
+    ...(heldBy === undefined
+      ? []
+      : [
+          {
+            id: `${RELEASE_PREFIX}${heldBy.host}:${heldBy.missionId}` as const,
+            label: resolve(msg("Release from mission")),
+            icon: "flag",
+            disabled: !canChangeOn(heldBy.host),
+            ...(canChangeOn(heldBy.host) ? {} : { detail: blockLabel("not-allowed", "", resolve) }),
           },
         ]),
     ...(single === undefined || claimHere(single, hosts) === undefined
@@ -212,4 +252,104 @@ export function missionAddSummary(
       reasons: [...new Set(outcome.refused)].join(" "),
     }),
   );
+}
+
+/** A row in a Mission: drawn as its thread's own row when this client has the thread. */
+export interface SidebarMissionEntry<T> {
+  readonly member: MissionMember;
+  readonly thread: T | null;
+}
+
+export interface SidebarMission<T> {
+  /** The lead's machine and the Mission id, as its collapse state is kept. */
+  readonly key: string;
+  readonly host: EnvironmentId;
+  readonly mission: Mission;
+  readonly lead: SidebarMissionEntry<T>;
+  /** False when a project scope hides the lead: it still heads its Mission, but only that. */
+  readonly leadInScope: boolean;
+  readonly members: ReadonlyArray<SidebarMissionEntry<T>>;
+}
+
+type ListedThread = Pick<
+  SidebarThreadSummary,
+  "environmentId" | "id" | "projectId" | "settledOverride" | "archivedAt"
+>;
+
+/** How surely a Mission holds a thread. A current claim wins over a last-known or pending one. */
+const HOLD: Record<MissionMember["state"], number> = {
+  active: 2,
+  offline: 1,
+  "release-pending": 1,
+  "add-pending": 0,
+  "add-refused": -1,
+  deleted: -1,
+};
+
+const isJoined = (member: MissionMember) => member.state === "active" || member.state === "offline";
+
+/**
+ * The Missions the sidebar lists, and `threadKeys`, the threads they show; other lists leave those
+ * out. A thread shows in one Mission: the one it leads, else the surest hold, else the first.
+ * A settled or archived member goes back to the other lists unless its add or release waits.
+ */
+export function groupSidebarMissions<T extends ListedThread>(
+  hosts: ReadonlyArray<MissionHost>,
+  threads: readonly T[],
+  scopedProjectKeys: ReadonlySet<string> | null,
+): {
+  readonly missions: ReadonlyArray<SidebarMission<T>>;
+  readonly threadKeys: ReadonlySet<string>;
+} {
+  const keyOf = (thread: T) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+  const threadByKey = new Map(threads.map((thread) => [keyOf(thread), thread]));
+  const inScope = (thread: T) =>
+    scopedProjectKeys === null ||
+    scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`);
+  const listed = hosts.flatMap((host) =>
+    host.snapshot.missions.map((mission) => ({
+      key: `${host.environmentId}:${mission.missionId}`,
+      host: host.environmentId,
+      mission,
+    })),
+  );
+  const holder = new Map<string, { readonly mission: string; readonly hold: number }>();
+  for (const { key, mission } of listed) {
+    for (const member of mission.members) {
+      const hold = member.role === "lead" ? 3 : HOLD[member.state];
+      const thread = scopedThreadKey(member.ref);
+      if (hold >= 0 && hold > (holder.get(thread)?.hold ?? -1)) {
+        holder.set(thread, { mission: key, hold });
+      }
+    }
+  }
+  const threadKeys = new Set<string>();
+  const missions = listed.flatMap(({ key, host, mission }): Array<SidebarMission<T>> => {
+    const entries = mission.members.flatMap((member): Array<SidebarMissionEntry<T>> => {
+      const threadKey = scopedThreadKey(member.ref);
+      const claimed = member.state !== "deleted" && member.state !== "add-refused";
+      if (claimed && holder.get(threadKey)?.mission !== key) return [];
+      const thread = claimed ? (threadByKey.get(threadKey) ?? null) : null;
+      if (
+        member.role === "member" &&
+        isJoined(member) &&
+        thread !== null &&
+        (thread.settledOverride === "settled" || thread.archivedAt !== null)
+      ) {
+        return [];
+      }
+      if (thread !== null) threadKeys.add(threadKey);
+      return [{ member, thread }];
+    });
+    const [lead, ...members] = entries;
+    if (lead?.member.role !== "lead") return [];
+    const shownMembers =
+      scopedProjectKeys === null
+        ? members
+        : members.filter((entry) => entry.thread !== null && inScope(entry.thread));
+    const leadInScope = lead.thread === null ? scopedProjectKeys === null : inScope(lead.thread);
+    if (!leadInScope && shownMembers.length === 0) return [];
+    return [{ key, host, mission, lead, leadInScope, members: shownMembers }];
+  });
+  return { missions, threadKeys };
 }

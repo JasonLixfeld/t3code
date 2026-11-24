@@ -10,7 +10,8 @@ import type { EnvironmentId, MissionMember, ScopedThreadRef } from "@t3tools/con
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon, XIcon } from "lucide-react";
-import { Fragment, type ReactNode, useContext, useState } from "react";
+import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { Fragment, type ReactNode, useContext, useEffect, useState } from "react";
 
 import { m } from "../../i18n/messages";
 import { readLocalApi } from "../../localApi";
@@ -19,9 +20,10 @@ import { useClientSettings } from "../../hooks/useSettings";
 import { useEnvironmentIdentities, useConnectedEnvironmentIds } from "../../state/environments";
 import { useProject, useQuietThreadShell } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { threadFamilies } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useUiStateStore } from "../../uiStateStore";
-import type { SidebarMission } from "../Sidebar.logic";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -32,7 +34,8 @@ import {
   type MissionCandidate,
   type MissionHost,
   type MissionMenuId,
-  parseMissionAddId,
+  parseMissionTarget,
+  type SidebarMission,
 } from "./missions.logic";
 import { SidebarHeading } from "./SidebarListMarkers";
 import type { SidebarMissionToggle } from "./SidebarThreadRow";
@@ -81,6 +84,7 @@ export function useMissionMenu() {
   const create = useAtomCommand(serverEnvironment.createMission, "mission create");
   const add = useAtomCommand(serverEnvironment.addMissionMember, "mission add member");
   const leave = useAtomCommand(serverEnvironment.leaveMission, "mission leave");
+  const release = useAtomCommand(serverEnvironment.releaseMissionMember, "mission release member");
   // One source for single and bulk adds: the right to change Missions on the machine that keeps them.
   const canChangeOn = (environmentId: EnvironmentId) =>
     registry.get(serverEnvironment.addMissionMember.permissionAtom(environmentId));
@@ -117,8 +121,17 @@ export function useMissionMenu() {
         reportFailure(gt("Could not leave the mission"), result);
         return result._tag === "Success" ? [lead] : [];
       }
-      const target = parseMissionAddId(id);
+      const target = parseMissionTarget(id);
       if (target === null) return [];
+      if (target.action === "release") {
+        if (lead === undefined) return [];
+        const result = await release({
+          environmentId: target.environmentId,
+          input: { missionId: target.missionId, member: lead },
+        });
+        reportFailure(gt("Could not release the thread"), result);
+        return result._tag === "Success" ? [lead] : [];
+      }
       const outcome = await addEachToMission(threads, async (member) =>
         failureMessage(
           await add({
@@ -142,6 +155,8 @@ function MemberRow(props: {
   readonly missionId: string;
   readonly member: MissionMember;
   readonly machineLabel: string;
+  /** Names a lead whose thread this client has not read yet. */
+  readonly missionName: string;
   readonly onOpen: (ref: ScopedThreadRef) => void;
   /** Set on a lead row this client has no thread for, so it still folds its members. */
   readonly toggle?: SidebarMissionToggle | undefined;
@@ -149,7 +164,9 @@ function MemberRow(props: {
   readonly stateOnly?: boolean;
 }) {
   const gt = useGT();
-  const thread = useQuietThreadShell(props.member.ref);
+  // A refused add never joined, so its row is only the refusal: no title, nothing to open.
+  const dismisses = props.member.state === "add-refused";
+  const thread = useQuietThreadShell(dismisses ? null : props.member.ref);
   const project = useProject(
     thread === null ? null : { environmentId: thread.environmentId, projectId: thread.projectId },
   );
@@ -162,11 +179,12 @@ function MemberRow(props: {
   const deleted = props.member.state === "deleted";
   const title = deleted
     ? gt("Lead deleted", { $context: "the thread that led a mission no longer exists" })
-    : (thread?.title ?? gt("Thread on {machine}", { machine: props.machineLabel }));
+    : (thread?.title ??
+      (props.member.role === "lead"
+        ? props.missionName
+        : gt("Thread on {machine}", { machine: props.machineLabel })));
   const where = project === null ? props.machineLabel : `${props.machineLabel} · ${project.title}`;
   const active = props.member.state === "active";
-  // A refused add never joined, so its button only puts the refusal away.
-  const dismisses = props.member.state === "add-refused";
   // Its machine has not answered, and may never: the lead can stop waiting without asking it.
   const forgets = props.member.state === "add-pending" || props.member.state === "release-pending";
   const command = {
@@ -217,7 +235,7 @@ function MemberRow(props: {
               active ? "text-sidebar-foreground" : "text-sidebar-muted-foreground",
             )}
           >
-            {props.stateOnly ? null : <span className="truncate">{title}</span>}
+            {props.stateOnly || dismisses ? null : <span className="truncate">{title}</span>}
             {toggle && !toggle.expanded && toggle.memberCount > 0 ? (
               <span className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground">
                 {toggle.memberCount}
@@ -294,6 +312,7 @@ export function SidebarMissions(props: {
         missionId={mission.mission.missionId}
         member={entry.member}
         machineLabel={machineLabel(entry.member.ref.environmentId)}
+        missionName={mission.mission.name}
         onOpen={props.onOpenThread}
         toggle={toggle}
       />
@@ -306,6 +325,7 @@ export function SidebarMissions(props: {
             missionId={mission.mission.missionId}
             member={entry.member}
             machineLabel={machineLabel(entry.member.ref.environmentId)}
+            missionName={mission.mission.name}
             onOpen={props.onOpenThread}
             stateOnly
           />
@@ -341,3 +361,35 @@ export function SidebarMissions(props: {
 }
 
 const scopedKey = (ref: ScopedThreadRef) => `${ref.environmentId}:${ref.threadId}`;
+
+/**
+ * The shell stream leaves older settled threads out, a mission's lead among them. Each lead the
+ * sidebar has no thread for is read in with its family, so its own row heads its mission, and is
+ * kept while the mission is listed, so the row it brings in does not release it.
+ */
+export function useMissionLeadShells(
+  missions: ReadonlyArray<SidebarMission<EnvironmentThreadShell>>,
+) {
+  const [mounted, setMounted] = useState<ReadonlyArray<string>>([]);
+  const wanted = missions.flatMap((mission) => {
+    const key = scopedThreadKey(mission.lead.member.ref);
+    return mission.lead.member.state === "active" &&
+      (mission.lead.thread === null || mounted.includes(key))
+      ? [key]
+      : [];
+  });
+  const wantedKey = JSON.stringify(wanted);
+  if (wantedKey !== JSON.stringify(mounted)) setMounted(wanted);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds each listed lead's family in the thread family registry while its mission is listed
+  useEffect(() => {
+    const releases = (JSON.parse(wantedKey) as ReadonlyArray<string>).flatMap((key) => {
+      const ref = parseScopedThreadKey(key);
+      return ref === null
+        ? []
+        : [threadFamilies.mount(appAtomRegistry, ref.environmentId, ref.threadId)];
+    });
+    return () => {
+      for (const release of releases) release();
+    };
+  }, [wantedKey]);
+}

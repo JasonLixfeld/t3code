@@ -1,12 +1,20 @@
-import { EnvironmentId, type Mission, type MissionLink, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type Mission,
+  type MissionLink,
+  type MissionMember,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   addEachToMission,
   buildMissionMenuItems,
+  groupSidebarMissions,
   missionAddSummary,
   type MissionHost,
-  parseMissionAddId,
+  parseMissionTarget,
 } from "./missions.logic";
 
 const DESK = EnvironmentId.make("env-desk");
@@ -133,8 +141,44 @@ describe("buildMissionMenuItems", () => {
     });
   });
 
+  it("offers the lead's machine to release a thread that joined one of its missions", () => {
+    const joined: ReadonlyArray<MissionHost> = [
+      {
+        ...hosts[0]!,
+        snapshot: {
+          ...hosts[0]!.snapshot,
+          missions: [
+            {
+              ...mission,
+              members: [
+                {
+                  ref: { environmentId: LAPTOP, threadId: ThreadId.make("ios") },
+                  role: "member",
+                  state: "active",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ];
+    const releaseOf = (can: (environmentId: EnvironmentId) => boolean, id = "ios") =>
+      buildMissionMenuItems([thread(LAPTOP, id)], joined, label, can).find((item) =>
+        item.id.startsWith("mission-release:"),
+      );
+    expect(releaseOf(allowed)).toMatchObject({
+      id: "mission-release:env-desk:0123456789ab",
+      label: "Release from mission",
+      disabled: false,
+    });
+    expect(parseMissionTarget(releaseOf(allowed)!.id)).toMatchObject({ action: "release" });
+    expect(releaseOf(() => false)).toMatchObject({ disabled: true, detail: "Not allowed here" });
+    expect(releaseOf(allowed, "other")).toBeUndefined();
+  });
+
   it("reads the host and mission back from an add entry", () => {
-    expect(parseMissionAddId("mission-add:env:with:colons:0123456789ab")).toEqual({
+    expect(parseMissionTarget("mission-add:env:with:colons:0123456789ab")).toEqual({
+      action: "add",
       environmentId: "env:with:colons",
       missionId: "0123456789ab",
     });
@@ -154,5 +198,139 @@ describe("addEachToMission", () => {
       '3 added, 1 refused: This thread is already in the mission "One".',
     );
     expect(missionAddSummary({ added: ["a", "b"], refused: [] })).toBeNull();
+  });
+});
+
+describe("groupSidebarMissions", () => {
+  const environmentId = EnvironmentId.make("env-desk");
+  const laptop = EnvironmentId.make("env-laptop");
+  const shell = (
+    id: string,
+    extra: { settled?: boolean; archived?: boolean; project?: string } = {},
+  ) => ({
+    environmentId,
+    id: ThreadId.make(id),
+    projectId: ProjectId.make(extra.project ?? "web"),
+    settledOverride: extra.settled === true ? ("settled" as const) : null,
+    archivedAt: extra.archived === true ? "2026-11-23T00:00:00.000Z" : null,
+  });
+  const member = (
+    threadId: string,
+    state: MissionMember["state"],
+    role: MissionMember["role"] = "member",
+    on = environmentId,
+  ): MissionMember => ({
+    ref: { environmentId: on, threadId: ThreadId.make(threadId) },
+    role,
+    state,
+  });
+  const mission = (missionId: string, members: ReadonlyArray<MissionMember>): Mission => ({
+    missionId,
+    name: missionId,
+    createdAt: "2026-11-23T00:00:00.000Z",
+    members,
+  });
+  const hostOf = (...missions: ReadonlyArray<Mission>): ReadonlyArray<MissionHost> => [
+    { environmentId, snapshot: { links: [], claims: [], missions } },
+  ];
+  const ship = mission("0123456789ab", [
+    member("lead", "active", "lead"),
+    member("docs", "active"),
+    member("done", "active"),
+    member("old", "active"),
+    member("joining", "add-pending"),
+    member("leaving", "release-pending"),
+    member("refused", "add-refused"),
+    member("remote", "offline", "member", laptop),
+  ]);
+  const threads = [
+    shell("lead"),
+    shell("docs"),
+    shell("done", { settled: true }),
+    shell("old", { archived: true }),
+    shell("joining"),
+    shell("leaving"),
+    shell("refused"),
+  ];
+  const listed = () => groupSidebarMissions(hostOf(ship), threads, null);
+  const entryOf = (threadId: string) =>
+    listed().missions[0]!.members.find((entry) => entry.member.ref.threadId === threadId);
+  const rowsOf = (result: ReturnType<typeof listed>) =>
+    result.missions.map((entry) => [
+      entry.key,
+      entry.leadInScope,
+      entry.members.map((row) => row.member.ref.threadId),
+    ]);
+
+  it("shows the lead and unsettled members only in their mission, and settled ones elsewhere", () => {
+    const { missions, threadKeys } = listed();
+    expect(threadKeys.has("env-desk:lead")).toBe(true);
+    expect(threadKeys.has("env-desk:docs")).toBe(true);
+    expect(threadKeys.has("env-desk:done")).toBe(false);
+    expect(missions[0]!.key).toBe("env-desk:0123456789ab");
+    expect(missions[0]!.lead.thread?.id).toBe("lead");
+    expect(entryOf("done")).toBeUndefined();
+    // A thread this client cannot see keeps the mission's own row.
+    expect(entryOf("remote")?.thread).toBeNull();
+  });
+
+  it("leaves an archived member out of its mission and to the other lists", () => {
+    expect(entryOf("old")).toBeUndefined();
+    expect(listed().threadKeys.has("env-desk:old")).toBe(false);
+  });
+
+  it("shows a pending add or release it has the thread for in the mission only", () => {
+    for (const threadId of ["joining", "leaving"]) {
+      expect(entryOf(threadId)?.thread?.id).toBe(threadId);
+      expect(listed().threadKeys.has(`env-desk:${threadId}`)).toBe(true);
+    }
+  });
+
+  it("keeps a refused add's thread in the other lists, and only the refusal in the mission", () => {
+    expect(entryOf("refused")).toMatchObject({ member: { state: "add-refused" }, thread: null });
+    expect(listed().threadKeys.has("env-desk:refused")).toBe(false);
+  });
+
+  it("shows a thread in one mission only: a current claim first, then the first listed", () => {
+    const stale = mission("aaaaaaaaaaaa", [
+      member("other-lead", "active", "lead"),
+      member("docs", "release-pending"),
+      member("joining", "active"),
+    ]);
+    const later = mission("bbbbbbbbbbbb", [
+      member("third-lead", "active", "lead"),
+      member("docs", "active"),
+    ]);
+    const shells = [...threads, shell("other-lead"), shell("third-lead")];
+    // `joining` waits to be added to the first and is claimed by the second; two current
+    // claims on `docs` leave it with the first.
+    const result = groupSidebarMissions(hostOf(ship, stale, later), shells, null);
+    expect(rowsOf(result)).toEqual([
+      ["env-desk:0123456789ab", true, ["docs", "leaving", "refused", "remote"]],
+      ["env-desk:aaaaaaaaaaaa", true, ["joining"]],
+      ["env-desk:bbbbbbbbbbbb", true, []],
+    ]);
+    // A current claim wins over a release that still waits, whichever is listed first.
+    const twice = groupSidebarMissions(hostOf(stale, later), shells, null);
+    expect(rowsOf(twice).map((row) => row[2])).toEqual([["joining"], ["docs"]]);
+  });
+
+  it("with a project scope, lists only members in it, under their lead wherever it is", () => {
+    const scoped = [...threads, shell("api-docs", { project: "api" })];
+    const withApi = mission("0123456789ab", [...ship.members, member("api-docs", "active")]);
+    const result = groupSidebarMissions(hostOf(withApi), scoped, new Set(["env-desk:api"]));
+    expect(rowsOf(result)).toEqual([["env-desk:0123456789ab", false, ["api-docs"]]]);
+    // Every mission thread still stays out of the other lists.
+    expect(result.threadKeys.has("env-desk:docs")).toBe(true);
+    expect(groupSidebarMissions(hostOf(ship), threads, new Set(["env-desk:api"])).missions).toEqual(
+      [],
+    );
+  });
+
+  it("leaves every thread to the other lists when no mission is listed", () => {
+    expect(groupSidebarMissions([], threads, null)).toEqual({
+      missions: [],
+      threadKeys: new Set(),
+    });
   });
 });

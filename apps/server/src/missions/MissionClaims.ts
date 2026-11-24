@@ -111,10 +111,15 @@ export class MissionClaims extends Context.Service<
       },
       access?: ThreadAccess<E>,
     ) => Effect.Effect<void, MissionError | E>;
-    /** Gives the owner's claims in a Mission its new name, then answers the owner's claims. */
-    readonly rename: (
+    /**
+     * Gives the owner's claims in a Mission its new name, then answers the owner's claims. Each
+     * thread is renamed as a claim change, under its locks and `access`. A thread the caller may
+     * no longer change keeps the old name.
+     */
+    readonly rename: <E = never>(
       owner: string,
       input: { readonly missionId: string; readonly name: string },
+      access?: ThreadAccess<E>,
     ) => Effect.Effect<ReadonlyArray<MissionClaim>>;
     /** The local user frees a thread here from whichever Mission holds it. A lead thread stays. */
     readonly leaveHere: (threadId: ThreadId) => Effect.Effect<void, MissionError>;
@@ -135,10 +140,10 @@ const make = Effect.gen(function* () {
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
 
   /**
-   * Call only while holding the thread's lock: it reads the claim it writes the tags for. The
-   * caller's mode limit is dropped, because the claim change already passed its access check.
+   * Call only while holding the thread's lock: it reads the claim it writes the tags for. A write
+   * that fails leaves the thread unsynced, for the repair below.
    */
-  const syncTags = Effect.fn("MissionClaims.syncTags")(
+  const writeTags = Effect.fn("MissionClaims.writeTags")(
     function* (threadId: ThreadId) {
       const claim = yield* store.claim(threadId);
       const shell = yield* threads.getThreadShell(threadId);
@@ -155,11 +160,13 @@ const make = Effect.gen(function* () {
       }
       yield* store.tagsSynced(threadId);
     },
-    Effect.provideService(DispatchModeLimit, undefined),
     Effect.catchCause((cause) =>
       Effect.logWarning("A mission tag was not written; this machine writes it again later", cause),
     ),
   );
+  /** The caller's mode limit is dropped, because the claim change already passed its access check. */
+  const syncTags = (threadId: ThreadId) =>
+    writeTags(threadId).pipe(Effect.provideService(DispatchModeLimit, undefined));
 
   yield* Effect.sleep(TAG_REPAIR_INTERVAL).pipe(
     Effect.andThen(store.unsyncedTags),
@@ -253,14 +260,38 @@ const make = Effect.gen(function* () {
     (effect, threadId) => locks.withLock(threadId, effect),
   );
 
-  const rename = Effect.fn("MissionClaims.rename")(function* (
+  const rename = Effect.fn("MissionClaims.rename")(function* <E>(
     owner: string,
     input: { readonly missionId: string; readonly name: string },
+    access?: ThreadAccess<E>,
   ) {
-    const renamed = yield* store.renameClaims({ owner, ...input });
-    yield* Effect.forEach(renamed, (threadId) => locks.withLock(threadId, syncTags(threadId)), {
-      discard: true,
-    });
+    // `renameClaim` alone decides which of these the owner holds in this Mission.
+    const stale = (yield* store.allClaims).filter((held) => held.name !== input.name);
+    for (const { threadId } of stale) {
+      yield* locks.withLock(
+        threadId,
+        Effect.gen(function* () {
+          const renamed = yield* threadCommands.withLock(
+            threadId,
+            Effect.gen(function* () {
+              const shell = yield* threads
+                .getThreadShell(threadId)
+                .pipe(Effect.orElseSucceed(() => null));
+              if (access !== undefined && shell !== null && shell.deletedAt === null) {
+                const allowed = yield* access(shell).pipe(
+                  Effect.as(true),
+                  Effect.orElseSucceed(() => false),
+                );
+                if (!allowed) return false;
+              }
+              return yield* store.renameClaim({ ...input, threadId, owner });
+            }),
+          );
+          // The caller's mode limit stays: the orchestrator checks it again for each tag write.
+          if (renamed) yield* writeTags(threadId);
+        }),
+      );
+    }
     return yield* store.claimsOf(owner);
   });
 
