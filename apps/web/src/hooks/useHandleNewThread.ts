@@ -328,14 +328,10 @@ export function createNewThreadHandler(router: AnyRouter) {
     if (storedDraftThreadRef && reusableStoredDraftThread === null) {
       markPromotedDraftThreadByRef(storedDraftThreadRef);
     }
-    // A Mission draft stays on its machine, as the project it was opened in.
-    const keepsMissionDraft = (draft: DraftSessionState, id: DraftId) =>
-      !isMissionDraft(id) ||
-      (draft.environmentId === projectRef.environmentId &&
-        draft.projectId === projectRef.projectId);
+    // A Mission draft belongs to the Mission it starts or leads; every other new thread is fresh.
     const emptyStoredDraftThread =
       reusableStoredDraftThread &&
-      keepsMissionDraft(reusableStoredDraftThread, reusableStoredDraftThread.draftId) &&
+      !isMissionDraft(reusableStoredDraftThread.draftId) &&
       !composerDraftHasUserContent(getComposerDraft(reusableStoredDraftThread.draftId))
         ? reusableStoredDraftThread
         : null;
@@ -424,7 +420,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       currentRouteTarget?.kind === "draft" &&
       latestActiveDraftThread.logicalProjectKey === logicalProjectKey &&
       latestActiveDraftThread.promotedTo == null &&
-      keepsMissionDraft(latestActiveDraftThread, currentRouteTarget.draftId) &&
+      !isMissionDraft(currentRouteTarget.draftId) &&
       !composerDraftHasUserContent(getComposerDraft(currentRouteTarget.draftId))
     ) {
       if (

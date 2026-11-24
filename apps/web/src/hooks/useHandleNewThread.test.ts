@@ -427,7 +427,7 @@ describe("a Mission draft", () => {
     expect(opened?.draftId).toBe("draft-delayed");
   });
 
-  it("is reused for its own project on its own machine", async () => {
+  it("is not reused even for its own project on its own machine", async () => {
     const marked = {
       draftId: "draft-marked",
       environmentId: "environment-ssh",
@@ -438,7 +438,7 @@ describe("a Mission draft", () => {
     testState.reset(marked);
     markDraft("draft-marked", "environment-ssh");
     const opened = await useNewThreadHandler()(remote);
-    expect(opened?.draftId).toBe("draft-marked");
+    expect(opened?.draftId).toBe("draft-delayed");
   });
 });
 

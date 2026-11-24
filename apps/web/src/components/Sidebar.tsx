@@ -279,6 +279,7 @@ import {
   useDraftTerminalLabels,
   useSidebarDrafts,
 } from "./sidebar/SidebarDraftBlock";
+import { createMissionEdgeScroll } from "./sidebar/missionEdgeScroll";
 import {
   NewMissionButton,
   SidebarMissions,
@@ -1476,6 +1477,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // A drag drops threads into a mission, or takes a member out of one, before sorting sees it.
   const missionDrop = useMissionDrop(missions);
   const missionDraggableKeys = missionDragKeys(missions);
+  const [missionEdgeScroll] = useState(() => createMissionEdgeScroll(SIDEBAR_AUTO_SCROLL));
+  // While it scrolls, dnd-kit's own scroll would follow the last move it saw and pull against it.
+  const [missionEdgeScrolling, setMissionEdgeScrolling] = useState(false);
 
   // Ranked across environments as the palette ranks them, so one
   // environment's list does not sit above another's better matches; rows
@@ -1881,6 +1885,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     dragSensorRef.current = null;
     contextDragKeyRef.current = null;
     dragScrollRef.current = null;
+    missionEdgeScroll.stop();
+    setMissionEdgeScrolling(false);
     missionDrop.clear();
     endThreadContextDrag();
     if (started) {
@@ -1925,8 +1931,33 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const scroll = dragScrollRef.current;
     if (scroll && scroll.viewport.scrollTop !== scroll.top) scroll.viewport.scrollTop = scroll.top;
   };
+  // A Mission drag scrolls the list at its edges: a member toward the release zone, a thread over
+  // a Mission, or a thread toward Missions scrolled out of view above. Other drags keep dnd-kit's.
+  const scrollMissionEdge = (point: { x: number; y: number }, claimed: boolean) => {
+    const list = threadListRef.current;
+    const viewport = list?.closest<HTMLElement>("[data-slot=scroll-area-viewport]") ?? null;
+    const edge = viewport === null ? 0 : missionEdgeScroll.edge(viewport, point.y);
+    const memberDrag = missionDraggableKeys.has(contextDragKeyRef.current ?? "");
+    const missionsAbove =
+      viewport !== null &&
+      (list?.querySelector("[data-mission-drop]")?.getBoundingClientRect().top ?? Infinity) <
+        viewport.getBoundingClientRect().top;
+    if (
+      viewport === null ||
+      edge === 0 ||
+      !(memberDrag || claimed || (edge < 0 && missionsAbove))
+    ) {
+      missionEdgeScroll.stop();
+      setMissionEdgeScrolling(false);
+      return false;
+    }
+    missionEdgeScroll.hold(viewport, point.y, () => missionDrop.move(missionDragAt(point)));
+    setMissionEdgeScrolling(true);
+    return true;
+  };
   const moveThreadContextDrag = (point: { x: number; y: number }) => {
-    if (missionDrop.move(missionDragAt(point))) {
+    const claimed = missionDrop.move(missionDragAt(point));
+    if (scrollMissionEdge(point, claimed) || claimed) {
       // A drag from the composer onto a Mission leaves the composer's drop behind.
       endThreadContextDrag();
       return true;
@@ -3607,7 +3638,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             >
               <DndContext
                 sensors={dndSensors}
-                autoScroll={isContextDrag ? false : SIDEBAR_AUTO_SCROLL}
+                autoScroll={
+                  isContextDrag || missionEdgeScrolling || missionDrop.target !== null
+                    ? false
+                    : SIDEBAR_AUTO_SCROLL
+                }
                 collisionDetection={dndCollisionDetection}
                 modifiers={dndModifiers}
                 onDragStart={handleThreadDragStart}

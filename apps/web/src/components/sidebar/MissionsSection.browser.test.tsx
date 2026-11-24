@@ -643,10 +643,15 @@ async function dragBetween(from: HTMLElement, to: DragTarget) {
   await act(() => pointer("pointermove", document, { ...start, clientY: start.clientY + 12 }));
   await act(() => pointer("pointermove", document, { ...start, clientY: start.clientY + 16 }));
   await act(() => pointer("pointermove", document, center(to)));
+  // The pointer is let go where it last moved to.
+  let at = to;
   return {
-    moveTo: (next: HTMLElement) => act(() => pointer("pointermove", document, center(next))),
+    moveTo: (next: HTMLElement) => {
+      at = next;
+      return act(() => pointer("pointermove", document, center(next)));
+    },
     release: async () => {
-      await act(() => pointer("pointerup", document, { ...center(to), buttons: 0 }));
+      await act(() => pointer("pointerup", document, { ...center(at), buttons: 0 }));
       // A drag leaves a guard for its click; the next press clears it.
       await act(() => pointer("pointerdown", document.body, { clientX: 0, clientY: 0 }));
       await act(() => pointer("pointerup", document.body, { clientX: 0, clientY: 0, buttons: 0 }));
@@ -845,6 +850,62 @@ describe("dragging threads into and out of missions", () => {
       await drag.release();
     }
     expect(commandFor("mission release member")).not.toHaveBeenCalled();
+  });
+
+  /** A 200px viewport over the list, as a short window has. */
+  const shortViewport = (root: Element) => {
+    const viewport = root.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]")!;
+    Object.assign(viewport.style, { height: "200px", overflow: "auto" });
+    return viewport;
+  };
+
+  it("scrolls the grouped list while a member is held at its bottom edge, to the release zone", async () => {
+    using _drag = allowDrag();
+    await using screen = await renderSidebar({ boringSidebarEnabled: true });
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    const viewport = shortViewport(screen.container);
+    const view = viewport.getBoundingClientRect();
+    const drag = await dragBetween(rowOf(screen.container, "Update the release notes"), {
+      clientX: view.left + 40,
+      clientY: view.bottom - 2,
+    });
+    expect(releaseZone(screen.container)().getBoundingClientRect().top).toBeGreaterThan(
+      view.bottom,
+    );
+    await vi.waitFor(
+      () =>
+        expect(releaseZone(screen.container)().getBoundingClientRect().bottom).toBeLessThan(
+          view.bottom - 12,
+        ),
+      { timeout: 10_000 },
+    );
+    await drag.moveTo(releaseZone(screen.container)());
+    await drag.release();
+    expect(commandFor("mission release member")).toHaveBeenCalledExactlyOnceWith({
+      environmentId: LOCAL,
+      input: { missionId: "0123456789ab", member: ref(LOCAL, "docs") },
+    });
+  });
+
+  it("scrolls up to missions above the list while a thread is held at its top edge", async () => {
+    using _drag = allowDrag();
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
+    const viewport = shortViewport(screen.container);
+    const areas = [...screen.container.querySelectorAll<HTMLElement>("[data-mission-drop]")];
+    viewport.scrollTop =
+      areas.at(-1)!.getBoundingClientRect().bottom - viewport.getBoundingClientRect().top + 20;
+    const view = viewport.getBoundingClientRect();
+    expect(areas.every((area) => area.getBoundingClientRect().bottom < view.top)).toBe(true);
+    const drag = await dragBetween(rowOf(screen.container, "Unrelated bug"), {
+      clientX: view.left + 40,
+      clientY: view.top + 2,
+    });
+    await vi.waitFor(() => expect(areas.map(hintIn)).toContain("Add to mission"), {
+      timeout: 10_000,
+    });
+    await drag.release();
+    expect(commandFor("mission add member")).toHaveBeenCalledOnce();
   });
 
   it("adds and releases nothing where the scrolled list is hidden", async () => {

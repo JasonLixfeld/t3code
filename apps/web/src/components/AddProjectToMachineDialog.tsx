@@ -26,6 +26,7 @@ import { create } from "zustand";
 
 import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { useAddProjectTargets } from "../hooks/useAddProjectTargets";
+import { isMissionDraft } from "./sidebar/missionDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useLogicalProjectEnvironments } from "../hooks/useLogicalProjectEnvironments";
 import {
@@ -88,6 +89,24 @@ function close() {
   endRequestWithProject?.();
   endRequestWithProject = null;
   useRequest.setState({ request: null });
+}
+
+/**
+ * The open draft that moves to the clone, if any: an unsent one on the source project. A Mission
+ * draft stays on its Mission's machine, and the clone opens a draft of its own.
+ */
+export function draftMovingToClone(
+  draftId: DraftId | undefined,
+  source: ScopedProjectRef,
+): DraftId | null {
+  if (!draftId || isMissionDraft(draftId)) return null;
+  const draft = useComposerDraftStore.getState().getDraftSession(draftId);
+  return draft !== null &&
+    !draft.promotedTo &&
+    draft.environmentId === source.environmentId &&
+    draft.projectId === source.projectId
+    ? draftId
+    : null;
 }
 
 export function AddProjectToMachineDialogHost() {
@@ -191,17 +210,9 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   // and holds sends until it finishes. A draft open on the source project moves
   // over with whatever was typed in it.
   const openClonedProject = (targetRef: ScopedProjectRef) => {
-    const drafts = useComposerDraftStore.getState();
-    const draftId = routeDraftId as DraftId | undefined;
-    const draft = draftId ? drafts.getDraftSession(draftId) : null;
-    if (
-      draftId &&
-      draft &&
-      !draft.promotedTo &&
-      draft.environmentId === request.projectRef.environmentId &&
-      draft.projectId === request.projectRef.projectId
-    ) {
-      drafts.setDraftThreadContext(draftId, {
+    const draftId = draftMovingToClone(routeDraftId as DraftId | undefined, request.projectRef);
+    if (draftId !== null) {
+      useComposerDraftStore.getState().setDraftThreadContext(draftId, {
         projectRef: targetRef,
         environmentSelection: "manual",
         loadBalancedEnvironmentId: null,

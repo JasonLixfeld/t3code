@@ -98,6 +98,7 @@ import { useShallow } from "zustand/react/shallow";
 import { draftModelSelectionApplies } from "./lib/chatThreadActions";
 import { createDeferredStorage, createMemoryStorage } from "./lib/storage";
 import { getDefaultServerModel } from "./providerModels";
+import { isMissionDraft } from "./components/sidebar/missionDraftStore";
 import {
   replaceComposerContextReferences,
   toComposerContextId,
@@ -3010,7 +3011,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               !composerDraftHasUserContent(
                 state.draftsByThreadKey[previousThreadKeyForLogicalProject],
               ) &&
-              !draftThreadHasOpenPreview(previousDraftThread)
+              !draftThreadHasOpenPreview(previousDraftThread) &&
+              // An empty Mission draft still starts or leads its Mission once sent.
+              !isMissionDraft(DraftId.make(previousThreadKeyForLogicalProject))
             ) {
               delete nextDraftThreadsByThreadKey[previousThreadKeyForLogicalProject];
               if (state.draftsByThreadKey[previousThreadKeyForLogicalProject] !== undefined) {

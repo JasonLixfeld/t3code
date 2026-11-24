@@ -13,14 +13,20 @@ import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { getRouter } from "~/router";
 import { useUiStateStore } from "~/uiStateStore";
-import { clearMissionDraft, markMissionDraft } from "~/components/sidebar/missionDraftStore";
+import {
+  clearMissionDraft,
+  markMissionDraft,
+  missionDraftOf,
+} from "~/components/sidebar/missionDraftStore";
+import { openCommandPalette } from "~/commandPaletteBus";
+import type { MissionDraftIntent } from "~/components/sidebar/missions.logic";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
   installFakeEnvironment,
   type FakeDriver,
 } from "../../../test/fakeEnvironment";
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 
 // The socket is the only fake layer; see test/appScenarios.renders.tsx.
 vi.mock(
@@ -34,6 +40,13 @@ vi.mock(
     return { ...actual, layer: Layer.succeed(actual.ConnectionDriver, fakeDriver) };
   },
 );
+
+// A machine the project could be cloned to, for a test that offers one.
+const addTargets = vi.hoisted(() => ({ offered: [] as ReadonlyArray<unknown> }));
+vi.mock(import("~/hooks/useAddProjectTargets"), async (original) => ({
+  ...(await original()),
+  useAddProjectTargets: (() => addTargets.offered) as never,
+}));
 
 vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   ...(await original()),
@@ -123,4 +136,108 @@ it("a mission draft's project picker offers only its machine's projects", async 
   const trigger = document.querySelector<HTMLElement>("[data-draft-project-trigger]");
   expect(trigger).toBeNull();
   expect(document.body.textContent).not.toContain("or start without a project");
+});
+
+const leadIntent = {
+  kind: "lead",
+  host: ENVIRONMENT_ID,
+  missionId: "ba9876543210",
+  name: "Old work",
+  expectedLead: ThreadId.make("deleted-lead"),
+} as const;
+
+/** The app on an empty draft, with New thread in... picking the render project. */
+async function openApp() {
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const start = DraftId.make("draft-start");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), start);
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${start}`] }));
+  await router.load();
+  const app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
+  const openDraftId = () => DraftId.make(router.state.location.pathname.replace("/draft/", ""));
+  const newThreadIn = async (mission?: MissionDraftIntent) => {
+    const before = openDraftId();
+    openCommandPalette({ open: "new-thread-in", ...(mission ? { mission } : {}) });
+    await page
+      .getByRole("option", { name: /render/ })
+      .first()
+      .click();
+    await vi.waitFor(() => expect(openDraftId()).not.toBe(before));
+    const opened = openDraftId();
+    onTestFinished(() => clearMissionDraft(opened));
+    return opened;
+  };
+  return Object.assign(app, { newThreadIn });
+}
+
+it("a plain new thread in a New-lead draft's project gets its own draft", async () => {
+  using _environment = installFakeEnvironment([]);
+  await using app = await openApp();
+  const lead = await app.newThreadIn(leadIntent);
+  expect(missionDraftOf(lead)?.intent).toEqual(leadIntent);
+  const plain = await app.newThreadIn();
+  expect(missionDraftOf(plain)).toBeUndefined();
+  expect(missionDraftOf(lead)?.intent).toEqual(leadIntent);
+  expect(useComposerDraftStore.getState().getDraftSession(lead)).not.toBeNull();
+});
+
+it("a new mission from a New-lead draft starts on a draft of its own", async () => {
+  using _environment = installFakeEnvironment([]);
+  await using app = await openApp();
+  const lead = await app.newThreadIn(leadIntent);
+  const started = await app.newThreadIn({ kind: "new" });
+  expect(missionDraftOf(started)?.intent).toEqual({ kind: "new" });
+  expect(missionDraftOf(lead)?.intent).toEqual(leadIntent);
+  expect(useComposerDraftStore.getState().getDraftSession(lead)).not.toBeNull();
+});
+
+it("does not offer a mission draft another machine to run on", async () => {
+  using _environment = installFakeEnvironment([]);
+  addTargets.offered = [
+    { environmentId: EnvironmentId.make("laptop"), label: "Laptop", machine: "desktop" },
+  ];
+  onTestFinished(() => {
+    addTargets.offered = [];
+  });
+  const plainDraft = DraftId.make("draft-plain-run-on");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), plainDraft);
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${plainDraft}`] }));
+  await router.load();
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const runOn = () => document.querySelectorAll<HTMLElement>('[aria-label="Run on"]');
+  // A plain draft offers the other machine.
+  await vi.waitFor(() => expect(runOn().length).toBeGreaterThan(0));
+  await userEvent.click(page.elementLocator(runOn()[0]!));
+  await expect.element(page.getByRole("option", { name: "Add to another machine" })).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+
+  // Marked as a mission draft, it keeps to its machine.
+  const threadId = useComposerDraftStore.getState().getDraftSession(plainDraft)!.threadId;
+  await act(() =>
+    markMissionDraft(plainDraft, {
+      intent: { kind: "new" },
+      thread: { environmentId: ENVIRONMENT_ID, threadId },
+    }),
+  );
+  onTestFinished(() => clearMissionDraft(plainDraft));
+  await vi.waitFor(() => expect(runOn()).toHaveLength(0));
+  expect(document.body.textContent).not.toContain("Add to another machine");
 });

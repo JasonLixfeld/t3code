@@ -42,6 +42,7 @@ import {
 } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { waitForAtomValue } from "../../state/waitForAtomValue";
 import { threadFamilies } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useUiStateStore } from "../../uiStateStore";
@@ -473,20 +474,12 @@ async function loadThreadShell(ref: ScopedThreadRef): Promise<EnvironmentThreadS
   const known = readThreadShell(ref);
   if (known !== null) return known;
   const release = threadFamilies.mount(appAtomRegistry, ref.environmentId, ref.threadId);
-  const family = threadFamilies.familyAtom(ref.environmentId, ref.threadId);
-  const answered = () => threadFamilyRead(appAtomRegistry.get(family)) !== "pending";
   try {
-    await new Promise<void>((resolve) => {
-      if (answered()) return resolve();
-      const stop = appAtomRegistry.subscribe(family, () => {
-        if (!answered()) return;
-        stop();
-        resolve();
-      });
-      setTimeout(() => {
-        stop();
-        resolve();
-      }, LOAD_WAIT_MS);
+    await waitForAtomValue({
+      registry: appAtomRegistry,
+      atom: threadFamilies.familyAtom(ref.environmentId, ref.threadId),
+      predicate: (read) => threadFamilyRead(read) !== "pending",
+      timeoutMs: LOAD_WAIT_MS,
     });
     return readThreadShell(ref);
   } finally {

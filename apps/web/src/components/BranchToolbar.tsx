@@ -47,6 +47,9 @@ import {
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { openAddProjectToMachine } from "./AddProjectToMachineDialog";
 import { type AddProjectTarget, useAddProjectTargets } from "../hooks/useAddProjectTargets";
+import { useMissionDraftPinned } from "./sidebar/missionDraftStore";
+
+const NO_ADD_TARGETS: readonly AddProjectTarget[] = [];
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
 import { WorktreeRepositoriesControl } from "./WorktreeRepositoriesControl";
@@ -718,7 +721,9 @@ export const BranchToolbar = memo(function BranchToolbar({
     ],
   );
 
-  const addTargets = useAddProjectTargets(activeProject, availableEnvironments);
+  const projectAddTargets = useAddProjectTargets(activeProject, availableEnvironments);
+  // A Mission draft stays on its Mission's machine, so it is not offered another one.
+  const addTargets = useMissionDraftPinned(draftId ?? null) ? NO_ADD_TARGETS : projectAddTargets;
   const onAddToMachine = (targetEnvironmentId: EnvironmentId | null) =>
     openAddProjectToMachine({ projectRef: activeProjectRef, targetEnvironmentId });
   // A project on one machine still gets the picker when it can be added to another.

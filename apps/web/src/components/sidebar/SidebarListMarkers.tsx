@@ -52,8 +52,11 @@ const DROP_ZONE_TARGET_CLASS = "border-primary/40 bg-primary/5 text-primary";
 /** Where a Mission member is let go of its Mission, drawn as a shelf's drop zone is. */
 export function SidebarReleaseZone(props: { label: string; isDropTarget: boolean }) {
   return (
-    <li className="mx-0.5 list-none py-1" data-mission-release="">
-      <div className={cn(DROP_ZONE_CLASS, props.isDropTarget && DROP_ZONE_TARGET_CLASS)}>
+    <li className="mx-0.5 list-none py-1">
+      <div
+        data-mission-release=""
+        className={cn(DROP_ZONE_CLASS, props.isDropTarget && DROP_ZONE_TARGET_CLASS)}
+      >
         {props.label}
       </div>
     </li>
