@@ -137,10 +137,13 @@ describe("buildMissionMenuItems", () => {
         },
       },
     ];
+    // A lead gets only its mission's group: it cannot start, join or leave a mission.
     const group = (members: ReadonlyArray<MissionMember>) =>
-      buildMissionMenuItems([thread(DESK, "lead")], led(members), label, allowed)
-        .slice(-3)
-        .map((item) => [item.id, item.header ?? item.disabled ?? false, item.detail]);
+      buildMissionMenuItems([thread(DESK, "lead")], led(members), label, allowed).map((item) => [
+        item.id,
+        item.header ?? item.disabled ?? false,
+        item.detail,
+      ]);
     expect(group([])).toEqual([
       ["mission-group", true, undefined],
       ["mission-new-thread:env-desk:0123456789ab", false, undefined],

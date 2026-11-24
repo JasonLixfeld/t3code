@@ -195,7 +195,18 @@ export function buildMissionMenuItems(
     holding !== undefined && holding.member.role === "member" && isJoined(holding.member)
       ? holding
       : undefined;
-  const leads = holding !== undefined && holding.member.role === "lead" ? holding : undefined;
+  // A lead cannot start, join or leave a Mission, so it gets only its Mission's own group.
+  if (holding !== undefined && holding.member.role === "lead") {
+    return missionRowItems(
+      {
+        host: holding.host,
+        mission: holding.mission,
+        leadGone: false,
+        canChange: canChangeOn(holding.host),
+      },
+      resolve,
+    );
+  }
   return [
     ...(single === undefined
       ? []
@@ -203,7 +214,7 @@ export function buildMissionMenuItems(
           {
             id: "mission-start" as const,
             label: resolve(msg("Start mission from this thread")),
-            icon: "flag",
+            icon: "folder-tree",
             separatorBefore: true,
             disabled:
               inMission ||
@@ -227,7 +238,7 @@ export function buildMissionMenuItems(
           {
             id: `${RELEASE_PREFIX}${heldBy.host}:${heldBy.mission.missionId}` as const,
             label: resolve(msg("Release from mission")),
-            icon: "flag",
+            icon: "folder-minus",
             disabled: !canChangeOn(heldBy.host),
             ...(canChangeOn(heldBy.host) ? {} : { detail: blockLabel("not-allowed", "", resolve) }),
           },
@@ -238,7 +249,7 @@ export function buildMissionMenuItems(
           {
             id: "mission-leave" as const,
             label: resolve(msg("Leave mission")),
-            icon: "flag",
+            icon: "folder-minus",
             disabled: !canChangeOn(single.environmentId),
             ...(canChangeOn(single.environmentId)
               ? {}
@@ -248,7 +259,7 @@ export function buildMissionMenuItems(
     {
       id: "mission-add",
       label: resolve(msg("Add to mission")),
-      icon: "flag",
+      icon: "folder-plus",
       separatorBefore: single === undefined,
       disabled: inMission || missions.length === 0,
       ...(inMission
@@ -271,17 +282,6 @@ export function buildMissionMenuItems(
         };
       }),
     },
-    ...(leads === undefined
-      ? []
-      : missionRowItems(
-          {
-            host: leads.host,
-            mission: leads.mission,
-            leadGone: false,
-            canChange: canChangeOn(leads.host),
-          },
-          resolve,
-        )),
   ];
 }
 

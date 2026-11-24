@@ -560,6 +560,14 @@ describe("missions in the sidebar", () => {
       "New thread in this mission",
       "Delete mission",
     ]);
+    // A lead cannot start, join or leave a mission, so those are not offered.
+    for (const absent of ["Start mission from this thread", "Add to mission", "Leave mission"]) {
+      expect(lead).not.toContain(absent);
+    }
+    // A member keeps them.
+    const member = await menuOf(rowOf(screen.container, "Update the release notes"), null);
+    expect(member).toEqual(expect.arrayContaining(["Release from mission", "Add to mission"]));
+    expect(member).not.toContain("New thread in this mission");
     // A deleted lead's row also takes a new lead.
     const gone = screen.getByText("Lead deleted").element().closest("li")!;
     expect(await menuOf(gone, "mission-new-thread:local:ba9876543210")).toEqual([
@@ -599,6 +607,8 @@ describe("missions in the sidebar", () => {
     expect(lead.textContent).not.toMatch(/web|WB/);
     const chevron = lead.querySelector<HTMLElement>('[aria-label^="Collapse mission"]')!;
     expect(chevron.parentElement!.textContent).toContain("Plan the v2 release");
+    // The row's title is the lead's title alone, with no word put before it.
+    expect(chevron.nextElementSibling!.textContent).toBe("Plan the v2 release");
     // With no status, machine or provider to show, the row is that one line.
     expect(chevron.parentElement!.nextElementSibling).toBeNull();
     // Members keep their own project.

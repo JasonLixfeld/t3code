@@ -230,6 +230,7 @@ export function useMissionMenu() {
           gt('Delete the mission "{mission}"? Its lead stays as a thread of its own.', {
             mission: mission.name,
           }),
+          { variant: "destructive" },
         );
         if (confirmed !== true) return [];
         reportFailure(
