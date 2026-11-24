@@ -145,6 +145,8 @@ function MemberRow(props: {
   readonly onOpen: (ref: ScopedThreadRef) => void;
   /** Set on a lead row this client has no thread for, so it still folds its members. */
   readonly toggle?: SidebarMissionToggle | undefined;
+  /** Under the thread's own row: only the waiting state and its action. */
+  readonly stateOnly?: boolean;
 }) {
   const gt = useGT();
   const thread = useQuietThreadShell(props.member.ref);
@@ -215,7 +217,7 @@ function MemberRow(props: {
               active ? "text-sidebar-foreground" : "text-sidebar-muted-foreground",
             )}
           >
-            <span className="truncate">{title}</span>
+            {props.stateOnly ? null : <span className="truncate">{title}</span>}
             {toggle && !toggle.expanded && toggle.memberCount > 0 ? (
               <span className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground">
                 {toggle.memberCount}
@@ -298,6 +300,16 @@ export function SidebarMissions(props: {
     ) : (
       <Fragment key={scopedKey(entry.member.ref)}>
         {props.renderThreadRow(entry.thread, toggle)}
+        {entry.member.state === "add-pending" || entry.member.state === "release-pending" ? (
+          <MemberRow
+            host={mission.host}
+            missionId={mission.mission.missionId}
+            member={entry.member}
+            machineLabel={machineLabel(entry.member.ref.environmentId)}
+            onOpen={props.onOpenThread}
+            stateOnly
+          />
+        ) : null}
       </Fragment>
     );
   return (

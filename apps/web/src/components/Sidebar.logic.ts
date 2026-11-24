@@ -1122,8 +1122,8 @@ export interface SidebarMission<T> {
 /**
  * The Missions the sidebar lists, and `threadKeys`, the threads they show. Every other list
  * leaves those out. A settled or archived member leaves its Mission's list and goes back to
- * the others. A thread whose add or release still waits shows a row of its own in the Mission,
- * so its own row stays in the other lists too.
+ * the others, unless its add or release still waits, so its Forget stays in reach. A refused
+ * add never joined: its thread stays in the other lists, and the Mission shows only the refusal.
  */
 export function groupSidebarMissions<
   T extends Pick<SidebarThreadSummary, "environmentId" | "id" | "settledOverride" | "archivedAt">,
@@ -1145,13 +1145,11 @@ export function groupSidebarMissions<
     host.snapshot.missions.flatMap((mission): Array<SidebarMission<T>> => {
       const entries = mission.members.flatMap((member): Array<SidebarMissionEntry<T>> => {
         const key = scopedThreadKey(member.ref);
-        const shown =
-          member.role === "lead"
-            ? member.state !== "deleted"
-            : member.state === "active" || member.state === "offline";
+        const shown = member.state !== "deleted" && member.state !== "add-refused";
         const thread = shown ? (threadByKey.get(key) ?? null) : null;
         if (
           member.role === "member" &&
+          (member.state === "active" || member.state === "offline") &&
           thread !== null &&
           (thread.settledOverride === "settled" || thread.archivedAt !== null)
         ) {

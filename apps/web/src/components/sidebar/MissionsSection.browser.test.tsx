@@ -54,6 +54,7 @@ const ship: Mission = {
     { ref: ref(LOCAL, "docs"), role: "member", state: "active" },
     { ref: ref(LOCAL, "done"), role: "member", state: "active" },
     { ref: ref(LAPTOP, "ios"), role: "member", state: "add-pending" },
+    { ref: ref(LOCAL, "guide"), role: "member", state: "add-pending" },
   ],
 };
 const gone: Mission = {
@@ -93,6 +94,7 @@ async function renderSidebar(settings: Partial<typeof DEFAULT_CLIENT_SETTINGS> =
     shell("docs", "Update the release notes"),
     shell("done", "Fix the changelog", true),
     shell("plain", "Unrelated bug"),
+    shell("guide", "Write the migration guide"),
   ]);
   vi.mocked(useServerConfigs).mockReturnValue(
     new Map([[LOCAL, { scratchWorkspaceRoot: null } as unknown as EnvironmentServerConfig]]),
@@ -123,16 +125,23 @@ describe("missions in the sidebar", () => {
     await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
     const members = screen.container.querySelector("[data-testid=sidebar-mission-members]")!;
     expect(members.textContent).toContain("Update the release notes");
-    expect(members.textContent).toContain("Add pending (machine offline)");
+    // A pending add this client has the thread for: its own row, with the pending state under it.
+    expect(members.textContent).toContain("Write the migration guide");
+    expect(screen.getByText("Add pending (machine offline)").elements()).toHaveLength(2);
     // The settled member is back on the Settled shelf, and no thread shows twice.
     expect(members.textContent).not.toContain("Fix the changelog");
-    for (const title of ["Plan the v2 release", "Update the release notes", "Unrelated bug"]) {
+    for (const title of [
+      "Plan the v2 release",
+      "Update the release notes",
+      "Write the migration guide",
+      "Unrelated bug",
+    ]) {
       expect(screen.getByText(title, { exact: true }).elements()).toHaveLength(1);
     }
     expect(screen.getByText("Lead deleted").elements()).toHaveLength(1);
     expect(screen.getByRole("heading", { name: "Missions" }).elements()).toHaveLength(1);
     expect(screen.getByRole("heading", { name: "Threads" }).elements()).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Forget" }).elements()).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Forget" }).elements()).toHaveLength(2);
   });
 
   it("folds one mission away and remembers it, leaving the others open", async () => {
