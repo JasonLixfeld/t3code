@@ -5,32 +5,23 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, Mission, MissionMember, ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import type { EnvironmentId, MissionMember, ScopedThreadRef } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { XIcon } from "lucide-react";
-import { useContext, useEffect, useState } from "react";
-import { create } from "zustand";
+import { ChevronDownIcon, XIcon } from "lucide-react";
+import { Fragment, type ReactNode, useContext, useState } from "react";
 
 import { m } from "../../i18n/messages";
 import { readLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
+import { useClientSettings } from "../../hooks/useSettings";
 import { useEnvironmentIdentities, useConnectedEnvironmentIds } from "../../state/environments";
 import { useProject, useQuietThreadShell } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { Button } from "../ui/button";
-import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
-import {
-  Dialog,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogPanel,
-  DialogPopup,
-  DialogTitle,
-} from "../ui/dialog";
-import { Input } from "../ui/input";
+import { useUiStateStore } from "../../uiStateStore";
+import type { SidebarMission } from "../Sidebar.logic";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -43,11 +34,19 @@ import {
   type MissionMenuId,
   parseMissionAddId,
 } from "./missions.logic";
+import { SidebarHeading } from "./SidebarListMarkers";
+import type { SidebarMissionToggle } from "./SidebarThreadRow";
 
-function useMissionHosts(): ReadonlyArray<MissionHost> {
+/** No machine is asked for its Missions while the sidebar setting turns them off. */
+export function useMissionHosts(): ReadonlyArray<MissionHost> {
+  const enabled = useClientSettings((settings) => settings.sidebarMissionsEnabled);
   const environmentIds = useConnectedEnvironmentIds();
-  return useAtomValue(serverEnvironment.missionsLiveAcross(JSON.stringify(environmentIds)));
+  const hosts = useAtomValue(
+    serverEnvironment.missionsLiveAcross(JSON.stringify(enabled ? environmentIds : [])),
+  );
+  return enabled ? hosts : NO_HOSTS;
 }
+const NO_HOSTS: ReadonlyArray<MissionHost> = [];
 
 function useMachineLabel(hosts: ReadonlyArray<MissionHost>) {
   const identities = useEnvironmentIdentities();
@@ -76,6 +75,7 @@ export function useMissionMenu() {
   const gt = useGT();
   const resolve = useMessages();
   const registry = useContext(RegistryContext);
+  const enabled = useClientSettings((settings) => settings.sidebarMissionsEnabled);
   const hosts = useMissionHosts();
   const machineLabel = useMachineLabel(hosts);
   const create = useAtomCommand(serverEnvironment.createMission, "mission create");
@@ -86,7 +86,7 @@ export function useMissionMenu() {
     registry.get(serverEnvironment.addMissionMember.permissionAtom(environmentId));
   return {
     items: (threads: ReadonlyArray<MissionCandidate>) =>
-      buildMissionMenuItems(threads, hosts, machineLabel, canChangeOn, resolve),
+      enabled ? buildMissionMenuItems(threads, hosts, machineLabel, canChangeOn, resolve) : [],
     /** The threads that got where they were sent; the rest stay selected. */
     run: async (
       id: MissionMenuId,
@@ -94,11 +94,9 @@ export function useMissionMenu() {
     ): Promise<ReadonlyArray<ScopedThreadRef>> => {
       const lead = threads[0];
       if (id === "mission-start" && lead !== undefined) {
-        const name = await requestMissionName();
-        if (name === null) return [];
         const result = await create({
           environmentId: lead.environmentId,
-          input: { missionId: newMissionId(), name, leadThreadId: lead.threadId },
+          input: { missionId: newMissionId(), leadThreadId: lead.threadId },
         });
         reportFailure(gt("Could not start the mission"), result);
         return result._tag === "Success" ? [lead] : [];
@@ -145,6 +143,8 @@ function MemberRow(props: {
   readonly member: MissionMember;
   readonly machineLabel: string;
   readonly onOpen: (ref: ScopedThreadRef) => void;
+  /** Set on a lead row this client has no thread for, so it still folds its members. */
+  readonly toggle?: SidebarMissionToggle | undefined;
 }) {
   const gt = useGT();
   const thread = useQuietThreadShell(props.member.ref);
@@ -157,7 +157,10 @@ function MemberRow(props: {
   const release = useAtomCommand(serverEnvironment.releaseMissionMember, "mission release member");
   const forget = useAtomCommand(serverEnvironment.forgetMissionMember, "mission forget member");
   const [releasing, setReleasing] = useState(false);
-  const title = thread?.title ?? gt("Thread on {machine}", { machine: props.machineLabel });
+  const deleted = props.member.state === "deleted";
+  const title = deleted
+    ? gt("Lead deleted", { $context: "the thread that led a mission no longer exists" })
+    : (thread?.title ?? gt("Thread on {machine}", { machine: props.machineLabel }));
   const where = project === null ? props.machineLabel : `${props.machineLabel} · ${project.title}`;
   const active = props.member.state === "active";
   // A refused add never joined, so its button only puts the refusal away.
@@ -182,9 +185,24 @@ function MemberRow(props: {
     else reportFailure(gt("Could not release the thread"), await release(command));
     setReleasing(false);
   };
+  const { toggle } = props;
   return (
     <li className="group/mission-row list-none">
       <div className="flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 hover:bg-sidebar-row-hover">
+        {toggle ? (
+          <button
+            type="button"
+            aria-expanded={toggle.expanded}
+            aria-label={toggle.expanded ? gt("Collapse mission") : gt("Expand mission")}
+            onClick={toggle.onToggle}
+            className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-sidebar-muted-foreground hover:text-sidebar-foreground"
+          >
+            <ChevronDownIcon
+              aria-hidden
+              className={cn("size-3 transition-transform", !toggle.expanded && "-rotate-90")}
+            />
+          </button>
+        ) : null}
         <button
           type="button"
           disabled={thread === null}
@@ -197,12 +215,12 @@ function MemberRow(props: {
               active ? "text-sidebar-foreground" : "text-sidebar-muted-foreground",
             )}
           >
-            {props.member.role === "lead" ? (
-              <span className="shrink-0 text-2xs font-medium text-sidebar-muted-foreground uppercase">
-                <T context="the thread that leads a mission">Lead</T>
+            <span className="truncate">{title}</span>
+            {toggle && !toggle.expanded && toggle.memberCount > 0 ? (
+              <span className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground">
+                {toggle.memberCount}
               </span>
             ) : null}
-            <span className="truncate">{title}</span>
           </span>
           <span className="truncate text-2xs text-sidebar-muted-foreground">
             {props.member.state === "release-pending"
@@ -213,11 +231,7 @@ function MemberRow(props: {
                   ? props.member.detail
                   : props.member.state === "offline"
                     ? gt("Last known (machine offline)")
-                    : props.member.state === "deleted"
-                      ? gt("Lead deleted", {
-                          $context: "the thread that led a mission no longer exists",
-                        })
-                      : where}
+                    : where}
           </span>
         </button>
         {props.member.role === "member" ? (
@@ -247,137 +261,71 @@ function MemberRow(props: {
   );
 }
 
-function MissionGroup(props: {
-  readonly host: EnvironmentId;
-  readonly mission: Mission;
-  readonly machineLabel: (environmentId: EnvironmentId) => string;
-  readonly onOpen: (ref: ScopedThreadRef) => void;
+/**
+ * The Missions above the thread list. Each lead's own thread row heads its Mission, and its
+ * members' rows sit under it. A row this client has no thread for keeps the Mission's own row.
+ */
+export function SidebarMissions(props: {
+  readonly missions: ReadonlyArray<SidebarMission<EnvironmentThreadShell>>;
+  readonly headerVisible: boolean;
+  readonly renderThreadRow: (
+    thread: EnvironmentThreadShell,
+    toggle?: SidebarMissionToggle,
+  ) => ReactNode;
+  readonly onOpenThread: (ref: ScopedThreadRef) => void;
 }) {
-  return (
-    <li className="list-none">
-      <div className="truncate px-2 pt-1 text-xs font-medium text-secondary-label">
-        {props.mission.name}
-      </div>
-      <ul>
-        {props.mission.members.map((member) => (
-          <MemberRow
-            key={`${member.ref.environmentId}:${member.ref.threadId}`}
-            host={props.host}
-            missionId={props.mission.missionId}
-            member={member}
-            machineLabel={props.machineLabel(member.ref.environmentId)}
-            onOpen={props.onOpen}
-          />
-        ))}
-      </ul>
-    </li>
-  );
-}
-
-/** Missions across connected machines: each lists its lead first, then its members. */
-export function MissionsSection(props: { readonly onOpenThread: (ref: ScopedThreadRef) => void }) {
   const gt = useGT();
   const hosts = useMissionHosts();
   const machineLabel = useMachineLabel(hosts);
-  const [expanded, setExpanded] = useState(true);
-  const missions = hosts.flatMap((host) =>
-    host.snapshot.missions.map((mission) => ({ host: host.environmentId, mission })),
-  );
-  if (missions.length === 0) return null;
+  const missionExpandedById = useUiStateStore((state) => state.missionExpandedById);
+  const setMissionExpanded = useUiStateStore((state) => state.setMissionExpanded);
+  if (props.missions.length === 0) return null;
+  const row = (
+    mission: SidebarMission<EnvironmentThreadShell>,
+    entry: SidebarMission<EnvironmentThreadShell>["lead"],
+    toggle?: SidebarMissionToggle,
+  ) =>
+    entry.thread === null ? (
+      <MemberRow
+        key={scopedKey(entry.member.ref)}
+        host={mission.host}
+        missionId={mission.mission.missionId}
+        member={entry.member}
+        machineLabel={machineLabel(entry.member.ref.environmentId)}
+        onOpen={props.onOpenThread}
+        toggle={toggle}
+      />
+    ) : (
+      <Fragment key={scopedKey(entry.member.ref)}>
+        {props.renderThreadRow(entry.thread, toggle)}
+      </Fragment>
+    );
   return (
-    <div className="mx-0.5 mb-1" data-testid="sidebar-missions">
-      <CollapsibleSectionHeader
-        expanded={expanded}
-        onClick={() => setExpanded(!expanded)}
-        accessory={<span className="font-normal tabular-nums">{missions.length}</span>}
-      >
-        {gt("Missions", { $context: "sidebar section" })}
-      </CollapsibleSectionHeader>
-      {expanded ? (
-        <ul>
-          {missions.map(({ host, mission }) => (
-            <MissionGroup
-              key={`${host}:${mission.missionId}`}
-              host={host}
-              mission={mission}
-              machineLabel={machineLabel}
-              onOpen={props.onOpenThread}
-            />
-          ))}
-        </ul>
+    <>
+      {props.headerVisible ? (
+        <SidebarHeading>{gt("Missions", { $context: "sidebar section" })}</SidebarHeading>
       ) : null}
-    </div>
+      {props.missions.map((mission) => {
+        const expanded = missionExpandedById[mission.key] ?? true;
+        return (
+          <Fragment key={mission.key}>
+            {row(mission, mission.lead, {
+              expanded,
+              memberCount: mission.members.length,
+              onToggle: () => setMissionExpanded(mission.key, !expanded),
+            })}
+            {expanded && mission.members.length > 0 ? (
+              <li className="list-none" data-testid="sidebar-mission-members">
+                <ul className="ms-3 flex flex-col gap-px border-s border-sidebar-border ps-1">
+                  {mission.members.map((entry) => row(mission, entry))}
+                </ul>
+              </li>
+            ) : null}
+          </Fragment>
+        );
+      })}
+    </>
   );
 }
 
-type NameRequest = { readonly resolve: (name: string | null) => void };
-const useNameRequest = create<{ request: NameRequest | null }>(() => ({ request: null }));
-
-function requestMissionName(): Promise<string | null> {
-  useNameRequest.getState().request?.resolve(null);
-  return new Promise((resolve) => useNameRequest.setState({ request: { resolve } }));
-}
-
-function finishNameRequest(name: string | null) {
-  const request = useNameRequest.getState().request;
-  useNameRequest.setState({ request: null });
-  request?.resolve(name);
-}
-
-export function MissionNameDialogHost() {
-  const request = useNameRequest((state) => state.request);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resolves a pending name request with null when the host unmounts
-  useEffect(() => () => finishNameRequest(null), []);
-  return request ? <MissionNameDialog /> : null;
-}
-
-function MissionNameDialog() {
-  const gt = useGT();
-  const [name, setName] = useState("");
-  const trimmed = name.trim();
-  return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) finishNameRequest(null);
-      }}
-    >
-      <DialogPopup className="sm:max-w-md">
-        <form
-          className="flex min-h-0 flex-col"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (trimmed !== "") finishNameRequest(trimmed);
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>
-              <T>Start mission</T>
-            </DialogTitle>
-            <DialogDescription>
-              <T>This thread leads the mission. Add other threads to it from their menus.</T>
-            </DialogDescription>
-          </DialogHeader>
-          <DialogPanel>
-            <Input
-              autoFocus
-              aria-label={gt("Mission name")}
-              placeholder={gt("Mission name")}
-              maxLength={64}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-            />
-          </DialogPanel>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => finishNameRequest(null)}>
-              <T>Cancel</T>
-            </Button>
-            <Button type="submit" disabled={trimmed === ""}>
-              <T context="verb, start a mission">Start</T>
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogPopup>
-    </Dialog>
-  );
-}
+const scopedKey = (ref: ScopedThreadRef) => `${ref.environmentId}:${ref.threadId}`;

@@ -6,8 +6,10 @@ import {
   type MissionMember,
   type OrchestrationV2Command,
   OrchestrationV2DispatchCommandError,
+  missionNameFromTitle,
   type MissionsSnapshot,
   type ScopedThreadRef,
+  threadHasMessages,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -55,10 +57,12 @@ export class Missions extends Context.Service<
   {
     /** The Missions here and the links that can reach member threads, now and after each change. */
     readonly watch: Stream.Stream<MissionsSnapshot>;
-    /** Starts a Mission led by a thread here. Asking again with the same id returns that Mission. */
+    /**
+     * Starts a Mission led by a thread here, named for its title. Refuses a thread with no
+     * messages. Asking again with the same id returns that Mission.
+     */
     readonly create: (input: {
       readonly missionId: string;
-      readonly name: string;
       readonly leadThreadId: ThreadId;
     }) => Effect.Effect<Mission, MissionError>;
     /** Leaves the add pending when the member's machine does not say what became of it. */
@@ -105,7 +109,8 @@ type ClaimCall =
       readonly missionId: string;
       readonly generation: string;
     }
-  | { readonly kind: "list" };
+  | { readonly kind: "list" }
+  | { readonly kind: "rename"; readonly missionId: string; readonly name: string };
 
 /** The claims a machine holds for this lead, as it last said. */
 interface Machine {
@@ -347,6 +352,8 @@ const make = Effect.gen(function* () {
           return [];
         case "list":
           return yield* claims.list(here);
+        case "rename":
+          return yield* claims.rename(here, call);
       }
     }
     const { label } = yield* linkTo(environmentId).pipe(
@@ -442,10 +449,25 @@ const make = Effect.gen(function* () {
           }
         }
         if (!discover) return;
-        yield* store.setKnownClaims(
-          environmentId,
-          yield* onMember(environmentId, { kind: "list" }),
-        );
+        let held = yield* onMember(environmentId, { kind: "list" });
+        // A member's claim, and so its tag, carries the Mission's name. A lead renamed since is
+        // sent to the member's machine here, as often as it still answers with the old name.
+        for (const mission of missions) {
+          if (
+            held.some(
+              (claim) => claim.missionId === mission.missionId && claim.name !== mission.name,
+            )
+          ) {
+            const before = held;
+            // A machine that refuses, as one without renames does, keeps the old name.
+            held = yield* onMember(environmentId, {
+              kind: "rename",
+              missionId: mission.missionId,
+              name: mission.name,
+            }).pipe(Effect.catchTags({ MissionError: () => Effect.succeed(before) }));
+          }
+        }
+        yield* store.setKnownClaims(environmentId, held);
       }).pipe(
         Effect.catch((error) => Effect.logInfo("A mission member machine did not answer", error)),
       ),
@@ -458,7 +480,22 @@ const make = Effect.gen(function* () {
   // Set by whoever wants the machines' claims read again; a sweep without it only sends again
   // what still waits for an answer.
   const discoverNext = yield* Ref.make(false);
+  /** Each Mission takes its lead thread's title as its name, on the lead's claims here too. */
+  const followLeadTitles = Effect.gen(function* () {
+    for (const mission of yield* store.missions) {
+      const shell = yield* threads
+        .getThreadShell(mission.leadThreadId)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (shell === null || shell.deletedAt !== null) continue;
+      const name = missionNameFromTitle(shell.title);
+      if (name === mission.name) continue;
+      yield* store.renameMission(mission.missionId, name);
+      yield* claims.rename(here, { missionId: mission.missionId, name });
+    }
+  });
+
   const sweep = Effect.gen(function* () {
+    yield* followLeadTitles;
     const discover = yield* Ref.getAndSet(discoverNext, false);
     const asked = new Set([
       ...(yield* owingAnAnswer),
@@ -500,10 +537,18 @@ const make = Effect.gen(function* () {
 
   const create = Effect.fn("Missions.create")(function* (input: {
     readonly missionId: string;
-    readonly name: string;
     readonly leadThreadId: ThreadId;
   }) {
-    const mission = yield* claims.create(here, input);
+    const shell = yield* threads
+      .getThreadShell(input.leadThreadId)
+      .pipe(Effect.catch((error) => fail(`The thread could not be read: ${error.message}`)));
+    if (shell !== null && shell.deletedAt === null && !threadHasMessages(shell)) {
+      return yield* fail("A mission needs a lead thread with messages. Send a message first.");
+    }
+    const mission = yield* claims.create(here, {
+      ...input,
+      name: missionNameFromTitle(shell?.title ?? ""),
+    });
     return yield* missionView(mission, yield* machines, yield* shown);
   });
 

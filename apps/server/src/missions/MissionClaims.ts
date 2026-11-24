@@ -22,7 +22,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as MissionStore from "./MissionStore.ts";
 import type { MissionClaim, MissionRecord } from "./MissionStore.ts";
 
-export const MissionClaimKind = Schema.Literals(["join", "release", "list"]);
+export const MissionClaimKind = Schema.Literals(["join", "release", "list", "rename"]);
 
 /**
  * Who holds a claim: this machine's environment id for a lead here, else the link session that
@@ -47,21 +47,27 @@ const wasTagOf = (liveTag: string) => {
 
 /**
  * The edits that make a thread's tags say what its claim says: the claim's `mission:` tag, and
- * every other `mission:` tag turned into `mission-was:`. Adds come first, so a release marks
- * before it unmarks.
+ * every other `mission:` tag turned into `mission-was:`. The claim's tag under an older name is
+ * replaced, not kept as `mission-was:`. Adds come first, so a release marks before it unmarks.
  */
 const planMissionTags = (tags: ReadonlyArray<string>, claim: MissionClaim | undefined) => {
   const ofClaim = (prefix: string) =>
     claim === undefined ? [] : tags.filter((tag) => tag.startsWith(`${prefix}${claim.missionId}:`));
-  const live = ofClaim(MISSION_TAG_PREFIX);
-  const stray = tags.filter((tag) => tag.startsWith(MISSION_TAG_PREFIX) && !live.includes(tag));
+  const live = claim === undefined ? undefined : missionTag(claim.missionId, claim.name);
+  const renamed = ofClaim(MISSION_TAG_PREFIX).filter((tag) => tag !== live);
+  const stray = tags.filter(
+    (tag) => tag.startsWith(MISSION_TAG_PREFIX) && tag !== live && !renamed.includes(tag),
+  );
   const add = new Set([
-    ...(claim === undefined || live.length > 0 ? [] : [missionTag(claim.missionId, claim.name)]),
+    ...(live === undefined || tags.includes(live) ? [] : [live]),
     ...stray.map(wasTagOf).filter((was) => !tags.includes(was)),
   ]);
   return [
     ...[...add].map((tag) => ({ tag, tagged: true })),
-    ...[...stray, ...ofClaim(MISSION_WAS_TAG_PREFIX)].map((tag) => ({ tag, tagged: false })),
+    ...[...renamed, ...stray, ...ofClaim(MISSION_WAS_TAG_PREFIX)].map((tag) => ({
+      tag,
+      tagged: false,
+    })),
   ];
 };
 
@@ -105,6 +111,11 @@ export class MissionClaims extends Context.Service<
       },
       access?: ThreadAccess<E>,
     ) => Effect.Effect<void, MissionError | E>;
+    /** Gives the owner's claims in a Mission its new name, then answers the owner's claims. */
+    readonly rename: (
+      owner: string,
+      input: { readonly missionId: string; readonly name: string },
+    ) => Effect.Effect<ReadonlyArray<MissionClaim>>;
     /** The local user frees a thread here from whichever Mission holds it. A lead thread stays. */
     readonly leaveHere: (threadId: ThreadId) => Effect.Effect<void, MissionError>;
     /** The owner's claims here. Reads only. */
@@ -242,7 +253,18 @@ const make = Effect.gen(function* () {
     (effect, threadId) => locks.withLock(threadId, effect),
   );
 
-  return MissionClaims.of({ create, join, release, leaveHere, list: store.claimsOf });
+  const rename = Effect.fn("MissionClaims.rename")(function* (
+    owner: string,
+    input: { readonly missionId: string; readonly name: string },
+  ) {
+    const renamed = yield* store.renameClaims({ owner, ...input });
+    yield* Effect.forEach(renamed, (threadId) => locks.withLock(threadId, syncTags(threadId)), {
+      discard: true,
+    });
+    return yield* store.claimsOf(owner);
+  });
+
+  return MissionClaims.of({ create, join, release, rename, leaveHere, list: store.claimsOf });
 });
 
 export const layer = Layer.effect(MissionClaims, make);

@@ -501,6 +501,26 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("hide fold running monitoring threads inbox sidebar shelf")],
   },
   {
+    id: "sidebar-missions",
+    title: msg("Missions"),
+    to: "/settings/general",
+    searchTerms: [msg("missions lead member group threads sidebar section")],
+  },
+  {
+    id: "sidebar-missions-header",
+    title: msg("Missions heading"),
+    to: "/settings/general",
+    // Shown inside the Missions row only while it is on, so search lands on the parent.
+    targetId: "sidebar-missions",
+    searchTerms: [msg("missions heading title label sidebar section")],
+  },
+  {
+    id: "sidebar-threads-header",
+    title: msg("Threads heading"),
+    to: "/settings/general",
+    searchTerms: [msg("threads heading title label sidebar section missions")],
+  },
+  {
     id: "boring-sidebar",
     title: msg("Boring sidebar (group by project)"),
     to: "/settings/labs",

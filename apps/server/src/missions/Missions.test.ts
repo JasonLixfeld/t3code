@@ -64,11 +64,14 @@ const TAG = "mission:0123456789ab:One";
 const WAS_TAG = "mission-was:0123456789ab:One";
 
 type Claims = MissionClaims.MissionClaims["Service"];
-type ClaimKind = "join" | "release" | "list";
+type ClaimKind = "join" | "release" | "list" | "rename";
 
 /** Every machine's threads and tags, and how the laptop answers this lead. */
 const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   const tags = new Map(threads.map((thread) => [keyOf(thread), [] as Array<string>]));
+  /** Every thread is titled "One" and has messages, unless a test says otherwise. */
+  const titles = new Map<string, string>();
+  const empty = new Set<string>();
   const laptop = {
     claims: undefined as Claims | undefined,
     /**
@@ -106,8 +109,18 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       getThreadShell: (threadId) =>
         Effect.sync(() => {
           const current = tags.get(keyOf(ref(environmentId, threadId)));
+          const key = keyOf(ref(environmentId, threadId));
           return (
-            current === undefined ? null : { id: threadId, deletedAt: null, tags: [...current] }
+            current === undefined
+              ? null
+              : {
+                  id: threadId,
+                  deletedAt: null,
+                  tags: [...current],
+                  title: titles.get(key) ?? "One",
+                  latestUserMessageAt: empty.has(key) ? null : "2026-01-01T00:00:00.000Z",
+                  visibleItemCount: empty.has(key) ? 0 : 1,
+                }
           ) as never;
         }),
       dispatch: (command) =>
@@ -141,6 +154,8 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
         return Effect.as(claims.release(owner, args), []);
       case "list":
         return claims.list(owner);
+      case "rename":
+        return claims.rename(owner, args);
     }
   };
   const peers = Layer.mock(PeerMcpClient.PeerMcpClient)({
@@ -205,6 +220,9 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     tags: (thread: ScopedThreadRef) => tags.get(keyOf(thread)),
     /** The thread's own user deletes it. */
     remove: (thread: ScopedThreadRef) => tags.delete(keyOf(thread)),
+    retitle: (thread: ScopedThreadRef, title: string) => titles.set(keyOf(thread), title),
+    /** The thread has no messages yet, as a new draft thread. */
+    empty: (thread: ScopedThreadRef) => empty.add(keyOf(thread)),
     laptop,
     /** The next calls this lead starts on the laptop, waiting for each. */
     nextCalls: (count: number) => Queue.takeN(laptop.started!, count),
@@ -305,7 +323,7 @@ const membersOf = (mission: Mission | undefined) =>
 const stateOf = (snapshot: MissionsSnapshot, thread: ScopedThreadRef) =>
   snapshot.missions[0]?.members.find((member) => keyOf(member.ref) === keyOf(thread))?.state;
 const createOne = Effect.flatMap(Missions.Missions, (missions) =>
-  missions.create({ missionId: "0123456789ab", name: "One", leadThreadId: lead.threadId }),
+  missions.create({ missionId: "0123456789ab", leadThreadId: lead.threadId }),
 );
 
 /** Waits for a snapshot that matches, starting with the one a new client gets at once. */
@@ -366,6 +384,49 @@ it.effect(
   },
 );
 
+it.effect("a thread with no messages cannot lead a mission", () => {
+  const world = makeWorld([lead]);
+  world.empty(lead);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const refused = yield* createOne.pipe(Effect.flip);
+      assert.include(refused.message, "needs a lead thread with messages");
+      assert.deepEqual(world.tags(lead), []);
+      assert.deepEqual((yield* listed).missions, []);
+    }),
+  );
+});
+
+it.effect("a mission is named for its lead's title, and its members' tags follow a rename", () => {
+  const world = makeWorld([lead, localMember, laptopMember]);
+  const renamed = "mission:0123456789ab:Two";
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const until = yield* openSidebar;
+      const mission = yield* createOne;
+      assert.equal(mission.name, "One");
+      yield* missions.addMember({ missionId: mission.missionId, member: localMember });
+      yield* missions.addMember({ missionId: mission.missionId, member: laptopMember });
+
+      world.retitle(lead, "Two");
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* world.untilAnswered("rename");
+      yield* until((snapshot) => snapshot.missions[0]?.name === "Two");
+      assert.deepEqual(
+        [world.tags(lead), world.tags(localMember), world.tags(laptopMember)],
+        [[renamed], [renamed], [renamed]],
+      );
+
+      // A released member keeps the name the mission had when it left.
+      yield* missions.releaseMember({ missionId: mission.missionId, member: laptopMember });
+      assert.deepEqual(world.tags(laptopMember), ["mission-was:0123456789ab:Two"]);
+    }),
+  );
+});
+
 it.effect("a thread another lead holds is refused by its machine, and is not listed", () => {
   const world = makeWorld([lead, laptopMember]);
   return withMissions(
@@ -417,11 +478,11 @@ it.effect(
         yield* missions.addMember({ missionId: first.missionId, member: localMember });
 
         const sameId = yield* missions
-          .create({ missionId: first.missionId, name: "One", leadThreadId: localMember.threadId })
+          .create({ missionId: first.missionId, leadThreadId: localMember.threadId })
           .pipe(Effect.flip);
         assert.equal(sameId.message, "Another mission already uses this id.");
         const held = yield* missions
-          .create({ missionId: "ba9876543210", name: "Two", leadThreadId: localMember.threadId })
+          .create({ missionId: "ba9876543210", leadThreadId: localMember.threadId })
           .pipe(Effect.flip);
         assert.include(held.message, 'already in the mission "One"');
 
@@ -634,7 +695,6 @@ it.effect("forgetting a thread in one mission leaves another mission's claim on 
       const one = yield* createOne;
       const two = yield* missions.create({
         missionId: "ba9876543210",
-        name: "Two",
         leadThreadId: otherLead.threadId,
       });
       yield* missions.addMember({ missionId: one.missionId, member: laptopMember });
@@ -916,7 +976,6 @@ it.effect("threads with one id on two machines, and in two missions, are told ap
       const mission = yield* createOne;
       yield* missions.create({
         missionId: "ba9876543210",
-        name: "Two",
         leadThreadId: otherLead.threadId,
       });
       yield* missions.addMember({ missionId: mission.missionId, member: sameLaptop });

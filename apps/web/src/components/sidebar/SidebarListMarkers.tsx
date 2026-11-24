@@ -145,3 +145,15 @@ export function SidebarSectionHeader(props: {
     </SortableSidebarMarker>
   );
 }
+
+/** A heading that does not fold, drawn as the shelf headers are. */
+export function SidebarHeading(props: { children: ReactNode }) {
+  return (
+    <li className="mx-0.5 list-none">
+      <h2 className="flex h-8 items-center gap-2 px-2 text-xs font-medium text-sidebar-muted-foreground">
+        <span className="min-w-0 truncate">{props.children}</span>
+        <span aria-hidden className="h-px min-w-2 flex-1 bg-sidebar-border/50" />
+      </h2>
+    </li>
+  );
+}

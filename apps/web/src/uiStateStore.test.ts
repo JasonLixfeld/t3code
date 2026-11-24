@@ -11,6 +11,7 @@ import {
   persistState,
   reorderProjects,
   resolveProjectExpanded,
+  setMissionExpanded,
   setProjectExpanded,
   type UiState,
 } from "./uiStateStore";
@@ -18,6 +19,7 @@ import {
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
+    missionExpandedById: {},
     projectOrder: [],
     sidebarProjectScopeKeys: [],
     threadLastVisitedAtById: {},
@@ -81,6 +83,17 @@ describe("uiStateStore pure functions", () => {
     expect(setProjectExpanded(next, keys, false)).toBe(next);
   });
 
+  it("keeps a mission expanded by default and remembers only collapsed ones", () => {
+    const collapsed = setMissionExpanded(makeUiState(), "env-a:0123456789ab", false);
+    expect(collapsed.missionExpandedById).toEqual({ "env-a:0123456789ab": false });
+    expect(setMissionExpanded(collapsed, "env-a:0123456789ab", false)).toBe(collapsed);
+    expect(setMissionExpanded(collapsed, "env-a:0123456789ab", true).missionExpandedById).toEqual(
+      {},
+    );
+    const untouched = makeUiState();
+    expect(setMissionExpanded(untouched, "env-b:ba9876543210", true)).toBe(untouched);
+  });
+
   it("moves grouped project members together", () => {
     const keyALocal = "env-local:proj-a";
     const keyARemote = "env-remote:proj-a";
@@ -120,6 +133,7 @@ describe("parsePersistedState", () => {
       projectExpandedById: {
         logical: false,
       },
+      missionExpandedById: {},
       projectOrder: ["physical-b", "physical-a"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
@@ -209,6 +223,7 @@ describe("uiStateStore persistence", () => {
       projectExpandedById: {
         logical: false,
       },
+      missionExpandedById: { "env-a:0123456789ab": false },
       projectOrder: ["physical-b", "physical-a"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
@@ -231,6 +246,7 @@ describe("uiStateStore persistence", () => {
       projectExpandedById: {
         logical: false,
       },
+      missionExpandedById: { "env-a:0123456789ab": false },
       projectOrder: ["physical-b", "physical-a"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",

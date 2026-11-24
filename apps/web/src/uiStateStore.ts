@@ -21,6 +21,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
+  missionExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
   threadLastVisitedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
@@ -36,6 +37,8 @@ export interface PersistedUiState {
 
 export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
+  /** Keyed by the lead's machine and the Mission id. A Mission missing here is expanded. */
+  missionExpandedById: Record<string, boolean>;
   projectOrder: string[];
   sidebarProjectScopeKeys: string[];
 }
@@ -58,6 +61,7 @@ export interface UiState
 
 const initialState: UiState = {
   projectExpandedById: {},
+  missionExpandedById: {},
   projectOrder: [],
   sidebarProjectScopeKeys: [],
   threadLastVisitedAtById: {},
@@ -143,6 +147,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
 
   return {
     projectExpandedById,
+    missionExpandedById: sanitizeBooleanRecord(parsed.missionExpandedById),
     projectOrder,
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
@@ -218,6 +223,7 @@ export function persistState(state: UiState): void {
       PERSISTED_STATE_KEY,
       JSON.stringify({
         projectExpandedById: state.projectExpandedById,
+        missionExpandedById: state.missionExpandedById,
         projectOrder: state.projectOrder,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
@@ -378,6 +384,13 @@ export function setProjectExpanded(
   };
 }
 
+export function setMissionExpanded(state: UiState, missionKey: string, expanded: boolean): UiState {
+  if ((state.missionExpandedById[missionKey] ?? true) === expanded) return state;
+  const { [missionKey]: _previous, ...rest } = state.missionExpandedById;
+  // Expanded is the default, so only collapsed Missions are kept.
+  return { ...state, missionExpandedById: expanded ? rest : { ...rest, [missionKey]: false } };
+}
+
 export function reorderProjects(
   state: UiState,
   currentProjectOrder: readonly string[],
@@ -430,6 +443,7 @@ interface UiStateStore extends UiState {
   setSidebarProjectScopeKeys: (projectKeys: readonly string[]) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
+  setMissionExpanded: (missionKey: string, expanded: boolean) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
     draggedProjectIds: readonly string[],
@@ -452,6 +466,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
+  setMissionExpanded: (missionKey, expanded) =>
+    set((state) => setMissionExpanded(state, missionKey, expanded)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
     set((state) =>
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),

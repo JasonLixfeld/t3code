@@ -3,6 +3,7 @@ import {
   type EnvironmentId,
   type MissionsSnapshot,
   type ThreadId,
+  threadHasMessages,
 } from "@t3tools/contracts";
 import { msg } from "gt-react";
 
@@ -17,7 +18,12 @@ export interface MissionHost {
 export interface MissionCandidate {
   readonly environmentId: EnvironmentId;
   readonly id?: ThreadId;
+  /** Only a thread with messages may start a Mission. */
+  readonly latestUserMessageAt: string | null;
+  readonly visibleItemCount: number;
 }
+
+type MissionThread = Pick<MissionCandidate, "environmentId" | "id">;
 
 export type MissionMenuId =
   | "mission-start"
@@ -48,7 +54,7 @@ export type MissionBlock = "in-mission" | "no-link" | "fenced" | "not-allowed";
  * The claim this thread's own machine holds for it, when one Mission or another holds it there.
  * The claim decides, never the thread's tags: a tag can lag behind its claim.
  */
-export const claimHere = (thread: MissionCandidate, hosts: ReadonlyArray<MissionHost>) =>
+export const claimHere = (thread: MissionThread, hosts: ReadonlyArray<MissionHost>) =>
   hosts
     .find((host) => host.environmentId === thread.environmentId)
     ?.snapshot.claims.find((claim) => claim.threadId === thread.id);
@@ -58,7 +64,7 @@ export const claimHere = (thread: MissionCandidate, hosts: ReadonlyArray<Mission
  * link to that machine to have full access, because a weaker link may change only threads it started.
  */
 function missionBlock(
-  thread: MissionCandidate,
+  thread: MissionThread,
   host: MissionHost,
   hosts: ReadonlyArray<MissionHost>,
 ): MissionBlock | null {
@@ -113,14 +119,20 @@ export function buildMissionMenuItems(
             label: resolve(msg("Start mission from this thread")),
             icon: "flag",
             separatorBefore: true,
-            disabled: inMission || startHost === undefined || !canChangeOn(single.environmentId),
+            disabled:
+              inMission ||
+              startHost === undefined ||
+              !threadHasMessages(single) ||
+              !canChangeOn(single.environmentId),
             ...(inMission
               ? { detail: resolve(msg("In a mission")) }
               : startHost === undefined
                 ? { detail: resolve(msg("Not supported here")) }
-                : !canChangeOn(single.environmentId)
-                  ? { detail: blockLabel("not-allowed", "", resolve) }
-                  : {}),
+                : !threadHasMessages(single)
+                  ? { detail: resolve(msg("No messages yet")) }
+                  : !canChangeOn(single.environmentId)
+                    ? { detail: blockLabel("not-allowed", "", resolve) }
+                    : {}),
           },
         ]),
     ...(single === undefined || claimHere(single, hosts) === undefined

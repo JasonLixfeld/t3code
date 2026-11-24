@@ -254,6 +254,14 @@ export class MissionStore extends Context.Service<
     readonly release: (input: Omit<ClaimInput, "name">) => Effect.Effect<void>;
     /** Drops the thread's claim, whoever holds it. Refuses a lead's claim. */
     readonly leave: (threadId: ThreadId) => Effect.Effect<void, MissionError>;
+    /** Names a Mission led here again. Its claims follow through `renameClaims`. */
+    readonly renameMission: (missionId: string, name: string) => Effect.Effect<void>;
+    /** Gives this owner's claims in a Mission its new name. Answers the threads it renamed. */
+    readonly renameClaims: (input: {
+      readonly owner: string;
+      readonly missionId: string;
+      readonly name: string;
+    }) => Effect.Effect<ReadonlyArray<ThreadId>>;
     readonly claim: (threadId: ThreadId) => Effect.Effect<MissionClaim | undefined>;
     readonly claimsOf: (owner: string) => Effect.Effect<ReadonlyArray<MissionClaim>>;
     readonly allClaims: Effect.Effect<ReadonlyArray<MissionClaim>>;
@@ -445,6 +453,35 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const renameMission = (missionId: string, name: string) =>
+    sql`UPDATE missions SET name = ${name} WHERE mission_id = ${missionId}`.pipe(
+      Effect.andThen(changed),
+      Effect.asVoid,
+      Effect.orDie,
+    );
+
+  const renameClaims = Effect.fn("MissionStore.renameClaims")(function* (input: {
+    readonly owner: string;
+    readonly missionId: string;
+    readonly name: string;
+  }) {
+    const renamed = yield* sql.withTransaction(
+      Effect.gen(function* () {
+        const rows = yield* sql<{ readonly thread_id: string }>`
+          UPDATE claims SET mission_name = ${input.name}
+          WHERE owner = ${input.owner} AND mission_id = ${input.missionId}
+            AND mission_name != ${input.name}
+          RETURNING thread_id
+        `;
+        const threadIds = rows.map((row) => ThreadId.make(row.thread_id));
+        yield* Effect.forEach(threadIds, markUnsynced);
+        return threadIds;
+      }),
+    );
+    if (renamed.length > 0) yield* changed;
+    return renamed;
+  }, Effect.orDie);
+
   const claim = Effect.fn("MissionStore.claim")(function* (threadId: ThreadId) {
     const held = yield* claimRow(threadId);
     return held === undefined ? undefined : toClaim(held);
@@ -624,6 +661,8 @@ const make = Effect.gen(function* () {
     join,
     release,
     leave,
+    renameMission,
+    renameClaims,
     claim,
     claimsOf,
     allClaims,

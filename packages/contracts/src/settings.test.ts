@@ -323,6 +323,16 @@ describe("resolveIdleCompaction", () => {
   });
 });
 
+describe("ClientSettings sidebar missions", () => {
+  it("shows Missions and both headings for settings without a saved preference", () => {
+    const settings = decodeClientSettings({});
+    expect(settings.sidebarMissionsEnabled).toBe(true);
+    expect(settings.sidebarMissionsHeaderVisible).toBe(true);
+    expect(settings.sidebarThreadsHeaderVisible).toBe(true);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("sidebarMissionsEnabled");
+  });
+});
+
 describe("ClientSettings notifications", () => {
   it("requires opt-in when existing settings omit notification preferences", () => {
     expect(decodeClientSettings({}).notificationMode).toBe("off");

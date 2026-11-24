@@ -544,6 +544,17 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? [gt("Working section")]
       : []),
+    ...(settings.sidebarMissionsEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarMissionsEnabled
+      ? [gt("Missions")]
+      : []),
+    ...(settings.sidebarMissionsHeaderVisible !==
+    DEFAULT_UNIFIED_SETTINGS.sidebarMissionsHeaderVisible
+      ? [gt("Missions heading")]
+      : []),
+    ...(settings.sidebarThreadsHeaderVisible !==
+    DEFAULT_UNIFIED_SETTINGS.sidebarThreadsHeaderVisible
+      ? [gt("Threads heading")]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? [gt("Auto-settle inactive threads")]
       : []),
@@ -735,6 +746,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarMissionsEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarMissionsEnabled,
+      sidebarMissionsHeaderVisible: DEFAULT_UNIFIED_SETTINGS.sidebarMissionsHeaderVisible,
+      sidebarThreadsHeaderVisible: DEFAULT_UNIFIED_SETTINGS.sidebarThreadsHeaderVisible,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -978,6 +992,101 @@ export function GeneralSettingsPanel() {
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
               aria-label={gt("Working section")}
+            />
+          }
+        />
+        <SettingsRow
+          {...setting("sidebar-missions")}
+          description={
+            <T>
+              Group the threads of each mission under its lead thread, above the other threads. When
+              off, every thread shows in the usual lists and no mission menu items show.
+            </T>
+          }
+          resetAction={
+            settings.sidebarMissionsEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarMissionsEnabled ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset missions to default")}
+                onClick={() =>
+                  updateSettings({
+                    sidebarMissionsEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarMissionsEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarMissionsEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarMissionsEnabled: Boolean(checked) })
+              }
+              aria-label={gt("Missions")}
+            />
+          }
+        >
+          {settings.sidebarMissionsEnabled ? (
+            <div className="mt-2 mb-2 border-l-2 border-border/60 ps-3">
+              <SettingsRow
+                {...setting("sidebar-missions-header")}
+                className="px-0 py-2 sm:px-0"
+                description={<T>Show a Missions heading above the missions.</T>}
+                resetAction={
+                  settings.sidebarMissionsHeaderVisible !==
+                  DEFAULT_UNIFIED_SETTINGS.sidebarMissionsHeaderVisible ? (
+                    <SettingResetButton
+                      ariaLabel={gt("Reset missions heading to default")}
+                      onClick={() =>
+                        updateSettings({
+                          sidebarMissionsHeaderVisible:
+                            DEFAULT_UNIFIED_SETTINGS.sidebarMissionsHeaderVisible,
+                        })
+                      }
+                    />
+                  ) : null
+                }
+                control={
+                  <Switch
+                    checked={settings.sidebarMissionsHeaderVisible}
+                    onCheckedChange={(checked) =>
+                      updateSettings({ sidebarMissionsHeaderVisible: Boolean(checked) })
+                    }
+                    aria-label={gt("Missions heading")}
+                  />
+                }
+              />
+            </div>
+          ) : null}
+        </SettingsRow>
+        <SettingsRow
+          {...setting("sidebar-threads-header")}
+          description={
+            <T>
+              Show a Threads heading above the threads that are not in a mission, when there are
+              missions.
+            </T>
+          }
+          resetAction={
+            settings.sidebarThreadsHeaderVisible !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarThreadsHeaderVisible ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset threads heading to default")}
+                onClick={() =>
+                  updateSettings({
+                    sidebarThreadsHeaderVisible:
+                      DEFAULT_UNIFIED_SETTINGS.sidebarThreadsHeaderVisible,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarThreadsHeaderVisible}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarThreadsHeaderVisible: Boolean(checked) })
+              }
+              aria-label={gt("Threads heading")}
             />
           }
         />

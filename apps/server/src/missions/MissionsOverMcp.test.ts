@@ -40,7 +40,14 @@ const threadsWith = (tags: Map<string, Array<string>>) =>
     getThreadShell: (threadId) =>
       Effect.sync(() => {
         const current = tags.get(threadId);
-        return current === undefined ? null : { ...liveThreadShell(threadId), tags: [...current] };
+        return current === undefined
+          ? null
+          : {
+              ...liveThreadShell(threadId),
+              title: "One",
+              latestUserMessageAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+              tags: [...current],
+            };
       }),
     dispatch: (command) =>
       Effect.sync(() => {
@@ -174,7 +181,6 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
         );
       const mission = yield* missions.create({
         missionId: "0123456789ab",
-        name: "One",
         leadThreadId: ThreadId.make("lead"),
       });
       const added = { environmentId: LAPTOP, threadId: ThreadId.make("added") };

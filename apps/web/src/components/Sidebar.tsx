@@ -182,6 +182,7 @@ import {
 import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
+  groupSidebarMissions,
   groupSidebarThreadsByProject,
   sidebarFolderExpansionKeys,
   buildBulkTitleRegenerationContextMenuItem,
@@ -269,6 +270,7 @@ import { useShownThreadRouteTarget } from "../hooks/useShownThreadRouteTarget";
 import {
   SidebarSearchResultRow,
   SortableThreadRow,
+  type SidebarMissionToggle,
   type SidebarProviderEntry,
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
@@ -278,8 +280,8 @@ import {
   useDraftTerminalLabels,
   useSidebarDrafts,
 } from "./sidebar/SidebarDraftBlock";
-import { MissionsSection, useMissionMenu } from "./sidebar/MissionsSection";
-import { isMissionMenuId } from "./sidebar/missions.logic";
+import { SidebarMissions, useMissionHosts, useMissionMenu } from "./sidebar/MissionsSection";
+import { isMissionMenuId, type MissionHost } from "./sidebar/missions.logic";
 import {
   SidebarProjectFolderHeader,
   sidebarFolderRowId,
@@ -288,6 +290,7 @@ import {
   SidebarDragBoundary,
   SidebarSectionHeader,
   SidebarSectionPlaceholder,
+  SidebarHeading,
 } from "./sidebar/SidebarListMarkers";
 
 function sameSidebarProviderEntries(
@@ -367,6 +370,8 @@ interface SidebarThreadPartitionInput {
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   /** Tasks linked environments run for a listed thread; they show under it. */
   readonly delegatedUnderParent: ReadonlySet<string>;
+  /** Threads a Mission lists; they show there only. */
+  readonly missionThreadKeys: ReadonlySet<string>;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly connectedEnvironmentIds: readonly EnvironmentId[];
   readonly optimisticDrop: SidebarOptimisticDrop | null;
@@ -437,6 +442,7 @@ function useSidebarThreads(input: {
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly threads: readonly EnvironmentThreadShell[];
   readonly delegatedUnderParent: ReadonlySet<string>;
+  readonly missionHosts: ReadonlyArray<MissionHost>;
   readonly routeRowThreadKey: string | null;
   readonly departingThreadKey: string | null;
   // Set in boring mode: the project groups to fold active threads into, in order.
@@ -452,11 +458,19 @@ function useSidebarThreads(input: {
     optimisticDrop,
     threads,
     delegatedUnderParent,
+    missionHosts,
     routeRowThreadKey,
     departingThreadKey,
     folderGroups,
     keepEmptyFolders: keepEmpty,
   } = input;
+  const { missions, threadKeys: missionThreadKeys } = groupSidebarMissions(missionHosts, threads);
+  const missionExpandedById = useUiStateStore((store) => store.missionExpandedById);
+  const missionThreads = missions.flatMap((mission) =>
+    [mission.lead, ...((missionExpandedById[mission.key] ?? true) ? mission.members : [])].flatMap(
+      (entry) => (entry.thread === null ? [] : [entry.thread]),
+    ),
+  );
   const shelfRouteThreadKey = routeRowThreadKey === departingThreadKey ? null : routeRowThreadKey;
   // Folders already separate the work, so boring mode has no Working shelf.
   const workingShelfEnabled =
@@ -500,6 +514,7 @@ function useSidebarThreads(input: {
     threads,
     scopedProjectKeys,
     delegatedUnderParent,
+    missionThreadKeys,
     serverConfigs,
     connectedEnvironmentIds,
     optimisticDrop,
@@ -563,6 +578,7 @@ function useSidebarThreads(input: {
           };
         });
   const orderedThreads = [
+    ...missionThreads,
     ...pinnedThreads,
     ...(projectFolders === null
       ? activeThreads
@@ -585,7 +601,14 @@ function useSidebarThreads(input: {
     ...partition,
     threads,
     workingShelfEnabled,
+    missions,
+    missionRowCount: missionThreads.length,
     searchableThreads: [
+      ...missions.flatMap((mission) =>
+        [mission.lead, ...mission.members].flatMap((entry) =>
+          entry.thread === null ? [] : [entry.thread],
+        ),
+      ),
       ...pinnedThreads,
       ...activeThreads,
       ...workingThreads,
@@ -636,13 +659,18 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     threads,
     scopedProjectKeys,
     delegatedUnderParent,
+    missionThreadKeys,
     serverConfigs,
     optimisticDrop,
     workingShelfEnabled,
     sortActiveBySend,
   } = input;
   const preciseNow = new Date().toISOString();
-  const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent);
+  const visible = filterSidebarV2VisibleThreads(
+    threads,
+    scopedProjectKeys,
+    delegatedUnderParent,
+  ).filter((thread) => !missionThreadKeys.has(threadShellKey(thread)));
   const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
@@ -941,6 +969,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const missionMenu = useMissionMenu();
+  const missionHosts = useMissionHosts();
+  const missionsHeaderVisible = useClientSettings((s) => s.sidebarMissionsHeaderVisible);
+  const threadsHeaderVisible = useClientSettings((s) => s.sidebarThreadsHeaderVisible);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
     settleThread,
@@ -1321,6 +1352,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   const {
     workingShelfEnabled,
+    missions,
+    missionRowCount,
     pinnedThreads,
     draggableThreadKeys,
     activeReorderableThreadKeys,
@@ -1363,6 +1396,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     optimisticDrop,
     threads: listedThreads,
     delegatedUnderParent,
+    missionHosts,
     routeRowThreadKey,
     departingThreadKey,
     folderGroups: boringSidebarEnabled
@@ -1463,7 +1497,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // Search hides them, so they drop out while it is open.
   const listedDraftIds = isSearchingThreads ? EMPTY_DRAFT_IDS : draftIds;
   const draftIdByRowKey = new Map<string, DraftId>(listedDraftIds.map((id) => [`draft:${id}`, id]));
-  const orderedRowKeys = [...draftIdByRowKey.keys(), ...orderedThreadKeys];
+  // Missions sit above the drafts.
+  const orderedRowKeys = [
+    ...orderedThreadKeys.slice(0, missionRowCount),
+    ...draftIdByRowKey.keys(),
+    ...orderedThreadKeys.slice(missionRowCount),
+  ];
   const routeDraftRowKey = `draft:${routeDraftIdForRows}`;
   const routeRowKey = draftIdByRowKey.has(routeDraftRowKey) ? routeDraftRowKey : routeRowThreadKey;
 
@@ -3415,6 +3454,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           {/* A scope can hide every active thread; say so even when its project still has settled ones. */}
           {!isSearchingThreads &&
           !hasProjectFolders &&
+          missions.length === 0 &&
           visibleDraftSessionCount === 0 &&
           pinnedThreads.length +
             activeThreads.length +
@@ -3465,7 +3505,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               )}
             </div>
           ) : null}
-          {!isSearchingThreads ? <MissionsSection onOpenThread={navigateToThread} /> : null}
           {!isSearchingThreads ? (
             <TooltipProvider
               key="sidebar-thread-tooltips-150"
@@ -3504,6 +3543,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         section: SidebarSection,
                         // The tree row of the project folder this row sits in.
                         folderRow?: string,
+                        missionToggle?: SidebarMissionToggle,
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -3528,6 +3568,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               optimisticDrop !== null
                             }
                             thread={thread}
+                            missionToggle={missionToggle}
                             variant={rowVariant}
                             navigationParent={
                               folderRow ??
@@ -3620,6 +3661,25 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       };
                       const from = isContextDrag ? null : (dragState?.activeSection ?? null);
                       const items: ReactNode[] = [
+                        <SidebarMissions
+                          key="missions"
+                          missions={missions}
+                          headerVisible={missionsHeaderVisible}
+                          renderThreadRow={(thread, toggle) =>
+                            renderThreadRow(
+                              thread,
+                              thread.settledOverride === "settled" ? "settled" : "active",
+                              undefined,
+                              toggle,
+                            )
+                          }
+                          onOpenThread={navigateToThread}
+                        />,
+                        threadsHeaderVisible && missions.length > 0 ? (
+                          <SidebarHeading key="threads-heading">
+                            {gt("Threads", { $context: "sidebar section" })}
+                          </SidebarHeading>
+                        ) : null,
                         <SidebarDraftBlock
                           key="draft-sessions"
                           draftIds={draftIds}

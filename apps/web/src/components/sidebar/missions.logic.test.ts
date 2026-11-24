@@ -37,6 +37,13 @@ const hosts: ReadonlyArray<MissionHost> = [
 const label = (environmentId: EnvironmentId) =>
   environmentId === DESK ? "Desk" : String(environmentId);
 const allowed = () => true;
+/** A thread with messages, as every thread that may lead a mission has. */
+const thread = (environmentId: EnvironmentId, id?: string) => ({
+  environmentId,
+  ...(id === undefined ? {} : { id: ThreadId.make(id) }),
+  latestUserMessageAt: "2026-11-23T00:00:00.000Z",
+  visibleItemCount: 1,
+});
 
 const addChild = (threads: Parameters<typeof buildMissionMenuItems>[0]) =>
   buildMissionMenuItems(threads, hosts, label, allowed).find((item) => item.id === "mission-add")!
@@ -44,7 +51,7 @@ const addChild = (threads: Parameters<typeof buildMissionMenuItems>[0]) =>
 
 describe("buildMissionMenuItems", () => {
   it("offers a mission to threads on its machine and behind a full-access link", () => {
-    expect(addChild([{ environmentId: DESK }, { environmentId: LAPTOP }])).toEqual({
+    expect(addChild([thread(DESK), thread(LAPTOP)])).toEqual({
       id: "mission-add:env-desk:0123456789ab",
       label: "Ship v2",
       disabled: false,
@@ -53,21 +60,16 @@ describe("buildMissionMenuItems", () => {
   });
 
   it("says why a thread cannot join", () => {
-    expect(addChild([{ environmentId: BOX }])).toMatchObject({
+    expect(addChild([thread(BOX)])).toMatchObject({
       disabled: true,
       detail: "Needs full-access link",
     });
-    expect(addChild([{ environmentId: OTHER }])).toMatchObject({
+    expect(addChild([thread(OTHER)])).toMatchObject({
       disabled: true,
       detail: "No link from Desk",
     });
     // The claim its own machine holds decides, not a tag the thread carries.
-    const held = buildMissionMenuItems(
-      [{ environmentId: DESK, id: ThreadId.make("held") }],
-      hosts,
-      label,
-      allowed,
-    );
+    const held = buildMissionMenuItems([thread(DESK, "held")], hosts, label, allowed);
     expect(held.map((item) => [item.id, item.disabled, item.detail])).toEqual([
       ["mission-start", true, "In a mission"],
       ["mission-leave", false, undefined],
@@ -76,41 +78,42 @@ describe("buildMissionMenuItems", () => {
   });
 
   it("starts missions only for one thread on a machine that runs them", () => {
-    expect(
-      buildMissionMenuItems([{ environmentId: DESK }], hosts, label, allowed)[0],
-    ).toMatchObject({
+    expect(buildMissionMenuItems([thread(DESK)], hosts, label, allowed)[0]).toMatchObject({
       id: "mission-start",
       disabled: false,
     });
-    expect(
-      buildMissionMenuItems([{ environmentId: LAPTOP }], hosts, label, allowed)[0],
-    ).toMatchObject({
+    expect(buildMissionMenuItems([thread(LAPTOP)], hosts, label, allowed)[0]).toMatchObject({
       id: "mission-start",
       disabled: true,
     });
     expect(
-      buildMissionMenuItems(
-        [{ environmentId: DESK }, { environmentId: DESK }],
-        hosts,
-        label,
-        allowed,
-      ).map((item) => item.id),
+      buildMissionMenuItems([thread(DESK), thread(DESK)], hosts, label, allowed).map(
+        (item) => item.id,
+      ),
     ).toEqual(["mission-add"]);
+  });
+
+  it("does not start a mission from a thread with no messages", () => {
+    const empty = { ...thread(DESK), latestUserMessageAt: null, visibleItemCount: 0 };
+    expect(buildMissionMenuItems([empty], hosts, label, allowed)[0]).toMatchObject({
+      id: "mission-start",
+      disabled: true,
+      detail: "No messages yet",
+    });
   });
 
   it("refuses single and bulk adds alike where this client may not change missions", () => {
     const nowhere = () => false;
-    for (const threads of [
-      [{ environmentId: DESK }],
-      [{ environmentId: DESK }, { environmentId: LAPTOP }],
-    ]) {
+    for (const threads of [[thread(DESK)], [thread(DESK), thread(LAPTOP)]]) {
       const items = buildMissionMenuItems(threads, hosts, label, nowhere);
       const add = items.find((item) => item.id === "mission-add")!;
       expect(add.children![0]).toMatchObject({ disabled: true, detail: "Not allowed here" });
     }
-    expect(
-      buildMissionMenuItems([{ environmentId: DESK }], hosts, label, nowhere)[0],
-    ).toMatchObject({ id: "mission-start", disabled: true, detail: "Not allowed here" });
+    expect(buildMissionMenuItems([thread(DESK)], hosts, label, nowhere)[0]).toMatchObject({
+      id: "mission-start",
+      disabled: true,
+      detail: "Not allowed here",
+    });
   });
 
   it("offers leaving only for a thread its own machine holds in a mission", () => {
@@ -118,13 +121,13 @@ describe("buildMissionMenuItems", () => {
       buildMissionMenuItems([thread], hosts, label, can).find(
         (item) => item.id === "mission-leave",
       );
-    expect(leaveOf({ environmentId: DESK, id: ThreadId.make("held") })).toMatchObject({
+    expect(leaveOf(thread(DESK, "held"))).toMatchObject({
       label: "Leave mission",
       disabled: false,
     });
-    expect(leaveOf({ environmentId: DESK, id: ThreadId.make("free") })).toBeUndefined();
-    expect(leaveOf({ environmentId: LAPTOP, id: ThreadId.make("held") })).toBeUndefined();
-    expect(leaveOf({ environmentId: DESK, id: ThreadId.make("held") }, () => false)).toMatchObject({
+    expect(leaveOf(thread(DESK, "free"))).toBeUndefined();
+    expect(leaveOf(thread(LAPTOP, "held"))).toBeUndefined();
+    expect(leaveOf(thread(DESK, "held"), () => false)).toMatchObject({
       disabled: true,
       detail: "Not allowed here",
     });

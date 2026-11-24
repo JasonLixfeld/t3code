@@ -43,6 +43,7 @@ import {
   AlarmClockOffIcon,
   ArrowRightLeftIcon,
   CheckIcon,
+  ChevronDownIcon,
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
@@ -580,8 +581,16 @@ function TopStatusIcon(props: { icon: keyof typeof TOP_STATUS_ICONS; className: 
   return <Icon aria-hidden className={cn("shrink-0", props.className)} />;
 }
 
+/** A Mission's lead row folds its members away under it. */
+export type SidebarMissionToggle = {
+  expanded: boolean;
+  memberCount: number;
+  onToggle: () => void;
+};
+
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
+  missionToggle?: SidebarMissionToggle | undefined;
   // "folder" is a one-line row inside a boring sidebar project folder;
   // "folder-multiline" adds the card's environment and PR line under it.
   variant: "card" | "slim" | "folder" | "folder-multiline";
@@ -1222,6 +1231,31 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       </TooltipPopup>
     </Tooltip>
   ) : null;
+  const { missionToggle } = props;
+  const missionChevron = missionToggle ? (
+    <button
+      type="button"
+      aria-expanded={missionToggle.expanded}
+      aria-label={missionToggle.expanded ? gt("Collapse mission") : gt("Expand mission")}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        missionToggle.onToggle();
+      }}
+      className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-sidebar-muted-foreground outline-none hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+    >
+      <ChevronDownIcon
+        aria-hidden
+        className={cn("size-3 transition-transform", !missionToggle.expanded && "-rotate-90")}
+      />
+    </button>
+  ) : null;
+  const missionCount =
+    missionToggle && !missionToggle.expanded && missionToggle.memberCount > 0 ? (
+      <span className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground">
+        {missionToggle.memberCount}
+      </span>
+    ) : null;
   const showPin =
     props.isPinned && (!sortable?.isDragging || (props.dragOverPinned && props.dropVerb === null));
   const pinIndicator = showPin ? (
@@ -1354,6 +1388,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           >
             {/* `contents` keeps one-line rows a single flex row. */}
             <div className={multiline ? "flex h-6 min-w-0 items-center gap-2.5" : "contents"}>
+              {missionChevron}
               {inFolder ? null : (
                 <span
                   className={cn(
@@ -1369,6 +1404,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {draftIndicator}
               {title}
+              {missionCount}
               {multiline ? titleLineIcons : null}
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
@@ -1559,6 +1595,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           >
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
+              {missionChevron}
               {props.project ? (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               ) : null}
@@ -1574,6 +1611,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ) : (
                 <span className="flex-1" />
               )}
+              {missionCount}
               {sortable?.isDragging ? (
                 dragDestination
               ) : (

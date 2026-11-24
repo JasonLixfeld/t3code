@@ -1,69 +1,73 @@
-import { EnvironmentId, ProjectId, ThreadId, type Mission } from "@t3tools/contracts";
+import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  EnvironmentId,
+  type Mission,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
+import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
+import { useHandleNewThread } from "../../hooks/useHandleNewThread";
+import { useProjects, useQuietThreadShells, useServerConfigs } from "../../state/entities";
+import { makeThreadFixture } from "../../test-fixtures";
+import type { Project } from "../../types";
+import { useUiStateStore } from "../../uiStateStore";
+import Sidebar from "../Sidebar";
+import { SidebarProvider } from "../ui/sidebar";
 import type { MissionHost } from "./missions.logic";
-import { MissionsSection } from "./MissionsSection";
 
-const DESK = EnvironmentId.make("env-desk");
+const LOCAL = EnvironmentId.make("local");
 const LAPTOP = EnvironmentId.make("env-laptop");
-const BOX = EnvironmentId.make("env-box");
+const web: Project = {
+  id: ProjectId.make("web"),
+  environmentId: LOCAL,
+  title: "web",
+  workspaceRoot: "/projects/web",
+  repositoryIdentity: null,
+  defaultModelSelection: null,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+  scripts: [],
+};
+const shell = (id: string, title: string, settled = false) =>
+  makeThreadFixture({
+    environmentId: LOCAL,
+    id: ThreadId.make(id),
+    projectId: web.id,
+    title,
+    ...(settled ? { settledOverride: "settled", settledAt: "2026-01-01T00:00:00.000Z" } : {}),
+  });
 const ref = (environmentId: EnvironmentId, threadId: string) => ({
   environmentId,
   threadId: ThreadId.make(threadId),
 });
 const ship: Mission = {
   missionId: "0123456789ab",
-  name: "Ship v2 release",
+  name: "Plan the v2 release",
   createdAt: "2026-11-23T00:00:00.000Z",
   members: [
-    { ref: ref(DESK, "lead"), role: "lead", state: "active" },
-    { ref: ref(DESK, "docs"), role: "member", state: "active" },
-    { ref: ref(LAPTOP, "ios"), role: "member", state: "offline" },
-    { ref: ref(LAPTOP, "old"), role: "member", state: "release-pending" },
-    { ref: ref(LAPTOP, "new"), role: "member", state: "add-pending" },
-    { ref: ref(LAPTOP, "taken"), role: "member", state: "add-refused", detail: "Laptop refused." },
+    { ref: ref(LOCAL, "lead"), role: "lead", state: "active" },
+    { ref: ref(LOCAL, "docs"), role: "member", state: "active" },
+    { ref: ref(LOCAL, "done"), role: "member", state: "active" },
+    { ref: ref(LAPTOP, "ios"), role: "member", state: "add-pending" },
   ],
 };
-const audit: Mission = {
+const gone: Mission = {
   missionId: "ba9876543210",
-  name: "Security audit",
+  name: "Old work",
   createdAt: "2026-11-23T00:00:00.000Z",
-  members: [{ ref: ref(LAPTOP, "audit"), role: "lead", state: "active" }],
+  members: [{ ref: ref(LOCAL, "deleted-lead"), role: "lead", state: "deleted" }],
 };
 const hosts: ReadonlyArray<MissionHost> = [
-  {
-    environmentId: DESK,
-    snapshot: {
-      missions: [ship],
-      claims: [],
-      links: [
-        { environmentId: LAPTOP, label: "Laptop", fullAccess: true },
-        { environmentId: BOX, label: "Build box", fullAccess: false },
-      ],
-    },
-  },
-  {
-    environmentId: LAPTOP,
-    snapshot: {
-      missions: [audit],
-      claims: [],
-      links: [{ environmentId: BOX, label: "Build box", fullAccess: true }],
-    },
-  },
+  { environmentId: LOCAL, snapshot: { missions: [ship, gone], links: [], claims: [] } },
 ];
-const titles: Record<string, [string, string]> = {
-  lead: ["Plan the v2 release", "t3code"],
-  docs: ["Update the release notes", "docs-site"],
-  ios: ["Fix the iOS share sheet", "mobile"],
-};
-const labels: Record<string, string> = {
-  "env-desk": "Desk",
-  "env-laptop": "Laptop",
-  "env-box": "Build box",
-};
 
+vi.mock("../../state/entities", { spy: true });
+vi.mock("../../hooks/useHandleNewThread", { spy: true });
 vi.mock(import("../../state/server"), async (original) => {
   const actual = await original();
   return {
@@ -71,49 +75,94 @@ vi.mock(import("../../state/server"), async (original) => {
     serverEnvironment: {
       ...actual.serverEnvironment,
       missionsLiveAcross: () => Atom.make([...hosts]),
-      releaseMissionMember: Object.assign(actual.serverEnvironment.releaseMissionMember, {
-        permissionAtom: () => Atom.make(true),
-      }),
     },
   };
 });
-vi.mock(import("../../state/environments"), async (original) => ({
-  ...(await original()),
-  useConnectedEnvironmentIds: () => [DESK, LAPTOP],
-  useEnvironmentIdentities: () =>
-    Object.entries(labels).map(([environmentId, label]) => ({
-      environmentId: EnvironmentId.make(environmentId),
-      label,
-    })) as never,
-}));
-vi.mock(import("../../state/entities"), async (original) => ({
-  ...(await original()),
-  useQuietThreadShell: (target) => {
-    const known = target === null ? undefined : titles[target.threadId];
-    return known === undefined
-      ? null
-      : ({
-          title: known[0],
-          environmentId: target!.environmentId,
-          projectId: ProjectId.make(known[1]),
-        } as never);
-  },
-  useProject: (target) => (target === null ? null : ({ title: target.projectId } as never)),
+vi.mock("./SidebarChrome", () => ({
+  SidebarChromeHeader: () => null,
+  SidebarChromeFooter: () => null,
 }));
 
-it("lists each mission with its lead first, and offers to forget what is still pending", async () => {
-  await using screen = await render(<MissionsSection onOpenThread={() => {}} />);
-  const rows = screen.container.querySelectorAll("li li");
-  expect([...rows].map((row) => row.textContent)).toEqual([
-    "LeadPlan the v2 releaseDesk · t3code",
-    "Update the release notesDesk · docs-site",
-    "Fix the iOS share sheetLast known (machine offline)",
-    "Thread on LaptopRelease pending (machine offline)",
-    "Thread on LaptopAdd pending (machine offline)",
-    "Thread on LaptopLaptop refused.",
-    "LeadThread on LaptopLaptop",
+async function renderSidebar(settings: Partial<typeof DEFAULT_CLIENT_SETTINGS> = {}) {
+  const previousSettings = getClientSettings();
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, ...settings });
+  useUiStateStore.setState({ missionExpandedById: {} });
+  vi.mocked(useProjects).mockReturnValue([web]);
+  vi.mocked(useQuietThreadShells).mockReturnValue([
+    shell("lead", "Plan the v2 release"),
+    shell("docs", "Update the release notes"),
+    shell("done", "Fix the changelog", true),
+    shell("plain", "Unrelated bug"),
   ]);
-  expect(screen.getByRole("button", { name: "Release from mission" }).elements()).toHaveLength(2);
-  expect(screen.getByRole("button", { name: "Dismiss" }).elements()).toHaveLength(1);
-  expect(screen.getByRole("button", { name: "Forget" }).elements()).toHaveLength(2);
+  vi.mocked(useServerConfigs).mockReturnValue(
+    new Map([[LOCAL, { scratchWorkspaceRoot: null } as unknown as EnvironmentServerConfig]]),
+  );
+  vi.mocked(useHandleNewThread).mockReturnValue({
+    activeDraftThread: null,
+    activeThread: null,
+    defaultProjectRef: null,
+    defaultProjectFallbackReady: true,
+    handleNewThread: vi.fn(),
+    routeDraftId: null,
+    routeThreadRef: null,
+  });
+  onTestFinished(() => __setClientSettingsForTests(previousSettings));
+  return render(
+    <SidebarProvider>
+      <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+    </SidebarProvider>,
+  );
+}
+
+const rowTitles = (root: Element) =>
+  [...root.querySelectorAll("[data-sidebar-row]")].map((row) => row.getAttribute("aria-label"));
+
+describe("missions in the sidebar", () => {
+  it("heads each mission with its lead's row and lists unsettled members under it only", async () => {
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    const members = screen.container.querySelector("[data-testid=sidebar-mission-members]")!;
+    expect(members.textContent).toContain("Update the release notes");
+    expect(members.textContent).toContain("Add pending (machine offline)");
+    // The settled member is back on the Settled shelf, and no thread shows twice.
+    expect(members.textContent).not.toContain("Fix the changelog");
+    for (const title of ["Plan the v2 release", "Update the release notes", "Unrelated bug"]) {
+      expect(screen.getByText(title, { exact: true }).elements()).toHaveLength(1);
+    }
+    expect(screen.getByText("Lead deleted").elements()).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: "Missions" }).elements()).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: "Threads" }).elements()).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Forget" }).elements()).toHaveLength(1);
+  });
+
+  it("folds one mission away and remembers it, leaving the others open", async () => {
+    await using screen = await renderSidebar();
+    const [collapse] = screen.getByRole("button", { name: "Collapse mission" }).elements();
+    await act(() => (collapse as HTMLElement).click());
+    expect(screen.container.querySelector("[data-testid=sidebar-mission-members]")).toBeNull();
+    expect(screen.getByText("Update the release notes").elements()).toHaveLength(0);
+    expect(useUiStateStore.getState().missionExpandedById).toEqual({
+      "local:0123456789ab": false,
+    });
+    expect(screen.getByRole("button", { name: "Expand mission" }).elements()).toHaveLength(1);
+  });
+
+  it("lists every thread as usual when Missions is off", async () => {
+    await using screen = await renderSidebar({ sidebarMissionsEnabled: false });
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    expect(screen.container.querySelector("[data-testid=sidebar-mission-members]")).toBeNull();
+    expect(screen.getByRole("heading").elements()).toHaveLength(0);
+    expect(
+      rowTitles(screen.container).filter((title) => title?.includes("Plan the v2")),
+    ).toHaveLength(1);
+  });
+
+  it("hides both headings when their settings are off", async () => {
+    await using screen = await renderSidebar({
+      sidebarMissionsHeaderVisible: false,
+      sidebarThreadsHeaderVisible: false,
+    });
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    expect(screen.getByRole("heading").elements()).toHaveLength(0);
+  });
 });

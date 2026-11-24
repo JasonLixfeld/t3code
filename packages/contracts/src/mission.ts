@@ -63,10 +63,10 @@ export const MissionId = Schema.String.check(Schema.isPattern(/^[0-9a-f]{12}$/))
 /** The name goes into each member's tag, so it follows the tag rules. */
 export const MissionName = ThreadTag;
 
+/** The Mission's name is its lead thread's title, so the client sends none. */
 export const MissionCreateInput = Schema.Struct({
   /** Chosen by the client, so a retry after a lost reply finds the Mission it already made. */
   missionId: MissionId,
-  name: MissionName,
   leadThreadId: ThreadId,
 });
 
@@ -95,6 +95,19 @@ const cut = (tag: string) => {
   }
   return kept.trimEnd();
 };
+
+/** A Mission is named for its lead thread's title, kept to the tag rules. */
+export const missionNameFromTitle = (title: string) =>
+  cut(title.replace(/\p{Cc}+/gu, " ").trim()) || "Mission";
+
+/**
+ * Only a thread with messages may lead a Mission: an empty draft thread is deleted on its own,
+ * which would leave the Mission without its lead.
+ */
+export const threadHasMessages = (thread: {
+  readonly latestUserMessageAt: unknown;
+  readonly visibleItemCount: number;
+}) => thread.latestUserMessageAt != null || thread.visibleItemCount > 0;
 
 /** The label a member thread carries. The id comes first so a cut name or a rename still matches. */
 export const missionTag = (missionId: string, name: string) =>

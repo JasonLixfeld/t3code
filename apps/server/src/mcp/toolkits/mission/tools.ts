@@ -17,8 +17,9 @@ const shownOnlyToLinks = (): boolean => {
 };
 
 /**
- * `join` needs threadId, missionId and name; `release` threadId, missionId and generation. A join
- * may name its add with intentId. It answers with no claim when that add's claim was dropped.
+ * `join` needs threadId, missionId and name; `release` threadId, missionId and generation;
+ * `rename` missionId and name. A join may name its add with intentId. It answers with no claim
+ * when that add's claim was dropped.
  */
 const MissionTagInput = Schema.Struct({
   kind: MissionClaimKind,
