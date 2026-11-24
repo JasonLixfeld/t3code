@@ -503,7 +503,8 @@ export function SidebarMissions(props: {
             <ul
               className={cn(
                 "flex flex-col gap-px rounded-md",
-                drop !== null && "bg-primary/5 ring-1 ring-primary/40",
+                // The composer's own highlight for a valid drop.
+                drop !== null && "bg-accent/45 ring-1 ring-inset ring-primary/70",
               )}
             >
               {row(mission, mission.lead, {

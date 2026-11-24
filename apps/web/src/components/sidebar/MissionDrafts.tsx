@@ -1,6 +1,6 @@
 import { type ScopedThreadRef, threadHasMessages } from "@t3tools/contracts";
 import { msg } from "gt-react";
-import { FlagIcon } from "lucide-react";
+import { InfoIcon } from "lucide-react";
 import { useEffect } from "react";
 import { create } from "zustand";
 
@@ -52,7 +52,7 @@ export function useMissionDraftBanner(
     {
       id: "mission-draft",
       variant: "info",
-      icon: <FlagIcon />,
+      icon: <InfoIcon />,
       title:
         draft.intent.kind === "new"
           ? resolve(msg("Sending starts a mission led by this thread"))
