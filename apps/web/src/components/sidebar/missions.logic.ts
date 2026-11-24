@@ -120,25 +120,15 @@ export function buildMissionMenuItems(
     single === undefined
       ? undefined
       : hosts.find((host) => host.environmentId === single.environmentId);
-  // The Mission whose lead may release this thread: one it joined, as its lead's machine knows.
-  const heldBy =
-    single === undefined
+  // The Mission whose lead may release this thread: the one the sidebar lists it under.
+  const holding =
+    single?.id === undefined
       ? undefined
-      : hosts
-          .flatMap((host) =>
-            host.snapshot.missions
-              .filter((mission) =>
-                mission.members.some(
-                  (member) =>
-                    member.role === "member" &&
-                    isJoined(member) &&
-                    member.ref.environmentId === single.environmentId &&
-                    member.ref.threadId === single.id,
-                ),
-              )
-              .map((mission) => ({ host: host.environmentId, missionId: mission.missionId })),
-          )
-          .at(0);
+      : missionHolders(hosts).get(scopedThreadKey(scopeThreadRef(single.environmentId, single.id)));
+  const heldBy =
+    holding !== undefined && holding.member.role === "member" && isJoined(holding.member)
+      ? holding
+      : undefined;
   return [
     ...(single === undefined
       ? []
@@ -168,7 +158,7 @@ export function buildMissionMenuItems(
       ? []
       : [
           {
-            id: `${RELEASE_PREFIX}${heldBy.host}:${heldBy.missionId}` as const,
+            id: `${RELEASE_PREFIX}${heldBy.host}:${heldBy.mission.missionId}` as const,
             label: resolve(msg("Release from mission")),
             icon: "flag",
             disabled: !canChangeOn(heldBy.host),
@@ -288,6 +278,33 @@ const HOLD: Record<MissionMember["state"], number> = {
 
 const isJoined = (member: MissionMember) => member.state === "active" || member.state === "offline";
 
+/** Where each thread shows: the Mission it leads, else the one that holds it surest, else the first. */
+function missionHolders(hosts: ReadonlyArray<MissionHost>) {
+  const holders = new Map<
+    string,
+    {
+      readonly key: string;
+      readonly host: EnvironmentId;
+      readonly mission: Mission;
+      readonly member: MissionMember;
+      readonly hold: number;
+    }
+  >();
+  for (const host of hosts) {
+    for (const mission of host.snapshot.missions) {
+      for (const member of mission.members) {
+        const hold = member.role === "lead" ? 3 : HOLD[member.state];
+        const thread = scopedThreadKey(member.ref);
+        if (hold >= 0 && hold > (holders.get(thread)?.hold ?? -1)) {
+          const key = `${host.environmentId}:${mission.missionId}`;
+          holders.set(thread, { key, host: host.environmentId, mission, member, hold });
+        }
+      }
+    }
+  }
+  return holders;
+}
+
 /**
  * The Missions the sidebar lists, and `threadKeys`, the threads they show; other lists leave those
  * out. A thread shows in one Mission: the one it leads, else the surest hold, else the first.
@@ -300,6 +317,8 @@ export function groupSidebarMissions<T extends ListedThread>(
 ): {
   readonly missions: ReadonlyArray<SidebarMission<T>>;
   readonly threadKeys: ReadonlySet<string>;
+  /** Every listed Mission's lead, whatever the scope. */
+  readonly leads: ReadonlyArray<SidebarMissionEntry<T>>;
 } {
   const keyOf = (thread: T) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
   const threadByKey = new Map(threads.map((thread) => [keyOf(thread), thread]));
@@ -313,22 +332,14 @@ export function groupSidebarMissions<T extends ListedThread>(
       mission,
     })),
   );
-  const holder = new Map<string, { readonly mission: string; readonly hold: number }>();
-  for (const { key, mission } of listed) {
-    for (const member of mission.members) {
-      const hold = member.role === "lead" ? 3 : HOLD[member.state];
-      const thread = scopedThreadKey(member.ref);
-      if (hold >= 0 && hold > (holder.get(thread)?.hold ?? -1)) {
-        holder.set(thread, { mission: key, hold });
-      }
-    }
-  }
+  const holders = missionHolders(hosts);
   const threadKeys = new Set<string>();
+  const leads: Array<SidebarMissionEntry<T>> = [];
   const missions = listed.flatMap(({ key, host, mission }): Array<SidebarMission<T>> => {
     const entries = mission.members.flatMap((member): Array<SidebarMissionEntry<T>> => {
       const threadKey = scopedThreadKey(member.ref);
       const claimed = member.state !== "deleted" && member.state !== "add-refused";
-      if (claimed && holder.get(threadKey)?.mission !== key) return [];
+      if (claimed && holders.get(threadKey)?.key !== key) return [];
       const thread = claimed ? (threadByKey.get(threadKey) ?? null) : null;
       if (
         member.role === "member" &&
@@ -343,13 +354,16 @@ export function groupSidebarMissions<T extends ListedThread>(
     });
     const [lead, ...members] = entries;
     if (lead?.member.role !== "lead") return [];
+    leads.push(lead);
     const shownMembers =
       scopedProjectKeys === null
         ? members
         : members.filter((entry) => entry.thread !== null && inScope(entry.thread));
     const leadInScope = lead.thread === null ? scopedProjectKeys === null : inScope(lead.thread);
-    if (!leadInScope && shownMembers.length === 0) return [];
+    // A lead the shell left out is still on its way, and only its project can decide the scope.
+    const leadLoading = lead.thread === null && lead.member.state === "active";
+    if (!leadInScope && !leadLoading && shownMembers.length === 0) return [];
     return [{ key, host, mission, lead, leadInScope, members: shownMembers }];
   });
-  return { missions, threadKeys };
+  return { missions, threadKeys, leads };
 }

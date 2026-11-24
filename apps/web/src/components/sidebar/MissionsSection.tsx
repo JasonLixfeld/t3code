@@ -11,7 +11,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon, XIcon } from "lucide-react";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { Fragment, type ReactNode, useContext, useEffect, useState } from "react";
+import { Fragment, type ReactNode, useContext, useEffect, useRef, useState } from "react";
 
 import { m } from "../../i18n/messages";
 import { readLocalApi } from "../../localApi";
@@ -36,6 +36,7 @@ import {
   type MissionMenuId,
   parseMissionTarget,
   type SidebarMission,
+  type SidebarMissionEntry,
 } from "./missions.logic";
 import { SidebarHeading } from "./SidebarListMarkers";
 import type { SidebarMissionToggle } from "./SidebarThreadRow";
@@ -368,28 +369,38 @@ const scopedKey = (ref: ScopedThreadRef) => `${ref.environmentId}:${ref.threadId
  * kept while the mission is listed, so the row it brings in does not release it.
  */
 export function useMissionLeadShells(
-  missions: ReadonlyArray<SidebarMission<EnvironmentThreadShell>>,
+  leads: ReadonlyArray<SidebarMissionEntry<EnvironmentThreadShell>>,
 ) {
   const [mounted, setMounted] = useState<ReadonlyArray<string>>([]);
-  const wanted = missions.flatMap((mission) => {
-    const key = scopedThreadKey(mission.lead.member.ref);
-    return mission.lead.member.state === "active" &&
-      (mission.lead.thread === null || mounted.includes(key))
+  const wanted = leads.flatMap((lead) => {
+    const key = scopedThreadKey(lead.member.ref);
+    return lead.member.state === "active" && (lead.thread === null || mounted.includes(key))
       ? [key]
       : [];
   });
   const wantedKey = JSON.stringify(wanted);
   if (wantedKey !== JSON.stringify(mounted)) setMounted(wanted);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds each listed lead's family in the thread family registry while its mission is listed
+  const held = useRef(new Map<string, () => void>());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds each listed lead's family in the thread family registry, leaving the ones already held in place
   useEffect(() => {
-    const releases = (JSON.parse(wantedKey) as ReadonlyArray<string>).flatMap((key) => {
+    const keys = new Set(JSON.parse(wantedKey) as ReadonlyArray<string>);
+    for (const [key, release] of held.current) {
+      if (keys.has(key)) continue;
+      release();
+      held.current.delete(key);
+    }
+    for (const key of keys) {
       const ref = parseScopedThreadKey(key);
-      return ref === null
-        ? []
-        : [threadFamilies.mount(appAtomRegistry, ref.environmentId, ref.threadId)];
-    });
-    return () => {
-      for (const release of releases) release();
-    };
+      if (ref === null || held.current.has(key)) continue;
+      held.current.set(key, threadFamilies.mount(appAtomRegistry, ref.environmentId, ref.threadId));
+    }
   }, [wantedKey]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases every held lead family when the sidebar unmounts
+  useEffect(
+    () => () => {
+      for (const release of held.current.values()) release();
+      held.current.clear();
+    },
+    [],
+  );
 }

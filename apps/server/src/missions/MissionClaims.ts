@@ -14,6 +14,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { DispatchModeLimit } from "../orchestration-v2/DispatchModeLimit.ts";
@@ -265,8 +266,9 @@ const make = Effect.gen(function* () {
     input: { readonly missionId: string; readonly name: string },
     access?: ThreadAccess<E>,
   ) {
-    // `renameClaim` alone decides which of these the owner holds in this Mission.
-    const stale = (yield* store.allClaims).filter((held) => held.name !== input.name);
+    const stale = (yield* store.claimsOf(owner)).filter(
+      (held) => held.missionId === input.missionId && held.name !== input.name,
+    );
     for (const { threadId } of stale) {
       yield* locks.withLock(
         threadId,
@@ -274,9 +276,10 @@ const make = Effect.gen(function* () {
           const renamed = yield* threadCommands.withLock(
             threadId,
             Effect.gen(function* () {
-              const shell = yield* threads
-                .getThreadShell(threadId)
-                .pipe(Effect.orElseSucceed(() => null));
+              // A thread that cannot be read is not checked, so it keeps its name and tags.
+              const read = yield* threads.getThreadShell(threadId).pipe(Effect.option);
+              if (Option.isNone(read)) return false;
+              const shell = read.value;
               if (access !== undefined && shell !== null && shell.deletedAt === null) {
                 const allowed = yield* access(shell).pipe(
                   Effect.as(true),
@@ -284,6 +287,7 @@ const make = Effect.gen(function* () {
                 );
                 if (!allowed) return false;
               }
+              // Checked again inside its transaction: the claim may have changed hands since.
               return yield* store.renameClaim({ ...input, threadId, owner });
             }),
           );

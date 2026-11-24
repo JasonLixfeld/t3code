@@ -27,6 +27,8 @@ interface Machine {
   refuses: (tag: string) => boolean;
   /** Runs at each read of the thread, before it is read. */
   onRead: Effect.Effect<void>;
+  /** Reads of the thread fail while it says so. */
+  readFails: boolean;
   /** Every tag write that landed, to wait on. */
   readonly written: Queue.Queue<string>;
   /** The orchestrator's lock on each thread, which a mode change there takes. */
@@ -48,6 +50,7 @@ const onMachine = <A, E>(
       failTags: false,
       refuses: () => false,
       onRead: Effect.void,
+      readFails: false,
       written: yield* Queue.unbounded<string>(),
       threadCommands: yield* ThreadCommandExecutor.make,
       events: [],
@@ -55,6 +58,11 @@ const onMachine = <A, E>(
     const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
       getThreadShell: (id) =>
         Effect.suspend(() => machine.onRead).pipe(
+          Effect.andThen(
+            Effect.suspend(() =>
+              machine.readFails ? Effect.fail(new Error("unreadable") as never) : Effect.void,
+            ),
+          ),
           Effect.andThen(Effect.yieldNow),
           Effect.andThen(
             Effect.sync(
@@ -260,6 +268,29 @@ it.effect("a rename that lands while tags are written is still written once it f
       yield* TestClock.adjust(MissionClaims.TAG_REPAIR_INTERVAL);
       assert.equal(yield* Queue.take(machine.written), "mission:aaaa:Renamed");
       assert.deepEqual(machine.tags, ["mission:aaaa:Renamed"]);
+    }),
+  ),
+);
+
+it.effect("a rename skips a thread it cannot read, leaving its name and tags as they were", () =>
+  onMachine((claims, machine) =>
+    Effect.gen(function* () {
+      yield* claims.join("link:a", join("aaaa"));
+      machine.readFails = true;
+      const answered = yield* claims.rename(
+        "link:a",
+        { missionId: "aaaa", name: "Renamed" },
+        () => Effect.void,
+      );
+      machine.readFails = false;
+      assert.deepEqual(
+        answered.map((claim) => claim.name),
+        ["AAAA"],
+      );
+      // Nothing is left for the repair to write either.
+      yield* TestClock.adjust(MissionClaims.TAG_REPAIR_INTERVAL);
+      assert.deepEqual(machine.tags, ["mission:aaaa:AAAA"]);
+      assert.equal(yield* Queue.size(machine.written), 1);
     }),
   ),
 );

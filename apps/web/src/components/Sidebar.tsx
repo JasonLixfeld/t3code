@@ -468,11 +468,11 @@ function useSidebarThreads(input: {
     folderGroups,
     keepEmptyFolders: keepEmpty,
   } = input;
-  const { missions, threadKeys: missionThreadKeys } = groupSidebarMissions(
-    missionHosts,
-    threads,
-    scopedProjectKeys,
-  );
+  const {
+    missions,
+    threadKeys: missionThreadKeys,
+    leads: missionLeadEntries,
+  } = groupSidebarMissions(missionHosts, threads, scopedProjectKeys);
   const missionExpandedById = useUiStateStore((store) => store.missionExpandedById);
   const threadsOf = (entries: ReadonlyArray<{ readonly thread: EnvironmentThreadShell | null }>) =>
     entries.flatMap((entry) => (entry.thread === null ? [] : [entry.thread]));
@@ -538,6 +538,22 @@ function useSidebarThreads(input: {
 
   const { pinnedThreads, activeThreads, workingThreads, snoozedThreads, settledThreads } =
     partition;
+  // A mission row keeps its own state, so a snoozed one can be woken and a settled one un-settled.
+  const missionSectionByKey = new Map(
+    [...missionLeads, ...missionThreads].map((thread) => {
+      const configLoaded = serverConfigs.has(thread.environmentId);
+      return [
+        threadShellKey(thread),
+        resolveSidebarThreadSection({
+          snoozed: configLoaded && effectiveSnoozed(thread, { now: partition.snoozeNow }),
+          settled: configLoaded && thread.settledOverride === "settled",
+          pinned: false,
+        }),
+      ] as const;
+    }),
+  );
+  const missionKeysIn = (section: SidebarSection) =>
+    [...missionSectionByKey].flatMap(([key, value]) => (value === section ? [key] : []));
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
     scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
@@ -547,7 +563,8 @@ function useSidebarThreads(input: {
   const listedSettledThreads = settledThreads.filter(olderSettledShelf.isListed);
   useOlderSettledShelfGrowth(olderSettledShelf, listedSettledThreads);
   const settledCount =
-    settledThreads.length + olderSettledShelf.unloadedCount(partition.visibleThreads);
+    settledThreads.length +
+    olderSettledShelf.unloadedCount([...partition.visibleThreads, ...missionLeads]);
   const visibleSettledThreads = (() => {
     const visible = listedSettledThreads.slice(0, settledVisibleCount);
     if (
@@ -615,6 +632,7 @@ function useSidebarThreads(input: {
     threads,
     workingShelfEnabled,
     missions,
+    missionLeadEntries,
     missionRowCount: missionThreads.length,
     searchableThreads: [
       ...missions.flatMap((mission) =>
@@ -655,14 +673,16 @@ function useSidebarThreads(input: {
         (thread) => [threadShellKey(thread), thread] as const,
       ),
     ),
-    // A settled lead heads its mission; moving on from a settled thread skips it as any other.
-    settledThreadKeys: new Set(
-      [
-        ...settledThreads,
-        ...missionThreads.filter((thread) => thread.settledOverride === "settled"),
-      ].map(threadShellKey),
-    ),
-    snoozedThreadKeys: new Set(snoozedThreads.map(threadShellKey)),
+    missionSectionByKey,
+    // Mission rows stay in their mission; moving on and the menu still treat them by their state.
+    settledThreadKeys: new Set([
+      ...settledThreads.map(threadShellKey),
+      ...missionKeysIn("settled"),
+    ]),
+    snoozedThreadKeys: new Set([
+      ...snoozedThreads.map(threadShellKey),
+      ...missionKeysIn("snoozed"),
+    ]),
     sectionByThreadKey,
     pinnedKeys: pinnedThreads.map(threadShellKey),
     activeKeys: activeThreads.map(threadShellKey),
@@ -1374,6 +1394,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const {
     workingShelfEnabled,
     missions,
+    missionLeadEntries,
+    missionSectionByKey,
     missionRowCount,
     pinnedThreads,
     draggableThreadKeys,
@@ -1429,7 +1451,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     keepEmptyFolders: (group) =>
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
   });
-  useMissionLeadShells(missions);
+  useMissionLeadShells(missionLeadEntries);
 
   // Ranked across environments as the palette ranks them, so one
   // environment's list does not sit above another's better matches; rows
@@ -3690,7 +3712,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           renderThreadRow={(thread, toggle) =>
                             renderThreadRow(
                               thread,
-                              thread.settledOverride === "settled" ? "settled" : "active",
+                              missionSectionByKey.get(threadShellKey(thread)) ?? "active",
                               undefined,
                               toggle,
                             )

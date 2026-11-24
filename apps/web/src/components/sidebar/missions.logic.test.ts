@@ -176,6 +176,37 @@ describe("buildMissionMenuItems", () => {
     expect(releaseOf(allowed, "other")).toBeUndefined();
   });
 
+  it("releases a thread from the mission the sidebar lists it under", () => {
+    const ios = { ref: { environmentId: LAPTOP, threadId: ThreadId.make("ios") } };
+    const twoLeads: ReadonlyArray<MissionHost> = [
+      {
+        environmentId: DESK,
+        snapshot: {
+          ...hosts[0]!.snapshot,
+          missions: [{ ...mission, members: [{ ...ios, role: "member", state: "offline" }] }],
+        },
+      },
+      {
+        environmentId: LAPTOP,
+        snapshot: {
+          links: [],
+          claims: [],
+          missions: [
+            {
+              ...mission,
+              missionId: "bbbbbbbbbbbb",
+              members: [{ ...ios, role: "member", state: "active" }],
+            },
+          ],
+        },
+      },
+    ];
+    const release = buildMissionMenuItems([thread(LAPTOP, "ios")], twoLeads, label, allowed).find(
+      (item) => item.id.startsWith("mission-release:"),
+    );
+    expect(release?.id).toBe("mission-release:env-laptop:bbbbbbbbbbbb");
+  });
+
   it("reads the host and mission back from an add entry", () => {
     expect(parseMissionTarget("mission-add:env:with:colons:0123456789ab")).toEqual({
       action: "add",
@@ -327,10 +358,27 @@ describe("groupSidebarMissions", () => {
     );
   });
 
+  it("keeps a mission under a scope while its lead's thread is on its way", () => {
+    const waiting = mission("cccccccccccc", [member("old-lead", "active", "lead")]);
+    const scope = new Set(["env-desk:web"]);
+    const loading = groupSidebarMissions(hostOf(waiting), threads, scope);
+    expect(rowsOf(loading)).toEqual([["env-desk:cccccccccccc", false, []]]);
+    expect(loading.leads.map((lead) => lead.member.ref.threadId)).toEqual(["old-lead"]);
+    // Once it arrives, its project decides.
+    const arrived = [...threads, shell("old-lead", { settled: true })];
+    expect(rowsOf(groupSidebarMissions(hostOf(waiting), arrived, scope))).toEqual([
+      ["env-desk:cccccccccccc", true, []],
+    ]);
+    expect(
+      groupSidebarMissions(hostOf(waiting), arrived, new Set(["env-desk:api"])).missions,
+    ).toEqual([]);
+  });
+
   it("leaves every thread to the other lists when no mission is listed", () => {
     expect(groupSidebarMissions([], threads, null)).toEqual({
       missions: [],
       threadKeys: new Set(),
+      leads: [],
     });
   });
 });

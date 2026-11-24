@@ -50,7 +50,11 @@ const project = (id: string): Project => ({
 });
 const web = project("web");
 const api = project("api");
-const shell = (id: string, title: string, options: { settled?: boolean; in?: Project } = {}) =>
+const shell = (
+  id: string,
+  title: string,
+  options: { settled?: boolean; snoozed?: boolean; in?: Project } = {},
+) =>
   makeThreadFixture({
     environmentId: LOCAL,
     id: ThreadId.make(id),
@@ -58,6 +62,9 @@ const shell = (id: string, title: string, options: { settled?: boolean; in?: Pro
     title,
     ...(options.settled === true
       ? { settledOverride: "settled", settledAt: "2026-01-01T00:00:00.000Z" }
+      : {}),
+    ...(options.snoozed === true
+      ? { snoozedAt: "2026-01-01T00:00:00.000Z", snoozedUntil: "2999-01-01T00:00:00.000Z" }
       : {}),
   });
 const ref = (environmentId: EnvironmentId, threadId: string) => ({
@@ -93,9 +100,9 @@ const archived: Mission = {
 const hosts: ReadonlyArray<MissionHost> = [
   { environmentId: LOCAL, snapshot: { missions: [ship, gone, archived], links: [], claims: [] } },
 ];
-const shells = (options: { leadSettled?: boolean } = {}) => [
+const shells = (options: { leadSettled?: boolean; docsSnoozed?: boolean } = {}) => [
   shell("lead", "Plan the v2 release", { settled: options.leadSettled === true }),
-  shell("docs", "Update the release notes"),
+  shell("docs", "Update the release notes", { snoozed: options.docsSnoozed === true }),
   shell("done", "Fix the changelog", { settled: true }),
   shell("plain", "Unrelated bug"),
   shell("guide", "Write the migration guide"),
@@ -132,7 +139,13 @@ vi.mock("./SidebarChrome", () => ({
 
 async function renderSidebar(
   settings: Partial<typeof DEFAULT_CLIENT_SETTINGS> = {},
-  options: { leadSettled?: boolean; scope?: Project } = {},
+  options: {
+    leadSettled?: boolean;
+    docsSnoozed?: boolean;
+    scope?: Project;
+    /** Threads the stream brings in later, by `arrive`. */
+    later?: ReadonlyArray<ReturnType<typeof shell>>;
+  } = {},
 ) {
   const previousSettings = getClientSettings();
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, ...settings });
@@ -151,8 +164,8 @@ async function renderSidebar(
   });
   onTestFinished(() => useUiStateStore.setState({ sidebarProjectScopeKeys: [] }));
   vi.mocked(useProjects).mockReturnValue([web, api]);
-  const listed = shells(options);
-  vi.mocked(useQuietThreadShells).mockReturnValue(listed);
+  const listed = [...shells(options)];
+  vi.mocked(useQuietThreadShells).mockImplementation(() => [...listed]);
   vi.mocked(useQuietThreadShell).mockImplementation(
     (target) =>
       listed.find(
@@ -179,11 +192,18 @@ async function renderSidebar(
     routeDraftId: null,
     routeThreadRef: null,
   });
-  return render(
+  const ui = () => (
     <SidebarProvider>
       <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
-    </SidebarProvider>,
+    </SidebarProvider>
   );
+  const screen = await render(ui());
+  return Object.assign(screen, {
+    arrive: () => {
+      listed.push(...(options.later ?? []));
+      return screen.rerender(ui());
+    },
+  });
 }
 
 const rowTitles = (root: Element) =>
@@ -289,7 +309,8 @@ describe("missions in the sidebar", () => {
     expect(members.textContent).toContain("Document the API");
     expect(members.textContent).not.toContain("Update the release notes");
     expect(screen.getByText("Lead deleted").elements()).toHaveLength(0);
-    expect(screen.getByText("Archive the old site").elements()).toHaveLength(0);
+    // Its lead is still on its way, so only its project can rule it out.
+    expect(screen.getByText("Archive the old site").elements()).toHaveLength(1);
     await userEvent.keyboard("{Control>}");
     await expect.element(screen.getByText("Ctrl+1")).toBeVisible();
     expect(jumpsOf(screen.container, ["Plan the v2 release", "Document the API"])).toEqual([
@@ -297,6 +318,37 @@ describe("missions in the sidebar", () => {
       ["Document the API", "Ctrl+1"],
     ]);
     await userEvent.keyboard("{/Control}");
+  });
+
+  it("keeps a scoped mission while its lead is read in, and shows the lead once it arrives", async () => {
+    using mount = vi.spyOn(threadFamilies, "mount");
+    await using screen = await renderSidebar(
+      {},
+      { scope: web, later: [shell("old-lead", "Archive the old site", { settled: true })] },
+    );
+    await expect.element(screen.getByText("Archive the old site")).toBeInTheDocument();
+    expect(mount).toHaveBeenCalledWith(expect.anything(), LOCAL, "old-lead");
+    await screen.arrive();
+    await expect
+      .element(screen.getByText("Archive the old site", { exact: true }))
+      .toBeInTheDocument();
+    expect(screen.container.querySelector('[data-thread-item="local:old-lead"]')).not.toBeNull();
+  });
+
+  it("keeps a snoozed member in its mission, with Wake on the row and in the menu", async () => {
+    const show = vi.fn().mockResolvedValue(null);
+    vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
+    await using screen = await renderSidebar({}, { docsSnoozed: true });
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    const members = screen.container.querySelector("[data-testid=sidebar-mission-members]")!;
+    const row = rowOf(members, "Update the release notes");
+    expect(row.closest("li")!.querySelector('[aria-label="Wake thread now"]')).not.toBeNull();
+    await userEvent.click(row, { button: "right" });
+    await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(1));
+    const ids = (show.mock.lastCall![0] as ReadonlyArray<{ readonly id: string }>).map(
+      (item) => item.id,
+    );
+    expect(ids).toContain("unsnooze");
   });
 
   it("offers a settled lead Un-settle, and a member Release from mission", async () => {
