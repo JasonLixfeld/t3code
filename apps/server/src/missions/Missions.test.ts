@@ -775,49 +775,115 @@ it.effect("an add here that was under way when its mission was deleted makes no 
   );
 });
 
-it.effect("a forgotten add holds off delete until its machine answers, here with no claim", () => {
+/** The claims this lead holds on the laptop, as the laptop itself keeps them. */
+const laptopClaims = (world: ReturnType<typeof makeWorld>) =>
+  Effect.suspend(() => world.laptop.claims!.list(LEAD_ON_LAPTOP));
+
+it.effect("a join that landed unanswered is released once its deleted mission's sweep asks", () => {
   const world = makeWorld([lead, laptopMember]);
   return withMissions(
     world,
     Effect.gen(function* () {
       const missions = yield* Missions.Missions;
-      // No client watches, so only the waiting add has the laptop listed.
       const mission = yield* createOne;
       const member = { missionId: mission.missionId, member: laptopMember };
-      world.laptop.mode = "offline";
+      // The laptop makes the claim, but its answers are lost, so the lead forgets the add.
+      world.laptop.mode = "lostReply";
       yield* missions.addMember(member);
       yield* missions.forgetMember(member);
-      assert.equal(stateOf(yield* listed, laptopMember), undefined);
-      assert.equal(yield* deleteRefusal(mission.missionId), "Waiting to hear from Laptop.");
-      // The laptop answers: the add never got there.
+      // Nothing shows, so the mission can go.
+      yield* missions.deleteMission({ missionId: mission.missionId });
+      assert.equal((yield* laptopClaims(world)).length, 1);
       world.laptop.mode = "up";
       yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
-      yield* world.untilAnswered("list");
-      yield* missions.deleteMission({ missionId: mission.missionId });
-      assert.deepEqual((yield* listed).missions, []);
+      yield* world.untilAnswered("release");
+      assert.deepEqual(yield* laptopClaims(world), []);
+      assert.deepEqual(world.tags(laptopMember), [WAS_TAG]);
+      // A new add to it is refused at once, and so is its id.
+      assert.include(
+        yield* missions.addMember(member).pipe(
+          Effect.flip,
+          Effect.map((error) => error.message),
+        ),
+        "not found",
+      );
+      assert.include(
+        yield* createOne.pipe(
+          Effect.flip,
+          Effect.map((error) => error.message),
+        ),
+        "was deleted",
+      );
     }),
   );
 });
 
-it.effect("a forgotten add whose reply was lost shows as a member once its machine answers", () => {
+it.effect("a release forgotten before delete is sent once its machine is back", () => {
   const world = makeWorld([lead, laptopMember]);
   return withMissions(
     world,
     Effect.gen(function* () {
       const missions = yield* Missions.Missions;
-      const until = yield* openSidebar;
       const mission = yield* createOne;
       const member = { missionId: mission.missionId, member: laptopMember };
-      world.laptop.mode = "lostReply";
       yield* missions.addMember(member);
+      world.laptop.mode = "offline";
+      yield* missions.releaseMember(member);
       yield* missions.forgetMember(member);
-      assert.equal(yield* deleteRefusal(mission.missionId), "Waiting to hear from Laptop.");
+      yield* missions.deleteMission({ missionId: mission.missionId });
+      assert.equal((yield* laptopClaims(world)).length, 1);
       world.laptop.mode = "up";
       yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
-      yield* until((snapshot) => stateOf(snapshot, laptopMember) === "active");
-      assert.equal(
-        yield* deleteRefusal(mission.missionId),
-        "Release this mission's threads before deleting it.",
+      yield* world.untilAnswered("release");
+      assert.deepEqual(yield* laptopClaims(world), []);
+    }),
+  );
+});
+
+it.effect("a release goes to the live claim, not to a refusal the view hides behind it", () => {
+  const world = makeWorld([lead, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const store = yield* MissionStore.MissionStore;
+      const mission = yield* createOne;
+      const member = { missionId: mission.missionId, member: laptopMember };
+      yield* missions.addMember(member);
+      // An older add of the same thread was refused, and its row is still kept.
+      yield* store.setPendingAdd({
+        ...laptopMember,
+        missionId: mission.missionId,
+        intentId: "older-add",
+        linkId: "",
+        addedAt: "",
+        refusal: "Laptop refused.",
+      });
+      assert.equal(stateOf(yield* listed, laptopMember), "active");
+      yield* missions.releaseMember(member);
+      assert.deepEqual(yield* laptopClaims(world), []);
+      assert.equal(stateOf(yield* listed, laptopMember), undefined);
+    }),
+  );
+});
+
+it.effect("a member deleted while the server was stopped is let go when it starts", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const mission = yield* createOne;
+      yield* missions.addMember({ missionId: mission.missionId, member: localMember });
+      world.whileStopped = Effect.sync(() => world.remove(localMember));
+    }),
+    Effect.gen(function* () {
+      yield* eventually((snapshot) =>
+        snapshot.claims.every((claim) => claim.threadId !== localMember.threadId),
+      );
+      assert.deepEqual(
+        (yield* listed).claims.map((claim) => claim.threadId),
+        [lead.threadId],
       );
     }),
   );
@@ -877,7 +943,10 @@ it.effect("a mission is not deleted while an add to another machine waits for it
       world.laptop.mode = "lostReply";
       yield* missions.addMember({ missionId: mission.missionId, member: laptopMember });
       assert.equal(stateOf(yield* listed, laptopMember), "add-pending");
-      assert.equal(yield* deleteRefusal(mission.missionId), "Waiting to hear from Laptop.");
+      assert.equal(
+        yield* deleteRefusal(mission.missionId),
+        "Release this mission's threads before deleting it.",
+      );
       assert.deepEqual(world.tags(lead), [TAG]);
     }),
   );
@@ -1070,8 +1139,7 @@ it.effect("an add the laptop turns down once it is back says why, until it is di
 });
 
 it.effect.each([
-  // A forgotten add may have made a claim there, so its machine is listed once to settle it.
-  { waitsOn: "an add", sentBefore: ["join", "join"], settled: ["list"] },
+  { waitsOn: "an add", sentBefore: ["join", "join"], settled: [] },
   { waitsOn: "a release", sentBefore: ["join", "release", "release"], settled: [] },
 ] as const)(
   "forgetting $waitsOn that still waits removes the row and stops asking, and the thread can be added again",

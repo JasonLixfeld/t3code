@@ -9,8 +9,9 @@ import { DraftId } from "../../composerDraftStore";
 import { useThreadShell } from "../../state/entities";
 import { makeThreadFixture } from "../../test-fixtures";
 import { toastManager } from "../ui/toast";
-import { markMissionDraft } from "./missionDraftStore";
+import { markMissionDraft, missionDraftOf } from "./missionDraftStore";
 import { MissionDraftCoordinator, useMissionDraftBanner } from "./MissionDrafts";
+import { useMissionHosts } from "./MissionsSection";
 
 const LOCAL = EnvironmentId.make("local");
 const thread = { environmentId: LOCAL, threadId: ThreadId.make("draft-thread") };
@@ -24,6 +25,7 @@ const commandFor = (label: string) => {
 };
 
 vi.mock("../../state/entities", { spy: true });
+vi.mock("./MissionsSection", { spy: true });
 vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: ((_command: never, label: string) => commandFor(label)) as never,
@@ -253,4 +255,23 @@ it("joins a draft marked for a mission as a member once its first message lands"
     }),
   );
   await vi.waitFor(() => expect(screen.container.textContent).not.toContain("Sending adds"));
+});
+
+it("holds a member's join while its mission's machine no longer lists the mission", async () => {
+  const draftId = DraftId.make("held-draft");
+  vi.mocked(useMissionHosts).mockReturnValue([
+    { environmentId: LOCAL, snapshot: { missions: [], links: [], claims: [] } },
+  ]);
+  onTestFinished(() => vi.mocked(useMissionHosts).mockRestore());
+  await using screen = await renderDraft(draftId);
+  const intent = {
+    kind: "member",
+    host: LOCAL,
+    missionId: "ba9876543210",
+    name: "Old work",
+  } as const;
+  await act(() => markMissionDraft(draftId, { intent, thread }));
+  await screen.stream("sent");
+  await vi.waitFor(() => expect(missionDraftOf(draftId)?.step).toBe("held"));
+  expect(commandFor("mission add member")).not.toHaveBeenCalled();
 });

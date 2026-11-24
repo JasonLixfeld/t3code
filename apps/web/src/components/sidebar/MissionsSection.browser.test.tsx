@@ -1040,6 +1040,28 @@ describe("dragging threads into and out of missions", () => {
     expect(commandFor("mission release member")).not.toHaveBeenCalled();
   });
 
+  it("releases nothing on a project folder or on Show more", async () => {
+    using _drag = allowDrag();
+    // Enough settled threads, with the shelf open, for a Show more under them.
+    localStorage.setItem("t3code:sidebar:settled-expanded", "true");
+    onTestFinished(() => localStorage.removeItem("t3code:sidebar:settled-expanded"));
+    const settled = Array.from({ length: 30 }, (_, index) =>
+      shell(`old-${index}`, `Old thread ${index}`, { settled: true }),
+    );
+    for (const settings of [{ boringSidebarEnabled: true }, {}]) {
+      await using screen = await renderSidebar(settings, { extra: settled });
+      await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+      const target = settings.boringSidebarEnabled
+        ? () => screen.container.querySelector<HTMLElement>('[data-sidebar-row^="folder:"]')!
+        : () => screen.container.querySelector<HTMLElement>('[data-sidebar-row="settled:more"]')!;
+      expect(target()).not.toBeNull();
+      const drag = await dragBetween(rowOf(screen.container, "Update the release notes"), target);
+      await drag.release();
+      // Each render starts its commands over, so each is checked here.
+      expect(commandFor("mission release member")).not.toHaveBeenCalled();
+    }
+  });
+
   /** A 200px viewport over the list, as a short window has. */
   const shortViewport = (root: Element) => {
     const viewport = root.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]")!;

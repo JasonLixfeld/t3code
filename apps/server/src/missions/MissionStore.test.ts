@@ -5,6 +5,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
@@ -64,7 +65,7 @@ it.effect("keeps its own migration history and reopens without migrating again",
           [3, "PendingAdds"],
           [4, "AddIntents"],
           [5, "AddLinkAndAge"],
-          [6, "UncertainAdds"],
+          [6, "MissionTombstones"],
         ],
       );
     }),
@@ -158,4 +159,48 @@ it.effect(
         assert.notInclude(yield* tablesIn(dbPath), "missions");
       }
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("upgrades a database an earlier build left, keeping a given-up add's machine", () =>
+  withDatabase((filename) =>
+    Effect.gen(function* () {
+      // The database as the build before tombstones left it: five migrations, a Mission, and
+      // an add to the laptop it gave up on.
+      yield* Effect.provide(
+        Effect.gen(function* () {
+          const earlier = Object.fromEntries(
+            Object.entries(MissionStore.MIGRATIONS).filter(([id]) => Number(id.split("_")[0]) <= 5),
+          );
+          yield* Migrator.make({})({ loader: Migrator.fromRecord(earlier) });
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`
+            INSERT INTO missions (mission_id, name, lead_thread_id, created_at)
+            VALUES ('m1', 'M1', ${lead}, '2026-01-01T00:00:00.000Z')
+          `;
+          yield* sql`
+            INSERT INTO claims
+              (thread_id, mission_id, mission_name, role, owner, generation, claimed_at)
+            VALUES (${lead}, 'm1', 'M1', 'lead', 'env-a', 'g1', '2026-01-01T00:00:00.000Z')
+          `;
+          yield* sql`
+            INSERT INTO pending_adds
+              (environment_id, thread_id, mission_id, intent_id, refusal, link_id, added_at)
+            VALUES ('env-laptop', ${member}, 'm1', 'i1',
+              'This add waited more than 7 days for the thread''s machine.', 'link', '2026-01-01')
+          `;
+        }),
+        NodeSqliteClient.layer({ filename }),
+      );
+      yield* usingStore(filename, (store) =>
+        Effect.gen(function* () {
+          assert.equal((yield* store.pendingAdds)[0]?.refusal?.startsWith("This add waited"), true);
+          yield* store.deleteMission({ missionId: "m1", lead });
+          // The deleted Mission still asks the laptop, which its old add may have reached.
+          assert.deepEqual([...(yield* store.tombstones)], [["m1", ["env-laptop"]]]);
+          const again = yield* store.createMission(claimFor(lead, "m1", "g2")).pipe(Effect.flip);
+          assert.include(again.message, "was deleted");
+        }),
+      );
+    }),
+  ),
 );

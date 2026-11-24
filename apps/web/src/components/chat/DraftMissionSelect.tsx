@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, Mission } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -17,6 +17,8 @@ const NO_MISSION = "";
 interface MissionItem {
   readonly value: string;
   readonly label: string;
+  readonly host?: EnvironmentId;
+  readonly mission?: Mission;
 }
 
 /**
@@ -36,27 +38,34 @@ export function DraftMissionSelect(props: {
   );
   const missionOn = (host: EnvironmentId) =>
     hosts.find((candidate) => candidate.environmentId === host)?.snapshot.missions ?? [];
-  // The Mission this draft joins, wherever it lives: New thread in this mission can mark it to
-  // join one on a machine that links to this one.
-  const target =
-    marked?.intent.kind === "member"
-      ? missionOn(marked.intent.host).find(
-          (mission) =>
-            marked.intent.kind === "member" && mission.missionId === marked.intent.missionId,
-        )
-      : undefined;
-  const here = missionOn(environmentId);
-  const missions =
-    target === undefined || here.some((mission) => mission.missionId === target.missionId)
-      ? here
-      : [target, ...here];
-  if (missions.length === 0 || threadId === null) return null;
-  if (marked !== undefined && marked.intent.kind !== "member") return null;
-  const items: ReadonlyArray<MissionItem> = [
+  const keyOf = (host: EnvironmentId, missionId: string) => `${host}:${missionId}`;
+  // Options are keyed by machine and id, so a Mission on a machine linked to this one, as New
+  // thread in this mission picks, is told apart from one here.
+  const items: Array<MissionItem> = [
     { value: NO_MISSION, label: gt("None", { $context: "no mission" }) },
-    ...missions.map((mission) => ({ value: mission.missionId, label: mission.name })),
+    ...missionOn(environmentId).map((mission) => ({
+      value: keyOf(environmentId, mission.missionId),
+      label: mission.name,
+      host: environmentId,
+      mission,
+    })),
   ];
-  const joining = marked?.intent.kind === "member" ? marked.intent.missionId : NO_MISSION;
+  const joining =
+    marked?.intent.kind === "member"
+      ? keyOf(marked.intent.host, marked.intent.missionId)
+      : NO_MISSION;
+  if (marked?.intent.kind === "member" && !items.some((item) => item.value === joining)) {
+    const { host, missionId } = marked.intent;
+    const mission = missionOn(host).find((candidate) => candidate.missionId === missionId);
+    // Gone from its machine's list, so nothing joins it until another pick.
+    items.push(
+      mission === undefined
+        ? { value: joining, label: gt("Unavailable mission") }
+        : { value: joining, label: mission.name, host, mission },
+    );
+  }
+  if (items.length === 1 || threadId === null) return null;
+  if (marked !== undefined && marked.intent.kind !== "member") return null;
   const selected = items.find((item) => item.value === joining) ?? items[0]!;
   return (
     <p className="mt-2 flex h-6 w-full items-center justify-center gap-1.5 text-sm text-muted-foreground">
@@ -74,24 +83,28 @@ export function DraftMissionSelect(props: {
           <MenuRadioGroup
             value={joining}
             onValueChange={(value) => {
-              const mission = missions.find((candidate) => candidate.missionId === value);
-              if (mission === undefined) return clearMissionDraft(draftId);
+              const item = items.find((candidate) => candidate.value === value);
+              if (item?.mission === undefined || item.host === undefined) {
+                return clearMissionDraft(draftId);
+              }
               markMissionDraft(draftId, {
                 intent: {
                   kind: "member",
-                  host:
-                    mission === target && marked?.intent.kind === "member"
-                      ? marked.intent.host
-                      : environmentId,
-                  missionId: mission.missionId,
-                  name: mission.name,
+                  host: item.host,
+                  missionId: item.mission.missionId,
+                  name: item.mission.name,
                 },
                 thread: { environmentId, threadId },
               });
             }}
           >
             {items.map((item) => (
-              <MenuRadioItem key={item.value} value={item.value} closeOnClick>
+              <MenuRadioItem
+                key={item.value}
+                value={item.value}
+                disabled={item.value !== NO_MISSION && item.mission === undefined}
+                closeOnClick
+              >
                 <span className="min-w-0 truncate">{item.label}</span>
               </MenuRadioItem>
             ))}

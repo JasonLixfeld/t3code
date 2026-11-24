@@ -325,13 +325,9 @@ function MemberRow(props: {
   const onRelease = async () => {
     if (forgets) {
       const confirmed = await readLocalApi()?.dialogs.confirm(
-        props.member.state === "add-pending"
-          ? gt(
-              "Forget this thread? Nothing is sent to its machine. The add may have reached it, so this mission cannot be deleted until that machine answers. If it holds the thread then, the thread shows here as a member.",
-            )
-          : gt(
-              "Forget this thread? Nothing is sent to its machine. If that machine comes back still holding the thread, someone there can free it with Leave mission.",
-            ),
+        gt(
+          "Forget this thread? Nothing is sent to its machine. If that machine comes back still holding the thread, someone there can free it with Leave mission.",
+        ),
       );
       if (confirmed !== true) return;
     }
@@ -864,12 +860,9 @@ export function useMissionDrop(missions: ReadonlyArray<SidebarMission<Environmen
     const releases =
       zone !== null &&
       ([...list.querySelectorAll<HTMLElement>("[data-mission-release]")].some(contains) ||
-        [...list.querySelectorAll<HTMLElement>("[data-sidebar-row]")].some(
-          (row) =>
-            // Shelf headers and drafts are rows too, but not threads.
-            !/^(shelf|draft):/.test(row.dataset.sidebarRow ?? "") &&
-            row.getBoundingClientRect().top >= below &&
-            contains(row),
+        // Only a thread's own row: not a folder, a shelf header, "Show more" or a draft.
+        [...list.querySelectorAll<HTMLElement>("[data-thread-item]")].some(
+          (row) => row.getBoundingClientRect().top >= below && contains(row),
         ));
     return resolveMissionDrop({
       dragged,

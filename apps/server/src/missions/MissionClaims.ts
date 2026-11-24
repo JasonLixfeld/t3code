@@ -324,7 +324,7 @@ const make = Effect.gen(function* () {
 
   const leaveHere = Effect.fn("MissionClaims.leaveHere")(
     function* (threadId: ThreadId) {
-      yield* store.leave(threadId);
+      yield* threadCommands.withLock(threadId, store.leave(threadId));
       yield* syncTags(threadId);
     },
     (effect, threadId) => locks.withLock(threadId, effect),

@@ -12,9 +12,10 @@ export interface MissionDraft {
   readonly missionId: string;
   /**
    * `waiting` until the first message lands, which starts the one automatic try. After a
-   * failure only the user's "Try again" sets it back to `waiting`.
+   * failure only the user's "Try again" sets it back to `waiting`. `held`: the Mission it joins
+   * is gone from its machine's list, so nothing is sent until the user picks again.
    */
-  readonly step: "waiting" | "trying" | "failed";
+  readonly step: "waiting" | "trying" | "failed" | "held";
 }
 
 /**

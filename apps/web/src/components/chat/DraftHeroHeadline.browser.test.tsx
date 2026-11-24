@@ -351,21 +351,26 @@ it("New thread in this mission opens a project's draft that joins the mission on
   await expect.element(page.getByText('Sending adds this thread to "Ship v2"')).toBeVisible();
 });
 
-it("the Mission choice shows the mission a draft joins on another machine", async () => {
+it.each([
+  ["the mission a draft joins on another machine", true, "Ship v2"],
+  ["a mission that machine no longer lists as unavailable", false, "Unavailable mission"],
+] as const)("the Mission choice shows %s", async (_, listed, shown) => {
   using _environment = installFakeEnvironment([]);
   const laptop = EnvironmentId.make("laptop");
   missionHosts.listed = [
     {
       environmentId: laptop,
       snapshot: {
-        missions: [
-          {
-            missionId: "ba9876543210",
-            name: "Ship v2",
-            createdAt: "2026-11-23T00:00:00.000Z",
-            members: [],
-          },
-        ],
+        missions: listed
+          ? [
+              {
+                missionId: "ba9876543210",
+                name: "Ship v2",
+                createdAt: "2026-11-23T00:00:00.000Z",
+                members: [],
+              },
+            ]
+          : [],
         links: [],
         claims: [],
       },
@@ -394,5 +399,5 @@ it("the Mission choice shows the mission a draft joins on another machine", asyn
     // AppRoot brings its own router.
     router: false,
   });
-  await expect.element(page.getByRole("button", { name: "Mission" })).toHaveTextContent("Ship v2");
+  await expect.element(page.getByRole("button", { name: "Mission" })).toHaveTextContent(shown);
 });

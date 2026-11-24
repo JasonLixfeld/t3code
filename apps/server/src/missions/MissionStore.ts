@@ -20,7 +20,8 @@ import * as ServerConfig from "../config.ts";
  */
 export const MISSIONS_DATABASE_FILE = "missions.sqlite";
 
-const migrations = Migrator.fromRecord({
+/** Every migration by id. Tests open a database as an older build left it with a prefix of these. */
+export const MIGRATIONS = {
   "1_Missions": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`
@@ -120,19 +121,32 @@ const migrations = Migrator.fromRecord({
     yield* sql`ALTER TABLE pending_adds ADD COLUMN link_id TEXT NOT NULL DEFAULT ''`;
     yield* sql`ALTER TABLE pending_adds ADD COLUMN added_at TEXT NOT NULL DEFAULT ''`;
   }),
-  "6_UncertainAdds": Effect.gen(function* () {
+  "6_MissionTombstones": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    // Adds no machine answered, forgotten or given up on. The thread may hold a claim there.
+    // Every machine a Mission sent an add or a release to. A claim there may outlive the
+    // Mission, so a deleted one's machines are asked again and their claims released.
     yield* sql`
-      CREATE TABLE uncertain_adds (
-        environment_id TEXT NOT NULL,
-        thread_id TEXT NOT NULL,
+      CREATE TABLE mission_machines (
         mission_id TEXT NOT NULL,
-        PRIMARY KEY (environment_id, thread_id, mission_id)
+        environment_id TEXT NOT NULL,
+        PRIMARY KEY (mission_id, environment_id)
       )
     `;
+    // Earlier builds kept no such list. What they still remember names those machines: adds
+    // waiting, refused or given up on, releases waiting, and claims last seen.
+    yield* sql`
+      INSERT OR IGNORE INTO mission_machines (mission_id, environment_id)
+      SELECT mission_id, environment_id FROM pending_adds
+      UNION SELECT mission_id, environment_id FROM pending_releases
+      UNION SELECT mission_id, environment_id FROM known_claims
+    `;
+    // A deleted Mission's id is never taken again, so a late add cannot bring it back.
+    yield* sql`
+      CREATE TABLE deleted_missions (mission_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL)
+    `;
   }),
-});
+};
+const migrations = Migrator.fromRecord(MIGRATIONS);
 
 interface MissionRow {
   readonly mission_id: string;
@@ -318,13 +332,10 @@ export class MissionStore extends Context.Service<
     readonly pendingAdds: Effect.Effect<ReadonlyArray<PendingAdd>>;
     /** Records the add, or what became of it. One row per thread and Mission. */
     readonly setPendingAdd: (add: PendingAdd) => Effect.Effect<void>;
-    /**
-     * Gives up on an add no machine answered, saying why. Its thread may still hold a claim
-     * there, so the add stays uncertain until that machine lists its claims.
-     */
-    readonly expireAdd: (add: PendingAdd & { readonly refusal: string }) => Effect.Effect<void>;
-    /** Adds forgotten or given up on, until their machine lists its claims again. */
-    readonly uncertainAdds: Effect.Effect<ReadonlyArray<AddKey>>;
+    /** The machines each Mission deleted here sent adds or releases to, until `forgetBefore`. */
+    readonly tombstones: Effect.Effect<ReadonlyMap<string, ReadonlyArray<EnvironmentId>>>;
+    /** Stops asking the machines of Missions deleted before `before`. Their ids stay refused. */
+    readonly forgetTombstonesBefore: (before: string) => Effect.Effect<void>;
     readonly clearPendingAdd: (add: AddKey) => Effect.Effect<void>;
     /** Replaces a pending add with the claim its join made, both or neither. */
     readonly settleAdd: (add: AddKey, claim: MissionClaim) => Effect.Effect<void>;
@@ -333,16 +344,13 @@ export class MissionStore extends Context.Service<
      * is away: only that machine's answer is the truth.
      */
     readonly knownClaims: Effect.Effect<ReadonlyMap<EnvironmentId, ReadonlyArray<MissionClaim>>>;
-    /** Replaces what a machine last said, which settles the adds uncertain there. */
+    /** Replaces what a machine last said. */
     readonly setKnownClaims: (
       environmentId: EnvironmentId,
       claims: ReadonlyArray<MissionClaim>,
     ) => Effect.Effect<void>;
     readonly forgetClaim: (release: Omit<PendingRelease, "missionId">) => Effect.Effect<void>;
-    /**
-     * Drops what this lead waits for and last knew about one thread, in one Mission only. An
-     * unanswered add stays uncertain.
-     */
+    /** Drops what this lead waits for and last knew about one thread, in one Mission only. */
     readonly forgetThread: (thread: AddKey) => Effect.Effect<void>;
   }
 >()("t3/missions/MissionStore") {}
@@ -415,6 +423,10 @@ const make = Effect.gen(function* () {
     const createdAt = yield* now;
     return yield* change(
       Effect.gen(function* () {
+        const [deleted] = yield* sql`
+          SELECT 1 FROM deleted_missions WHERE mission_id = ${lead.missionId}
+        `;
+        if (deleted !== undefined) return refuse("That mission was deleted.");
         const existing = yield* sql<MissionRow>`
           SELECT mission_id, name, lead_thread_id, created_at FROM missions
           WHERE mission_id = ${lead.missionId}
@@ -464,7 +476,6 @@ const make = Effect.gen(function* () {
           UNION ALL SELECT 1 FROM pending_adds
             WHERE mission_id = ${input.missionId} AND refusal IS NULL
           UNION ALL SELECT 1 FROM pending_releases WHERE mission_id = ${input.missionId}
-          UNION ALL SELECT 1 FROM uncertain_adds WHERE mission_id = ${input.missionId}
           LIMIT 1
         `;
         if (held !== undefined) {
@@ -475,6 +486,10 @@ const make = Effect.gen(function* () {
           DELETE FROM claims WHERE thread_id = ${input.lead} AND mission_id = ${input.missionId}
         `;
         yield* sql`DELETE FROM missions WHERE mission_id = ${input.missionId}`;
+        yield* sql`
+          INSERT INTO deleted_missions (mission_id, deleted_at)
+          VALUES (${input.missionId}, ${yield* now})
+        `;
         yield* markUnsynced(input.lead);
       }),
     );
@@ -691,12 +706,22 @@ const make = Effect.gen(function* () {
     Effect.orDie,
   );
 
+  const touches = (missionId: string, environmentId: EnvironmentId) => sql`
+    INSERT OR IGNORE INTO mission_machines (mission_id, environment_id)
+    VALUES (${missionId}, ${environmentId})
+  `;
+
   const addPendingRelease = (pending: PendingRelease) =>
     sql`
       INSERT OR IGNORE INTO pending_releases (environment_id, thread_id, generation, mission_id)
       VALUES (${pending.environmentId}, ${pending.threadId}, ${pending.generation},
         ${pending.missionId})
-    `.pipe(Effect.andThen(changed), Effect.asVoid, Effect.orDie);
+    `.pipe(
+      Effect.andThen(touches(pending.missionId, pending.environmentId)),
+      Effect.andThen(changed),
+      Effect.asVoid,
+      Effect.orDie,
+    );
 
   const clearPendingRelease = (pending: Omit<PendingRelease, "missionId">) =>
     sql`
@@ -737,39 +762,35 @@ const make = Effect.gen(function* () {
         (environment_id, thread_id, mission_id, intent_id, link_id, added_at, refusal)
       VALUES (${add.environmentId}, ${add.threadId}, ${add.missionId}, ${add.intentId},
         ${add.linkId}, ${add.addedAt}, ${add.refusal})
-    `.pipe(Effect.andThen(changed), Effect.asVoid, Effect.orDie);
+    `.pipe(
+      Effect.andThen(touches(add.missionId, add.environmentId)),
+      Effect.andThen(changed),
+      Effect.asVoid,
+      Effect.orDie,
+    );
 
-  const uncertain = (add: AddKey) => sql`
-    INSERT OR IGNORE INTO uncertain_adds (environment_id, thread_id, mission_id)
-    VALUES (${add.environmentId}, ${add.threadId}, ${add.missionId})
-  `;
-
-  const expireAdd = (add: PendingAdd & { readonly refusal: string }) =>
-    sql
-      .withTransaction(
-        sql`
-          INSERT OR REPLACE INTO pending_adds
-            (environment_id, thread_id, mission_id, intent_id, link_id, added_at, refusal)
-          VALUES (${add.environmentId}, ${add.threadId}, ${add.missionId}, ${add.intentId},
-            ${add.linkId}, ${add.addedAt}, ${add.refusal})
-        `.pipe(Effect.andThen(uncertain(add))),
-      )
-      .pipe(Effect.andThen(changed), Effect.asVoid, Effect.orDie);
-
-  const uncertainAdds = sql<{
-    readonly environment_id: string;
-    readonly thread_id: string;
-    readonly mission_id: string;
-  }>`SELECT environment_id, thread_id, mission_id FROM uncertain_adds ORDER BY rowid`.pipe(
-    Effect.map((rows) =>
-      rows.map((row): AddKey => ({
-        environmentId: EnvironmentId.make(row.environment_id),
-        threadId: ThreadId.make(row.thread_id),
-        missionId: row.mission_id,
-      })),
-    ),
+  const tombstones = sql<{ readonly mission_id: string; readonly environment_id: string }>`
+    SELECT d.mission_id, m.environment_id FROM deleted_missions d
+    JOIN mission_machines m ON m.mission_id = d.mission_id
+  `.pipe(
+    Effect.map((rows) => {
+      const byMission = new Map<string, Array<EnvironmentId>>();
+      for (const row of rows) {
+        byMission.set(row.mission_id, [
+          ...(byMission.get(row.mission_id) ?? []),
+          EnvironmentId.make(row.environment_id),
+        ]);
+      }
+      return byMission as ReadonlyMap<string, ReadonlyArray<EnvironmentId>>;
+    }),
     Effect.orDie,
   );
+
+  const forgetTombstonesBefore = (before: string) =>
+    sql`
+      DELETE FROM mission_machines WHERE mission_id IN
+        (SELECT mission_id FROM deleted_missions WHERE deleted_at < ${before})
+    `.pipe(Effect.asVoid, Effect.orDie);
 
   const deletePendingAdd = (add: AddKey) =>
     sql`
@@ -805,7 +826,7 @@ const make = Effect.gen(function* () {
         (environment_id, thread_id, mission_id, mission_name, generation)
       VALUES (${environmentId}, ${held.threadId}, ${held.missionId}, ${held.name},
         ${held.generation})
-    `;
+    `.pipe(Effect.andThen(touches(held.missionId, environmentId)));
 
   const setKnownClaims = Effect.fn("MissionStore.setKnownClaims")(function* (
     environmentId: EnvironmentId,
@@ -814,7 +835,6 @@ const make = Effect.gen(function* () {
     yield* sql.withTransaction(
       Effect.gen(function* () {
         yield* sql`DELETE FROM known_claims WHERE environment_id = ${environmentId}`;
-        yield* sql`DELETE FROM uncertain_adds WHERE environment_id = ${environmentId}`;
         yield* Effect.forEach(claims, (held) => insertKnownClaim(environmentId, held));
       }),
     );
@@ -843,11 +863,6 @@ const make = Effect.gen(function* () {
       AND thread_id = ${thread.threadId} AND mission_id = ${thread.missionId}`;
     yield* sql.withTransaction(
       Effect.all([
-        sql`
-          INSERT OR IGNORE INTO uncertain_adds (environment_id, thread_id, mission_id)
-          SELECT environment_id, thread_id, mission_id FROM pending_adds
-          WHERE ${theThread} AND refusal IS NULL
-        `,
         sql`DELETE FROM pending_adds WHERE ${theThread}`,
         sql`DELETE FROM pending_releases WHERE ${theThread}`,
         sql`DELETE FROM known_claims WHERE ${theThread}`,
@@ -863,8 +878,8 @@ const make = Effect.gen(function* () {
     setLead,
     deleteMission,
     join,
-    expireAdd,
-    uncertainAdds,
+    tombstones,
+    forgetTombstonesBefore,
     release,
     leave,
     renameMission,

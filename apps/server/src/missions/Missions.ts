@@ -51,6 +51,8 @@ export const REFRESH_INTERVAL = Duration.seconds(15);
  * a member's machine remembers a spent add, so a lead restored from a backup cannot replay one.
  */
 export const PENDING_ADD_DAYS = 7;
+/** How long a deleted Mission's machines are still asked for claims made after the delete. */
+const TOMBSTONE_DAYS = 14;
 
 export class Missions extends Context.Service<
   Missions,
@@ -215,6 +217,20 @@ const make = Effect.gen(function* () {
       Effect.map((shell) => shell === null || shell.deletedAt !== null),
       Effect.orElseSucceed(() => false),
     );
+
+  /**
+   * Lets go of member claims here whose threads are gone, as a delete does when its event is seen.
+   * Run on start and on every sweep, so a delete missed while stopped is caught. A lead keeps its
+   * claim, so its Mission can take a new lead.
+   */
+  const letGoOfGoneMembers = Effect.gen(function* () {
+    for (const claim of yield* store.allClaims) {
+      if (claim.role !== "member" || !(yield* threadGone(claim.threadId))) continue;
+      yield* claims
+        .leaveHere(claim.threadId)
+        .pipe(Effect.catchTags({ MissionError: () => Effect.void }));
+    }
+  });
 
   const missionView = Effect.fn("Missions.view")(function* (
     mission: MissionRecord,
@@ -467,7 +483,7 @@ const make = Effect.gen(function* () {
           else {
             const stale = yield* staleAdd(add);
             if (stale !== undefined) {
-              yield* store.expireAdd({ ...add, refusal: stale });
+              yield* store.setPendingAdd({ ...add, refusal: stale });
               continue;
             }
             yield* sendJoin(mission, add).pipe(
@@ -477,12 +493,24 @@ const make = Effect.gen(function* () {
             );
           }
         }
-        // Only a list settles an add no answer came for, so such a machine is listed every time.
-        const uncertain = (yield* store.uncertainAdds).some(
-          (add) => add.environmentId === environmentId,
+        const tombstones = yield* store.tombstones;
+        const cleansUp = [...tombstones.values()].some((machines) =>
+          machines.includes(environmentId),
         );
-        if (!discover && !uncertain) return;
+        if (!discover && !cleansUp) return;
         let held = yield* onMember(environmentId, { kind: "list" });
+        // A claim on a Mission deleted here may have landed after the delete, from an add whose
+        // answer never came. Each is released as any member is. A claim made under an old link
+        // owner, before a re-pair, is not listed here; Leave mission on that machine frees it.
+        for (const claim of held) {
+          if (!tombstones.has(claim.missionId)) continue;
+          yield* sendRelease({ environmentId, ...claim }).pipe(
+            Effect.catchTags({
+              MissionError: (error) => Effect.logInfo("A deleted mission's claim stayed", error),
+            }),
+          );
+        }
+        held = held.filter((claim) => !tombstones.has(claim.missionId));
         // A member's claim, and so its tag, carries the Mission's name. A lead renamed since is
         // sent to the member's machine here, as often as it still answers with the old name.
         for (const mission of missions) {
@@ -508,11 +536,14 @@ const make = Effect.gen(function* () {
 
   /** The machines that owe an answer to an add or a release. They stay in every sweep. */
   const owingAnAnswer = Effect.map(
-    Effect.all([waiting, store.uncertainAdds]),
-    ([{ releases, adds }, uncertain]) =>
-      [...releases, ...adds.filter((add) => add.refusal === null), ...uncertain].map(
+    Effect.all([waiting, store.tombstones]),
+    ([{ releases, adds }, tombstones]) => [
+      ...[...releases, ...adds.filter((add) => add.refusal === null)].map(
         (owed) => owed.environmentId,
       ),
+      // A deleted Mission's machines, for as long as its tombstone keeps them.
+      ...[...tombstones.values()].flat(),
+    ],
   );
   // Set by whoever wants the machines' claims read again; a sweep without it only sends again
   // what still waits for an answer.
@@ -544,6 +575,11 @@ const make = Effect.gen(function* () {
   });
 
   const sweep = Effect.gen(function* () {
+    yield* letGoOfGoneMembers;
+    const now = yield* DateTime.now;
+    yield* store.forgetTombstonesBefore(
+      DateTime.formatIso(DateTime.subtract(now, { days: TOMBSTONE_DAYS })),
+    );
     yield* followLeadTitles;
     const discover = yield* Ref.getAndSet(discoverNext, false);
     const asked = new Set([
@@ -565,6 +601,11 @@ const make = Effect.gen(function* () {
   const sweepRequests = yield* Queue.sliding<void>(1);
   const retryWaiting = Queue.offer(sweepRequests, undefined).pipe(Effect.asVoid);
   const refresh = Ref.set(discoverNext, true).pipe(Effect.andThen(retryWaiting));
+  // Deletes missed while this server was stopped.
+  yield* letGoOfGoneMembers.pipe(
+    Effect.catchCause((cause) => Effect.logWarning("Deleted members were not let go", cause)),
+    Effect.forkIn(background),
+  );
   yield* Queue.take(sweepRequests).pipe(
     Effect.andThen(sweep),
     Effect.forever,
@@ -605,24 +646,9 @@ const make = Effect.gen(function* () {
     readonly missionId: string;
   }) {
     const mission = yield* missionNamed(input.missionId);
-    // An add its machine never answered may have made a claim there.
-    const { adds } = yield* waiting;
-    const [owed] = [
-      ...adds.filter((add) => add.refusal === null),
-      ...(yield* store.uncertainAdds),
-    ].filter((add) => add.missionId === mission.missionId);
-    if (owed !== undefined) {
-      const label = yield* linkTo(owed.environmentId).pipe(
-        Effect.map((link) => link.label),
-        Effect.orElseSucceed(() => owed.environmentId as string),
-      );
-      return yield* fail(`Waiting to hear from ${label}.`);
-    }
-    // A member whose thread is gone holds nothing back.
-    for (const claim of yield* claims.list(here)) {
-      if (claim.missionId !== mission.missionId || claim.role !== "member") continue;
-      if (yield* threadGone(claim.threadId)) yield* claims.leaveHere(claim.threadId);
-    }
+    // A member whose thread is gone holds nothing back. Claims elsewhere that the lead cannot
+    // see, from adds never answered, are released by the sweeps the tombstone keeps asking.
+    yield* letGoOfGoneMembers;
     yield* claims.deleteMission({ missionId: mission.missionId, lead: mission.leadThreadId });
   });
 
@@ -714,12 +740,15 @@ const make = Effect.gen(function* () {
         add.missionId === mission.missionId &&
         add.refusal !== null,
     );
-    // The thread never joined, so releasing it only puts the refusal away.
-    if (refused !== undefined) return yield* store.clearPendingAdd(refused);
     const claim = (yield* machines)
       .get(environmentId)
       ?.claims.find((held) => held.threadId === threadId && held.missionId === mission.missionId);
-    if (claim === undefined) return yield* fail("That thread is not in this mission.");
+    // A refusal the view hides behind a live claim must not take the release meant for it.
+    if (refused !== undefined) yield* store.clearPendingAdd(refused);
+    if (claim === undefined) {
+      // The thread never joined, so releasing it only puts the refusal away.
+      return refused === undefined ? yield* fail("That thread is not in this mission.") : undefined;
+    }
     if (claim.role === "lead") {
       return yield* fail("A mission keeps its lead thread, so the lead cannot be released.");
     }

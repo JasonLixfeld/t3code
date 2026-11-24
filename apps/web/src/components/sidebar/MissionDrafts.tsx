@@ -16,7 +16,7 @@ import {
   setMissionDraftStep,
   useMissionDrafts,
 } from "./missionDraftStore";
-import { reportFailure, reportLeadOutcome } from "./MissionsSection";
+import { reportFailure, reportLeadOutcome, useMissionHosts } from "./MissionsSection";
 
 /** The composer's line for a draft that starts, leads or joins a Mission, with a way to undo it. */
 export function useMissionDraftBanner(
@@ -100,10 +100,22 @@ function MissionDraftWatch(props: { readonly draftId: DraftId; readonly draft: M
     setMissionDraftStep(draftId, "failed");
     reportFailure(title, result, retry);
   });
+  // A Mission to join that its machine no longer lists holds the join until another pick.
+  const hosts = useMissionHosts();
+  const gone =
+    draft.intent.kind === "member" &&
+    hosts.some(
+      (host) =>
+        draft.intent.kind === "member" &&
+        host.environmentId === draft.intent.host &&
+        !host.snapshot.missions.some((mission) => mission.missionId === draft.missionId),
+    );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts or relinks the Mission on the server once the draft's first message has landed, and again after the user's "Try again"
   useEffect(() => {
-    if (sent && draft.step === "waiting") void start();
-  }, [draft.step, sent, start]);
+    if (draft.step !== "waiting") return;
+    if (gone) setMissionDraftStep(draftId, "held");
+    else if (sent) void start();
+  }, [draft.step, draftId, gone, sent, start]);
   return null;
 }
 
