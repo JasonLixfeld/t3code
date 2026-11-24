@@ -372,6 +372,34 @@ describe("missions in the sidebar", () => {
     );
   });
 
+  it("heads a mission with the lead's title beside its chevron, and names no project", async () => {
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    const navigate = vi.spyOn(screen.router!, "navigate").mockResolvedValue(undefined);
+    const lead = screen.container.querySelector<HTMLElement>('[data-sidebar-row="local:lead"]')!;
+    expect(lead.textContent).not.toMatch(/web|WB/);
+    const chevron = lead.querySelector<HTMLElement>('[aria-label="Collapse mission"]')!;
+    expect(chevron.parentElement!.textContent).toContain("Plan the v2 release");
+    // Members keep their own project.
+    const members = screen.container.querySelector("[data-testid=sidebar-mission-members]")!;
+    expect(rowOf(members, "Update the release notes").textContent).toContain("web");
+    // The fallback leads have the same shape: chevron and title, no project.
+    for (const title of ["Lead deleted", "Archive the old site"]) {
+      const line = screen.getByText(title, { exact: true }).element().closest("li")!;
+      expect(line.querySelector('[aria-label="Collapse mission"]')).not.toBeNull();
+      expect(line.textContent).not.toMatch(/web|WB/);
+    }
+
+    await userEvent.click(screen.getByText("Plan the v2 release", { exact: true }));
+    expect(navigate).toHaveBeenCalledWith(
+      expect.objectContaining({ params: expect.objectContaining({ threadId: "lead" }) }),
+    );
+    navigate.mockClear();
+    await act(() => chevron.click());
+    expect(navigate).not.toHaveBeenCalled();
+    expect(screen.getByText("Update the release notes").elements()).toHaveLength(0);
+  });
+
   it("folds one mission away and remembers it, leaving the others open", async () => {
     await using screen = await renderSidebar();
     const [collapse] = screen.getByRole("button", { name: "Collapse mission" }).elements();

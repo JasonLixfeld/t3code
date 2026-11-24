@@ -184,7 +184,11 @@ function MemberRow(props: {
       (props.member.role === "lead"
         ? props.missionName
         : gt("Thread on {machine}", { machine: props.machineLabel })));
-  const where = project === null ? props.machineLabel : `${props.machineLabel} · ${project.title}`;
+  // A mission's lead row names no project: a mission can span several.
+  const where =
+    project === null || props.toggle !== undefined
+      ? props.machineLabel
+      : `${props.machineLabel} · ${project.title}`;
   const active = props.member.state === "active";
   // Its machine has not answered, and may never: the lead can stop waiting without asking it.
   const forgets = props.member.state === "add-pending" || props.member.state === "release-pending";
@@ -216,7 +220,7 @@ function MemberRow(props: {
             aria-expanded={toggle.expanded}
             aria-label={toggle.expanded ? gt("Collapse mission") : gt("Expand mission")}
             onClick={toggle.onToggle}
-            className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-sidebar-muted-foreground hover:text-sidebar-foreground"
+            className="mt-0.5 inline-flex size-4 shrink-0 cursor-pointer items-center justify-center self-start rounded-sm text-sidebar-muted-foreground hover:text-sidebar-foreground"
           >
             <ChevronDownIcon
               aria-hidden
