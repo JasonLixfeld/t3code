@@ -282,11 +282,17 @@ import {
 import {
   SidebarMissions,
   useMissionHosts,
+  useMissionDrop,
   useMissionLeadShells,
   useMissionMenu,
   useUnavailableMissionLeads,
 } from "./sidebar/MissionsSection";
-import { groupSidebarMissions, isMissionMenuId, type MissionHost } from "./sidebar/missions.logic";
+import {
+  groupSidebarMissions,
+  isMissionMenuId,
+  missionDragKeys,
+  type MissionHost,
+} from "./sidebar/missions.logic";
 import {
   SidebarProjectFolderHeader,
   sidebarFolderRowId,
@@ -1462,6 +1468,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
   });
   useMissionLeadShells(missionLeadEntries);
+  // A drag drops threads into a mission, or takes a member out of one, before sorting sees it.
+  const missionDrop = useMissionDrop(missions);
+  const missionDraggableKeys = missionDragKeys(missions);
 
   // Ranked across environments as the palette ranks them, so one
   // environment's list does not sit above another's better matches; rows
@@ -1867,6 +1876,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     dragSensorRef.current = null;
     contextDragKeyRef.current = null;
     dragScrollRef.current = null;
+    missionDrop.clear();
     endThreadContextDrag();
     if (started) {
       listMotionRef.current?.release();
@@ -1889,6 +1899,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       return ref ? [ref] : [];
     });
   };
+  const missionDragAt = (point: { x: number; y: number }) => ({
+    point,
+    list: threadListRef.current,
+    dragged: contextDragKeyRef.current,
+    threads: contextDragThreads().flatMap((ref) => {
+      const thread = threadByKeyRef.current.get(scopedThreadKey(ref));
+      return thread === undefined ? [] : [thread];
+    }),
+  });
   const pointerOutsideThreadList = (point: { x: number; y: number }) => {
     // Search results replace the thread list, so only one of them is mounted.
     const bounds = (threadListRef.current ?? searchResultsListRef.current)?.getBoundingClientRect();
@@ -1900,6 +1919,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (scroll && scroll.viewport.scrollTop !== scroll.top) scroll.viewport.scrollTop = scroll.top;
   };
   const moveThreadContextDrag = (point: { x: number; y: number }) => {
+    if (missionDrop.move(missionDragAt(point))) return true;
     // Search results cannot reorder, so their context preview starts inside the list.
     const contextDrag = searchResultsListRef.current !== null || pointerOutsideThreadList(point);
     setDragState((current) =>
@@ -1919,6 +1939,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     return true;
   };
   const dropThreadContextDrag = (point: { x: number; y: number }) => {
+    if (missionDrop.drop(missionDragAt(point))) return true;
     if (!pointerOutsideThreadList(point)) return false;
     restoreDragScroll();
     dropThreadContext(point, contextDragThreads());
@@ -2128,11 +2149,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   useEffect(() => {
     if (
       dragState !== null &&
-      !sidebarListItems.some((item) => item.kind === "thread" && item.key === dragState.activeKey)
+      !sidebarListItems.some(
+        (item) => item.kind === "thread" && item.key === dragState.activeKey,
+      ) &&
+      // A mission member is not in the sortable list, and drags out of its mission.
+      !missionDraggableKeys.has(dragState.activeKey)
     ) {
       cancelThreadDrag();
     }
-  }, [cancelThreadDrag, dragState, sidebarListItems]);
+  }, [cancelThreadDrag, dragState, missionDraggableKeys, sidebarListItems]);
   // Only order, section, or draft changes need layout reads and motion.
   const listMotionLayoutKey = [
     sidebarListItemsKey,
@@ -3619,7 +3644,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             contextDrag={isContextDrag}
                             sortableDisabled={
                               renamingThreadKey === threadKey ||
-                              !draggableThreadKeys.has(threadKey) ||
+                              (!draggableThreadKeys.has(threadKey) &&
+                                !missionDraggableKeys.has(threadKey)) ||
                               optimisticDrop !== null
                             }
                             thread={thread}
@@ -3740,8 +3766,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             );
                           }}
                           onOpenThread={navigateToThread}
+                          dropTarget={missionDrop.target}
                         />,
-                        threadsHeaderVisible && missions.length > 0 ? (
+                        missionDrop.target?.kind === "release" ? (
+                          <SidebarHeading key="threads-heading" isDropTarget>
+                            {missionDrop.target.refusal ?? gt("Release from mission")}
+                          </SidebarHeading>
+                        ) : threadsHeaderVisible && missions.length > 0 ? (
                           <SidebarHeading key="threads-heading">
                             {gt("Threads", { $context: "sidebar section" })}
                           </SidebarHeading>

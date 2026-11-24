@@ -12832,5 +12832,14 @@
   "b59dd4f7877f1064": "trådar rubrik titel etikett sidofält avsnitt uppdrag",
   "e096948ea00955cb": "Inga meddelanden än",
   "19cd8fa8198eabf5": "Fäll ihop uppdraget {mission}, {count, plural, one {{count} tråd} other {{count} trådar}}",
-  "18c378583d4d0beb": "Fäll ut uppdraget {mission}, {count, plural, one {{count} tråd} other {{count} trådar}}"
+  "18c378583d4d0beb": "Fäll ut uppdraget {mission}, {count, plural, one {{count} tråd} other {{count} trådar}}",
+  "b4ba50773b3fa3d5": "Nytt uppdrag...",
+  "58fcfae7881296c1": "När du skickar startar ett uppdrag som den här tråden leder",
+  "057d6deb81129c20": "När du skickar blir den här tråden ledande för ”{mission}”",
+  "0cb19d38f44bcba8": "Skicka som vanlig tråd",
+  "5ef7c097912549e4": "Det gick inte att göra den här tråden ledande",
+  "80745e2c24369bae": "Ingen tråd här kan leda det",
+  "cd8a28f23175f6ed": "Nytt uppdrag",
+  "5728e12679f06b4c": "Ny ledande tråd",
+  "525baaf1f7b6e6e8": "Välj en tråd…"
 }

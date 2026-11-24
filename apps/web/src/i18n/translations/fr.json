@@ -12825,5 +12825,14 @@
   "b59dd4f7877f1064": "conversations fils en-tête titre libellé barre latérale section missions",
   "e096948ea00955cb": "Pas encore de messages",
   "19cd8fa8198eabf5": "Replier la mission {mission}, {count, plural, one {{count} fil} other {{count} fils}}",
-  "18c378583d4d0beb": "Déplier la mission {mission}, {count, plural, one {{count} fil} other {{count} fils}}"
+  "18c378583d4d0beb": "Déplier la mission {mission}, {count, plural, one {{count} fil} other {{count} fils}}",
+  "b4ba50773b3fa3d5": "Nouvelle mission...",
+  "58fcfae7881296c1": "L’envoi démarre une mission dirigée par ce fil",
+  "057d6deb81129c20": "L’envoi fait de ce fil le principal de « {mission} »",
+  "0cb19d38f44bcba8": "Envoyer comme fil normal",
+  "5ef7c097912549e4": "Impossible de faire de ce fil le principal",
+  "80745e2c24369bae": "Aucun fil ici ne peut la diriger",
+  "cd8a28f23175f6ed": "Nouvelle mission",
+  "5728e12679f06b4c": "Nouveau fil principal",
+  "525baaf1f7b6e6e8": "Choisir un fil…"
 }

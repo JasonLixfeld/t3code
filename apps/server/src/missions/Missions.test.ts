@@ -537,6 +537,82 @@ it.effect("an archived lead shows as gone, as a deleted one does", () => {
   );
 });
 
+it.effect(
+  "a new lead must be on the mission's machine, have messages and be in no other mission",
+  () => {
+    const otherLead = ref(HERE, "other-lead");
+    const empty = ref(HERE, "empty");
+    const world = makeWorld([lead, otherLead, empty, laptopMember]);
+    world.empty(empty);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const mission = yield* createOne;
+        yield* missions.create({ missionId: "ba9876543210", leadThreadId: otherLead.threadId });
+        const refusalOf = (next: ScopedThreadRef) =>
+          missions.setLead({ missionId: mission.missionId, lead: next }).pipe(
+            Effect.flip,
+            Effect.map((error) => error.message),
+          );
+        assert.include(yield* refusalOf(laptopMember), "must be a thread on that machine");
+        assert.include(yield* refusalOf(empty), "needs a lead thread with messages");
+        assert.include(yield* refusalOf(otherLead), "already in the mission");
+        assert.deepEqual(membersOf((yield* listed).missions[0]), [["env-here/lead", "active"]]);
+        assert.deepEqual(world.tags(lead), [TAG]);
+      }),
+    );
+  },
+);
+
+it.effect("a member becomes the lead, keeps the others, and the mission takes its title", () => {
+  const world = makeWorld([lead, localMember, laptopMember]);
+  const renamed = "mission:0123456789ab:Two";
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const mission = yield* createOne;
+      yield* missions.addMember({ missionId: mission.missionId, member: localMember });
+      yield* missions.addMember({ missionId: mission.missionId, member: laptopMember });
+      world.retitle(localMember, "Two");
+      const promoted = yield* missions.setLead({ missionId: mission.missionId, lead: localMember });
+      assert.equal(promoted.name, "Two");
+      assert.deepEqual(
+        promoted.members.map((member) => [keyOf(member.ref), member.role, member.state]),
+        [
+          ["env-here/local", "lead", "active"],
+          ["env-laptop/laptop", "member", "active"],
+        ],
+      );
+      assert.deepEqual(world.tags(localMember), [renamed]);
+      // The old lead leaves with the name the mission had.
+      assert.deepEqual(world.tags(lead), [WAS_TAG]);
+      // The laptop's claim stays; its tag takes the new name when the laptop is next asked.
+      assert.equal((yield* world.laptop.claims!.list(LEAD_ON_LAPTOP)).length, 1);
+    }),
+  );
+});
+
+it.effect("a deleted lead is replaced by a thread with messages on this machine", () => {
+  const fresh = ref(HERE, "fresh");
+  const world = makeWorld([lead, fresh]);
+  world.retitle(fresh, "Fresh start");
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const mission = yield* createOne;
+      world.remove(lead);
+      assert.equal(stateOf(yield* listed, lead), "deleted");
+      const replaced = yield* missions.setLead({ missionId: mission.missionId, lead: fresh });
+      assert.equal(replaced.name, "Fresh start");
+      assert.deepEqual(membersOf(replaced), [["env-here/fresh", "active"]]);
+      assert.deepEqual(world.tags(fresh), ["mission:0123456789ab:Fresh start"]);
+    }),
+  );
+});
+
 it.effect("a thread another lead holds is refused by its machine, and is not listed", () => {
   const world = makeWorld([lead, laptopMember]);
   return withMissions(

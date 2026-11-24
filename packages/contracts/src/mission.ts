@@ -75,6 +75,12 @@ export const MissionMemberInput = Schema.Struct({
   member: ScopedThreadRef,
 });
 
+/** A thread on the Mission's own machine takes over as its lead, as when the old one is gone. */
+export const MissionSetLeadInput = Schema.Struct({
+  missionId: Schema.String,
+  lead: ScopedThreadRef,
+});
+
 /** The local user frees a thread on this machine from its Mission. */
 export const MissionLeaveInput = Schema.Struct({ threadId: ThreadId });
 

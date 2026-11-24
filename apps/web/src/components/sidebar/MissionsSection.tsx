@@ -9,7 +9,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import type { EnvironmentId, MissionMember, ScopedThreadRef } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { ChevronDownIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, PlusIcon, XIcon } from "lucide-react";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
@@ -17,14 +17,25 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { threadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import { Atom } from "effect/reactivity";
-import { Fragment, type ReactNode, useContext, useEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { m } from "../../i18n/messages";
 import { readLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
 import { useClientSettings } from "../../hooks/useSettings";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { useEnvironmentIdentities, useConnectedEnvironmentIds } from "../../state/environments";
-import { useProject, useQuietThreadShell } from "../../state/entities";
+import { openCommandPalette } from "../../commandPaletteBus";
+import { contextMenuSourceOf } from "../../contextMenuSource";
+import { useProject, useQuietThreadShell, useQuietThreadShells } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { threadFamilies } from "../../state/threads";
@@ -38,13 +49,17 @@ import {
   claimHere,
   missionAddSummary,
   type MissionCandidate,
+  type MissionDrop,
+  missionLeadCandidates,
   type MissionHost,
+  resolveMissionDrop,
   type MissionMenuId,
   parseMissionTarget,
   type SidebarMission,
   type SidebarMissionEntry,
 } from "./missions.logic";
 import { SidebarHeading } from "./SidebarListMarkers";
+import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
 import type { SidebarMissionToggle } from "./SidebarThreadRow";
 
 /** No machine is asked for its Missions while the sidebar setting turns them off. */
@@ -74,7 +89,7 @@ function failureMessage(result: AtomCommandResult<unknown, unknown>): string | n
   return thrownErrorMessage(squashAtomCommandFailure(result), m) ?? m(msg("An error occurred."));
 }
 
-function reportFailure(title: string, result: AtomCommandResult<unknown, unknown>) {
+export function reportFailure(title: string, result: AtomCommandResult<unknown, unknown>) {
   const message = failureMessage(result);
   if (message === null || isAtomCommandInterrupted(result)) return;
   toastManager.add(stackedThreadToast({ type: "error", title, description: message }));
@@ -155,7 +170,7 @@ export function useMissionMenu() {
 }
 
 /** Twelve hex digits, as Mission ids in tags are. */
-const newMissionId = () => SecureRandom.uuidV4Unsafe().replaceAll("-", "").slice(0, 12);
+export const newMissionId = () => SecureRandom.uuidV4Unsafe().replaceAll("-", "").slice(0, 12);
 
 function MemberRow(props: {
   readonly host: EnvironmentId;
@@ -171,6 +186,7 @@ function MemberRow(props: {
   readonly stateOnly?: boolean;
   /** Inside the thread's own row, as its last line. */
   readonly inRow?: boolean;
+  readonly hosts?: ReadonlyArray<MissionHost>;
 }) {
   const gt = useGT();
   // A refused add never joined, so its row is only the refusal: no title, nothing to open.
@@ -315,9 +331,85 @@ function MemberRow(props: {
         </button>
         {action}
       </div>
+      {deleted && props.member.role === "lead" ? (
+        <MissingLeadActions
+          host={props.host}
+          missionId={props.missionId}
+          missionName={props.missionName}
+          hosts={props.hosts ?? []}
+        />
+      ) : null}
     </li>
   );
 }
+
+/** A Mission whose lead is gone takes a new lead: a draft sent on its machine, or a thread there. */
+function MissingLeadActions(props: {
+  readonly host: EnvironmentId;
+  readonly missionId: string;
+  readonly missionName: string;
+  readonly hosts: ReadonlyArray<MissionHost>;
+}) {
+  const gt = useGT();
+  const shells = useQuietThreadShells();
+  const setLead = useAtomCommand(serverEnvironment.setMissionLead, "mission set lead");
+  const allowed = useAtomValue(serverEnvironment.setMissionLead.permissionAtom(props.host));
+  if (!allowed) return null;
+  const newLead = () =>
+    openCommandPalette({
+      open: "new-thread-in",
+      mission: {
+        kind: "lead",
+        host: props.host,
+        missionId: props.missionId,
+        name: props.missionName,
+      },
+    });
+  const chooseLead = async (event: ReactMouseEvent) => {
+    const candidates = missionLeadCandidates(
+      shells,
+      { host: props.host, missionId: props.missionId },
+      props.hosts,
+    ).slice(0, LEAD_CHOICES);
+    const picked = await readLocalApi()?.contextMenu.show(
+      candidates.length === 0
+        ? [{ id: "none", label: gt("No thread here can lead it"), disabled: true }]
+        : candidates.map((candidate) => ({ id: candidate.id as string, label: candidate.title })),
+      { x: event.clientX, y: event.clientY },
+      contextMenuSourceOf(event),
+    );
+    const lead = candidates.find((candidate) => candidate.id === picked);
+    if (lead === undefined) return;
+    reportFailure(
+      gt("Could not make this thread the lead"),
+      await setLead({
+        environmentId: props.host,
+        input: {
+          missionId: props.missionId,
+          lead: { environmentId: lead.environmentId, threadId: lead.id },
+        },
+      }),
+    );
+  };
+  return (
+    // Lined up with the title, past the chevron.
+    <div className="flex gap-3 ps-7.5 pb-1 text-2xs font-medium text-sidebar-foreground">
+      <button type="button" className="cursor-pointer hover:underline" onClick={newLead}>
+        <T>New lead</T>
+      </button>
+      <button
+        type="button"
+        className="cursor-pointer hover:underline"
+        onClick={(event) => void chooseLead(event)}
+      >
+        <T>Choose a thread…</T>
+      </button>
+    </div>
+  );
+}
+
+/** How many threads "Choose a thread…" offers, most recently written first. */
+const LEAD_CHOICES = 20;
 
 /**
  * The Missions above the thread list. Each lead's own thread row heads its Mission, and its
@@ -333,6 +425,8 @@ export function SidebarMissions(props: {
     footer?: (inRow: boolean) => ReactNode,
   ) => ReactNode;
   readonly onOpenThread: (ref: ScopedThreadRef) => void;
+  /** Where a drag over the sidebar would drop, while one is under way. */
+  readonly dropTarget?: MissionDrop | null;
 }) {
   const gt = useGT();
   const hosts = useMissionHosts();
@@ -355,6 +449,7 @@ export function SidebarMissions(props: {
         missionName={mission.mission.name}
         onOpen={props.onOpenThread}
         toggle={toggle}
+        hosts={hosts}
       />
     ) : (
       <Fragment key={scopedKey(entry.member.ref)}>
@@ -381,25 +476,61 @@ export function SidebarMissions(props: {
   return (
     <>
       {props.headerVisible ? (
-        <SidebarHeading>{gt("Missions", { $context: "sidebar section" })}</SidebarHeading>
+        <SidebarHeading
+          action={
+            <SidebarHeaderIconButton
+              label={gt("New mission")}
+              onClick={() =>
+                openCommandPalette({ open: "new-thread-in", mission: { kind: "new" } })
+              }
+            >
+              <PlusIcon />
+            </SidebarHeaderIconButton>
+          }
+        >
+          {gt("Missions", { $context: "sidebar section" })}
+        </SidebarHeading>
       ) : null}
       {props.missions.map((mission) => {
         const expanded = missionExpandedById[mission.key] ?? true;
+        const drop =
+          props.dropTarget?.kind === "add" && props.dropTarget.mission === mission.key
+            ? props.dropTarget
+            : null;
         return (
-          <Fragment key={mission.key}>
-            {row(mission, mission.lead, {
-              expanded,
-              memberCount: mission.members.length,
-              onToggle: () => setMissionExpanded(mission.key, !expanded),
-            })}
-            {expanded && mission.members.length > 0 ? (
-              <li className="list-none" data-testid="sidebar-mission-members">
-                <ul className="ms-3 flex flex-col gap-px border-s border-sidebar-border ps-1">
-                  {mission.members.map((entry) => row(mission, entry))}
-                </ul>
-              </li>
-            ) : null}
-          </Fragment>
+          // The area a dragged thread drops on to join this mission.
+          <li key={mission.key} className="list-none" data-mission-drop={mission.key}>
+            <ul
+              className={cn(
+                "flex flex-col gap-px rounded-md",
+                drop !== null && "bg-primary/5 ring-1 ring-primary/40",
+              )}
+            >
+              {row(mission, mission.lead, {
+                expanded,
+                memberCount: mission.members.length,
+                onToggle: () => setMissionExpanded(mission.key, !expanded),
+              })}
+              {drop === null ? null : (
+                <li
+                  role="status"
+                  className={cn(
+                    "list-none px-2 pb-1 text-xs",
+                    drop.refusal === null ? "text-primary" : "text-sidebar-muted-foreground",
+                  )}
+                >
+                  {drop.refusal ?? gt("Add to mission")}
+                </li>
+              )}
+              {expanded && mission.members.length > 0 ? (
+                <li className="list-none" data-testid="sidebar-mission-members">
+                  <ul className="ms-3 flex flex-col gap-px border-s border-sidebar-border ps-1">
+                    {mission.members.map((entry) => row(mission, entry))}
+                  </ul>
+                </li>
+              ) : null}
+            </ul>
+          </li>
         );
       })}
     </>
@@ -487,4 +618,69 @@ export function useUnavailableMissionLeads(
     ),
   );
   return useAtomValue(settledLeadReadsAtom(JSON.stringify(missing)));
+}
+
+/**
+ * Drops of the sidebar's thread drag on Missions. Over a Mission, the dragged threads join it;
+ * a member dragged onto the thread list leaves its own. Each claims the pointer from sorting.
+ */
+export function useMissionDrop(missions: ReadonlyArray<SidebarMission<EnvironmentThreadShell>>) {
+  const resolve = useMessages();
+  const registry = useContext(RegistryContext);
+  const hosts = useMissionHosts();
+  const machineLabel = useMachineLabel(hosts);
+  const menu = useMissionMenu();
+  const [target, setTarget] = useState<MissionDrop | null>(null);
+  type At = {
+    readonly point: { readonly x: number; readonly y: number };
+    /** The thread list the drag runs in. */
+    readonly list: HTMLElement | null;
+    readonly dragged: string | null;
+    /** The dragged threads: the selection, when the drag started on a selected row. */
+    readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  };
+  const dropAt = ({ point, list, dragged, threads }: At) => {
+    if (list === null || dragged === null || missions.length === 0) return null;
+    const contains = (element: HTMLElement) => {
+      const box = element.getBoundingClientRect();
+      return (
+        point.x >= box.left && point.x <= box.right && point.y >= box.top && point.y <= box.bottom
+      );
+    };
+    const mission = [...list.querySelectorAll<HTMLElement>("[data-mission-drop]")].find(contains);
+    return resolveMissionDrop({
+      dragged,
+      threads,
+      over: mission?.dataset.missionDrop ?? (contains(list) ? "list" : null),
+      missions,
+      hosts,
+      machineLabel,
+      canChangeOn: (environmentId) =>
+        registry.get(serverEnvironment.addMissionMember.permissionAtom(environmentId)),
+      resolve,
+    });
+  };
+  const show = (next: MissionDrop | null) =>
+    setTarget((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
+  return {
+    target,
+    move: useStableCallback((at: At) => {
+      const next = dropAt(at);
+      show(next);
+      return next !== null;
+    }),
+    drop: useStableCallback((at: At) => {
+      const next = dropAt(at);
+      show(null);
+      if (next === null) return false;
+      if (next.refusal === null) {
+        const refs = at.threads
+          .map((thread) => scopeThreadRef(thread.environmentId, thread.id))
+          .filter((ref) => next.kind === "add" || scopedThreadKey(ref) === at.dragged);
+        void menu.run(`mission-${next.kind}:${next.host}:${next.missionId}`, refs);
+      }
+      return true;
+    }),
+    clear: useStableCallback(() => show(null)),
+  };
 }

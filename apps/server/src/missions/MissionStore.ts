@@ -244,6 +244,12 @@ export class MissionStore extends Context.Service<
      */
     readonly createMission: (lead: ClaimInput) => Effect.Effect<MissionRecord, MissionError>;
     /**
+     * Makes a thread the Mission's lead, and drops the old lead's claim, both or neither. A
+     * member of this Mission here keeps its claim, which becomes the lead's. Refuses a thread
+     * any other Mission or owner holds.
+     */
+    readonly setLead: (lead: ClaimInput) => Effect.Effect<MissionRecord, MissionError>;
+    /**
      * The claim this owner already holds for this Mission, or a new one. Refuses any other claim.
      * `intent-spent`: the claim this add made was dropped since, so the add may not make another.
      */
@@ -389,6 +395,47 @@ const make = Effect.gen(function* () {
           lead_thread_id: lead.threadId,
           created_at: createdAt,
         });
+      }),
+    );
+  });
+
+  const setLead = Effect.fn("MissionStore.setLead")(function* (lead: ClaimInput) {
+    const claimedAt = yield* now;
+    return yield* change(
+      Effect.gen(function* () {
+        const [mission] = yield* sql<MissionRow>`
+          SELECT mission_id, name, lead_thread_id, created_at FROM missions
+          WHERE mission_id = ${lead.missionId}
+        `;
+        if (mission === undefined) return refuse("That mission was not found.");
+        const held = yield* claimRow(lead.threadId);
+        if (
+          held !== undefined &&
+          (held.mission_id !== lead.missionId || held.owner !== lead.owner)
+        ) {
+          return heldElsewhere(held);
+        }
+        if (held === undefined) yield* insertClaim(lead, "lead", claimedAt);
+        else {
+          yield* sql`
+            UPDATE claims SET role = 'lead', mission_name = ${lead.name}
+            WHERE thread_id = ${lead.threadId}
+          `;
+          yield* markUnsynced(lead.threadId);
+        }
+        const previous = ThreadId.make(mission.lead_thread_id);
+        if (previous !== lead.threadId) {
+          yield* sql`
+            DELETE FROM claims
+            WHERE thread_id = ${previous} AND mission_id = ${lead.missionId} AND role = 'lead'
+          `;
+          yield* markUnsynced(previous);
+        }
+        yield* sql`
+          UPDATE missions SET lead_thread_id = ${lead.threadId}, name = ${lead.name}
+          WHERE mission_id = ${lead.missionId}
+        `;
+        return toMission({ ...mission, lead_thread_id: lead.threadId, name: lead.name });
       }),
     );
   });
@@ -662,6 +709,7 @@ const make = Effect.gen(function* () {
     changes,
     missions,
     createMission,
+    setLead,
     join,
     release,
     leave,

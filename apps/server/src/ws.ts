@@ -2399,6 +2399,7 @@ export const layerWsRpc = (
         [WS_METHODS.missionsReleaseMember]: (input) => missions.releaseMember(input),
         [WS_METHODS.missionsForgetMember]: (input) => missions.forgetMember(input),
         [WS_METHODS.missionsLeave]: (input) => missions.leaveHere(input.threadId),
+        [WS_METHODS.missionsSetLead]: (input) => missions.setLead(input),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),

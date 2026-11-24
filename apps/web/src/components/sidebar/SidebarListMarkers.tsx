@@ -147,13 +147,31 @@ export function SidebarSectionHeader(props: {
 }
 
 /** A heading that does not fold, drawn as the shelf headers are. */
-export function SidebarHeading(props: { children: ReactNode }) {
+export function SidebarHeading(props: {
+  children: ReactNode;
+  /** A button at the end of the row. */
+  action?: ReactNode;
+  /** Drawn as a drag boundary is while a drop there would land. */
+  isDropTarget?: boolean;
+}) {
   return (
-    <li className="mx-0.5 list-none">
-      <h2 className="flex h-8 items-center gap-2 px-2 text-xs font-medium text-sidebar-muted-foreground">
+    <li className="mx-0.5 flex list-none items-center">
+      <h2
+        className={cn(
+          "flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-xs font-medium",
+          props.isDropTarget ? "text-primary" : "text-sidebar-muted-foreground",
+        )}
+      >
         <span className="min-w-0 truncate">{props.children}</span>
-        <span aria-hidden className="h-px min-w-2 flex-1 bg-sidebar-border/50" />
+        <span
+          aria-hidden
+          className={cn(
+            "h-px min-w-2 flex-1",
+            props.isDropTarget ? "bg-primary/50" : "bg-sidebar-border/50",
+          )}
+        />
       </h2>
+      {props.action}
     </li>
   );
 }

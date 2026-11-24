@@ -11,6 +11,8 @@ import { removeLocalStorageItem } from "../hooks/useLocalStorage";
 import { makeThreadFixture } from "../test-fixtures";
 import type { Project, Thread } from "../types";
 import { CommandPalette } from "./CommandPalette";
+import { markMissionDraft } from "./sidebar/MissionDrafts";
+import { DraftId } from "../composerDraftStore";
 
 const entities = vi.hoisted(() => ({
   projects: [] as ReadonlyArray<Project>,
@@ -44,6 +46,7 @@ vi.mock("../hooks/useHandleNewThread", async (original) => {
     }),
   };
 });
+vi.mock("./sidebar/MissionDrafts", { spy: true });
 vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
   useProjects: () => entities.projects,
@@ -286,6 +289,34 @@ describe("CommandPalette open intents", () => {
       expect(entities.handleNewThread).toHaveBeenCalledWith({
         environmentId: open.environmentId,
         projectId: open.id,
+      }),
+    );
+  });
+
+  it("marks the draft a mission's project pick makes, offering only the lead's machine", async () => {
+    const local = makeProject("web");
+    const remote = { ...makeProject("api"), environmentId: EnvironmentId.make("remote") };
+    setup({ projects: [local, remote] });
+    vi.mocked(markMissionDraft).mockClear();
+    const created = { draftId: DraftId.make("lead-draft"), threadId: ThreadId.make("lead-thread") };
+    entities.handleNewThread.mockResolvedValueOnce(created as never);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    const intent = {
+      kind: "lead",
+      host: local.environmentId,
+      missionId: "ba9876543210",
+      name: "Old work",
+    } as const;
+
+    openCommandPalette({ open: "new-thread-in", mission: intent });
+    await expect.element(page.getByRole("option", { name: /web/ })).toBeInTheDocument();
+    await expect.element(page.getByRole("option", { name: /api/ })).not.toBeInTheDocument();
+    await page.getByRole("option", { name: /web/ }).click();
+
+    await vi.waitFor(() =>
+      expect(markMissionDraft).toHaveBeenCalledExactlyOnceWith(created.draftId, {
+        intent,
+        thread: { environmentId: local.environmentId, threadId: created.threadId },
       }),
     );
   });

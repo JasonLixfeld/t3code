@@ -12825,5 +12825,14 @@
   "b59dd4f7877f1064": "threads título cabeçalho rótulo barra lateral seção missões",
   "e096948ea00955cb": "Ainda sem mensagens",
   "19cd8fa8198eabf5": "Recolher missão {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
-  "18c378583d4d0beb": "Expandir missão {mission}, {count, plural, one {{count} thread} other {{count} threads}}"
+  "18c378583d4d0beb": "Expandir missão {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
+  "b4ba50773b3fa3d5": "Nova missão...",
+  "58fcfae7881296c1": "Ao enviar, começa uma missão liderada por esta thread",
+  "057d6deb81129c20": "Ao enviar, esta thread passa a liderar “{mission}”",
+  "0cb19d38f44bcba8": "Enviar como thread comum",
+  "5ef7c097912549e4": "Não foi possível tornar esta thread a principal",
+  "80745e2c24369bae": "Nenhuma thread aqui pode liderá-la",
+  "cd8a28f23175f6ed": "Nova missão",
+  "5728e12679f06b4c": "Nova thread principal",
+  "525baaf1f7b6e6e8": "Escolher uma thread…"
 }

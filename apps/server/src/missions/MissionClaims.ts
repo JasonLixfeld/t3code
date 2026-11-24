@@ -6,6 +6,7 @@ import {
   MISSION_TAG_PREFIX,
   MISSION_WAS_TAG_PREFIX,
   type OrchestrationV2ThreadShell,
+  threadHasMessages,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -92,6 +93,19 @@ export class MissionClaims extends Context.Service<
     readonly create: (
       owner: string,
       input: { readonly missionId: string; readonly name: string; readonly leadThreadId: ThreadId },
+    ) => Effect.Effect<MissionRecord, MissionError>;
+    /**
+     * Makes a thread here the lead of a Mission led here, in place of `previous`. The thread must
+     * have messages. Its tags and the old lead's follow.
+     */
+    readonly setLead: (
+      owner: string,
+      input: {
+        readonly missionId: string;
+        readonly name: string;
+        readonly leadThreadId: ThreadId;
+        readonly previous: ThreadId;
+      },
     ) => Effect.Effect<MissionRecord, MissionError>;
     /**
      * Joining again into the same Mission for the same owner returns the claim it already has.
@@ -212,6 +226,45 @@ const make = Effect.gen(function* () {
     (effect, _owner, input) => locks.withLock(input.leadThreadId, effect),
   );
 
+  const setLead = Effect.fn("MissionClaims.setLead")(function* (
+    owner: string,
+    input: {
+      readonly missionId: string;
+      readonly name: string;
+      readonly leadThreadId: ThreadId;
+      readonly previous: ThreadId;
+    },
+  ) {
+    const { leadThreadId, previous } = input;
+    const swap = Effect.gen(function* () {
+      const mission = yield* threadCommands.withLock(
+        leadThreadId,
+        Effect.gen(function* () {
+          const shell = yield* requireThread(leadThreadId);
+          if (!threadHasMessages(shell)) {
+            return yield* fail(
+              "A mission needs a lead thread with messages. Send a message first.",
+            );
+          }
+          return yield* store.setLead({
+            threadId: leadThreadId,
+            missionId: input.missionId,
+            name: input.name,
+            owner,
+            generation: yield* generation,
+          });
+        }),
+      );
+      yield* syncTags(leadThreadId);
+      if (previous !== leadThreadId) yield* syncTags(previous);
+      return mission;
+    });
+    // Both threads' claims change, so both are held, always in the same order.
+    if (previous === leadThreadId) return yield* locks.withLock(leadThreadId, swap);
+    const [first, second] = [leadThreadId, previous].toSorted();
+    return yield* locks.withLock(first!, locks.withLock(second!, swap));
+  });
+
   const join = Effect.fn("MissionClaims.join")(
     function* <E>(owner: string, input: JoinInput, access?: ThreadAccess<E>) {
       const claim = yield* threadCommands.withLock(
@@ -299,7 +352,15 @@ const make = Effect.gen(function* () {
     return yield* store.claimsOf(owner);
   });
 
-  return MissionClaims.of({ create, join, release, rename, leaveHere, list: store.claimsOf });
+  return MissionClaims.of({
+    create,
+    setLead,
+    join,
+    release,
+    rename,
+    leaveHere,
+    list: store.claimsOf,
+  });
 });
 
 export const layer = Layer.effect(MissionClaims, make);

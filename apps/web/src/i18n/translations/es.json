@@ -12820,5 +12820,14 @@
   "b59dd4f7877f1064": "hilos encabezado título etiqueta barra lateral sección misiones",
   "e096948ea00955cb": "Aún no hay mensajes",
   "19cd8fa8198eabf5": "Contraer misión {mission}, {count, plural, one {{count} hilo} other {{count} hilos}}",
-  "18c378583d4d0beb": "Expandir misión {mission}, {count, plural, one {{count} hilo} other {{count} hilos}}"
+  "18c378583d4d0beb": "Expandir misión {mission}, {count, plural, one {{count} hilo} other {{count} hilos}}",
+  "b4ba50773b3fa3d5": "Nueva misión...",
+  "58fcfae7881296c1": "Al enviar, empieza una misión dirigida por este hilo",
+  "057d6deb81129c20": "Al enviar, este hilo pasa a dirigir «{mission}»",
+  "0cb19d38f44bcba8": "Enviar como hilo normal",
+  "5ef7c097912549e4": "No se pudo hacer que este hilo dirija la misión",
+  "80745e2c24369bae": "Ningún hilo de aquí puede dirigirla",
+  "cd8a28f23175f6ed": "Nueva misión",
+  "5728e12679f06b4c": "Nuevo hilo principal",
+  "525baaf1f7b6e6e8": "Elegir un hilo…"
 }

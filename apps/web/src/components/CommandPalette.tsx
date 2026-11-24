@@ -67,6 +67,7 @@ import {
   ChevronRightIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
+  FlagIcon,
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
@@ -243,6 +244,7 @@ import {
   useProjectLookups,
   useSortedProjectGroups,
 } from "./CommandPaletteLookups";
+import { markMissionDraft } from "./sidebar/MissionDrafts";
 import {
   buildNewThreadInProjectItems,
   buildProjectSearchItems,
@@ -474,6 +476,12 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
+  const missionsEnabled = useClientSettings((settings) => settings.sidebarMissionsEnabled);
+  // A draft made from this session starts or leads a Mission once it is sent.
+  const [missionIntent] = useState(() =>
+    props.openIntent?.kind === "new-thread-in" ? props.openIntent.mission : undefined,
+  );
+  const missionHost = missionIntent?.kind === "lead" ? missionIntent.host : null;
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -898,7 +906,11 @@ function OpenCommandPaletteDialog(props: {
           ? undefined
           : projectPickerEntries.find((entry) => entry.isPreferred);
       const projectItems = buildNewThreadInProjectItems({
-        projects: pickerProjects.filter((project) => !isScratch(project)),
+        // A Mission's lead lives on its machine, so only that machine's projects can give one.
+        projects: pickerProjects.filter(
+          (project) =>
+            !isScratch(project) && (missionHost === null || project.environmentId === missionHost),
+        ),
         currentProjectKey: currentEntry
           ? `${currentEntry.targetProject.environmentId}:${currentEntry.targetProject.id}`
           : null,
@@ -915,14 +927,21 @@ function OpenCommandPaletteDialog(props: {
                 member.id === contextualProjectRef.projectId &&
                 isPickableProjectMember(member),
             );
-          await handleNewThread(
-            contextualProjectIsEligible
+          const projectRef =
+            contextualProjectIsEligible &&
+            (missionHost === null || contextualProjectRef.environmentId === missionHost)
               ? contextualProjectRef
-              : scopeProjectRef(project.environmentId, project.id),
-          );
+              : scopeProjectRef(project.environmentId, project.id);
+          const created = await handleNewThread(projectRef);
+          if (created !== null && missionIntent !== undefined) {
+            markMissionDraft(created.draftId, {
+              intent: missionIntent,
+              thread: scopeThreadRef(projectRef.environmentId, created.threadId),
+            });
+          }
         },
       });
-      if (scratchTargetEnvironmentId === null) return projectItems;
+      if (scratchTargetEnvironmentId === null || missionIntent !== undefined) return projectItems;
 
       const noProjectIndex = newThreadNoProjectIndex(
         projectPickerEntries.map(({ group, targetProject, isPreferred }) => ({
@@ -1382,6 +1401,18 @@ function OpenCommandPaletteDialog(props: {
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: NEW_THREAD_IN_GROUP, label: gt("Projects"), items: projectThreadItems }],
     });
+    if (missionsEnabled) {
+      actionItems.push({
+        kind: "action",
+        value: "action:new-mission",
+        searchTerms: ["new mission", "mission", "lead", "orchestrate"],
+        title: gt("New mission..."),
+        icon: <FlagIcon className={ITEM_ICON_CLASS} />,
+        keepOpen: true,
+        run: async () =>
+          dispatchCommandPalette({ _tag: "OpenNewThreadIn", mission: { kind: "new" } }),
+      });
+    }
   }
 
   if (scratchTargetEnvironmentId !== null) {

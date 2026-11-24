@@ -65,6 +65,14 @@ export class Missions extends Context.Service<
       readonly missionId: string;
       readonly leadThreadId: ThreadId;
     }) => Effect.Effect<Mission, MissionError>;
+    /**
+     * Makes a thread on this machine the Mission's lead, named for its title. A member of the
+     * Mission becomes its lead; the other members stay.
+     */
+    readonly setLead: (input: {
+      readonly missionId: string;
+      readonly lead: ScopedThreadRef;
+    }) => Effect.Effect<Mission, MissionError>;
     /** Leaves the add pending when the member's machine does not say what became of it. */
     readonly addMember: (input: {
       readonly missionId: string;
@@ -562,6 +570,28 @@ const make = Effect.gen(function* () {
     return yield* missionView(mission, yield* machines, yield* shown);
   });
 
+  const setLead = Effect.fn("Missions.setLead")(function* (input: {
+    readonly missionId: string;
+    readonly lead: ScopedThreadRef;
+  }) {
+    const mission = yield* missionNamed(input.missionId);
+    if (input.lead.environmentId !== here) {
+      return yield* fail(
+        "A mission lives on its lead's machine, so its new lead must be a thread on that machine.",
+      );
+    }
+    const shell = yield* threads
+      .getThreadShell(input.lead.threadId)
+      .pipe(Effect.catch((error) => fail(`The thread could not be read: ${error.message}`)));
+    const record = yield* claims.setLead(here, {
+      missionId: mission.missionId,
+      name: missionNameFromTitle(shell?.title ?? ""),
+      leadThreadId: input.lead.threadId,
+      previous: mission.leadThreadId,
+    });
+    return yield* missionView(record, yield* machines, yield* shown);
+  });
+
   const addMember = Effect.fn("Missions.addMember")(function* (input: {
     readonly missionId: string;
     readonly member: ScopedThreadRef;
@@ -695,6 +725,7 @@ const make = Effect.gen(function* () {
   return Missions.of({
     watch,
     create,
+    setLead,
     addMember,
     releaseMember,
     forgetMember,

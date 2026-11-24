@@ -20,7 +20,11 @@ import { act, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
+import { openCommandPalette } from "../../commandPaletteBus";
 import { readLocalApi } from "../../localApi";
+import { useThreadSelectionStore } from "../../threadSelectionStore";
+import { useConnectedEnvironmentIds } from "../../state/environments";
+import { useEnvironmentScope } from "../../state/session";
 import {
   useProjects,
   useQuietThreadShell,
@@ -53,13 +57,16 @@ const api = project("api");
 const shell = (
   id: string,
   title: string,
-  options: { settled?: boolean; snoozed?: boolean; in?: Project } = {},
+  options: { settled?: boolean; snoozed?: boolean; in?: Project; empty?: boolean } = {},
 ) =>
   makeThreadFixture({
     environmentId: LOCAL,
     id: ThreadId.make(id),
     projectId: (options.in ?? web).id,
     title,
+    ...(options.empty === true
+      ? {}
+      : { latestUserMessageAt: "2026-01-01T00:00:00.000Z", visibleItemCount: 1 }),
     ...(options.settled === true
       ? { settledOverride: "settled", settledAt: "2026-01-01T00:00:00.000Z" }
       : {}),
@@ -99,9 +106,20 @@ const archived: Mission = {
 };
 /** A test may list one more mission, for itself only. */
 const listedMissions: Array<Mission> = [ship, gone, archived];
+/** The claims this machine holds, which a test may add to for itself. */
+const listedClaims: Array<MissionHost["snapshot"]["claims"][number]> = [];
 const hosts: ReadonlyArray<MissionHost> = [
-  { environmentId: LOCAL, snapshot: { missions: listedMissions, links: [], claims: [] } },
+  { environmentId: LOCAL, snapshot: { missions: listedMissions, links: [], claims: listedClaims } },
 ];
+/** The mission commands the sidebar sends, by the label it sends them under. */
+const commands = vi.hoisted(() => new Map<string, ReturnType<typeof vi.fn>>());
+const commandFor = (label: string) => {
+  const existing = commands.get(label);
+  if (existing !== undefined) return existing;
+  const command = vi.fn().mockResolvedValue({ _tag: "Success", value: undefined });
+  commands.set(label, command);
+  return command;
+};
 const shells = (options: { leadSettled?: boolean; docsSnoozed?: boolean } = {}) => [
   shell("lead", "Plan the v2 release", { settled: options.leadSettled === true }),
   shell("docs", "Update the release notes", { snoozed: options.docsSnoozed === true }),
@@ -115,6 +133,19 @@ const shells = (options: { leadSettled?: boolean; docsSnoozed?: boolean } = {}) 
 vi.mock("../../state/entities", { spy: true });
 vi.mock("../../hooks/useHandleNewThread", { spy: true });
 vi.mock("../../localApi", { spy: true });
+vi.mock("../../commandPaletteBus", { spy: true });
+vi.mock("../../state/environments", { spy: true });
+vi.mock("../../state/session", { spy: true });
+vi.mock(import("../../state/use-atom-command"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    useAtomCommand: ((command: never, options?: string) =>
+      typeof options === "string" && options.startsWith("mission ")
+        ? commandFor(options)
+        : actual.useAtomCommand(command, options)) as never,
+  };
+});
 vi.mock(import("../../state/server"), async (original) => {
   const actual = await original();
   const { compileResolvedKeybindingsConfig } = await import("@t3tools/shared/keybindings");
@@ -131,6 +162,16 @@ vi.mock(import("../../state/server"), async (original) => {
     serverEnvironment: {
       ...actual.serverEnvironment,
       missionsLiveAcross: () => Atom.make([...hosts]),
+      // This client may change the missions its machine keeps.
+      addMissionMember: Object.assign(actual.serverEnvironment.addMissionMember, {
+        permissionAtom: () => Atom.make(true),
+      }),
+      releaseMissionMember: Object.assign(actual.serverEnvironment.releaseMissionMember, {
+        permissionAtom: () => Atom.make(true),
+      }),
+      setMissionLead: Object.assign(actual.serverEnvironment.setMissionLead, {
+        permissionAtom: () => Atom.make(true),
+      }),
     },
   };
 });
@@ -147,6 +188,8 @@ async function renderSidebar(
     scope?: Project;
     /** Threads the stream brings in later, by `arrive`. */
     later?: ReadonlyArray<ReturnType<typeof shell>>;
+    /** More threads, listed from the start. */
+    extra?: ReadonlyArray<ReturnType<typeof shell>>;
   } = {},
 ) {
   const previousSettings = getClientSettings();
@@ -166,7 +209,8 @@ async function renderSidebar(
   });
   onTestFinished(() => useUiStateStore.setState({ sidebarProjectScopeKeys: [] }));
   vi.mocked(useProjects).mockReturnValue([web, api]);
-  const listed = [...shells(options)];
+  const listed = [...shells(options), ...(options.extra ?? [])];
+  commands.clear();
   vi.mocked(useQuietThreadShells).mockImplementation(() => [...listed]);
   vi.mocked(useQuietThreadShell).mockImplementation(
     (target) =>
@@ -536,5 +580,188 @@ describe("missions in the sidebar", () => {
     });
     await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
     expect(screen.getByRole("heading").elements()).toHaveLength(0);
+  });
+});
+
+/** Rows drag only on a connected machine this client may operate. */
+function allowDrag(): Disposable {
+  vi.mocked(useConnectedEnvironmentIds).mockReturnValue([LOCAL]);
+  vi.mocked(useEnvironmentScope).mockReturnValue(true);
+  return {
+    [Symbol.dispose]: () => {
+      vi.mocked(useConnectedEnvironmentIds).mockReset();
+      vi.mocked(useEnvironmentScope).mockReset();
+    },
+  };
+}
+
+/** A pointer drag from one element to another, as the sidebar's drag sees it. */
+async function dragBetween(from: HTMLElement, to: HTMLElement) {
+  const center = (element: HTMLElement) => {
+    const box = element.getBoundingClientRect();
+    return { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 };
+  };
+  const pointer = (type: string, target: EventTarget, values: PointerEventInit) =>
+    target.dispatchEvent(
+      new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        isPrimary: true,
+        pointerId: 1,
+        button: 0,
+        buttons: 1,
+        ...values,
+      }),
+    );
+  const start = center(from);
+  await act(() => pointer("pointerdown", from, start));
+  await act(() => pointer("pointermove", document, { ...start, clientY: start.clientY + 12 }));
+  await act(() => pointer("pointermove", document, { ...start, clientY: start.clientY + 16 }));
+  await act(() => pointer("pointermove", document, center(to)));
+  return {
+    release: async () => {
+      await act(() => pointer("pointerup", document, { ...center(to), buttons: 0 }));
+      // A drag leaves a guard for its click; the next press clears it.
+      await act(() => pointer("pointerdown", document.body, { clientX: 0, clientY: 0 }));
+      await act(() => pointer("pointerup", document.body, { clientX: 0, clientY: 0, buttons: 0 }));
+    },
+  };
+}
+
+const shipArea = (root: Element) =>
+  root.querySelector<HTMLElement>('[data-mission-drop="local:0123456789ab"]')!;
+const hintIn = (element: Element) => element.querySelector('[role="status"]')?.textContent ?? null;
+
+describe("dragging threads into and out of missions", () => {
+  it("adds a dragged thread to the mission it is dropped on", async () => {
+    using _drag = allowDrag();
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
+    const drag = await dragBetween(
+      rowOf(screen.container, "Unrelated bug"),
+      rowOf(screen.container, "Plan the v2 release"),
+    );
+    expect(hintIn(shipArea(screen.container))).toBe("Add to mission");
+    await drag.release();
+    expect(commandFor("mission add member")).toHaveBeenCalledExactlyOnceWith({
+      environmentId: LOCAL,
+      input: { missionId: "0123456789ab", member: ref(LOCAL, "plain") },
+    });
+    expect(hintIn(shipArea(screen.container))).toBeNull();
+  });
+
+  it("shows why a thread cannot join, and does not drop it", async () => {
+    using _drag = allowDrag();
+    await using screen = await renderSidebar(
+      {},
+      { extra: [shell("empty", "Empty thread", { empty: true })] },
+    );
+    await expect.element(screen.getByText("Empty thread")).toBeInTheDocument();
+    const drag = await dragBetween(
+      rowOf(screen.container, "Empty thread"),
+      rowOf(screen.container, "Plan the v2 release"),
+    );
+    expect(hintIn(shipArea(screen.container))).toBe("No messages yet");
+    await drag.release();
+    expect(commandFor("mission add member")).not.toHaveBeenCalled();
+  });
+
+  it("adds every selected thread when the drag starts on a selected one", async () => {
+    using _drag = allowDrag();
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
+    useThreadSelectionStore.setState({
+      selectedThreadKeys: new Set(["local:plain", "local:refused"]),
+    });
+    onTestFinished(() => useThreadSelectionStore.setState({ selectedThreadKeys: new Set() }));
+    const drag = await dragBetween(
+      rowOf(screen.container, "Unrelated bug"),
+      rowOf(screen.container, "Plan the v2 release"),
+    );
+    await drag.release();
+    const added = commandFor("mission add member").mock.calls.map(
+      ([call]) => (call as { input: { member: { threadId: string } } }).input.member.threadId,
+    );
+    expect(added.toSorted()).toEqual(["plain", "refused"]);
+  });
+
+  it("releases a member dragged onto the thread list", async () => {
+    using _drag = allowDrag();
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    const drag = await dragBetween(
+      rowOf(screen.container, "Update the release notes"),
+      rowOf(screen.container, "Unrelated bug"),
+    );
+    expect(screen.getByRole("heading", { name: "Release from mission" })).toBeInTheDocument();
+    await drag.release();
+    expect(commandFor("mission release member")).toHaveBeenCalledExactlyOnceWith({
+      environmentId: LOCAL,
+      input: { missionId: "0123456789ab", member: ref(LOCAL, "docs") },
+    });
+  });
+
+  it("does not drag a mission's lead, into another mission or out of its own", async () => {
+    using _drag = allowDrag();
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
+    const other = screen.container.querySelector<HTMLElement>(
+      '[data-mission-drop="local:ba9876543210"]',
+    )!;
+    const intoOther = await dragBetween(rowOf(screen.container, "Plan the v2 release"), other);
+    expect(hintIn(other)).toBeNull();
+    await intoOther.release();
+    const out = await dragBetween(
+      rowOf(screen.container, "Plan the v2 release"),
+      rowOf(screen.container, "Unrelated bug"),
+    );
+    expect(screen.container.textContent).not.toContain("Release from mission");
+    await out.release();
+    expect(commandFor("mission add member")).not.toHaveBeenCalled();
+    expect(commandFor("mission release member")).not.toHaveBeenCalled();
+  });
+});
+
+describe("new missions and missing leads", () => {
+  it("starts a new mission from the plus on the Missions heading", async () => {
+    await using screen = await renderSidebar();
+    await userEvent.click(screen.getByRole("button", { name: "New mission", exact: true }));
+    expect(openCommandPalette).toHaveBeenCalledWith({
+      open: "new-thread-in",
+      mission: { kind: "new" },
+    });
+  });
+
+  it("offers a gone lead's mission a new lead, or a thread with messages in no other mission", async () => {
+    listedClaims.push({ threadId: ThreadId.make("guide"), missionId: "ffffffffffff", name: "X" });
+    onTestFinished(() => {
+      listedClaims.length = 0;
+    });
+    const show = vi.fn().mockResolvedValue("plain");
+    vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
+    await using screen = await renderSidebar(
+      {},
+      { extra: [shell("empty", "Empty thread", { empty: true })] },
+    );
+    await expect.element(screen.getByText("Lead deleted")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "New lead" }));
+    expect(openCommandPalette).toHaveBeenCalledWith({
+      open: "new-thread-in",
+      mission: { kind: "lead", host: LOCAL, missionId: "ba9876543210", name: "Old work" },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Choose a thread…" }));
+    await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(1));
+    const offered = (show.mock.lastCall![0] as ReadonlyArray<{ readonly id: string }>).map(
+      (item) => item.id,
+    );
+    expect(offered).toContain("plain");
+    expect(offered).not.toContain("empty");
+    expect(offered).not.toContain("guide");
+    await vi.waitFor(() =>
+      expect(commandFor("mission set lead")).toHaveBeenCalledExactlyOnceWith({
+        environmentId: LOCAL,
+        input: { missionId: "ba9876543210", lead: ref(LOCAL, "plain") },
+      }),
+    );
   });
 });

@@ -12825,5 +12825,14 @@
   "b59dd4f7877f1064": "threads überschrift titel beschriftung seitenleiste bereich missionen",
   "e096948ea00955cb": "Noch keine Nachrichten",
   "19cd8fa8198eabf5": "Mission {mission} einklappen, {count, plural, one {{count} Thread} other {{count} Threads}}",
-  "18c378583d4d0beb": "Mission {mission} ausklappen, {count, plural, one {{count} Thread} other {{count} Threads}}"
+  "18c378583d4d0beb": "Mission {mission} ausklappen, {count, plural, one {{count} Thread} other {{count} Threads}}",
+  "b4ba50773b3fa3d5": "Neue Mission...",
+  "58fcfae7881296c1": "Beim Senden startet eine Mission, die dieser Thread leitet",
+  "057d6deb81129c20": "Beim Senden leitet dieser Thread die Mission „{mission}“",
+  "0cb19d38f44bcba8": "Als normalen Thread senden",
+  "5ef7c097912549e4": "Dieser Thread konnte nicht die Leitung übernehmen",
+  "80745e2c24369bae": "Kein Thread hier kann sie leiten",
+  "cd8a28f23175f6ed": "Neue Mission",
+  "5728e12679f06b4c": "Neue Leitung",
+  "525baaf1f7b6e6e8": "Thread wählen…"
 }

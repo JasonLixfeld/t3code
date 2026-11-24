@@ -12834,5 +12834,14 @@
   "b59dd4f7877f1064": "threads heading title label sidebar section missions",
   "e096948ea00955cb": "No messages yet",
   "19cd8fa8198eabf5": "Collapse mission {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
-  "18c378583d4d0beb": "Expand mission {mission}, {count, plural, one {{count} thread} other {{count} threads}}"
+  "18c378583d4d0beb": "Expand mission {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
+  "b4ba50773b3fa3d5": "New mission...",
+  "58fcfae7881296c1": "Sending starts a mission led by this thread",
+  "057d6deb81129c20": "Sending makes this thread the lead of \"{mission}\"",
+  "0cb19d38f44bcba8": "Send as a plain thread",
+  "5ef7c097912549e4": "Could not make this thread the lead",
+  "80745e2c24369bae": "No thread here can lead it",
+  "cd8a28f23175f6ed": "New mission",
+  "5728e12679f06b4c": "New lead",
+  "525baaf1f7b6e6e8": "Choose a thread…"
 }
