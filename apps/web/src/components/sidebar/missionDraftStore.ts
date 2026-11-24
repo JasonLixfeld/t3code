@@ -33,7 +33,7 @@ const update = (change: (drafts: Map<DraftId, MissionDraft>) => void) =>
   });
 
 export function markMissionDraft(draftId: DraftId, draft: Pick<MissionDraft, "intent" | "thread">) {
-  const missionId = draft.intent.kind === "lead" ? draft.intent.missionId : newMissionId();
+  const missionId = draft.intent.kind === "new" ? newMissionId() : draft.intent.missionId;
   update((drafts) => drafts.set(draftId, { ...draft, missionId, step: "waiting" }));
 }
 

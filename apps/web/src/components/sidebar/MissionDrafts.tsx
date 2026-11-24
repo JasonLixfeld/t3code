@@ -18,7 +18,7 @@ import {
 } from "./missionDraftStore";
 import { reportFailure, reportLeadOutcome } from "./MissionsSection";
 
-/** The composer's line for a draft that starts or leads a Mission, with a way to undo it. */
+/** The composer's line for a draft that starts, leads or joins a Mission, with a way to undo it. */
 export function useMissionDraftBanner(
   draftId: DraftId | null,
   resolve: MessageResolver = m,
@@ -35,11 +35,15 @@ export function useMissionDraftBanner(
       title:
         draft.intent.kind === "new"
           ? resolve(msg("Sending starts a mission led by this thread"))
-          : resolve(
-              msg('Sending makes this thread the lead of "{mission}"', {
-                mission: draft.intent.name,
-              }),
-            ),
+          : draft.intent.kind === "member"
+            ? resolve(
+                msg('Sending adds this thread to "{mission}"', { mission: draft.intent.name }),
+              )
+            : resolve(
+                msg('Sending makes this thread the lead of "{mission}"', {
+                  mission: draft.intent.name,
+                }),
+              ),
       description: resolve(msg("It stays on this machine and sends to one model.")),
       dismissLabel: resolve(msg("Send as a plain thread")),
       onDismiss: () => clearMissionDraft(draftId),
@@ -52,6 +56,7 @@ function MissionDraftWatch(props: { readonly draftId: DraftId; readonly draft: M
   const shell = useThreadShell(draft.thread);
   const createMission = useAtomCommand(serverEnvironment.createMission, "mission create");
   const setLead = useAtomCommand(serverEnvironment.setMissionLead, "mission set lead");
+  const addMember = useAtomCommand(serverEnvironment.addMissionMember, "mission add member");
   // A Mission's lead needs a message, so this waits for the first one to land.
   const sent = shell !== null && threadHasMessages(shell);
   const retry = () => setMissionDraftStep(draftId, "waiting");
@@ -74,14 +79,26 @@ function MissionDraftWatch(props: { readonly draftId: DraftId; readonly draft: M
       else clearMissionDraft(draftId);
       return;
     }
-    const result = await createMission({
-      environmentId: draft.thread.environmentId,
-      input: { missionId: draft.missionId, leadThreadId: draft.thread.threadId },
-    });
+    const [title, result] =
+      draft.intent.kind === "member"
+        ? [
+            m(msg("Could not add this thread to the mission")),
+            await addMember({
+              environmentId: draft.intent.host,
+              input: { missionId: draft.missionId, member: draft.thread },
+            }),
+          ]
+        : [
+            m(msg("Could not start the mission")),
+            await createMission({
+              environmentId: draft.thread.environmentId,
+              input: { missionId: draft.missionId, leadThreadId: draft.thread.threadId },
+            }),
+          ];
     // The draft keeps its Mission until the server has it.
     if (result._tag === "Success") return clearMissionDraft(draftId);
     setMissionDraftStep(draftId, "failed");
-    reportFailure(m(msg("Could not start the mission")), result, retry);
+    reportFailure(title, result, retry);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts or relinks the Mission on the server once the draft's first message has landed, and again after the user's "Try again"
   useEffect(() => {

@@ -12836,5 +12836,19 @@
   "02c5972468338659": "Este borrador salió de la máquina de su misión",
   "86a6437dc189ea6a": "Devuélvelo para enviarlo, o envíalo como hilo normal.",
   "5b03d7d90b62dd82": "Esta misión ya tiene un nuevo hilo principal",
-  "33e8e07ab6191f5b": "No cargado."
+  "33e8e07ab6191f5b": "No cargado.",
+  "03d266b5e18e221e": "Nuevo hilo principal",
+  "adc33705dea3b406": "Ninguna",
+  "1534e3e2d7fe1e6d": "Misión",
+  "f6b851950eb5f92e": "Misión",
+  "41f48cbd3b002668": "Al enviar, este hilo se suma a «{mission}»",
+  "8959a2d6d612223f": "No se pudo añadir este hilo a la misión",
+  "22998b93dbed774f": "No se añadió a la misión",
+  "ebd33d86bdde93be": "No se liberó de la misión",
+  "524e536207bcb7be": "¿Eliminar la misión «{mission}»? Su hilo principal queda como un hilo propio.",
+  "8373f0f23ed95056": "No se pudo eliminar la misión",
+  "c14823b109f213cc": "Nuevo hilo en esta misión",
+  "e41e604f2ab02e67": "Elegir un hilo…",
+  "41ed219e17bd8470": "Eliminar misión",
+  "76a0f477c383d3a2": "Tiene hilos"
 }

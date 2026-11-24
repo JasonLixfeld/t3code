@@ -52,6 +52,7 @@ import { InlineButton } from "../ui/button";
 import { DraftProjectName } from "./DraftProjectName";
 import { DraftHeroProjectHeading } from "./DraftHeroProjectHeading";
 import { TriageDraftHero } from "./TriageDraftHero";
+import { DraftMissionSelect } from "./DraftMissionSelect";
 import { moveMissionDraft, useMissionDraftMachine } from "../sidebar/missionDraftStore";
 
 const ADD_PROJECT_VALUE = "add-project";
@@ -395,6 +396,9 @@ export function DraftHeroHeadline({
           )}
         </h1>
       )}
+      {draftId && activeProjectRef ? (
+        <DraftMissionSelect draftId={draftId} environmentId={activeProjectRef.environmentId} />
+      ) : null}
       {scratchWorkspaceRoot === null ? null : (
         <p className="mt-2 flex h-6 w-full items-center justify-center text-sm">
           {isScratchDraft ? projectSelector : orStartWithoutProject}

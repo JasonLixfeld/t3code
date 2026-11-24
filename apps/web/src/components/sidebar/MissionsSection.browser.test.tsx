@@ -533,6 +533,64 @@ describe("missions in the sidebar", () => {
     );
   });
 
+  it("gives every mission row T3's menu with the mission's group", async () => {
+    const show = vi.fn().mockResolvedValue(null);
+    const confirm = vi.fn().mockResolvedValue(true);
+    vi.mocked(readLocalApi).mockReturnValue({
+      contextMenu: { show },
+      dialogs: { confirm },
+    } as unknown as LocalApi);
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Lead deleted")).toBeInTheDocument();
+    const menuOf = async (row: HTMLElement, pick: string | null) => {
+      show.mockClear();
+      show.mockResolvedValueOnce(pick);
+      await userEvent.click(row, { button: "right" });
+      await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(1));
+      return (show.mock.lastCall![0] as ReadonlyArray<{ readonly label: string }>).map(
+        (item) => item.label,
+      );
+    };
+    // The live lead's thread menu keeps its own items, then the mission's group.
+    const lead = await menuOf(rowOf(screen.container, "Plan the v2 release"), null);
+    expect(lead).toContain("Pin thread");
+    const group = lead.indexOf("Mission");
+    expect(lead.slice(group, group + 3)).toEqual([
+      "Mission",
+      "New thread in this mission",
+      "Delete mission",
+    ]);
+    // A deleted lead's row also takes a new lead.
+    const gone = screen.getByText("Lead deleted").element().closest("li")!;
+    expect(await menuOf(gone, "mission-new-thread:local:ba9876543210")).toEqual([
+      "Mission",
+      "New thread in this mission",
+      "New lead",
+      "Choose a thread…",
+      "Delete mission",
+    ]);
+    await vi.waitFor(() =>
+      expect(openCommandPalette).toHaveBeenCalledWith({
+        open: "new-thread-in",
+        mission: { kind: "member", host: LOCAL, missionId: "ba9876543210", name: "Old work" },
+      }),
+    );
+    // A lead not read in yet, as an archived one, still gets the menu, and can delete it.
+    const loading = screen.getByText("Archive the old site").element().closest("li")!;
+    expect(await menuOf(loading, "mission-delete:local:cccccccccccc")).toEqual([
+      "Mission",
+      "New thread in this mission",
+      "Delete mission",
+    ]);
+    await vi.waitFor(() =>
+      expect(commandFor("mission delete")).toHaveBeenCalledExactlyOnceWith({
+        environmentId: LOCAL,
+        input: { missionId: "cccccccccccc" },
+      }),
+    );
+    expect(confirm).toHaveBeenCalledOnce();
+  });
+
   it("heads a mission with the lead's title beside its chevron, and names no project", async () => {
     await using screen = await renderSidebar();
     await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
@@ -684,7 +742,29 @@ describe("dragging threads into and out of missions", () => {
     expect(hintIn(shipArea(screen.container))).toBeNull();
   });
 
-  it("shows why a thread cannot join, and does not drop it", async () => {
+  it("shows why a thread cannot join, does not drop it, and says why in a toast", async () => {
+    using _drag = allowDrag();
+    listedClaims.push({ threadId: ThreadId.make("plain"), missionId: "ffffffffffff", name: "X" });
+    onTestFinished(() => {
+      listedClaims.length = 0;
+    });
+    const toasts = vi.spyOn(toastManager, "add");
+    onTestFinished(() => toasts.mockRestore());
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
+    const drag = await dragBetween(
+      rowOf(screen.container, "Unrelated bug"),
+      rowOf(screen.container, "Plan the v2 release"),
+    );
+    expect(hintIn(shipArea(screen.container))).toBe("In a mission");
+    await drag.release();
+    expect(commandFor("mission add member")).not.toHaveBeenCalled();
+    expect(toasts).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ title: "Not added to the mission", description: "In a mission" }),
+    );
+  });
+
+  it("adds an empty thread as a member, as a lead starts one with no prompt", async () => {
     using _drag = allowDrag();
     await using screen = await renderSidebar(
       {},
@@ -695,9 +775,12 @@ describe("dragging threads into and out of missions", () => {
       rowOf(screen.container, "Empty thread"),
       rowOf(screen.container, "Plan the v2 release"),
     );
-    expect(hintIn(shipArea(screen.container))).toBe("No messages yet");
+    expect(hintIn(shipArea(screen.container))).toBe("Add to mission");
     await drag.release();
-    expect(commandFor("mission add member")).not.toHaveBeenCalled();
+    expect(commandFor("mission add member")).toHaveBeenCalledExactlyOnceWith({
+      environmentId: LOCAL,
+      input: { missionId: "0123456789ab", member: ref(LOCAL, "empty") },
+    });
   });
 
   it("adds every selected thread when the drag starts on a selected one", async () => {
@@ -891,7 +974,7 @@ describe("dragging threads into and out of missions", () => {
     expect(commandFor("mission release member")).not.toHaveBeenCalled();
   });
 
-  it("releases only on the zone, not on the Missions heading, between missions or on a thread", async () => {
+  it("releases on the Threads list, not on the Missions heading or between missions", async () => {
     using _drag = allowDrag();
     await using screen = await renderSidebar();
     await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
@@ -904,11 +987,19 @@ describe("dragging threads into and out of missions", () => {
       clientX: first!.left + 40,
       clientY: (first!.bottom + second!.top) / 2,
     };
-    for (const to of [heading, between, rowOf(screen.container, "Unrelated bug")]) {
+    for (const to of [heading, between]) {
       const drag = await dragBetween(rowOf(screen.container, "Update the release notes"), to);
       await drag.release();
     }
     expect(commandFor("mission release member")).not.toHaveBeenCalled();
+    const threadsHeading = [...screen.container.querySelectorAll<HTMLElement>("h2")].find((h2) =>
+      h2.textContent?.includes("Threads"),
+    )!;
+    for (const to of [threadsHeading, rowOf(screen.container, "Unrelated bug")]) {
+      const drag = await dragBetween(rowOf(screen.container, "Update the release notes"), to);
+      await drag.release();
+    }
+    expect(commandFor("mission release member")).toHaveBeenCalledTimes(2);
   });
 
   /** A 200px viewport over the list, as a short window has. */

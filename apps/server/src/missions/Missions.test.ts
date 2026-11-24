@@ -709,6 +709,58 @@ it.effect("a title read before a new lead took over does not rename the mission"
   );
 });
 
+const deleteRefusal = (missionId: string) =>
+  Effect.flatMap(Missions.Missions, (missions) =>
+    missions.deleteMission({ missionId }).pipe(
+      Effect.flip,
+      Effect.map((error) => error.message),
+    ),
+  );
+
+it.effect("a mission with a member is not deleted; once released, its lead stays a thread", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const mission = yield* createOne;
+      yield* missions.addMember({ missionId: mission.missionId, member: localMember });
+      assert.equal(
+        yield* deleteRefusal(mission.missionId),
+        "Release this mission's threads before deleting it.",
+      );
+      assert.equal((yield* listed).missions.length, 1);
+      yield* missions.releaseMember({ missionId: mission.missionId, member: localMember });
+      yield* missions.deleteMission({ missionId: mission.missionId });
+      const after = yield* listed;
+      assert.deepEqual(after.missions, []);
+      assert.deepEqual(after.claims, []);
+      // The lead thread is kept, and its tag says which mission it led.
+      assert.deepEqual(world.tags(lead), [WAS_TAG]);
+      assert.include(yield* deleteRefusal(mission.missionId), "not found");
+    }),
+  );
+});
+
+it.effect("a mission is not deleted while an add to another machine waits for its answer", () => {
+  const world = makeWorld([lead, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const mission = yield* createOne;
+      world.laptop.mode = "lostReply";
+      yield* missions.addMember({ missionId: mission.missionId, member: laptopMember });
+      assert.equal(stateOf(yield* listed, laptopMember), "add-pending");
+      assert.equal(
+        yield* deleteRefusal(mission.missionId),
+        "Release this mission's threads before deleting it.",
+      );
+      assert.deepEqual(world.tags(lead), [TAG]);
+    }),
+  );
+});
+
 it.effect("a deleted lead is replaced by a thread with messages on this machine", () => {
   const fresh = ref(HERE, "fresh");
   const world = makeWorld([lead, fresh]);

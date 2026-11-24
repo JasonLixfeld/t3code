@@ -107,6 +107,11 @@ export class MissionClaims extends Context.Service<
         readonly previous: ThreadId;
       },
     ) => Effect.Effect<MissionRecord, MissionError>;
+    /** Ends a Mission led here that has no members. Its lead keeps a `mission-was:` tag. */
+    readonly deleteMission: (input: {
+      readonly missionId: string;
+      readonly lead: ThreadId;
+    }) => Effect.Effect<void, MissionError>;
     /**
      * Joining again into the same Mission for the same owner returns the claim it already has.
      * `intent-spent`: the claim this add made was dropped here since, so the thread stays out.
@@ -266,6 +271,14 @@ const make = Effect.gen(function* () {
     return yield* locks.withLock(first!, locks.withLock(second!, swap));
   });
 
+  const deleteMission = Effect.fn("MissionClaims.deleteMission")(
+    function* (input: { readonly missionId: string; readonly lead: ThreadId }) {
+      yield* threadCommands.withLock(input.lead, store.deleteMission(input));
+      yield* syncTags(input.lead);
+    },
+    (effect, input) => locks.withLock(input.lead, effect),
+  );
+
   const join = Effect.fn("MissionClaims.join")(
     function* <E>(owner: string, input: JoinInput, access?: ThreadAccess<E>) {
       const claim = yield* threadCommands.withLock(
@@ -356,6 +369,7 @@ const make = Effect.gen(function* () {
   return MissionClaims.of({
     create,
     setLead,
+    deleteMission,
     join,
     release,
     rename,

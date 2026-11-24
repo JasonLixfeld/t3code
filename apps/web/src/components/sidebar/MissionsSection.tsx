@@ -6,7 +6,13 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import type { EnvironmentId, MissionMember, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  Mission,
+  MissionMember,
+  ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon, PlusIcon, XIcon } from "lucide-react";
 import {
@@ -17,6 +23,7 @@ import {
 import { threadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import { Atom } from "effect/reactivity";
 import {
+  type ComponentProps,
   Fragment,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -51,6 +58,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   addEachToMission,
   buildMissionMenuItems,
+  isMissionMenuId,
   claimHere,
   missionAddSummary,
   type MissionCandidate,
@@ -59,6 +67,7 @@ import {
   type MissionHost,
   resolveMissionDrop,
   type MissionMenuId,
+  missionRowItems,
   newMissionId,
   parseMissionTarget,
   type SidebarMission,
@@ -157,12 +166,16 @@ export function useMissionMenu() {
   const add = useAtomCommand(serverEnvironment.addMissionMember, "mission add member");
   const leave = useAtomCommand(serverEnvironment.leaveMission, "mission leave");
   const release = useAtomCommand(serverEnvironment.releaseMissionMember, "mission release member");
+  const deleteMission = useAtomCommand(serverEnvironment.deleteMission, "mission delete");
   // One source for single and bulk adds: the right to change Missions on the machine that keeps them.
   const canChangeOn = (environmentId: EnvironmentId) =>
     registry.get(serverEnvironment.addMissionMember.permissionAtom(environmentId));
   return {
     items: (threads: ReadonlyArray<MissionCandidate>) =>
       enabled ? buildMissionMenuItems(threads, hosts, machineLabel, canChangeOn, resolve) : [],
+    /** The menu of a Mission's own row where no thread row stands in for its lead. */
+    rowItems: (host: EnvironmentId, mission: Mission, leadGone: boolean) =>
+      missionRowItems({ host, mission, leadGone, canChange: canChangeOn(host) }, resolve),
     /** The threads that got where they were sent; the rest stay selected. */
     run: async (
       id: MissionMenuId,
@@ -197,6 +210,37 @@ export function useMissionMenu() {
       }
       const target = parseMissionTarget(id);
       if (target === null) return [];
+      const mission = hosts
+        .find((host) => host.environmentId === target.environmentId)
+        ?.snapshot.missions.find((candidate) => candidate.missionId === target.missionId);
+      if (target.action === "new-thread" && mission !== undefined) {
+        openCommandPalette({
+          open: "new-thread-in",
+          mission: {
+            kind: "member",
+            host: target.environmentId,
+            missionId: target.missionId,
+            name: mission.name,
+          },
+        });
+        return [];
+      }
+      if (target.action === "delete" && mission !== undefined) {
+        const confirmed = await readLocalApi()?.dialogs.confirm(
+          gt('Delete the mission "{mission}"? Its lead stays as a thread of its own.', {
+            mission: mission.name,
+          }),
+        );
+        if (confirmed !== true) return [];
+        reportFailure(
+          gt("Could not delete the mission"),
+          await deleteMission({
+            environmentId: target.environmentId,
+            input: { missionId: target.missionId },
+          }),
+        );
+        return [];
+      }
       if (target.action === "release") {
         if (lead === undefined) return [];
         const result = await release({
@@ -206,6 +250,7 @@ export function useMissionMenu() {
         reportFailure(gt("Could not release the thread"), result);
         return result._tag === "Success" ? [lead] : [];
       }
+      if (target.action !== "add") return [];
       const outcome = await addEachToMission(threads, async (member) =>
         failureMessage(
           await add({
@@ -240,7 +285,9 @@ function MemberRow(props: {
   readonly stateOnly?: boolean;
   /** Inside the thread's own row, as its last line. */
   readonly inRow?: boolean;
-  readonly hosts?: ReadonlyArray<MissionHost>;
+  readonly onContextMenu?: (event: ReactMouseEvent) => void;
+  /** A lead row whose lead is gone offers a new one under it. */
+  readonly missingLead?: MissingLead;
 }) {
   const gt = useGT();
   // A refused add never joined, so its row is only the refusal: no title, nothing to open.
@@ -336,7 +383,7 @@ function MemberRow(props: {
     );
   }
   return (
-    <li className="group/mission-row list-none">
+    <li className="group/mission-row list-none" onContextMenu={props.onContextMenu}>
       <div className="flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 hover:bg-sidebar-row-hover">
         {toggle ? (
           <button
@@ -385,21 +432,13 @@ function MemberRow(props: {
         </button>
         {action}
       </div>
-      {deleted && props.member.role === "lead" ? (
-        <MissingLeadActions
-          host={props.host}
-          missionId={props.missionId}
-          missionName={props.missionName}
-          expectedLead={props.member.ref.threadId}
-          hosts={props.hosts ?? []}
-        />
-      ) : null}
+      {props.missingLead ? <MissingLeadActions actions={props.missingLead} /> : null}
     </li>
   );
 }
 
 /** A Mission whose lead is gone takes a new lead: a draft sent on its machine, or a thread there. */
-function MissingLeadActions(props: {
+function useMissingLead(props: {
   readonly host: EnvironmentId;
   readonly missionId: string;
   readonly missionName: string;
@@ -411,7 +450,6 @@ function MissingLeadActions(props: {
   const shells = useQuietThreadShells();
   const setLead = useAtomCommand(serverEnvironment.setMissionLead, "mission set lead");
   const allowed = useAtomValue(serverEnvironment.setMissionLead.permissionAtom(props.host));
-  if (!allowed) return null;
   const newLead = () =>
     openCommandPalette({
       open: "new-thread-in",
@@ -449,20 +487,69 @@ function MissingLeadActions(props: {
       }),
     );
   };
+  return { allowed, newLead, chooseLead };
+}
+type MissingLead = ReturnType<typeof useMissingLead>;
+
+function MissingLeadActions(props: { readonly actions: MissingLead }) {
   return (
     // Lined up with the title, past the chevron.
     <div className="flex gap-3 ps-7.5 pb-1 text-2xs font-medium text-sidebar-foreground">
-      <button type="button" className="cursor-pointer hover:underline" onClick={newLead}>
+      <button
+        type="button"
+        className="cursor-pointer hover:underline"
+        onClick={props.actions.newLead}
+      >
         <T>New lead</T>
       </button>
       <button
         type="button"
         className="cursor-pointer hover:underline"
-        onClick={(event) => void chooseLead(event)}
+        onClick={(event) => void props.actions.chooseLead(event)}
       >
         <T>Choose a thread…</T>
       </button>
     </div>
+  );
+}
+
+/**
+ * A Mission's own row while this client has no thread row for its lead: loading, archived or
+ * deleted. It takes T3's menu with the Mission's group, as a lead's thread row does.
+ */
+function MissionLeadRow(
+  props: Omit<ComponentProps<typeof MemberRow>, "onContextMenu" | "missingLead"> & {
+    readonly mission: Mission;
+    readonly hosts: ReadonlyArray<MissionHost>;
+  },
+) {
+  const { mission, hosts, ...row } = props;
+  const menu = useMissionMenu();
+  const missingLead = useMissingLead({
+    host: props.host,
+    missionId: mission.missionId,
+    missionName: mission.name,
+    expectedLead: props.member.ref.threadId,
+    hosts,
+  });
+  const leadGone = props.member.state === "deleted" && missingLead.allowed;
+  const onContextMenu = async (event: ReactMouseEvent) => {
+    event.preventDefault();
+    const picked = await readLocalApi()?.contextMenu.show(
+      menu.rowItems(props.host, mission, leadGone),
+      { x: event.clientX, y: event.clientY },
+      contextMenuSourceOf(event),
+    );
+    if (picked === "mission-new-lead") missingLead.newLead();
+    else if (picked === "mission-choose-lead") await missingLead.chooseLead(event);
+    else if (picked != null && isMissionMenuId(picked)) await menu.run(picked, []);
+  };
+  return (
+    <MemberRow
+      {...row}
+      onContextMenu={(event) => void onContextMenu(event)}
+      {...(leadGone ? { missingLead } : {})}
+    />
   );
 }
 
@@ -533,7 +620,20 @@ export function SidebarMissions(props: {
     entry: SidebarMission<EnvironmentThreadShell>["lead"],
     toggle?: SidebarMissionToggle,
   ) =>
-    entry.thread === null ? (
+    entry.thread === null && entry.member.role === "lead" ? (
+      <MissionLeadRow
+        key={scopedKey(entry.member.ref)}
+        host={mission.host}
+        missionId={mission.mission.missionId}
+        member={entry.member}
+        machineLabel={machineLabel(entry.member.ref.environmentId)}
+        missionName={mission.mission.name}
+        onOpen={props.onOpenThread}
+        toggle={toggle}
+        mission={mission.mission}
+        hosts={hosts}
+      />
+    ) : entry.thread === null ? (
       <MemberRow
         key={scopedKey(entry.member.ref)}
         host={mission.host}
@@ -543,7 +643,6 @@ export function SidebarMissions(props: {
         missionName={mission.mission.name}
         onOpen={props.onOpenThread}
         toggle={toggle}
-        hosts={hosts}
       />
     ) : (
       <Fragment key={scopedKey(entry.member.ref)}>
@@ -751,11 +850,14 @@ export function useMissionDrop(missions: ReadonlyArray<SidebarMission<Environmen
     const viewport = list.closest<HTMLElement>("[data-slot=scroll-area-viewport]");
     if (viewport !== null && !contains(viewport)) return null;
     const mission = [...list.querySelectorAll<HTMLElement>("[data-mission-drop]")].find(contains);
+    // A dragged member shows the release zone; it and the thread list below it release one.
     const release = list.querySelector<HTMLElement>("[data-mission-release]");
+    const releases =
+      release !== null && contains(list) && point.y >= release.getBoundingClientRect().top;
     return resolveMissionDrop({
       dragged,
       threads,
-      over: mission?.dataset.missionDrop ?? (release !== null && contains(release) ? "list" : null),
+      over: mission?.dataset.missionDrop ?? (releases ? "list" : null),
       missions,
       hosts,
       machineLabel,
@@ -777,7 +879,18 @@ export function useMissionDrop(missions: ReadonlyArray<SidebarMission<Environmen
       const next = dropAt(at);
       show(null);
       if (next === null) return false;
-      if (next.refusal === null && next.kind === "add") {
+      if (next.refusal !== null) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title:
+              next.kind === "add"
+                ? resolve(msg("Not added to the mission"))
+                : resolve(msg("Not released from the mission")),
+            description: next.refusal,
+          }),
+        );
+      } else if (next.kind === "add") {
         void add(`mission-add:${next.host}:${next.missionId}`, at.refs);
       } else if (next.refusal === null) {
         const dragged = at.refs.filter((ref) => scopedThreadKey(ref) === at.dragged);

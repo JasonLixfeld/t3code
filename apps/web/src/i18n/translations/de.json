@@ -12841,5 +12841,19 @@
   "02c5972468338659": "Dieser Entwurf ist nicht mehr auf dem Rechner seiner Mission",
   "86a6437dc189ea6a": "Verschiebe ihn zurück, um ihn zu senden, oder sende ihn als normalen Thread.",
   "5b03d7d90b62dd82": "Diese Mission hat schon eine neue Leitung",
-  "33e8e07ab6191f5b": "Nicht geladen."
+  "33e8e07ab6191f5b": "Nicht geladen.",
+  "03d266b5e18e221e": "Neue Leitung",
+  "adc33705dea3b406": "Keine",
+  "1534e3e2d7fe1e6d": "Mission",
+  "f6b851950eb5f92e": "Mission",
+  "41f48cbd3b002668": "Beim Senden kommt dieser Thread zu „{mission}“",
+  "8959a2d6d612223f": "Dieser Thread konnte der Mission nicht hinzugefügt werden",
+  "22998b93dbed774f": "Nicht zur Mission hinzugefügt",
+  "ebd33d86bdde93be": "Nicht aus der Mission gelöst",
+  "524e536207bcb7be": "Mission „{mission}“ löschen? Ihre Leitung bleibt als eigener Thread erhalten.",
+  "8373f0f23ed95056": "Mission konnte nicht gelöscht werden",
+  "c14823b109f213cc": "Neuer Thread in dieser Mission",
+  "e41e604f2ab02e67": "Thread wählen…",
+  "41ed219e17bd8470": "Mission löschen",
+  "76a0f477c383d3a2": "Hat Threads"
 }

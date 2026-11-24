@@ -253,6 +253,14 @@ export class MissionStore extends Context.Service<
       lead: ClaimInput & { readonly previous: ThreadId },
     ) => Effect.Effect<MissionRecord, MissionError>;
     /**
+     * Ends a Mission with no members, dropping its lead's claim with it. Refuses while any member
+     * claim, add or release is known, and when the lead is no longer `lead`, the one locked.
+     */
+    readonly deleteMission: (input: {
+      readonly missionId: string;
+      readonly lead: ThreadId;
+    }) => Effect.Effect<void, MissionError>;
+    /**
      * The claim this owner already holds for this Mission, or a new one. Refuses any other claim.
      * `intent-spent`: the claim this add made was dropped since, so the add may not make another.
      */
@@ -405,6 +413,44 @@ const make = Effect.gen(function* () {
           lead_thread_id: lead.threadId,
           created_at: createdAt,
         });
+      }),
+    );
+  });
+
+  const deleteMission = Effect.fn("MissionStore.deleteMission")(function* (input: {
+    readonly missionId: string;
+    readonly lead: ThreadId;
+  }) {
+    return yield* change(
+      Effect.gen(function* () {
+        const [mission] = yield* sql<MissionRow>`
+          SELECT mission_id, name, lead_thread_id, created_at FROM missions
+          WHERE mission_id = ${input.missionId}
+        `;
+        if (mission === undefined) return refuse("That mission was not found.");
+        if (mission.lead_thread_id !== input.lead) {
+          return new MissionError({
+            message: "This mission already has a new lead.",
+            reason: "lead-changed",
+          });
+        }
+        const [held] = yield* sql<{ readonly found: number }>`
+          SELECT 1 AS found FROM claims WHERE mission_id = ${input.missionId} AND role = 'member'
+          UNION ALL SELECT 1 FROM known_claims WHERE mission_id = ${input.missionId}
+          UNION ALL SELECT 1 FROM pending_adds
+            WHERE mission_id = ${input.missionId} AND refusal IS NULL
+          UNION ALL SELECT 1 FROM pending_releases WHERE mission_id = ${input.missionId}
+          LIMIT 1
+        `;
+        if (held !== undefined) {
+          return refuse("Release this mission's threads before deleting it.");
+        }
+        yield* sql`DELETE FROM pending_adds WHERE mission_id = ${input.missionId}`;
+        yield* sql`
+          DELETE FROM claims WHERE thread_id = ${input.lead} AND mission_id = ${input.missionId}
+        `;
+        yield* sql`DELETE FROM missions WHERE mission_id = ${input.missionId}`;
+        yield* markUnsynced(input.lead);
       }),
     );
   });
@@ -746,6 +792,7 @@ const make = Effect.gen(function* () {
     missions,
     createMission,
     setLead,
+    deleteMission,
     join,
     release,
     leave,

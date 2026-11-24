@@ -83,6 +83,9 @@ export const MissionSetLeadInput = Schema.Struct({
   expectedLead: ThreadId,
 });
 
+/** Ends a Mission with no members. Its lead stays a thread of its own. */
+export const MissionDeleteInput = Schema.Struct({ missionId: Schema.String });
+
 /** The local user frees a thread on this machine from its Mission. */
 export const MissionLeaveInput = Schema.Struct({ threadId: ThreadId });
 

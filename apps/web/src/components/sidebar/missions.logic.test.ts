@@ -101,12 +101,67 @@ describe("buildMissionMenuItems", () => {
     ).toEqual(["mission-add"]);
   });
 
-  it("does not start a mission from a thread with no messages", () => {
+  it("adds a thread with no messages as a member, but does not start a mission from it", () => {
     const empty = { ...thread(DESK), latestUserMessageAt: null, visibleItemCount: 0 };
-    expect(buildMissionMenuItems([empty], hosts, label, allowed)[0]).toMatchObject({
+    const items = buildMissionMenuItems([empty], hosts, label, allowed);
+    expect(items[0]).toMatchObject({
       id: "mission-start",
       disabled: true,
       detail: "No messages yet",
+    });
+    const add = items.find((item) => item.id === "mission-add")!;
+    expect(add.disabled).toBe(false);
+    expect(add.children!.every((child) => child.disabled === false)).toBe(true);
+  });
+
+  it("gives a mission's lead the mission's own group, deletable only with no members", () => {
+    const led = (members: ReadonlyArray<MissionMember>): ReadonlyArray<MissionHost> => [
+      {
+        environmentId: DESK,
+        snapshot: {
+          missions: [
+            {
+              ...mission,
+              members: [
+                {
+                  ref: { environmentId: DESK, threadId: ThreadId.make("lead") },
+                  role: "lead",
+                  state: "active",
+                },
+                ...members,
+              ],
+            },
+          ],
+          links,
+          claims: [],
+        },
+      },
+    ];
+    const group = (members: ReadonlyArray<MissionMember>) =>
+      buildMissionMenuItems([thread(DESK, "lead")], led(members), label, allowed)
+        .slice(-3)
+        .map((item) => [item.id, item.header ?? item.disabled ?? false, item.detail]);
+    expect(group([])).toEqual([
+      ["mission-group", true, undefined],
+      ["mission-new-thread:env-desk:0123456789ab", false, undefined],
+      ["mission-delete:env-desk:0123456789ab", false, undefined],
+    ]);
+    const member = (state: MissionMember["state"]): MissionMember => ({
+      ref: { environmentId: LAPTOP, threadId: ThreadId.make("m") },
+      role: "member",
+      state,
+    });
+    expect(group([member("add-pending")]).at(-1)).toEqual([
+      "mission-delete:env-desk:0123456789ab",
+      true,
+      "Has threads",
+    ]);
+    // A refused add never joined, so the mission can still go.
+    expect(group([member("add-refused")]).at(-1)![1]).toBe(false);
+    expect(parseMissionTarget("mission-delete:env-desk:0123456789ab")).toEqual({
+      action: "delete",
+      environmentId: DESK,
+      missionId: "0123456789ab",
     });
   });
 

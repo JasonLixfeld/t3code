@@ -229,3 +229,28 @@ it("stops offering a retry once the lead changed while the first try failed", as
   expect(retryOf(toasts.mock.calls[1]![0])).toBeUndefined();
   await vi.waitFor(() => expect(screen.container.textContent).not.toContain("Sending makes"));
 });
+
+it("joins a draft marked for a mission as a member once its first message lands", async () => {
+  const draftId = DraftId.make("member-draft");
+  await using screen = await renderDraft(draftId);
+  const intent = {
+    kind: "member",
+    host: LOCAL,
+    missionId: "ba9876543210",
+    name: "Old work",
+  } as const;
+  await act(() => markMissionDraft(draftId, { intent, thread }));
+  await expect
+    .element(screen.getByText('Sending adds this thread to "Old work"'))
+    .toBeInTheDocument();
+  await screen.stream("empty");
+  expect(commandFor("mission add member")).not.toHaveBeenCalled();
+  await screen.stream("sent");
+  await vi.waitFor(() =>
+    expect(commandFor("mission add member")).toHaveBeenCalledExactlyOnceWith({
+      environmentId: LOCAL,
+      input: { missionId: "ba9876543210", member: thread },
+    }),
+  );
+  await vi.waitFor(() => expect(screen.container.textContent).not.toContain("Sending adds"));
+});

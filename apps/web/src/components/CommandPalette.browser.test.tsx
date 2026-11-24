@@ -1,6 +1,6 @@
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
@@ -12,6 +12,7 @@ import { makeThreadFixture } from "../test-fixtures";
 import type { Project, Thread } from "../types";
 import { CommandPalette } from "./CommandPalette";
 import { markMissionDraft } from "./sidebar/missionDraftStore";
+import { useScratchProject } from "../hooks/useScratchProject";
 import { DraftId } from "../composerDraftStore";
 
 const entities = vi.hoisted(() => ({
@@ -47,6 +48,7 @@ vi.mock("../hooks/useHandleNewThread", async (original) => {
   };
 });
 vi.mock("./sidebar/missionDraftStore", { spy: true });
+vi.mock("../hooks/useScratchProject", { spy: true });
 vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
   useProjects: () => entities.projects,
@@ -291,6 +293,49 @@ describe("CommandPalette open intents", () => {
         projectId: open.id,
       }),
     );
+  });
+
+  it("titles the New mission picker and offers No project, on the lead's machine for a new lead", async () => {
+    const local = makeProject("web");
+    setup({ projects: [local] });
+    vi.mocked(markMissionDraft).mockClear();
+    // Only the local machine has a home for threads without a project.
+    const scratch = { ...makeProject("scratch"), workspaceRoot: "/scratch/home" };
+    const openScratchProject = vi.fn().mockResolvedValue(scratch);
+    vi.mocked(useScratchProject).mockReturnValue({
+      scratchEnvironmentId: () => local.environmentId,
+      scratchWorkspaceRootFor: (environmentId: EnvironmentId | null) =>
+        environmentId === local.environmentId ? "/scratch" : null,
+      startScratchThread: vi.fn(),
+      openScratchProject,
+    } as never);
+    onTestFinished(() => vi.mocked(useScratchProject).mockRestore());
+    const created = { draftId: DraftId.make("mission-draft"), threadId: ThreadId.make("t") };
+    entities.handleNewThread.mockResolvedValueOnce(created as never);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+
+    openCommandPalette({ open: "new-thread-in", mission: { kind: "new" } });
+    await expect.element(page.getByText("New mission", { exact: true })).toBeVisible();
+    await page.getByRole("option", { name: /No project/ }).click();
+    await vi.waitFor(() =>
+      expect(markMissionDraft).toHaveBeenCalledExactlyOnceWith(created.draftId, {
+        intent: { kind: "new" },
+        thread: { environmentId: local.environmentId, threadId: created.threadId },
+      }),
+    );
+    expect(openScratchProject).toHaveBeenCalledWith(local.environmentId);
+
+    // A lead on a machine with no such home is not offered one.
+    const lead = {
+      kind: "lead",
+      host: EnvironmentId.make("remote"),
+      missionId: "ba9876543210",
+      name: "Old work",
+      expectedLead: ThreadId.make("deleted-lead"),
+    } as const;
+    openCommandPalette({ open: "new-thread-in", mission: lead });
+    await expect.element(page.getByText("New lead", { exact: true })).toBeVisible();
+    await expect.element(page.getByRole("option", { name: /No project/ })).not.toBeInTheDocument();
   });
 
   it("marks the draft a mission's project pick makes, offering only the lead's machine", async () => {

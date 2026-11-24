@@ -57,6 +57,7 @@ import {
   SourceControlProviderKind,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
+  type ScopedProjectRef,
 } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
@@ -483,7 +484,8 @@ function OpenCommandPaletteDialog(props: {
   const updateProject = useOrchestrationCommand(projectEnvironment.update, {
     label: "project unarchive",
   });
-  const { scratchEnvironmentId, scratchWorkspaceRootFor, startScratchThread } = useScratchProject();
+  const { scratchEnvironmentId, scratchWorkspaceRootFor, startScratchThread, openScratchProject } =
+    useScratchProject();
   const startTriage = useStartTriage();
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
@@ -745,6 +747,23 @@ function OpenCommandPaletteDialog(props: {
     activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
   const scratchTargetEnvironmentId = scratchEnvironmentId(currentProjectEnvironmentId);
+  // A new lead must be on its Mission's machine, so "No project" opens there or not at all.
+  const noProjectEnvironmentId =
+    missionHost === null
+      ? scratchTargetEnvironmentId
+      : scratchWorkspaceRootFor(missionHost) !== null
+        ? missionHost
+        : null;
+  // A draft opened from this view starts, leads or joins a Mission once it is sent.
+  const openDraftIn = async (projectRef: ScopedProjectRef) => {
+    const created = await handleNewThread(projectRef);
+    if (created !== null && missionIntent !== undefined) {
+      markMissionDraft(created.draftId, {
+        intent: missionIntent,
+        thread: scopeThreadRef(projectRef.environmentId, created.threadId),
+      });
+    }
+  };
   const supportsTriage = (environmentId: EnvironmentId | null) =>
     environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
       ?.environment.capabilities.triage === true;
@@ -928,16 +947,10 @@ function OpenCommandPaletteDialog(props: {
             (missionHost === null || contextualProjectRef.environmentId === missionHost)
               ? contextualProjectRef
               : scopeProjectRef(project.environmentId, project.id);
-          const created = await handleNewThread(projectRef);
-          if (created !== null && missionIntent !== undefined) {
-            markMissionDraft(created.draftId, {
-              intent: missionIntent,
-              thread: scopeThreadRef(projectRef.environmentId, created.threadId),
-            });
-          }
+          await openDraftIn(projectRef);
         },
       });
-      if (scratchTargetEnvironmentId === null || missionIntent !== undefined) return projectItems;
+      if (noProjectEnvironmentId === null) return projectItems;
 
       const noProjectIndex = newThreadNoProjectIndex(
         projectPickerEntries.map(({ group, targetProject, isPreferred }) => ({
@@ -958,7 +971,11 @@ function OpenCommandPaletteDialog(props: {
           title: gt("No project"),
           icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
           shortcutCommand: "chat.newWithoutProject" as const,
-          run: () => startScratchThread(scratchTargetEnvironmentId),
+          run: async () => {
+            if (missionIntent === undefined) return startScratchThread(noProjectEnvironmentId);
+            const project = await openScratchProject(noProjectEnvironmentId);
+            if (project) await openDraftIn(scopeProjectRef(project.environmentId, project.id));
+          },
         },
         ...projectItems.slice(noProjectIndex),
       ];
@@ -1932,7 +1949,12 @@ function OpenCommandPaletteDialog(props: {
           ? [
               {
                 value: NEW_THREAD_IN_GROUP,
-                label: gt("Projects"),
+                label:
+                  missionIntent?.kind === "new"
+                    ? gt("New mission")
+                    : missionIntent?.kind === "lead"
+                      ? gt("New lead")
+                      : gt("Projects"),
                 // Every project archived and no "No project" home leaves only adding one.
                 items: projectThreadItems.length > 0 ? projectThreadItems : [addProjectAction],
               },

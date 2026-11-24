@@ -35,31 +35,47 @@ export type MissionMenuId =
   | "mission-leave"
   | "mission-add"
   | `mission-add:${string}`
-  | `mission-release:${string}`;
+  | `mission-release:${string}`
+  | `mission-new-thread:${string}`
+  | `mission-delete:${string}`
+  /** The heading of a Mission row's own group. */
+  | "mission-group"
+  | "mission-new-lead"
+  | "mission-choose-lead";
 
 export const isMissionMenuId = (id: string): id is MissionMenuId => id.startsWith("mission-");
 
 const ADD_PREFIX = "mission-add:";
 const RELEASE_PREFIX = "mission-release:";
+const NEW_THREAD_PREFIX = "mission-new-thread:";
+const DELETE_PREFIX = "mission-delete:";
+const TARGET_ACTIONS = {
+  [ADD_PREFIX]: "add",
+  [RELEASE_PREFIX]: "release",
+  [NEW_THREAD_PREFIX]: "new-thread",
+  [DELETE_PREFIX]: "delete",
+} as const;
 
 /** Mission ids are hex, so the last colon separates them from the host's environment id. */
 export function parseMissionTarget(id: MissionMenuId): {
-  readonly action: "add" | "release";
+  readonly action: (typeof TARGET_ACTIONS)[keyof typeof TARGET_ACTIONS];
   readonly environmentId: EnvironmentId;
   readonly missionId: string;
 } | null {
-  const prefix = [ADD_PREFIX, RELEASE_PREFIX].find((candidate) => id.startsWith(candidate));
+  const prefix = (Object.keys(TARGET_ACTIONS) as Array<keyof typeof TARGET_ACTIONS>).find(
+    (candidate) => id.startsWith(candidate),
+  );
   if (prefix === undefined) return null;
   const rest = id.slice(prefix.length);
   const split = rest.lastIndexOf(":");
   return {
-    action: prefix === ADD_PREFIX ? "add" : "release",
+    action: TARGET_ACTIONS[prefix],
     environmentId: rest.slice(0, split) as EnvironmentId,
     missionId: rest.slice(split + 1),
   };
 }
 
-export type MissionBlock = "in-mission" | "empty" | "no-link" | "fenced" | "not-allowed";
+export type MissionBlock = "in-mission" | "no-link" | "fenced" | "not-allowed";
 
 /**
  * The claim this thread's own machine holds for it, when one Mission or another holds it there.
@@ -79,9 +95,9 @@ function missionBlock(
   host: MissionHost,
   hosts: ReadonlyArray<MissionHost>,
 ): MissionBlock | null {
+  // A member may be empty: one a lead starts with no prompt joins as it is. Only a lead needs
+  // messages, since T3 deletes a draft chat that never got one.
   if (claimHere(thread, hosts) !== undefined) return "in-mission";
-  // An empty thread may still be a draft that T3 deletes on its own.
-  if (!threadHasMessages(thread)) return "empty";
   if (thread.environmentId === host.environmentId) return null;
   const link = host.snapshot.links.find((entry) => entry.environmentId === thread.environmentId);
   if (link === undefined) return "no-link";
@@ -93,8 +109,6 @@ function blockLabel(block: MissionBlock, hostLabel: string, resolve: MessageReso
   switch (block) {
     case "in-mission":
       return resolve(msg("In a mission"));
-    case "empty":
-      return resolve(msg("No messages yet"));
     case "no-link":
       return resolve(msg("No link from {machine}", { machine: hostLabel }));
     case "fenced":
@@ -105,8 +119,55 @@ function blockLabel(block: MissionBlock, hostLabel: string, resolve: MessageReso
 }
 
 /**
+ * The "Mission" group of a Mission's own row: a new thread to join it, and deleting it once it has
+ * no members. A Mission whose lead is gone also takes a new lead here.
+ */
+export function missionRowItems(
+  input: {
+    readonly host: EnvironmentId;
+    readonly mission: Mission;
+    /** The lead is gone and this client may give the Mission a new one. */
+    readonly leadGone: boolean;
+    readonly canChange: boolean;
+  },
+  resolve: MessageResolver = m,
+): ReadonlyArray<ContextMenuItem<MissionMenuId>> {
+  const target = `${input.host}:${input.mission.missionId}`;
+  // A refused add never joined, so it holds nothing back.
+  const members = input.mission.members.filter(
+    (member) => member.role === "member" && member.state !== "add-refused",
+  );
+  return [
+    { id: "mission-group", label: resolve(msg("Mission")), header: true, separatorBefore: true },
+    {
+      id: `${NEW_THREAD_PREFIX}${target}`,
+      label: resolve(msg("New thread in this mission")),
+      icon: "message-square-plus",
+    },
+    ...(input.leadGone
+      ? [
+          { id: "mission-new-lead" as const, label: resolve(msg("New lead")) },
+          { id: "mission-choose-lead" as const, label: resolve(msg("Choose a thread…")) },
+        ]
+      : []),
+    {
+      id: `${DELETE_PREFIX}${target}`,
+      label: resolve(msg("Delete mission")),
+      icon: "trash",
+      destructive: true,
+      disabled: members.length > 0 || !input.canChange,
+      ...(members.length > 0
+        ? { detail: resolve(msg("Has threads")) }
+        : input.canChange
+          ? {}
+          : { detail: blockLabel("not-allowed", "", resolve) }),
+    },
+  ];
+}
+
+/**
  * "Start mission from this thread" and "Leave mission" for one thread, and "Add to mission" for
- * one or more.
+ * one or more. A Mission's lead also gets its Mission's own group.
  */
 export function buildMissionMenuItems(
   threads: ReadonlyArray<MissionCandidate>,
@@ -134,6 +195,7 @@ export function buildMissionMenuItems(
     holding !== undefined && holding.member.role === "member" && isJoined(holding.member)
       ? holding
       : undefined;
+  const leads = holding !== undefined && holding.member.role === "lead" ? holding : undefined;
   return [
     ...(single === undefined
       ? []
@@ -209,6 +271,17 @@ export function buildMissionMenuItems(
         };
       }),
     },
+    ...(leads === undefined
+      ? []
+      : missionRowItems(
+          {
+            host: leads.host,
+            mission: leads.mission,
+            leadGone: false,
+            canChange: canChangeOn(leads.host),
+          },
+          resolve,
+        )),
   ];
 }
 
@@ -395,6 +468,13 @@ export type MissionDraftIntent =
       readonly name: string;
       /** The missing lead the user saw. Only that one is replaced. */
       readonly expectedLead: ThreadId;
+    }
+  | {
+      /** Joins as a member, through the usual add and its rules across machines. */
+      readonly kind: "member";
+      readonly host: EnvironmentId;
+      readonly missionId: string;
+      readonly name: string;
     };
 
 /** The members a drag can take out of their Mission: joined ones the sidebar shows. */

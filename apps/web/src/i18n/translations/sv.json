@@ -12848,5 +12848,19 @@
   "02c5972468338659": "Det här utkastet lämnade sitt uppdrags maskin",
   "86a6437dc189ea6a": "Flytta tillbaka det för att skicka, eller skicka det som en vanlig tråd.",
   "5b03d7d90b62dd82": "Det här uppdraget har redan en ny ledande tråd",
-  "33e8e07ab6191f5b": "Inte inläst."
+  "33e8e07ab6191f5b": "Inte inläst.",
+  "03d266b5e18e221e": "Ny ledande tråd",
+  "adc33705dea3b406": "Inget",
+  "1534e3e2d7fe1e6d": "Uppdrag",
+  "f6b851950eb5f92e": "Uppdrag",
+  "41f48cbd3b002668": "När du skickar läggs den här tråden till i ”{mission}”",
+  "8959a2d6d612223f": "Det gick inte att lägga till tråden i uppdraget",
+  "22998b93dbed774f": "Inte tillagd i uppdraget",
+  "ebd33d86bdde93be": "Inte släppt från uppdraget",
+  "524e536207bcb7be": "Ta bort uppdraget ”{mission}”? Den ledande tråden blir kvar som en egen tråd.",
+  "8373f0f23ed95056": "Det gick inte att ta bort uppdraget",
+  "c14823b109f213cc": "Ny tråd i det här uppdraget",
+  "e41e604f2ab02e67": "Välj en tråd…",
+  "41ed219e17bd8470": "Ta bort uppdrag",
+  "76a0f477c383d3a2": "Har trådar"
 }

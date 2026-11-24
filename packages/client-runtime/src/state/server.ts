@@ -2028,6 +2028,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:missions:set-lead",
       tag: WS_METHODS.missionsSetLead,
     }),
+    deleteMission: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:missions:delete",
+      tag: WS_METHODS.missionsDelete,
+    }),
     createGuestShare: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:guest-share:create",
       tag: WS_METHODS.guestShareCreate,

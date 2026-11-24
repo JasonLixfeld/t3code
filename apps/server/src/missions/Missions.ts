@@ -75,6 +75,10 @@ export class Missions extends Context.Service<
       readonly lead: ScopedThreadRef;
       readonly expectedLead: ThreadId;
     }) => Effect.Effect<Mission, MissionError>;
+    /** Ends a Mission that has no members. Its lead stays a thread, tagged as it was. */
+    readonly deleteMission: (input: {
+      readonly missionId: string;
+    }) => Effect.Effect<void, MissionError>;
     /** Leaves the add pending when the member's machine does not say what became of it. */
     readonly addMember: (input: {
       readonly missionId: string;
@@ -580,6 +584,13 @@ const make = Effect.gen(function* () {
     return yield* missionView(mission, yield* machines, yield* shown);
   });
 
+  const deleteMission = Effect.fn("Missions.deleteMission")(function* (input: {
+    readonly missionId: string;
+  }) {
+    const mission = yield* missionNamed(input.missionId);
+    yield* claims.deleteMission({ missionId: mission.missionId, lead: mission.leadThreadId });
+  });
+
   const setLead = Effect.fn("Missions.setLead")(function* (input: {
     readonly missionId: string;
     readonly lead: ScopedThreadRef;
@@ -737,6 +748,7 @@ const make = Effect.gen(function* () {
     watch,
     create,
     setLead,
+    deleteMission,
     addMember,
     releaseMember,
     forgetMember,

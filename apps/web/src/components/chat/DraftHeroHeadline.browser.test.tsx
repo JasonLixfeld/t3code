@@ -48,6 +48,13 @@ vi.mock(import("~/hooks/useAddProjectTargets"), async (original) => ({
   useAddProjectTargets: (() => addTargets.offered) as never,
 }));
 
+// The Missions this machine keeps, for a test that lists some.
+const missionHosts = vi.hoisted(() => ({ listed: [] as ReadonlyArray<unknown> }));
+vi.mock(import("~/components/sidebar/MissionsSection"), async (original) => ({
+  ...(await original()),
+  useMissionHosts: (() => missionHosts.listed) as never,
+}));
+
 vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   ...(await original()),
   trackRpcRequestSent: () => {},
@@ -240,4 +247,106 @@ it("does not offer a mission draft another machine to run on", async () => {
   onTestFinished(() => clearMissionDraft(plainDraft));
   await vi.waitFor(() => expect(runOn()).toHaveLength(0));
   expect(document.body.textContent).not.toContain("Add to another machine");
+});
+
+it("a new thread's Mission choice marks its draft to join that mission, or none", async () => {
+  using _environment = installFakeEnvironment([]);
+  missionHosts.listed = [
+    {
+      environmentId: ENVIRONMENT_ID,
+      snapshot: {
+        missions: [
+          {
+            missionId: "ba9876543210",
+            name: "Ship v2",
+            createdAt: "2026-11-23T00:00:00.000Z",
+            members: [
+              {
+                ref: { environmentId: ENVIRONMENT_ID, threadId: ThreadId.make("lead") },
+                role: "lead",
+                state: "active",
+              },
+            ],
+          },
+        ],
+        links: [],
+        claims: [],
+      },
+    },
+  ];
+  onTestFinished(() => {
+    missionHosts.listed = [];
+  });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-mission-choice");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId);
+  onTestFinished(() => clearMissionDraft(draftId));
+  const threadId = useComposerDraftStore.getState().getDraftSession(draftId)!.threadId;
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const trigger = page.getByRole("button", { name: "Mission" });
+  await expect.element(trigger).toHaveTextContent("None");
+  await userEvent.click(trigger);
+  await page.getByRole("menuitemradio", { name: "Ship v2" }).click();
+  expect(missionDraftOf(draftId)).toMatchObject({
+    intent: { kind: "member", host: ENVIRONMENT_ID, missionId: "ba9876543210", name: "Ship v2" },
+    thread: { environmentId: ENVIRONMENT_ID, threadId },
+  });
+  await expect.element(trigger).toHaveTextContent("Ship v2");
+  await userEvent.click(trigger);
+  await page.getByRole("menuitemradio", { name: "None" }).click();
+  expect(missionDraftOf(draftId)).toBeUndefined();
+
+  // A draft that starts a mission of its own offers no mission to join.
+  await act(() =>
+    markMissionDraft(draftId, {
+      intent: { kind: "new" },
+      thread: { environmentId: ENVIRONMENT_ID, threadId },
+    }),
+  );
+  await expect.element(trigger).not.toBeInTheDocument();
+});
+
+it("New thread in this mission opens a project's draft that joins the mission once sent", async () => {
+  using _environment = installFakeEnvironment([]);
+  missionHosts.listed = [
+    {
+      environmentId: ENVIRONMENT_ID,
+      snapshot: {
+        missions: [
+          {
+            missionId: "ba9876543210",
+            name: "Ship v2",
+            createdAt: "2026-11-23T00:00:00.000Z",
+            members: [],
+          },
+        ],
+        links: [],
+        claims: [],
+      },
+    },
+  ];
+  onTestFinished(() => {
+    missionHosts.listed = [];
+  });
+  await using app = await openApp();
+  const member = {
+    kind: "member",
+    host: ENVIRONMENT_ID,
+    missionId: "ba9876543210",
+    name: "Ship v2",
+  } as const;
+  const joining = await app.newThreadIn(member);
+  expect(missionDraftOf(joining)?.intent).toEqual(member);
+  await expect.element(page.getByRole("button", { name: "Mission" })).toHaveTextContent("Ship v2");
+  await expect.element(page.getByText('Sending adds this thread to "Ship v2"')).toBeVisible();
 });
