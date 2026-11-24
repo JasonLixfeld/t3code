@@ -3588,6 +3588,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         // The tree row of the project folder this row sits in.
                         folderRow?: string,
                         missionToggle?: SidebarMissionToggle,
+                        footer?: ReactNode,
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -3613,6 +3614,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             }
                             thread={thread}
                             missionToggle={missionToggle}
+                            footer={footer}
                             variant={rowVariant}
                             navigationParent={
                               folderRow ??
@@ -3709,14 +3711,24 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           key="missions"
                           missions={missions}
                           headerVisible={missionsHeaderVisible}
-                          renderThreadRow={(thread, toggle) =>
-                            renderThreadRow(
-                              thread,
-                              missionSectionByKey.get(threadShellKey(thread)) ?? "active",
-                              undefined,
-                              toggle,
-                            )
-                          }
+                          renderThreadRow={(thread, toggle, footer) => {
+                            const section =
+                              missionSectionByKey.get(threadShellKey(thread)) ?? "active";
+                            // Only a card has room for a last line; a one-line row gets it below.
+                            const inCard = section === "active";
+                            return (
+                              <>
+                                {renderThreadRow(
+                                  thread,
+                                  section,
+                                  undefined,
+                                  toggle,
+                                  inCard ? footer?.(true) : undefined,
+                                )}
+                                {inCard ? null : footer?.(false)}
+                              </>
+                            );
+                          }}
                           onOpenThread={navigateToThread}
                         />,
                         threadsHeaderVisible && missions.length > 0 ? (

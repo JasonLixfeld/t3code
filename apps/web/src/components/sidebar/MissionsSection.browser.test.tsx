@@ -380,8 +380,14 @@ describe("missions in the sidebar", () => {
     expect(lead.textContent).not.toMatch(/web|WB/);
     const chevron = lead.querySelector<HTMLElement>('[aria-label="Collapse mission"]')!;
     expect(chevron.parentElement!.textContent).toContain("Plan the v2 release");
+    // With no status, machine or provider to show, the row is that one line.
+    expect(chevron.parentElement!.nextElementSibling).toBeNull();
     // Members keep their own project.
     const members = screen.container.querySelector("[data-testid=sidebar-mission-members]")!;
+    // A pending add is the last line of its own member's row.
+    expect(rowOf(members, "Write the migration guide").textContent).toContain(
+      "Add pending (machine offline)",
+    );
     expect(rowOf(members, "Update the release notes").textContent).toContain("web");
     // The fallback leads have the same shape: chevron and title, no project.
     for (const title of ["Lead deleted", "Archive the old site"]) {

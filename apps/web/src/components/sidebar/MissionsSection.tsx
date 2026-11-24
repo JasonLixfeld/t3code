@@ -163,6 +163,8 @@ function MemberRow(props: {
   readonly toggle?: SidebarMissionToggle | undefined;
   /** Under the thread's own row: only the waiting state and its action. */
   readonly stateOnly?: boolean;
+  /** Inside the thread's own row, as its last line. */
+  readonly inRow?: boolean;
 }) {
   const gt = useGT();
   // A refused add never joined, so its row is only the refusal: no title, nothing to open.
@@ -211,6 +213,52 @@ function MemberRow(props: {
     setReleasing(false);
   };
   const { toggle } = props;
+  const stateText =
+    props.member.state === "release-pending"
+      ? gt("Release pending (machine offline)")
+      : props.member.state === "add-pending"
+        ? gt("Add pending (machine offline)")
+        : props.member.state === "add-refused"
+          ? props.member.detail
+          : props.member.state === "offline"
+            ? gt("Last known (machine offline)")
+            : where;
+  const action =
+    props.member.role === "member" ? (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label={
+                forgets ? gt("Forget") : dismisses ? gt("Dismiss") : gt("Release from mission")
+              }
+              disabled={!canRelease || releasing}
+              onClick={(event) => {
+                // Inside a thread's row, the row would open the thread as well.
+                event.stopPropagation();
+                void onRelease();
+              }}
+              className="inline-flex shrink-0 cursor-pointer items-center rounded-md px-1 text-muted-foreground opacity-0 transition-opacity group-hover/mission-row:opacity-100 hover:text-foreground focus-visible:opacity-100 disabled:cursor-default"
+            >
+              <XIcon className="size-3" />
+            </button>
+          }
+        />
+        <TooltipPopup side="top">
+          {forgets ? gt("Forget") : dismisses ? gt("Dismiss") : <T>Release from mission</T>}
+        </TooltipPopup>
+      </Tooltip>
+    ) : null;
+  // The last line of the thread's own row, styled as its other lines.
+  if (props.inRow === true) {
+    return (
+      <div className="group/mission-row mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
+        <span className="min-w-0 flex-1 truncate">{stateText}</span>
+        {action}
+      </div>
+    );
+  }
   return (
     <li className="group/mission-row list-none">
       <div className="flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 hover:bg-sidebar-row-hover">
@@ -247,40 +295,9 @@ function MemberRow(props: {
               </span>
             ) : null}
           </span>
-          <span className="truncate text-2xs text-sidebar-muted-foreground">
-            {props.member.state === "release-pending"
-              ? gt("Release pending (machine offline)")
-              : props.member.state === "add-pending"
-                ? gt("Add pending (machine offline)")
-                : props.member.state === "add-refused"
-                  ? props.member.detail
-                  : props.member.state === "offline"
-                    ? gt("Last known (machine offline)")
-                    : where}
-          </span>
+          <span className="truncate text-2xs text-sidebar-muted-foreground">{stateText}</span>
         </button>
-        {props.member.role === "member" ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  aria-label={
-                    forgets ? gt("Forget") : dismisses ? gt("Dismiss") : gt("Release from mission")
-                  }
-                  disabled={!canRelease || releasing}
-                  onClick={() => void onRelease()}
-                  className="inline-flex shrink-0 cursor-pointer items-center rounded-md px-1 text-muted-foreground opacity-0 transition-opacity group-hover/mission-row:opacity-100 hover:text-foreground focus-visible:opacity-100 disabled:cursor-default"
-                >
-                  <XIcon className="size-3" />
-                </button>
-              }
-            />
-            <TooltipPopup side="top">
-              {forgets ? gt("Forget") : dismisses ? gt("Dismiss") : <T>Release from mission</T>}
-            </TooltipPopup>
-          </Tooltip>
-        ) : null}
+        {action}
       </div>
     </li>
   );
@@ -296,6 +313,8 @@ export function SidebarMissions(props: {
   readonly renderThreadRow: (
     thread: EnvironmentThreadShell,
     toggle?: SidebarMissionToggle,
+    /** The waiting state of a member's add or release, inside its row or under it. */
+    footer?: (inRow: boolean) => ReactNode,
   ) => ReactNode;
   readonly onOpenThread: (ref: ScopedThreadRef) => void;
 }) {
@@ -323,18 +342,24 @@ export function SidebarMissions(props: {
       />
     ) : (
       <Fragment key={scopedKey(entry.member.ref)}>
-        {props.renderThreadRow(entry.thread, toggle)}
-        {entry.member.state === "add-pending" || entry.member.state === "release-pending" ? (
-          <MemberRow
-            host={mission.host}
-            missionId={mission.mission.missionId}
-            member={entry.member}
-            machineLabel={machineLabel(entry.member.ref.environmentId)}
-            missionName={mission.mission.name}
-            onOpen={props.onOpenThread}
-            stateOnly
-          />
-        ) : null}
+        {props.renderThreadRow(
+          entry.thread,
+          toggle,
+          entry.member.state === "add-pending" || entry.member.state === "release-pending"
+            ? (inRow) => (
+                <MemberRow
+                  host={mission.host}
+                  missionId={mission.mission.missionId}
+                  member={entry.member}
+                  machineLabel={machineLabel(entry.member.ref.environmentId)}
+                  missionName={mission.mission.name}
+                  onOpen={props.onOpenThread}
+                  stateOnly
+                  inRow={inRow}
+                />
+              )
+            : undefined,
+        )}
       </Fragment>
     );
   return (

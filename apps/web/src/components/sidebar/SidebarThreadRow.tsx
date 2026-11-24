@@ -591,6 +591,8 @@ export type SidebarMissionToggle = {
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   missionToggle?: SidebarMissionToggle | undefined;
+  /** A last line inside the card, such as a mission member's pending add or release. */
+  footer?: ReactNode;
   // "folder" is a one-line row inside a boring sidebar project folder;
   // "folder-multiline" adds the card's environment and PR line under it.
   variant: "card" | "slim" | "folder" | "folder-multiline";
@@ -1553,6 +1555,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     );
   }
 
+  // Only an empty line would remain, so a mission's lead row is then one line.
+  const hasMissionMeta =
+    Boolean(topStatus) ||
+    metaLine !== null ||
+    props.providerEntryByInstanceId.has(resolveThreadProviderStack(thread).at(-1)!);
   // A mission's lead row shows its status on the line under its title, where the project was.
   const statusLabel = topStatus ? (
     isWokeStatus ? (
@@ -1639,7 +1646,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           <div
             className={cn(
               "relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
-              (metaLineEmpty || missionToggle) && "h-auto",
+              (metaLineEmpty || missionToggle || props.footer !== undefined) && "h-auto",
             )}
           >
             <div className="flex h-5 min-w-0 items-center gap-1.5">
@@ -1755,15 +1762,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {props.sweepAction !== null ? dragDestination : null}
             </div>
             {missionToggle ? (
-              // Lined up with the title, past the chevron.
-              <div className="mt-1 flex min-w-0 items-center gap-1.5 ps-5.5 text-secondary-label text-xs">
-                {statusLabel}
-                {metaLine === null ? (
-                  <span className="ml-auto">{titleLineIcons}</span>
-                ) : (
-                  <div className="min-w-0 flex-1">{metaLine}</div>
-                )}
-              </div>
+              !hasMissionMeta ? null : (
+                // Lined up with the title, past the chevron.
+                <div className="mt-1 flex min-w-0 items-center gap-1.5 ps-5.5 text-secondary-label text-xs">
+                  {statusLabel}
+                  {metaLine === null ? (
+                    <span className="ml-auto">{titleLineIcons}</span>
+                  ) : (
+                    <div className="min-w-0 flex-1">{metaLine}</div>
+                  )}
+                </div>
+              )
             ) : (
               <>
                 <div className="mt-1 flex min-w-0 items-center gap-1.5">
@@ -1773,6 +1782,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 {metaLine}
               </>
             )}
+            {props.footer}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
                 <T>Regenerating title</T>
