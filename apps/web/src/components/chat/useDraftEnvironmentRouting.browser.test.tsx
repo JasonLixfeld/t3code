@@ -17,13 +17,14 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import { expect, it, vi } from "vite-plus/test";
+import { expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useDraftEnvironmentRouting } from "./useDraftEnvironmentRouting";
 import { appAtomRegistry, AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
+import { clearMissionDraft, markMissionDraft } from "../sidebar/missionDraftStore";
 
 const resources = vi.hoisted(() => ({
   projects: [] as EnvironmentProject[],
@@ -353,3 +354,40 @@ it.each([
   expect(draft?.modelSelectionByProvider[codex]?.model).toBe(model);
   expect(draft?.modelSelectionExplicit === true).toBe(explicit);
 });
+
+it.each(["by hand", "by automatic routing", "before sending"] as const)(
+  "keeps a mission draft on its mission's machine %s",
+  async (path) => {
+    const { a, b, draftId, input, store } = fanoutSetup();
+    const threadId = input.draftThread!.threadId;
+    markMissionDraft(draftId, { intent: { kind: "new" }, thread: scopeThreadRef(a, threadId) });
+    onTestFinished(() => clearMissionDraft(draftId));
+    if (path === "by automatic routing") {
+      store.setDraftThreadContext(draftId, { environmentSelection: "auto" });
+      resources.pickedEnvironmentId = b;
+    }
+    if (path === "before sending") {
+      store.setDraftThreadContext(draftId, {
+        environmentSelection: "auto",
+        loadBalancedEnvironmentId: a,
+      });
+    }
+    await using screen = await render(
+      <Harness
+        input={{
+          ...input,
+          automaticEnvironment: path !== "by hand",
+          draftThread: store.getDraftSession(draftId),
+        }}
+      />,
+    );
+    await expect.element(screen.getByText(a)).toBeInTheDocument();
+    if (path === "by hand") {
+      await screen.getByRole("button", { name: `Switch to ${b}` }).click();
+    }
+    if (path === "before sending") await screen.getByRole("button", { name: "Send" }).click();
+    await act(async () => {});
+    expect(resources.refreshSelection).not.toHaveBeenCalled();
+    expect(store.getDraftSession(draftId)?.environmentId).toBe(a);
+  },
+);

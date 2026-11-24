@@ -246,9 +246,12 @@ export class MissionStore extends Context.Service<
     /**
      * Makes a thread the Mission's lead, and drops the old lead's claim, both or neither. A
      * member of this Mission here keeps its claim, which becomes the lead's. Refuses a thread
-     * any other Mission or owner holds.
+     * any other Mission or owner holds, and refuses when the lead is no longer `previous`, since
+     * only `previous` is locked.
      */
-    readonly setLead: (lead: ClaimInput) => Effect.Effect<MissionRecord, MissionError>;
+    readonly setLead: (
+      lead: ClaimInput & { readonly previous: ThreadId },
+    ) => Effect.Effect<MissionRecord, MissionError>;
     /**
      * The claim this owner already holds for this Mission, or a new one. Refuses any other claim.
      * `intent-spent`: the claim this add made was dropped since, so the add may not make another.
@@ -260,8 +263,15 @@ export class MissionStore extends Context.Service<
     readonly release: (input: Omit<ClaimInput, "name">) => Effect.Effect<void>;
     /** Drops the thread's claim, whoever holds it. Refuses a lead's claim. */
     readonly leave: (threadId: ThreadId) => Effect.Effect<void, MissionError>;
-    /** Names a Mission led here again. Its claims follow through `renameClaims`. */
-    readonly renameMission: (missionId: string, name: string) => Effect.Effect<void>;
+    /**
+     * Names a Mission led here again, from the title of `lead`, unless its lead changed since.
+     * Answers the name it has now. Its claims follow through `renameClaims`.
+     */
+    readonly renameMission: (input: {
+      readonly missionId: string;
+      readonly lead: ThreadId;
+      readonly name: string;
+    }) => Effect.Effect<string>;
     /**
      * Gives this owner's claim on one thread the Mission's new name, and marks its tags unsynced
      * with it. Answers whether it changed. Called only under that thread's lock.
@@ -399,7 +409,9 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const setLead = Effect.fn("MissionStore.setLead")(function* (lead: ClaimInput) {
+  const setLead = Effect.fn("MissionStore.setLead")(function* (
+    lead: ClaimInput & { readonly previous: ThreadId },
+  ) {
     const claimedAt = yield* now;
     return yield* change(
       Effect.gen(function* () {
@@ -408,6 +420,10 @@ const make = Effect.gen(function* () {
           WHERE mission_id = ${lead.missionId}
         `;
         if (mission === undefined) return refuse("That mission was not found.");
+        const previous = ThreadId.make(mission.lead_thread_id);
+        if (previous !== lead.previous) {
+          return refuse("The mission's lead changed while this was asked. Try again.");
+        }
         const held = yield* claimRow(lead.threadId);
         if (
           held !== undefined &&
@@ -423,7 +439,6 @@ const make = Effect.gen(function* () {
           `;
           yield* markUnsynced(lead.threadId);
         }
-        const previous = ThreadId.make(mission.lead_thread_id);
         if (previous !== lead.threadId) {
           yield* sql`
             DELETE FROM claims
@@ -504,12 +519,28 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const renameMission = (missionId: string, name: string) =>
-    sql`UPDATE missions SET name = ${name} WHERE mission_id = ${missionId}`.pipe(
-      Effect.andThen(changed),
-      Effect.asVoid,
-      Effect.orDie,
-    );
+  const renameMission = (input: {
+    readonly missionId: string;
+    readonly lead: ThreadId;
+    readonly name: string;
+  }) =>
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          yield* sql`
+          UPDATE missions SET name = ${input.name}
+          WHERE mission_id = ${input.missionId} AND lead_thread_id = ${input.lead}
+        `;
+          const [row] = yield* sql<{ readonly name: string }>`
+          SELECT name FROM missions WHERE mission_id = ${input.missionId}
+        `;
+          return row?.name ?? input.name;
+        }),
+      )
+      .pipe(
+        Effect.tap(() => changed),
+        Effect.orDie,
+      );
 
   const renameClaim = Effect.fn("MissionStore.renameClaim")(function* (input: {
     readonly threadId: ThreadId;

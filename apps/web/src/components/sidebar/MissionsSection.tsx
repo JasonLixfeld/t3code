@@ -89,10 +89,31 @@ function failureMessage(result: AtomCommandResult<unknown, unknown>): string | n
   return thrownErrorMessage(squashAtomCommandFailure(result), m) ?? m(msg("An error occurred."));
 }
 
-export function reportFailure(title: string, result: AtomCommandResult<unknown, unknown>) {
+export function reportFailure(
+  title: string,
+  result: AtomCommandResult<unknown, unknown>,
+  retry?: () => void,
+) {
   const message = failureMessage(result);
   if (message === null || isAtomCommandInterrupted(result)) return;
-  toastManager.add(stackedThreadToast({ type: "error", title, description: message }));
+  const toastId = toastManager.add(
+    stackedThreadToast({
+      type: "error",
+      title,
+      description: message,
+      ...(retry === undefined
+        ? {}
+        : {
+            actionProps: {
+              children: m(msg("Try again")),
+              onClick: () => {
+                toastManager.close(toastId);
+                retry();
+              },
+            },
+          }),
+    }),
+  );
 }
 
 /** The Mission entries of a thread menu, and what choosing one does. */
@@ -648,11 +669,15 @@ export function useMissionDrop(missions: ReadonlyArray<SidebarMission<Environmen
         point.x >= box.left && point.x <= box.right && point.y >= box.top && point.y <= box.bottom
       );
     };
-    const mission = [...list.querySelectorAll<HTMLElement>("[data-mission-drop]")].find(contains);
+    const areas = [...list.querySelectorAll<HTMLElement>("[data-mission-drop]")];
+    const mission = areas.find(contains);
+    // Only the threads below every Mission release one: not the Missions heading or a gap.
+    const missionsEnd = Math.max(...areas.map((area) => area.getBoundingClientRect().bottom));
     return resolveMissionDrop({
       dragged,
       threads,
-      over: mission?.dataset.missionDrop ?? (contains(list) ? "list" : null),
+      over:
+        mission?.dataset.missionDrop ?? (contains(list) && point.y > missionsEnd ? "list" : null),
       missions,
       hosts,
       machineLabel,

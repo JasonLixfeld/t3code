@@ -65,6 +65,7 @@ import {
 import { type ChatMessage, DEFAULT_INTERACTION_MODE } from "../../types";
 import { recordPromptSent } from "../GitHubStarPrompt";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { isMissionDraft } from "../sidebar/missionDraftStore";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { readPendingWorkspaceDefault, useNewThreadHandler } from "../../hooks/useHandleNewThread";
@@ -775,7 +776,18 @@ export function useComposerSend(input: ComposerSendInput) {
             isLocalDraftThread,
             isGitRepo,
             branch: activeThreadBranch,
+            isMissionDraft: isMissionDraft(draftId),
           });
+    if (multipleModelBlock === "mission-draft") {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: m(msg("Choose one model to start a mission")),
+          description: m(msg("A mission starts from one thread, so it sends to one model.")),
+        }),
+      );
+      return;
+    }
     if (multipleModelBlock === "server-outdated") {
       setThreadError(
         activeThread.id,

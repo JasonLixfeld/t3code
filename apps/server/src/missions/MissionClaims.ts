@@ -252,6 +252,7 @@ const make = Effect.gen(function* () {
             name: input.name,
             owner,
             generation: yield* generation,
+            previous,
           });
         }),
       );

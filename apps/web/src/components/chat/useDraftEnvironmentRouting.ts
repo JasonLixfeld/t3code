@@ -40,6 +40,7 @@ import { loadBalancingSendWarning } from "./composerSend.logic";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { seedDraftModelSelection } from "../../lib/seedDraftModelSelection";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
+import { isMissionDraft, useMissionDraftPinned } from "../sidebar/missionDraftStore";
 
 interface DraftEnvironmentRoutingInput {
   readonly draftId: DraftId | null;
@@ -87,8 +88,6 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
   const {
     draftId,
     draftThread,
-    envLocked,
-    automaticEnvironment,
     logicalProjectEnvironments,
     environmentById,
     providersByEnvironment,
@@ -102,6 +101,9 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     projectGroupingSettings,
     sendInFlightRef,
   } = input;
+  const machinePinned = useMissionDraftPinned(draftId);
+  const envLocked = input.envLocked || machinePinned;
+  const automaticEnvironment = input.automaticEnvironment && !machinePinned;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const getDraftSession = useComposerDraftStore((store) => store.getDraftSession);
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
@@ -167,6 +169,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       if (
         current.input.draftId !== draftId ||
         !current.input.automaticEnvironment ||
+        isMissionDraft(draftId) ||
         current.input.composerHasAttachments ||
         current.input.activeProjectKey !== activeProjectKey ||
         current.input.selectedProvider !== selectedProvider ||
@@ -394,6 +397,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
   const onEnvironmentChangeStable = useStableCallback(onEnvironmentChange);
 
   return {
+    machinePinned,
     needsLoadBalancing,
     loadBalancing,
     refreshBeforeSend,

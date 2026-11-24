@@ -84,7 +84,10 @@ export function multipleModelSendBlock(input: {
   readonly isLocalDraftThread: boolean;
   readonly isGitRepo: boolean;
   readonly branch: string | null;
-}): "server-outdated" | "needs-new-git-thread" | null {
+  /** A Mission draft becomes one thread, its lead. */
+  readonly isMissionDraft: boolean;
+}): "mission-draft" | "server-outdated" | "needs-new-git-thread" | null {
+  if (input.isMissionDraft) return "mission-draft";
   if (!input.serverSupportsWorktreeBootstrap) return "server-outdated";
   if (
     !input.isLocalDraftThread ||

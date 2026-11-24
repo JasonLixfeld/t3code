@@ -251,6 +251,8 @@ export interface CommandPaletteView {
   readonly addonIcon: ReactNode;
   readonly groups: ReadonlyArray<CommandPaletteGroup>;
   readonly initialQuery?: string;
+  /** A project picked in this view starts or leads a Mission. Leaving the view drops it. */
+  readonly mission?: MissionDraftIntent;
 }
 
 // Child search unmounts the palette; retain search data without its view closures.

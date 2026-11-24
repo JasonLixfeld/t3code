@@ -12841,5 +12841,8 @@
   "80745e2c24369bae": "Ingen tråd här kan leda det",
   "cd8a28f23175f6ed": "Nytt uppdrag",
   "5728e12679f06b4c": "Ny ledande tråd",
-  "525baaf1f7b6e6e8": "Välj en tråd…"
+  "525baaf1f7b6e6e8": "Välj en tråd…",
+  "a7e5c19f0c796aaa": "Välj en modell för att starta ett uppdrag",
+  "9cd2c148429a61ae": "Ett uppdrag börjar med en tråd, så det skickas till en modell.",
+  "ac2fd935331a784e": "Den stannar på den här maskinen och skickas till en modell."
 }

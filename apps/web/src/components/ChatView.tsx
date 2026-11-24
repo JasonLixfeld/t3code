@@ -1921,6 +1921,7 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   const {
+    machinePinned,
     needsLoadBalancing,
     loadBalancing,
     refreshBeforeSend,
@@ -3826,7 +3827,7 @@ export default function ChatView(props: ChatViewProps) {
                                 multipleModelSelections={multipleModelSelections}
                                 supportsMultipleModels={
                                   serverConfig?.environment.capabilities
-                                    .requiredWorktreeBootstrap === true
+                                    .requiredWorktreeBootstrap === true && !machinePinned
                                 }
                                 onMultipleModelSelectionsChange={setMultipleModelSelectionsStable}
                                 composerRef={composerRef}
@@ -4018,7 +4019,7 @@ export default function ChatView(props: ChatViewProps) {
                                   {...(canCheckoutPullRequestIntoThread
                                     ? { onCheckoutPullRequestRequest: openPullRequestDialogStable }
                                     : {})}
-                                  {...(canChangeEnvironment
+                                  {...(canChangeEnvironment && !machinePinned
                                     ? { onEnvironmentChange: onEnvironmentChangeStable }
                                     : {})}
                                   autoEnvironmentLabel={autoEnvironmentLabel}
@@ -4026,7 +4027,8 @@ export default function ChatView(props: ChatViewProps) {
                                     draftId &&
                                     !envLocked &&
                                     canAutoBalanceEnvironments &&
-                                    loadBalancingSettings.loadBalancingEnabled
+                                    loadBalancingSettings.loadBalancingEnabled &&
+                                    !machinePinned
                                       ? onAutoEnvironmentStable
                                       : undefined
                                   }
@@ -4126,11 +4128,12 @@ export default function ChatView(props: ChatViewProps) {
                     draftId &&
                     !envLocked &&
                     canAutoBalanceEnvironments &&
-                    loadBalancingSettings.loadBalancingEnabled
+                    loadBalancingSettings.loadBalancingEnabled &&
+                    !machinePinned
                       ? onAutoEnvironmentStable
                       : undefined
                   }
-                  {...(canChangeEnvironment
+                  {...(canChangeEnvironment && !machinePinned
                     ? { onEnvironmentChange: onEnvironmentChangeStable }
                     : {})}
                   onEnvModeChange={onEnvModeChangeStable}

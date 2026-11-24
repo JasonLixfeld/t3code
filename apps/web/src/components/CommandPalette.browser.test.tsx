@@ -11,7 +11,7 @@ import { removeLocalStorageItem } from "../hooks/useLocalStorage";
 import { makeThreadFixture } from "../test-fixtures";
 import type { Project, Thread } from "../types";
 import { CommandPalette } from "./CommandPalette";
-import { markMissionDraft } from "./sidebar/MissionDrafts";
+import { markMissionDraft } from "./sidebar/missionDraftStore";
 import { DraftId } from "../composerDraftStore";
 
 const entities = vi.hoisted(() => ({
@@ -46,7 +46,7 @@ vi.mock("../hooks/useHandleNewThread", async (original) => {
     }),
   };
 });
-vi.mock("./sidebar/MissionDrafts", { spy: true });
+vi.mock("./sidebar/missionDraftStore", { spy: true });
 vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
   useProjects: () => entities.projects,
@@ -319,6 +319,78 @@ describe("CommandPalette open intents", () => {
         thread: { environmentId: local.environmentId, threadId: created.threadId },
       }),
     );
+  });
+
+  it("offers the copy on the lead's machine of a repository on two machines", async () => {
+    const repository = {
+      canonicalKey: "github.com/acme/web",
+      locator: {
+        source: "git-remote",
+        remoteName: "origin",
+        remoteUrl: "https://github.com/acme/web",
+      },
+      provider: "github",
+      owner: "acme",
+      name: "web",
+      displayName: "acme/web",
+    } as unknown as Project["repositoryIdentity"];
+    const local = { ...makeProject("web"), repositoryIdentity: repository };
+    const remote = {
+      ...local,
+      id: ProjectId.make("web-remote"),
+      environmentId: EnvironmentId.make("remote"),
+    };
+    setup({ projects: [local, remote] });
+    vi.mocked(markMissionDraft).mockClear();
+    const created = { draftId: DraftId.make("lead-draft"), threadId: ThreadId.make("lead-thread") };
+    entities.handleNewThread.mockResolvedValueOnce(created as never);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    const intent = {
+      kind: "lead",
+      host: remote.environmentId,
+      missionId: "ba9876543210",
+      name: "Old work",
+    } as const;
+
+    openCommandPalette({ open: "new-thread-in", mission: intent });
+    await page.getByRole("option", { name: /web/ }).click();
+
+    await vi.waitFor(() =>
+      expect(entities.handleNewThread).toHaveBeenCalledExactlyOnceWith({
+        environmentId: remote.environmentId,
+        projectId: remote.id,
+      }),
+    );
+    expect(markMissionDraft).toHaveBeenCalledExactlyOnceWith(created.draftId, {
+      intent,
+      thread: { environmentId: remote.environmentId, threadId: created.threadId },
+    });
+  });
+
+  it("drops a mission's intent when the picker is left, so New thread in... stays plain", async () => {
+    setup({ projects: [makeProject("web")] });
+    vi.mocked(markMissionDraft).mockClear();
+    entities.handleNewThread.mockResolvedValueOnce({
+      draftId: DraftId.make("plain-draft"),
+      threadId: ThreadId.make("plain-thread"),
+    } as never);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    const intent = {
+      kind: "lead",
+      host: EnvironmentId.make("local"),
+      missionId: "ba9876543210",
+      name: "Old work",
+    } as const;
+
+    openCommandPalette({ open: "new-thread-in", mission: intent });
+    await expect.element(page.getByRole("option", { name: /web/ })).toBeInTheDocument();
+    await expect.element(page.getByPlaceholder("Search...")).toHaveFocus();
+    await userEvent.keyboard("{Backspace}");
+    await page.getByRole("option", { name: /^New thread in\.\.\./ }).click();
+    await page.getByRole("option", { name: /web/ }).click();
+
+    await vi.waitFor(() => expect(entities.handleNewThread).toHaveBeenCalledOnce());
+    expect(markMissionDraft).not.toHaveBeenCalled();
   });
 
   it("numbers filtered New thread in... rows from 1 and jumps to them", async () => {

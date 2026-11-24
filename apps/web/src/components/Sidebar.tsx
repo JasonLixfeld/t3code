@@ -1903,9 +1903,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     point,
     list: threadListRef.current,
     dragged: contextDragKeyRef.current,
+    // From the stream, so selected threads on a folded shelf go too.
     threads: contextDragThreads().flatMap((ref) => {
-      const thread = threadByKeyRef.current.get(scopedThreadKey(ref));
-      return thread === undefined ? [] : [thread];
+      const thread = readThreadShell(ref);
+      return thread === null ? [] : [thread];
     }),
   });
   const pointerOutsideThreadList = (point: { x: number; y: number }) => {
@@ -1919,7 +1920,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (scroll && scroll.viewport.scrollTop !== scroll.top) scroll.viewport.scrollTop = scroll.top;
   };
   const moveThreadContextDrag = (point: { x: number; y: number }) => {
-    if (missionDrop.move(missionDragAt(point))) return true;
+    if (missionDrop.move(missionDragAt(point))) {
+      // A drag from the composer onto a Mission leaves the composer's drop behind.
+      endThreadContextDrag();
+      return true;
+    }
     // Search results cannot reorder, so their context preview starts inside the list.
     const contextDrag = searchResultsListRef.current !== null || pointerOutsideThreadList(point);
     setDragState((current) =>

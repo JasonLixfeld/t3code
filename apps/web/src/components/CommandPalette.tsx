@@ -244,7 +244,7 @@ import {
   useProjectLookups,
   useSortedProjectGroups,
 } from "./CommandPaletteLookups";
-import { markMissionDraft } from "./sidebar/MissionDrafts";
+import { markMissionDraft } from "./sidebar/missionDraftStore";
 import {
   buildNewThreadInProjectItems,
   buildProjectSearchItems,
@@ -316,6 +316,7 @@ function openIntentView(
       return {
         addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
         groups: [{ value: NEW_THREAD_IN_GROUP, label: resolve(msg("Projects")), items: [] }],
+        ...(intent.mission ? { mission: intent.mission } : {}),
       };
     case "change-theme":
       return {
@@ -477,11 +478,6 @@ function OpenCommandPaletteDialog(props: {
   }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
   const missionsEnabled = useClientSettings((settings) => settings.sidebarMissionsEnabled);
-  // A draft made from this session starts or leads a Mission once it is sent.
-  const [missionIntent] = useState(() =>
-    props.openIntent?.kind === "new-thread-in" ? props.openIntent.mission : undefined,
-  );
-  const missionHost = missionIntent?.kind === "lead" ? missionIntent.host : null;
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -567,6 +563,9 @@ function OpenCommandPaletteDialog(props: {
     query: deferredQuery,
   });
   const currentView = viewStack.at(-1)?.view ?? null;
+  // A draft made from this view starts or leads a Mission once it is sent.
+  const missionIntent = currentView?.mission;
+  const missionHost = missionIntent?.kind === "lead" ? missionIntent.host : null;
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
   const [browseGeneration, setBrowseGeneration] = useState(0);
   const [browseNavigation] = useState(createBrowseNavigationCoordinator);
@@ -600,6 +599,8 @@ function OpenCommandPaletteDialog(props: {
   const projectPickerEntries = buildSidebarProjectPickerEntries({
     groups: pickableProjectGroups(projectGroups),
     preferredProjectRef: contextualProjectRef,
+    // A Mission's lead lives on its machine, so only that machine's copies can give one.
+    environmentId: missionHost,
   });
   const pickerProjects = projectPickerEntries.map(({ group, targetProject }) => ({
     ...targetProject,
@@ -906,11 +907,7 @@ function OpenCommandPaletteDialog(props: {
           ? undefined
           : projectPickerEntries.find((entry) => entry.isPreferred);
       const projectItems = buildNewThreadInProjectItems({
-        // A Mission's lead lives on its machine, so only that machine's projects can give one.
-        projects: pickerProjects.filter(
-          (project) =>
-            !isScratch(project) && (missionHost === null || project.environmentId === missionHost),
-        ),
+        projects: pickerProjects.filter((project) => !isScratch(project)),
         currentProjectKey: currentEntry
           ? `${currentEntry.targetProject.environmentId}:${currentEntry.targetProject.id}`
           : null,

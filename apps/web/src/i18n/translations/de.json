@@ -12834,5 +12834,8 @@
   "80745e2c24369bae": "Kein Thread hier kann sie leiten",
   "cd8a28f23175f6ed": "Neue Mission",
   "5728e12679f06b4c": "Neue Leitung",
-  "525baaf1f7b6e6e8": "Thread wählen…"
+  "525baaf1f7b6e6e8": "Thread wählen…",
+  "a7e5c19f0c796aaa": "Wähle ein Modell, um eine Mission zu starten",
+  "9cd2c148429a61ae": "Eine Mission beginnt mit einem Thread und sendet daher an ein Modell.",
+  "ac2fd935331a784e": "Er bleibt auf diesem Rechner und sendet an ein Modell."
 }

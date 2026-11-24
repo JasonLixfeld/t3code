@@ -12834,5 +12834,8 @@
   "80745e2c24369bae": "Aucun fil ici ne peut la diriger",
   "cd8a28f23175f6ed": "Nouvelle mission",
   "5728e12679f06b4c": "Nouveau fil principal",
-  "525baaf1f7b6e6e8": "Choisir un fil…"
+  "525baaf1f7b6e6e8": "Choisir un fil…",
+  "a7e5c19f0c796aaa": "Choisissez un modèle pour démarrer une mission",
+  "9cd2c148429a61ae": "Une mission part d’un seul fil, elle s’envoie donc à un seul modèle.",
+  "ac2fd935331a784e": "Il reste sur cette machine et s’envoie à un seul modèle."
 }

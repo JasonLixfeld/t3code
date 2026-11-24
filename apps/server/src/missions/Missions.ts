@@ -507,8 +507,16 @@ const make = Effect.gen(function* () {
         shell === null || shell.deletedAt !== null
           ? mission.name
           : missionNameFromTitle(shell.title);
-      if (name !== mission.name) yield* store.renameMission(mission.missionId, name);
-      yield* claims.rename(here, { missionId: mission.missionId, name });
+      // A new lead may have taken over since the title was read, and its title wins.
+      const named =
+        name === mission.name
+          ? name
+          : yield* store.renameMission({
+              missionId: mission.missionId,
+              lead: mission.leadThreadId,
+              name,
+            });
+      yield* claims.rename(here, { missionId: mission.missionId, name: named });
     }
   });
 

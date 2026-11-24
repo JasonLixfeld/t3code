@@ -28,6 +28,7 @@ import { useEnvironmentScope } from "../../state/session";
 import {
   useProjects,
   useQuietThreadShell,
+  readThreadShell,
   useQuietThreadShells,
   useServerConfigs,
 } from "../../state/entities";
@@ -218,6 +219,12 @@ async function renderSidebar(
         (thread) => thread.environmentId === target?.environmentId && thread.id === target.threadId,
       ) ?? null,
   );
+  vi.mocked(readThreadShell).mockImplementation(
+    (target) =>
+      listed.find(
+        (thread) => thread.environmentId === target.environmentId && thread.id === target.threadId,
+      ) ?? null,
+  );
   vi.mocked(useServerConfigs).mockReturnValue(
     new Map([
       [
@@ -312,10 +319,13 @@ describe("missions in the sidebar", () => {
   });
 
   it("numbers missions before drafts, in screen order, and skips folded members", async () => {
-    const initial = useComposerDraftStore.getState();
+    const previous = useComposerDraftStore.getState();
     onTestFinished(() => {
-      useComposerDraftStore.setState(initial, true);
+      useComposerDraftStore.setState(previous, true);
     });
+    // Drafts other test files saved in this origin's storage would take numbers too.
+    useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
+    const initial = useComposerDraftStore.getState();
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
     const draftId = DraftId.make("unsent-draft");
     initial.setProjectDraftThreadId(scopeProjectRef(LOCAL, web.id), draftId, {
@@ -596,8 +606,14 @@ function allowDrag(): Disposable {
 }
 
 /** A pointer drag from one element to another, as the sidebar's drag sees it. */
-async function dragBetween(from: HTMLElement, to: HTMLElement) {
-  const center = (element: HTMLElement) => {
+async function dragBetween(
+  from: HTMLElement,
+  to: HTMLElement | { readonly clientX: number; readonly clientY: number },
+) {
+  const center = (
+    element: HTMLElement | { readonly clientX: number; readonly clientY: number },
+  ) => {
+    if (!(element instanceof HTMLElement)) return element;
     const box = element.getBoundingClientRect();
     return { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 };
   };
@@ -619,6 +635,7 @@ async function dragBetween(from: HTMLElement, to: HTMLElement) {
   await act(() => pointer("pointermove", document, { ...start, clientY: start.clientY + 16 }));
   await act(() => pointer("pointermove", document, center(to)));
   return {
+    moveTo: (next: HTMLElement) => act(() => pointer("pointermove", document, center(next))),
     release: async () => {
       await act(() => pointer("pointerup", document, { ...center(to), buttons: 0 }));
       // A drag leaves a guard for its click; the next press clears it.
@@ -685,6 +702,55 @@ describe("dragging threads into and out of missions", () => {
     expect(added.toSorted()).toEqual(["plain", "refused"]);
   });
 
+  it("adds selected threads a folded shelf hides, with the one the drag started on", async () => {
+    using _drag = allowDrag();
+    await using screen = await renderSidebar(
+      {},
+      { extra: [shell("folded", "Old settled bug", { settled: true })] },
+    );
+    await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
+    expect(screen.container.textContent).not.toContain("Old settled bug");
+    useThreadSelectionStore.setState({
+      selectedThreadKeys: new Set(["local:plain", "local:folded"]),
+    });
+    onTestFinished(() => useThreadSelectionStore.setState({ selectedThreadKeys: new Set() }));
+    const drag = await dragBetween(
+      rowOf(screen.container, "Unrelated bug"),
+      rowOf(screen.container, "Plan the v2 release"),
+    );
+    await drag.release();
+    const added = commandFor("mission add member").mock.calls.map(
+      ([call]) => (call as { input: { member: { threadId: string } } }).input.member.threadId,
+    );
+    expect(added.toSorted()).toEqual(["folded", "plain"]);
+  });
+
+  it("clears the composer's drop highlight when the drag moves on onto a mission", async () => {
+    using _drag = allowDrag();
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
+    // The sidebar sits beside the composer.
+    screen.container.style.width = "200px";
+    const composer = document.createElement("div");
+    composer.setAttribute("data-thread-context-drop", "true");
+    Object.assign(composer.style, {
+      position: "fixed",
+      right: "0",
+      top: "0",
+      width: "200px",
+      height: "300px",
+      zIndex: "100",
+    });
+    document.body.append(composer);
+    onTestFinished(() => composer.remove());
+    const drag = await dragBetween(rowOf(screen.container, "Unrelated bug"), composer);
+    expect(composer.hasAttribute("data-thread-context-over")).toBe(true);
+    await drag.moveTo(rowOf(screen.container, "Plan the v2 release"));
+    expect(hintIn(shipArea(screen.container))).toBe("Add to mission");
+    expect(composer.hasAttribute("data-thread-context-over")).toBe(false);
+    await drag.release();
+  });
+
   it("releases a member dragged onto the thread list", async () => {
     using _drag = allowDrag();
     await using screen = await renderSidebar();
@@ -699,6 +765,27 @@ describe("dragging threads into and out of missions", () => {
       environmentId: LOCAL,
       input: { missionId: "0123456789ab", member: ref(LOCAL, "docs") },
     });
+  });
+
+  it("releases only on the thread list, not on the Missions heading or between missions", async () => {
+    using _drag = allowDrag();
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    const heading = screen.container.querySelector<HTMLElement>("h2")!;
+    expect(heading.textContent).toContain("Missions");
+    const [first, second] = [
+      ...screen.container.querySelectorAll<HTMLElement>("[data-mission-drop]"),
+    ].map((area) => area.getBoundingClientRect());
+    const between = {
+      clientX: first!.left + 40,
+      clientY: (first!.bottom + second!.top) / 2,
+    };
+    for (const to of [heading, between]) {
+      const drag = await dragBetween(rowOf(screen.container, "Update the release notes"), to);
+      expect(screen.container.textContent).not.toContain("Release from mission");
+      await drag.release();
+    }
+    expect(commandFor("mission release member")).not.toHaveBeenCalled();
   });
 
   it("does not drag a mission's lead, into another mission or out of its own", async () => {

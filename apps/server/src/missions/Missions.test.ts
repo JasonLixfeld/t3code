@@ -110,23 +110,27 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   const threadsOn = (environmentId: EnvironmentId) =>
     Layer.mock(ThreadManagement.ThreadManagementService)({
       getThreadShell: (threadId) =>
-        Effect.sync(() => {
-          const current = tags.get(keyOf(ref(environmentId, threadId)));
-          const key = keyOf(ref(environmentId, threadId));
-          return (
-            current === undefined
-              ? null
-              : {
-                  id: threadId,
-                  deletedAt: null,
-                  archivedAt: archived.has(key) ? "2026-01-02T00:00:00.000Z" : null,
-                  tags: [...current],
-                  title: titles.get(key) ?? "One",
-                  latestUserMessageAt: empty.has(key) ? null : "2026-01-01T00:00:00.000Z",
-                  visibleItemCount: empty.has(key) ? 0 : 1,
-                }
-          ) as never;
-        }),
+        Effect.suspend(() => world.beforeShellRead(threadId)).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              const current = tags.get(keyOf(ref(environmentId, threadId)));
+              const key = keyOf(ref(environmentId, threadId));
+              return (
+                current === undefined
+                  ? null
+                  : {
+                      id: threadId,
+                      deletedAt: null,
+                      archivedAt: archived.has(key) ? "2026-01-02T00:00:00.000Z" : null,
+                      tags: [...current],
+                      title: titles.get(key) ?? "One",
+                      latestUserMessageAt: empty.has(key) ? null : "2026-01-01T00:00:00.000Z",
+                      visibleItemCount: empty.has(key) ? 0 : 1,
+                    }
+              ) as never;
+            }),
+          ),
+        ),
       dispatch: (command) =>
         Effect.sync(() => {
           if (command.type !== "thread.tag.set") throw new Error(`unexpected ${command.type}`);
@@ -257,6 +261,8 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     afterKnownClaimsRead: Effect.void as Effect.Effect<void>,
     /** Runs once, after the lead has stopped and before it starts again. */
     whileStopped: Effect.void as Effect.Effect<void>,
+    /** Runs before each read of a thread, on any machine. */
+    beforeShellRead: (_threadId: ThreadId): Effect.Effect<void> => Effect.void,
     /** Runs before the lead's next read of its missions; a test holds a snapshot open with it. */
     beforeMissionsRead: Effect.void as Effect.Effect<void>,
     /** Runs before the lead reads the releases it waits on, as an add does under its lock. */
@@ -277,7 +283,9 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
 /** Runs each session on a freshly started lead, over the same files and the same laptop. */
 const withMissions = <A, E>(
   world: ReturnType<typeof makeWorld>,
-  ...sessions: ReadonlyArray<Effect.Effect<A, E, Missions.Missions | Scope.Scope>>
+  ...sessions: ReadonlyArray<
+    Effect.Effect<A, E, Missions.Missions | MissionStore.MissionStore | Scope.Scope>
+  >
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -298,10 +306,10 @@ const withMissions = <A, E>(
                 pendingReleases: Effect.suspend(() => world.beforeReleasesRead).pipe(
                   Effect.andThen(real.pendingReleases),
                 ),
-                renameMission: (missionId, name) =>
+                renameMission: (input) =>
                   real
-                    .renameMission(missionId, name)
-                    .pipe(Effect.andThen(Effect.suspend(() => world.afterMissionRenamed))),
+                    .renameMission(input)
+                    .pipe(Effect.tap(Effect.suspend(() => world.afterMissionRenamed))),
               }),
             ),
           ).pipe(
@@ -327,7 +335,8 @@ const withMissions = <A, E>(
       MissionClaims.MissionClaims,
     );
     const lead = Missions.layer.pipe(
-      Layer.provide(Layer.mergeAll(claimsOn(HERE), world.threadsOn(HERE), world.layer)),
+      Layer.provideMerge(claimsOn(HERE)),
+      Layer.provide(Layer.mergeAll(world.threadsOn(HERE), world.layer)),
     );
     return yield* Effect.forEach(sessions, (session) =>
       Effect.scoped(Effect.provide(session, lead)).pipe(
@@ -590,6 +599,75 @@ it.effect("a member becomes the lead, keeps the others, and the mission takes it
       assert.deepEqual(world.tags(lead), [WAS_TAG]);
       // The laptop's claim stays; its tag takes the new name when the laptop is next asked.
       assert.equal((yield* world.laptop.claims!.list(LEAD_ON_LAPTOP)).length, 1);
+    }),
+  );
+});
+
+it.effect("two new leads asked at once: one wins, and every claim and tag follows it", () => {
+  const [b, c] = [ref(HERE, "b"), ref(HERE, "c")];
+  const world = makeWorld([lead, b, c]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const mission = yield* createOne;
+      // Both read the mission, still led by `lead`, and their thread before either takes a lock.
+      const bothRead = yield* Deferred.make<void>();
+      let reads = 0;
+      world.beforeShellRead = (threadId) => {
+        if (threadId !== b.threadId && threadId !== c.threadId) return Effect.void;
+        reads += 1;
+        if (reads < 2) return Deferred.await(bothRead);
+        world.beforeShellRead = () => Effect.void;
+        return Deferred.succeed(bothRead, undefined);
+      };
+      const asked = yield* Effect.forEach(
+        [b, c],
+        (next) =>
+          missions.setLead({ missionId: mission.missionId, lead: next }).pipe(
+            Effect.result,
+            Effect.map((result) => [next, result] as const),
+          ),
+        { concurrency: "unbounded" },
+      );
+      const won = asked.filter(([, result]) => result._tag === "Success");
+      assert.equal(won.length, 1);
+      const [winner] = won[0]!;
+      const loser = winner === b ? c : b;
+      const [, refused] = asked.find(([next]) => next === loser)!;
+      assert.include(refused._tag === "Failure" ? refused.failure.message : "", "lead changed");
+      const snapshot = yield* listed;
+      assert.deepEqual(membersOf(snapshot.missions[0]), [[keyOf(winner), "active"]]);
+      assert.deepEqual(
+        snapshot.claims.map((claim) => claim.threadId),
+        [winner.threadId],
+      );
+      assert.deepEqual(world.tags(winner), [TAG]);
+      assert.deepEqual(world.tags(loser), []);
+      assert.deepEqual(world.tags(lead), [WAS_TAG]);
+    }),
+  );
+});
+
+it.effect("a title read before a new lead took over does not rename the mission", () => {
+  const fresh = ref(HERE, "fresh");
+  const world = makeWorld([lead, fresh]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const store = yield* MissionStore.MissionStore;
+      const mission = yield* createOne;
+      world.retitle(fresh, "Fresh start");
+      yield* missions.setLead({ missionId: mission.missionId, lead: fresh });
+      // A sweep that read the old lead's title before the swap writes it after.
+      const named = yield* store.renameMission({
+        missionId: mission.missionId,
+        lead: lead.threadId,
+        name: "Old title",
+      });
+      assert.equal(named, "Fresh start");
+      assert.equal((yield* listed).missions[0]?.name, "Fresh start");
     }),
   );
 });

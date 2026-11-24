@@ -106,6 +106,7 @@ describe("multipleModelSendBlock", () => {
     isLocalDraftThread: true,
     isGitRepo: true,
     branch: "main",
+    isMissionDraft: false,
   };
 
   it("lets a new Git draft with a branch and models start", () => {
@@ -129,6 +130,16 @@ describe("multipleModelSendBlock", () => {
     { selectionCount: 0 },
   ])("needs a new Git thread with a branch and models (%o)", (override) => {
     expect(multipleModelSendBlock({ ...ready, ...override })).toBe("needs-new-git-thread");
+  });
+
+  it("keeps a mission draft to one model, so its one thread leads the mission", () => {
+    expect(
+      multipleModelSendBlock({
+        ...ready,
+        isMissionDraft: true,
+        serverSupportsWorktreeBootstrap: false,
+      }),
+    ).toBe("mission-draft");
   });
 });
 

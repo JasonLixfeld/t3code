@@ -1,13 +1,16 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { useSyncExternalStore } from "react";
-import { expect, it, vi } from "vite-plus/test";
+import { expect, it, onTestFinished, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
 import { DraftId } from "../../composerDraftStore";
 import { useThreadShell } from "../../state/entities";
 import { makeThreadFixture } from "../../test-fixtures";
-import { markMissionDraft, MissionDraftCoordinator, useMissionDraftBanner } from "./MissionDrafts";
+import { toastManager } from "../ui/toast";
+import { markMissionDraft } from "./missionDraftStore";
+import { MissionDraftCoordinator, useMissionDraftBanner } from "./MissionDrafts";
 
 const LOCAL = EnvironmentId.make("local");
 const thread = { environmentId: LOCAL, threadId: ThreadId.make("draft-thread") };
@@ -93,7 +96,9 @@ it("starts a mission only once the draft's first message lands, led by that thre
       input: { missionId: expect.stringMatching(/^[0-9a-f]{12}$/), leadThreadId: thread.threadId },
     }),
   );
-  expect(screen.container.textContent).not.toContain("Sending starts a mission");
+  await vi.waitFor(() =>
+    expect(screen.container.textContent).not.toContain("Sending starts a mission"),
+  );
   await screen.stream("sent");
   expect(commandFor("mission create")).toHaveBeenCalledTimes(1);
 });
@@ -127,5 +132,28 @@ it("makes a new-lead draft the mission's lead once it is sent", async () => {
       environmentId: LOCAL,
       input: { missionId: "ba9876543210", lead: thread },
     }),
+  );
+});
+
+it("keeps the mission until the server has it, and tries again with the same id", async () => {
+  const draftId = DraftId.make("retry-draft");
+  await using screen = await renderDraft(draftId);
+  const toasts = vi.spyOn(toastManager, "add");
+  onTestFinished(() => toasts.mockRestore());
+  const create = commandFor("mission create");
+  create.mockResolvedValueOnce({ _tag: "Failure", cause: Cause.fail(new Error("Server busy")) });
+  await act(() => markMissionDraft(draftId, { intent: { kind: "new" }, thread }));
+  await screen.stream("sent");
+  await vi.waitFor(() => expect(toasts).toHaveBeenCalledOnce());
+  expect(screen.container.textContent).toContain("Sending starts a mission");
+  const retry = (toasts.mock.calls[0]![0] as { actionProps: { onClick: () => void } }).actionProps;
+  await act(() => retry.onClick());
+  await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+  const [first, second] = create.mock.calls.map(
+    ([call]) => (call as { input: { missionId: string } }).input.missionId,
+  );
+  expect(second).toBe(first);
+  await vi.waitFor(() =>
+    expect(screen.container.textContent).not.toContain("Sending starts a mission"),
   );
 });

@@ -12843,5 +12843,8 @@
   "80745e2c24369bae": "No thread here can lead it",
   "cd8a28f23175f6ed": "New mission",
   "5728e12679f06b4c": "New lead",
-  "525baaf1f7b6e6e8": "Choose a thread…"
+  "525baaf1f7b6e6e8": "Choose a thread…",
+  "a7e5c19f0c796aaa": "Choose one model to start a mission",
+  "9cd2c148429a61ae": "A mission starts from one thread, so it sends to one model.",
+  "ac2fd935331a784e": "It stays on this machine and sends to one model."
 }
