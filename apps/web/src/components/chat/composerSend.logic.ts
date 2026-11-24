@@ -1,4 +1,9 @@
-import type { EnvironmentId, ThreadContextRecord } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ScopedThreadRef,
+  ThreadContextRecord,
+  ThreadId,
+} from "@t3tools/contracts";
 import { msg } from "gt-react";
 import { m, type MessageResolver } from "../../i18n/messages";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
@@ -98,6 +103,20 @@ export function multipleModelSendBlock(input: {
     return "needs-new-git-thread";
   }
   return null;
+}
+
+/**
+ * A Mission draft waits for its own thread on its Mission's machine. Sent as any other, it would
+ * start nothing, so the send is refused while the draft is elsewhere.
+ */
+export function missionDraftMoved(
+  pinned: ScopedThreadRef | undefined,
+  sending: { readonly environmentId: EnvironmentId; readonly id: ThreadId },
+): boolean {
+  return (
+    pinned !== undefined &&
+    (pinned.environmentId !== sending.environmentId || pinned.threadId !== sending.id)
+  );
 }
 
 /** Why a message sent over pending approvals did not go out, or null to stop quietly. */

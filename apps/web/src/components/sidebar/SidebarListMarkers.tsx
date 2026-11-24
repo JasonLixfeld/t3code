@@ -45,6 +45,21 @@ function SortableSidebarMarker(props: {
   );
 }
 
+const DROP_ZONE_CLASS =
+  "flex h-9 items-center justify-center rounded-md border border-dashed border-sidebar-foreground/25 text-xs text-sidebar-foreground/80";
+const DROP_ZONE_TARGET_CLASS = "border-primary/40 bg-primary/5 text-primary";
+
+/** Where a Mission member is let go of its Mission, drawn as a shelf's drop zone is. */
+export function SidebarReleaseZone(props: { label: string; isDropTarget: boolean }) {
+  return (
+    <li className="mx-0.5 list-none py-1" data-mission-release="">
+      <div className={cn(DROP_ZONE_CLASS, props.isDropTarget && DROP_ZONE_TARGET_CLASS)}>
+        {props.label}
+      </div>
+    </li>
+  );
+}
+
 export function SidebarSectionPlaceholder(props: {
   marker: "active-placeholder" | "settled-placeholder";
   label: string;
@@ -64,8 +79,9 @@ export function SidebarSectionPlaceholder(props: {
       {props.showHint ? (
         <div
           className={cn(
-            "absolute inset-x-0 top-0 flex h-9 items-center justify-center rounded-md border border-dashed border-sidebar-foreground/25 text-xs text-sidebar-foreground/80",
-            props.isDropTarget && "border-primary/40 bg-primary/5 text-primary",
+            "absolute inset-x-0 top-0",
+            DROP_ZONE_CLASS,
+            props.isDropTarget && DROP_ZONE_TARGET_CLASS,
           )}
         >
           {props.label}
@@ -151,25 +167,12 @@ export function SidebarHeading(props: {
   children: ReactNode;
   /** A button at the end of the row. */
   action?: ReactNode;
-  /** Drawn as a drag boundary is while a drop there would land. */
-  isDropTarget?: boolean;
 }) {
   return (
     <li className="mx-0.5 flex list-none items-center">
-      <h2
-        className={cn(
-          "flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-xs font-medium",
-          props.isDropTarget ? "text-primary" : "text-sidebar-muted-foreground",
-        )}
-      >
+      <h2 className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-xs font-medium text-sidebar-muted-foreground">
         <span className="min-w-0 truncate">{props.children}</span>
-        <span
-          aria-hidden
-          className={cn(
-            "h-px min-w-2 flex-1",
-            props.isDropTarget ? "bg-primary/50" : "bg-sidebar-border/50",
-          )}
-        />
+        <span aria-hidden className="h-px min-w-2 flex-1 bg-sidebar-border/50" />
       </h2>
       {props.action}
     </li>

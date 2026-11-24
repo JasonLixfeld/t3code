@@ -280,6 +280,7 @@ import {
   useSidebarDrafts,
 } from "./sidebar/SidebarDraftBlock";
 import {
+  NewMissionButton,
   SidebarMissions,
   useMissionHosts,
   useMissionDrop,
@@ -299,6 +300,7 @@ import {
 } from "./sidebar/SidebarProjectFolderHeader";
 import {
   SidebarDragBoundary,
+  SidebarReleaseZone,
   SidebarSectionHeader,
   SidebarSectionPlaceholder,
   SidebarHeading,
@@ -1026,6 +1028,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const missionMenu = useMissionMenu();
   const missionHosts = useMissionHosts();
   const missionsHeaderVisible = useClientSettings((s) => s.sidebarMissionsHeaderVisible);
+  const missionsEnabled = useClientSettings((s) => s.sidebarMissionsEnabled);
+  // The Missions heading shows while Missions is on, even before the first one.
+  const missionsHeadingShown = missionsEnabled && missionsHeaderVisible;
   const threadsHeaderVisible = useClientSettings((s) => s.sidebarThreadsHeaderVisible);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
@@ -1903,6 +1908,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     point,
     list: threadListRef.current,
     dragged: contextDragKeyRef.current,
+    refs: contextDragThreads(),
     // From the stream, so selected threads on a folded shelf go too.
     threads: contextDragThreads().flatMap((ref) => {
       const thread = readThreadShell(ref);
@@ -3429,6 +3435,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               newThreadDisabled={projects.length === 0}
               newThreadShortcutLabel={newThreadShortcutLabel}
               newThreadInProjectShortcutLabel={newThreadInProjectShortcutLabel}
+              {...(missionsEnabled && !missionsHeaderVisible
+                ? { newMission: <NewMissionButton /> }
+                : {})}
               showNewThreadInProjectHint={
                 !shouldCreateNewThreadInCurrentProject(
                   false,
@@ -3746,7 +3755,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           />
                         );
                       };
-                      const from = isContextDrag ? null : (dragState?.activeSection ?? null);
+                      // A Mission member drags only out of its Mission, so no section boundary shows.
+                      const memberDrag =
+                        dragState !== null && missionDraggableKeys.has(dragState.activeKey);
+                      const from =
+                        isContextDrag || memberDrag ? null : (dragState?.activeSection ?? null);
                       const items: ReactNode[] = [
                         <SidebarMissions
                           key="missions"
@@ -3773,11 +3786,22 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           onOpenThread={navigateToThread}
                           dropTarget={missionDrop.target}
                         />,
-                        missionDrop.target?.kind === "release" ? (
-                          <SidebarHeading key="threads-heading" isDropTarget>
-                            {missionDrop.target.refusal ?? gt("Release from mission")}
-                          </SidebarHeading>
-                        ) : threadsHeaderVisible && missions.length > 0 ? (
+                        // A member drags out of its Mission only onto this zone, below them all.
+                        memberDrag ? (
+                          <SidebarReleaseZone
+                            key="mission-release"
+                            label={
+                              (missionDrop.target?.kind === "release"
+                                ? missionDrop.target.refusal
+                                : null) ?? gt("Release from mission")
+                            }
+                            isDropTarget={
+                              missionDrop.target?.kind === "release" &&
+                              missionDrop.target.refusal === null
+                            }
+                          />
+                        ) : null,
+                        threadsHeaderVisible && (missions.length > 0 || missionsHeadingShown) ? (
                           <SidebarHeading key="threads-heading">
                             {gt("Threads", { $context: "sidebar section" })}
                           </SidebarHeading>

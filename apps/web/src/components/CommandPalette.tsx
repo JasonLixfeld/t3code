@@ -67,7 +67,6 @@ import {
   ChevronRightIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
-  FlagIcon,
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
@@ -1404,7 +1403,7 @@ function OpenCommandPaletteDialog(props: {
         value: "action:new-mission",
         searchTerms: ["new mission", "mission", "lead", "orchestrate"],
         title: gt("New mission..."),
-        icon: <FlagIcon className={ITEM_ICON_CLASS} />,
+        icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
         keepOpen: true,
         run: async () =>
           dispatchCommandPalette({ _tag: "OpenNewThreadIn", mission: { kind: "new" } }),

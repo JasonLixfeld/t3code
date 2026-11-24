@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import type { EnvironmentId, ProjectId, RuntimeMode } from "@t3tools/contracts";
 
 const testState = vi.hoisted(() => {
@@ -21,6 +21,7 @@ const testState = vi.hoisted(() => {
   let storedDraft: {
     readonly draftId: string;
     readonly environmentId: string;
+    readonly projectId?: string;
     readonly promotedTo: null;
     readonly threadId: string;
   } | null = null;
@@ -261,6 +262,7 @@ vi.mock("../uiStateStore", () => ({
 }));
 vi.mock("./useSettings", () => ({ getClientSettings: () => ({}) }));
 
+import { clearMissionDraft, markMissionDraft } from "../components/sidebar/missionDraftStore";
 import {
   readPendingWorkspaceDefault,
   resolveDefaultProjectRef,
@@ -390,6 +392,53 @@ describe("useNewThreadHandler", () => {
 
     expect(opened).toEqual({ draftId: "draft-delayed", threadId: "thread-delayed" });
     expect(testState.router.navigate).toHaveBeenCalledOnce();
+  });
+});
+
+describe("a Mission draft", () => {
+  const remote = { environmentId: "environment-ssh", projectId: "project-remote" } as never;
+  const markDraft = (draftId: string, environmentId: string) => {
+    markMissionDraft(draftId as never, {
+      intent: { kind: "new" },
+      thread: { environmentId, threadId: "thread-marked" } as never,
+    });
+    onTestFinished(() => clearMissionDraft(draftId as never));
+  };
+
+  it("is not reused for the same project's copy on another machine", async () => {
+    const marked = {
+      draftId: "draft-marked",
+      environmentId: "environment-primary",
+      projectId: "project-primary",
+      promotedTo: null,
+      threadId: "thread-marked",
+    };
+    testState.reset(marked);
+    markDraft("draft-marked", "environment-primary");
+    const opened = await useNewThreadHandler()(remote);
+    expect(opened).toEqual({ draftId: "draft-delayed", threadId: "thread-delayed" });
+  });
+
+  it("is not reused when it is the open draft and another copy is asked for", async () => {
+    testState.reset(null);
+    testState.openEmptyDraft("draft-open");
+    markDraft("draft-open", "environment-primary");
+    const opened = await useNewThreadHandler()(remote);
+    expect(opened?.draftId).toBe("draft-delayed");
+  });
+
+  it("is reused for its own project on its own machine", async () => {
+    const marked = {
+      draftId: "draft-marked",
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+      promotedTo: null,
+      threadId: "thread-marked",
+    };
+    testState.reset(marked);
+    markDraft("draft-marked", "environment-ssh");
+    const opened = await useNewThreadHandler()(remote);
+    expect(opened?.draftId).toBe("draft-marked");
   });
 });
 

@@ -9,6 +9,7 @@ import {
   approvalRedirectNotice,
   composerDraftContentChanged,
   loadBalancingSendWarning,
+  missionDraftMoved,
   multipleModelSendBlock,
   referencedThreadContexts,
 } from "./composerSend.logic";
@@ -140,6 +141,31 @@ describe("multipleModelSendBlock", () => {
         serverSupportsWorktreeBootstrap: false,
       }),
     ).toBe("mission-draft");
+  });
+});
+
+describe("missionDraftMoved", () => {
+  const pinned = {
+    environmentId: EnvironmentId.make("lead-machine"),
+    threadId: ThreadId.make("t"),
+  };
+
+  it("refuses a Mission draft sent from another machine or as another thread", () => {
+    expect(
+      missionDraftMoved(pinned, { environmentId: pinned.environmentId, id: pinned.threadId }),
+    ).toBe(false);
+    expect(
+      missionDraftMoved(pinned, {
+        environmentId: EnvironmentId.make("other"),
+        id: pinned.threadId,
+      }),
+    ).toBe(true);
+    expect(
+      missionDraftMoved(pinned, { environmentId: pinned.environmentId, id: ThreadId.make("u") }),
+    ).toBe(true);
+    expect(
+      missionDraftMoved(undefined, { environmentId: pinned.environmentId, id: pinned.threadId }),
+    ).toBe(false);
   });
 });
 

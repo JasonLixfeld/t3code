@@ -6,8 +6,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import type { EnvironmentId, MissionMember, ScopedThreadRef } from "@t3tools/contracts";
-import * as SecureRandom from "effect/crypto/SecureRandom";
+import type { EnvironmentId, MissionMember, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon, PlusIcon, XIcon } from "lucide-react";
 import {
@@ -35,7 +34,12 @@ import { useStableCallback } from "../../hooks/useStableCallback";
 import { useEnvironmentIdentities, useConnectedEnvironmentIds } from "../../state/environments";
 import { openCommandPalette } from "../../commandPaletteBus";
 import { contextMenuSourceOf } from "../../contextMenuSource";
-import { useProject, useQuietThreadShell, useQuietThreadShells } from "../../state/entities";
+import {
+  readThreadShell,
+  useProject,
+  useQuietThreadShell,
+  useQuietThreadShells,
+} from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { threadFamilies } from "../../state/threads";
@@ -54,6 +58,7 @@ import {
   type MissionHost,
   resolveMissionDrop,
   type MissionMenuId,
+  newMissionId,
   parseMissionTarget,
   type SidebarMission,
   type SidebarMissionEntry,
@@ -87,6 +92,29 @@ function useMachineLabel(hosts: ReadonlyArray<MissionHost>) {
 function failureMessage(result: AtomCommandResult<unknown, unknown>): string | null {
   if (result._tag !== "Failure") return null;
   return thrownErrorMessage(squashAtomCommandFailure(result), m) ?? m(msg("An error occurred."));
+}
+
+/** Another ask gave the Mission a new lead first, so asking again cannot help. */
+function leadChanged(result: AtomCommandResult<unknown, unknown>): boolean {
+  if (result._tag !== "Failure") return false;
+  const error = squashAtomCommandFailure(result) as { readonly reason?: unknown } | null;
+  return error?.reason === "lead-changed";
+}
+
+/** Reports a new-lead ask. A lead that changed first is said plainly and offers no retry. */
+export function reportLeadOutcome(
+  result: AtomCommandResult<unknown, unknown>,
+  retry?: () => void,
+): "done" | "lead-changed" | "failed" {
+  if (result._tag === "Success") return "done";
+  if (leadChanged(result)) {
+    toastManager.add(
+      stackedThreadToast({ type: "warning", title: m(msg("This mission already has a new lead")) }),
+    );
+    return "lead-changed";
+  }
+  reportFailure(m(msg("Could not make this thread the lead")), result, retry);
+  return "failed";
 }
 
 export function reportFailure(
@@ -138,6 +166,8 @@ export function useMissionMenu() {
     run: async (
       id: MissionMenuId,
       threads: ReadonlyArray<ScopedThreadRef>,
+      /** Why some threads of the batch were refused before any was sent, for its one line. */
+      refusedFirst: ReadonlyArray<string> = [],
     ): Promise<ReadonlyArray<ScopedThreadRef>> => {
       const lead = threads[0];
       if (id === "mission-start" && lead !== undefined) {
@@ -183,7 +213,10 @@ export function useMissionMenu() {
           }),
         ),
       );
-      const summary = missionAddSummary(outcome, resolve);
+      const summary = missionAddSummary(
+        { ...outcome, refused: [...refusedFirst, ...outcome.refused] },
+        resolve,
+      );
       if (summary !== null) toastManager.add(stackedThreadToast({ type: "error", title: summary }));
       return outcome.added;
     },
@@ -191,7 +224,6 @@ export function useMissionMenu() {
 }
 
 /** Twelve hex digits, as Mission ids in tags are. */
-export const newMissionId = () => SecureRandom.uuidV4Unsafe().replaceAll("-", "").slice(0, 12);
 
 function MemberRow(props: {
   readonly host: EnvironmentId;
@@ -357,6 +389,7 @@ function MemberRow(props: {
           host={props.host}
           missionId={props.missionId}
           missionName={props.missionName}
+          expectedLead={props.member.ref.threadId}
           hosts={props.hosts ?? []}
         />
       ) : null}
@@ -369,6 +402,8 @@ function MissingLeadActions(props: {
   readonly host: EnvironmentId;
   readonly missionId: string;
   readonly missionName: string;
+  /** The missing lead, which is the only one a new lead may replace. */
+  readonly expectedLead: ThreadId;
   readonly hosts: ReadonlyArray<MissionHost>;
 }) {
   const gt = useGT();
@@ -384,6 +419,7 @@ function MissingLeadActions(props: {
         host: props.host,
         missionId: props.missionId,
         name: props.missionName,
+        expectedLead: props.expectedLead,
       },
     });
   const chooseLead = async (event: ReactMouseEvent) => {
@@ -401,13 +437,13 @@ function MissingLeadActions(props: {
     );
     const lead = candidates.find((candidate) => candidate.id === picked);
     if (lead === undefined) return;
-    reportFailure(
-      gt("Could not make this thread the lead"),
+    reportLeadOutcome(
       await setLead({
         environmentId: props.host,
         input: {
           missionId: props.missionId,
           lead: { environmentId: lead.environmentId, threadId: lead.id },
+          expectedLead: props.expectedLead,
         },
       }),
     );
@@ -429,6 +465,35 @@ function MissingLeadActions(props: {
   );
 }
 
+/** How long a thread the lists left out may take to read in before it counts as not loaded. */
+const LOAD_WAIT_MS = 10_000;
+
+/** A thread's shell, read in through its family when the lists left it out. */
+async function loadThreadShell(ref: ScopedThreadRef): Promise<EnvironmentThreadShell | null> {
+  const known = readThreadShell(ref);
+  if (known !== null) return known;
+  const release = threadFamilies.mount(appAtomRegistry, ref.environmentId, ref.threadId);
+  const family = threadFamilies.familyAtom(ref.environmentId, ref.threadId);
+  const answered = () => threadFamilyRead(appAtomRegistry.get(family)) !== "pending";
+  try {
+    await new Promise<void>((resolve) => {
+      if (answered()) return resolve();
+      const stop = appAtomRegistry.subscribe(family, () => {
+        if (!answered()) return;
+        stop();
+        resolve();
+      });
+      setTimeout(() => {
+        stop();
+        resolve();
+      }, LOAD_WAIT_MS);
+    });
+    return readThreadShell(ref);
+  } finally {
+    release();
+  }
+}
+
 /** How many threads "Choose a thread…" offers, most recently written first. */
 const LEAD_CHOICES = 20;
 
@@ -436,6 +501,19 @@ const LEAD_CHOICES = 20;
  * The Missions above the thread list. Each lead's own thread row heads its Mission, and its
  * members' rows sit under it. A row this client has no thread for keeps the Mission's own row.
  */
+/** Starts a Mission: a project pick, then a draft that leads it once sent. */
+export function NewMissionButton() {
+  const gt = useGT();
+  return (
+    <SidebarHeaderIconButton
+      label={gt("New mission")}
+      onClick={() => openCommandPalette({ open: "new-thread-in", mission: { kind: "new" } })}
+    >
+      <PlusIcon />
+    </SidebarHeaderIconButton>
+  );
+}
+
 export function SidebarMissions(props: {
   readonly missions: ReadonlyArray<SidebarMission<EnvironmentThreadShell>>;
   readonly headerVisible: boolean;
@@ -454,7 +532,9 @@ export function SidebarMissions(props: {
   const machineLabel = useMachineLabel(hosts);
   const missionExpandedById = useUiStateStore((state) => state.missionExpandedById);
   const setMissionExpanded = useUiStateStore((state) => state.setMissionExpanded);
-  if (props.missions.length === 0) return null;
+  const enabled = useClientSettings((settings) => settings.sidebarMissionsEnabled);
+  // With none yet, the heading alone offers the first; without it, the sidebar header does.
+  if (!enabled || (props.missions.length === 0 && !props.headerVisible)) return null;
   const row = (
     mission: SidebarMission<EnvironmentThreadShell>,
     entry: SidebarMission<EnvironmentThreadShell>["lead"],
@@ -497,18 +577,7 @@ export function SidebarMissions(props: {
   return (
     <>
       {props.headerVisible ? (
-        <SidebarHeading
-          action={
-            <SidebarHeaderIconButton
-              label={gt("New mission")}
-              onClick={() =>
-                openCommandPalette({ open: "new-thread-in", mission: { kind: "new" } })
-              }
-            >
-              <PlusIcon />
-            </SidebarHeaderIconButton>
-          }
-        >
+        <SidebarHeading action={<NewMissionButton />}>
           {gt("Missions", { $context: "sidebar section" })}
         </SidebarHeading>
       ) : null}
@@ -659,7 +728,23 @@ export function useMissionDrop(missions: ReadonlyArray<SidebarMission<Environmen
     readonly list: HTMLElement | null;
     readonly dragged: string | null;
     /** The dragged threads: the selection, when the drag started on a selected row. */
+    readonly refs: ReadonlyArray<ScopedThreadRef>;
+    /** Those the lists hold. */
     readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  };
+  // Selected threads the lists left out, as older settled pages not read yet, are read in first.
+  const add = async (id: MissionMenuId, refs: ReadonlyArray<ScopedThreadRef>) => {
+    const read = await Promise.all(
+      refs.map(async (ref) => [ref, await loadThreadShell(ref)] as const),
+    );
+    const notLoaded = read
+      .filter(([, shell]) => shell === null)
+      .map(() => resolve(msg("Not loaded.")));
+    await menu.run(
+      id,
+      read.flatMap(([ref, shell]) => (shell === null ? [] : [ref])),
+      notLoaded,
+    );
   };
   const dropAt = ({ point, list, dragged, threads }: At) => {
     if (list === null || dragged === null || missions.length === 0) return null;
@@ -669,15 +754,15 @@ export function useMissionDrop(missions: ReadonlyArray<SidebarMission<Environmen
         point.x >= box.left && point.x <= box.right && point.y >= box.top && point.y <= box.bottom
       );
     };
-    const areas = [...list.querySelectorAll<HTMLElement>("[data-mission-drop]")];
-    const mission = areas.find(contains);
-    // Only the threads below every Mission release one: not the Missions heading or a gap.
-    const missionsEnd = Math.max(...areas.map((area) => area.getBoundingClientRect().bottom));
+    // Only what shows counts: the list scrolls behind the sidebar's header and footer.
+    const viewport = list.closest<HTMLElement>("[data-slot=scroll-area-viewport]");
+    if (viewport !== null && !contains(viewport)) return null;
+    const mission = [...list.querySelectorAll<HTMLElement>("[data-mission-drop]")].find(contains);
+    const release = list.querySelector<HTMLElement>("[data-mission-release]");
     return resolveMissionDrop({
       dragged,
       threads,
-      over:
-        mission?.dataset.missionDrop ?? (contains(list) && point.y > missionsEnd ? "list" : null),
+      over: mission?.dataset.missionDrop ?? (release !== null && contains(release) ? "list" : null),
       missions,
       hosts,
       machineLabel,
@@ -699,11 +784,11 @@ export function useMissionDrop(missions: ReadonlyArray<SidebarMission<Environmen
       const next = dropAt(at);
       show(null);
       if (next === null) return false;
-      if (next.refusal === null) {
-        const refs = at.threads
-          .map((thread) => scopeThreadRef(thread.environmentId, thread.id))
-          .filter((ref) => next.kind === "add" || scopedThreadKey(ref) === at.dragged);
-        void menu.run(`mission-${next.kind}:${next.host}:${next.missionId}`, refs);
+      if (next.refusal === null && next.kind === "add") {
+        void add(`mission-add:${next.host}:${next.missionId}`, at.refs);
+      } else if (next.refusal === null) {
+        const dragged = at.refs.filter((ref) => scopedThreadKey(ref) === at.dragged);
+        void menu.run(`mission-release:${next.host}:${next.missionId}`, dragged);
       }
       return true;
     }),

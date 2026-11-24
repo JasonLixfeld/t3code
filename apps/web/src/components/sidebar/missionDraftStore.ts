@@ -1,13 +1,20 @@
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 
 import type { DraftId } from "../../composerDraftStore";
-import type { MissionDraftIntent } from "./missions.logic";
+import { type MissionDraftIntent, newMissionId } from "./missions.logic";
 
 export interface MissionDraft {
   readonly intent: MissionDraftIntent;
-  /** The thread the draft becomes when it is sent. */
+  /** The thread the draft becomes when it is sent, on the machine the draft is pinned to. */
   readonly thread: ScopedThreadRef;
+  /** Every try uses this id, so a try whose answer was lost is not doubled. */
+  readonly missionId: string;
+  /**
+   * `waiting` until the first message lands, which starts the one automatic try. After a
+   * failure only the user's "Try again" sets it back to `waiting`.
+   */
+  readonly step: "waiting" | "trying" | "failed";
 }
 
 /**
@@ -15,31 +22,57 @@ export interface MissionDraft {
  * abandoned draft leaves nothing behind. Kept for this session only.
  */
 export const useMissionDrafts = create<{ readonly drafts: ReadonlyMap<DraftId, MissionDraft> }>(
-  () => ({
-    drafts: new Map(),
-  }),
+  () => ({ drafts: new Map() }),
 );
 
-export function markMissionDraft(draftId: DraftId, draft: MissionDraft) {
-  useMissionDrafts.setState(({ drafts }) => ({ drafts: new Map(drafts).set(draftId, draft) }));
+const update = (change: (drafts: Map<DraftId, MissionDraft>) => void) =>
+  useMissionDrafts.setState(({ drafts }) => {
+    const next = new Map(drafts);
+    change(next);
+    return { drafts: next };
+  });
+
+export function markMissionDraft(draftId: DraftId, draft: Pick<MissionDraft, "intent" | "thread">) {
+  const missionId = draft.intent.kind === "lead" ? draft.intent.missionId : newMissionId();
+  update((drafts) => drafts.set(draftId, { ...draft, missionId, step: "waiting" }));
 }
 
-/**
- * A Mission draft stays on the machine it was opened on, as one thread: it starts its Mission
- * there, or leads one that lives there.
- */
+export function missionDraftOf(draftId: DraftId | null): MissionDraft | undefined {
+  return draftId === null ? undefined : useMissionDrafts.getState().drafts.get(draftId);
+}
+
+/** The machine a Mission draft is pinned to: it starts its Mission there, or leads one there. */
+export function useMissionDraftMachine(draftId: DraftId | null): EnvironmentId | null {
+  return useMissionDrafts((state) =>
+    draftId === null ? null : (state.drafts.get(draftId)?.thread.environmentId ?? null),
+  );
+}
+
 export function useMissionDraftPinned(draftId: DraftId | null): boolean {
-  return useMissionDrafts((state) => draftId !== null && state.drafts.has(draftId));
+  return useMissionDraftMachine(draftId) !== null;
 }
 
 export function isMissionDraft(draftId: DraftId | null): boolean {
-  return draftId !== null && useMissionDrafts.getState().drafts.has(draftId);
+  return missionDraftOf(draftId) !== undefined;
+}
+
+export function setMissionDraftStep(draftId: DraftId, step: MissionDraft["step"]) {
+  update((drafts) => {
+    const draft = drafts.get(draftId);
+    if (draft !== undefined) drafts.set(draftId, { ...draft, step });
+  });
+}
+
+/** The Mission follows the user to another draft on the same machine, as a project pick makes. */
+export function moveMissionDraft(from: DraftId, to: DraftId, thread: ScopedThreadRef) {
+  update((drafts) => {
+    const draft = drafts.get(from);
+    if (draft === undefined || from === to) return;
+    drafts.delete(from);
+    drafts.set(to, { ...draft, thread });
+  });
 }
 
 export function clearMissionDraft(draftId: DraftId) {
-  useMissionDrafts.setState(({ drafts }) => {
-    const next = new Map(drafts);
-    next.delete(draftId);
-    return { drafts: next };
-  });
+  update((drafts) => drafts.delete(draftId));
 }

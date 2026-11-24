@@ -12844,5 +12844,9 @@
   "525baaf1f7b6e6e8": "Välj en tråd…",
   "a7e5c19f0c796aaa": "Välj en modell för att starta ett uppdrag",
   "9cd2c148429a61ae": "Ett uppdrag börjar med en tråd, så det skickas till en modell.",
-  "ac2fd935331a784e": "Den stannar på den här maskinen och skickas till en modell."
+  "ac2fd935331a784e": "Den stannar på den här maskinen och skickas till en modell.",
+  "02c5972468338659": "Det här utkastet lämnade sitt uppdrags maskin",
+  "86a6437dc189ea6a": "Flytta tillbaka det för att skicka, eller skicka det som en vanlig tråd.",
+  "5b03d7d90b62dd82": "Det här uppdraget har redan en ny ledande tråd",
+  "33e8e07ab6191f5b": "Inte inläst."
 }

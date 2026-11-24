@@ -12837,5 +12837,9 @@
   "525baaf1f7b6e6e8": "Choisir un fil…",
   "a7e5c19f0c796aaa": "Choisissez un modèle pour démarrer une mission",
   "9cd2c148429a61ae": "Une mission part d’un seul fil, elle s’envoie donc à un seul modèle.",
-  "ac2fd935331a784e": "Il reste sur cette machine et s’envoie à un seul modèle."
+  "ac2fd935331a784e": "Il reste sur cette machine et s’envoie à un seul modèle.",
+  "02c5972468338659": "Ce brouillon a quitté la machine de sa mission",
+  "86a6437dc189ea6a": "Remettez-le en place pour l’envoyer, ou envoyez-le comme fil normal.",
+  "5b03d7d90b62dd82": "Cette mission a déjà un nouveau fil principal",
+  "33e8e07ab6191f5b": "Non chargé."
 }

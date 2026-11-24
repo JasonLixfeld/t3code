@@ -306,6 +306,7 @@ describe("CommandPalette open intents", () => {
       host: local.environmentId,
       missionId: "ba9876543210",
       name: "Old work",
+      expectedLead: ThreadId.make("deleted-lead"),
     } as const;
 
     openCommandPalette({ open: "new-thread-in", mission: intent });
@@ -350,6 +351,7 @@ describe("CommandPalette open intents", () => {
       host: remote.environmentId,
       missionId: "ba9876543210",
       name: "Old work",
+      expectedLead: ThreadId.make("deleted-lead"),
     } as const;
 
     openCommandPalette({ open: "new-thread-in", mission: intent });
@@ -380,6 +382,7 @@ describe("CommandPalette open intents", () => {
       host: EnvironmentId.make("local"),
       missionId: "ba9876543210",
       name: "Old work",
+      expectedLead: ThreadId.make("deleted-lead"),
     } as const;
 
     openCommandPalette({ open: "new-thread-in", mission: intent });

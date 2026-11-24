@@ -67,11 +67,13 @@ export class Missions extends Context.Service<
     }) => Effect.Effect<Mission, MissionError>;
     /**
      * Makes a thread on this machine the Mission's lead, named for its title. A member of the
-     * Mission becomes its lead; the other members stay.
+     * Mission becomes its lead; the other members stay. Refuses when the lead is no longer
+     * `expectedLead`, and answers the Mission as it is when `lead` already leads it.
      */
     readonly setLead: (input: {
       readonly missionId: string;
       readonly lead: ScopedThreadRef;
+      readonly expectedLead: ThreadId;
     }) => Effect.Effect<Mission, MissionError>;
     /** Leaves the add pending when the member's machine does not say what became of it. */
     readonly addMember: (input: {
@@ -581,6 +583,7 @@ const make = Effect.gen(function* () {
   const setLead = Effect.fn("Missions.setLead")(function* (input: {
     readonly missionId: string;
     readonly lead: ScopedThreadRef;
+    readonly expectedLead: ThreadId;
   }) {
     const mission = yield* missionNamed(input.missionId);
     if (input.lead.environmentId !== here) {
@@ -595,7 +598,7 @@ const make = Effect.gen(function* () {
       missionId: mission.missionId,
       name: missionNameFromTitle(shell?.title ?? ""),
       leadThreadId: input.lead.threadId,
-      previous: mission.leadThreadId,
+      previous: input.expectedLead,
     });
     return yield* missionView(record, yield* machines, yield* shown);
   });

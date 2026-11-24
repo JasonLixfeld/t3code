@@ -65,7 +65,7 @@ import {
 import { type ChatMessage, DEFAULT_INTERACTION_MODE } from "../../types";
 import { recordPromptSent } from "../GitHubStarPrompt";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { isMissionDraft } from "../sidebar/missionDraftStore";
+import { isMissionDraft, missionDraftOf } from "../sidebar/missionDraftStore";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { readPendingWorkspaceDefault, useNewThreadHandler } from "../../hooks/useHandleNewThread";
@@ -106,6 +106,7 @@ import {
   approvalRedirectNotice,
   composerDraftContentChanged,
   loadBalancingSendWarning,
+  missionDraftMoved,
   multipleModelSendBlock,
   referencedThreadContexts,
 } from "./composerSend.logic";
@@ -758,6 +759,16 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     if (!sendCtx?.providerAvailable) {
       notifyDirectAnnotationAttached();
+      return;
+    }
+    if (isLocalDraftThread && missionDraftMoved(missionDraftOf(draftId)?.thread, activeThread)) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: m(msg("This draft left its mission's machine")),
+          description: m(msg("Move it back to send it, or send it as a plain thread.")),
+        }),
+      );
       return;
     }
     const multipleModelSelections = sendCtx.multipleModelSelections;

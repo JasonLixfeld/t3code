@@ -22,6 +22,7 @@ import {
 } from "../composerDraftStore";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
+import { isMissionDraft } from "../components/sidebar/missionDraftStore";
 import {
   deriveLogicalProjectKeyFromSettings,
   getProjectOrderKey,
@@ -327,8 +328,14 @@ export function createNewThreadHandler(router: AnyRouter) {
     if (storedDraftThreadRef && reusableStoredDraftThread === null) {
       markPromotedDraftThreadByRef(storedDraftThreadRef);
     }
+    // A Mission draft stays on its machine, as the project it was opened in.
+    const keepsMissionDraft = (draft: DraftSessionState, id: DraftId) =>
+      !isMissionDraft(id) ||
+      (draft.environmentId === projectRef.environmentId &&
+        draft.projectId === projectRef.projectId);
     const emptyStoredDraftThread =
       reusableStoredDraftThread &&
+      keepsMissionDraft(reusableStoredDraftThread, reusableStoredDraftThread.draftId) &&
       !composerDraftHasUserContent(getComposerDraft(reusableStoredDraftThread.draftId))
         ? reusableStoredDraftThread
         : null;
@@ -417,6 +424,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       currentRouteTarget?.kind === "draft" &&
       latestActiveDraftThread.logicalProjectKey === logicalProjectKey &&
       latestActiveDraftThread.promotedTo == null &&
+      keepsMissionDraft(latestActiveDraftThread, currentRouteTarget.draftId) &&
       !composerDraftHasUserContent(getComposerDraft(currentRouteTarget.draftId))
     ) {
       if (

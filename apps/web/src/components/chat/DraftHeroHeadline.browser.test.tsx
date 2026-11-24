@@ -1,9 +1,9 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { ProjectId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
-import { expect, it, vi } from "vite-plus/test";
+import { expect, it, onTestFinished, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { AppRoot } from "~/AppRoot";
@@ -13,6 +13,7 @@ import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { getRouter } from "~/router";
 import { useUiStateStore } from "~/uiStateStore";
+import { clearMissionDraft, markMissionDraft } from "~/components/sidebar/missionDraftStore";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
@@ -91,4 +92,35 @@ it("the new-thread project picker follows the manual sidebar project order", asy
       "Add project",
     ]);
   });
+});
+
+it("a mission draft's project picker offers only its machine's projects", async () => {
+  using _environment = installFakeEnvironment([], {
+    extraProjects: [{ id: ProjectId.make("project-alpha"), title: "alpha" }],
+  });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-mission-machine");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId);
+  // The Mission it leads lives on a machine none of these projects are on.
+  markMissionDraft(draftId, {
+    intent: { kind: "new" },
+    thread: { environmentId: EnvironmentId.make("mission-machine"), threadId: ThreadId.make("t") },
+  });
+  onTestFinished(() => clearMissionDraft(draftId));
+
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
+  const trigger = document.querySelector<HTMLElement>("[data-draft-project-trigger]");
+  expect(trigger).toBeNull();
+  expect(document.body.textContent).not.toContain("or start without a project");
 });

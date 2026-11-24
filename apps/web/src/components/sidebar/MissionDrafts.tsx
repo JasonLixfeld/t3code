@@ -1,7 +1,7 @@
 import { threadHasMessages } from "@t3tools/contracts";
 import { msg } from "gt-react";
 import { InfoIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -10,8 +10,13 @@ import { useThreadShell } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ComposerBannerStackItem } from "../chat/ComposerBannerStack";
-import { clearMissionDraft, type MissionDraft, useMissionDrafts } from "./missionDraftStore";
-import { newMissionId, reportFailure } from "./MissionsSection";
+import {
+  clearMissionDraft,
+  type MissionDraft,
+  setMissionDraftStep,
+  useMissionDrafts,
+} from "./missionDraftStore";
+import { reportFailure, reportLeadOutcome } from "./MissionsSection";
 
 /** The composer's line for a draft that starts or leads a Mission, with a way to undo it. */
 export function useMissionDraftBanner(
@@ -43,45 +48,45 @@ export function useMissionDraftBanner(
 }
 
 function MissionDraftWatch(props: { readonly draftId: DraftId; readonly draft: MissionDraft }) {
-  const shell = useThreadShell(props.draft.thread);
+  const { draftId, draft } = props;
+  const shell = useThreadShell(draft.thread);
   const createMission = useAtomCommand(serverEnvironment.createMission, "mission create");
   const setLead = useAtomCommand(serverEnvironment.setMissionLead, "mission set lead");
-  // One id for every try, so a try that reached the server and lost its answer is not doubled.
-  const [missionId] = useState(newMissionId);
-  const [tries, setTries] = useState(0);
   // A Mission's lead needs a message, so this waits for the first one to land.
   const sent = shell !== null && threadHasMessages(shell);
-  const { draftId, draft } = props;
+  const retry = () => setMissionDraftStep(draftId, "waiting");
   const start = useStableCallback(async () => {
-    const [title, result] =
-      draft.intent.kind === "new"
-        ? [
-            m(msg("Could not start the mission")),
-            await createMission({
-              environmentId: draft.thread.environmentId,
-              input: { missionId, leadThreadId: draft.thread.threadId },
-            }),
-          ]
-        : [
-            m(msg("Could not make this thread the lead")),
-            await setLead({
-              environmentId: draft.intent.host,
-              input: { missionId: draft.intent.missionId, lead: draft.thread },
-            }),
-          ];
+    setMissionDraftStep(draftId, "trying");
+    if (draft.intent.kind === "lead") {
+      const outcome = reportLeadOutcome(
+        await setLead({
+          environmentId: draft.intent.host,
+          input: {
+            missionId: draft.missionId,
+            lead: draft.thread,
+            expectedLead: draft.intent.expectedLead,
+          },
+        }),
+        retry,
+      );
+      // A lead that changed first leaves this thread plain, with its message.
+      if (outcome === "failed") setMissionDraftStep(draftId, "failed");
+      else clearMissionDraft(draftId);
+      return;
+    }
+    const result = await createMission({
+      environmentId: draft.thread.environmentId,
+      input: { missionId: draft.missionId, leadThreadId: draft.thread.threadId },
+    });
     // The draft keeps its Mission until the server has it.
-    if (result._tag === "Success") clearMissionDraft(draftId);
-    else reportFailure(title, result, () => setTries((count) => count + 1));
+    if (result._tag === "Success") return clearMissionDraft(draftId);
+    setMissionDraftStep(draftId, "failed");
+    reportFailure(m(msg("Could not start the mission")), result, retry);
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts or relinks the Mission on the server once the draft's first message has landed there, and again on each retry
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts or relinks the Mission on the server once the draft's first message has landed, and again after the user's "Try again"
   useEffect(() => {
-    if (sent) void start();
-  }, [
-    sent,
-    start,
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each "Try again" counts one more try, which runs the start again.
-    tries,
-  ]);
+    if (sent && draft.step === "waiting") void start();
+  }, [draft.step, sent, start]);
   return null;
 }
 

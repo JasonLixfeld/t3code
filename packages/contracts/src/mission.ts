@@ -79,6 +79,8 @@ export const MissionMemberInput = Schema.Struct({
 export const MissionSetLeadInput = Schema.Struct({
   missionId: Schema.String,
   lead: ScopedThreadRef,
+  /** The lead the asker saw. Only that lead is replaced, so a stale ask cannot undo a newer one. */
+  expectedLead: ThreadId,
 });
 
 /** The local user frees a thread on this machine from its Mission. */
@@ -86,6 +88,8 @@ export const MissionLeaveInput = Schema.Struct({ threadId: ThreadId });
 
 export class MissionError extends Schema.TaggedError<MissionError>()("MissionError", {
   message: Schema.String,
+  /** `lead-changed`: another ask gave the Mission a new lead first, so asking again cannot help. */
+  reason: Schema.optional(Schema.Literals(["lead-changed"])),
 }) {}
 
 export const MISSION_TAG_PREFIX = "mission:";

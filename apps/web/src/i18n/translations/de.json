@@ -12837,5 +12837,9 @@
   "525baaf1f7b6e6e8": "Thread wählen…",
   "a7e5c19f0c796aaa": "Wähle ein Modell, um eine Mission zu starten",
   "9cd2c148429a61ae": "Eine Mission beginnt mit einem Thread und sendet daher an ein Modell.",
-  "ac2fd935331a784e": "Er bleibt auf diesem Rechner und sendet an ein Modell."
+  "ac2fd935331a784e": "Er bleibt auf diesem Rechner und sendet an ein Modell.",
+  "02c5972468338659": "Dieser Entwurf ist nicht mehr auf dem Rechner seiner Mission",
+  "86a6437dc189ea6a": "Verschiebe ihn zurück, um ihn zu senden, oder sende ihn als normalen Thread.",
+  "5b03d7d90b62dd82": "Diese Mission hat schon eine neue Leitung",
+  "33e8e07ab6191f5b": "Nicht geladen."
 }

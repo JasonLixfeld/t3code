@@ -8,6 +8,7 @@ import {
   type ThreadId,
   threadHasMessages,
 } from "@t3tools/contracts";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "../../i18n/messages";
@@ -383,6 +384,8 @@ export function groupSidebarMissions<T extends ListedThread>(
 }
 
 /** What a draft does on its first send: start a Mission it leads, or lead one whose lead is gone. */
+export const newMissionId = () => SecureRandom.uuidV4Unsafe().replaceAll("-", "").slice(0, 12);
+
 export type MissionDraftIntent =
   | { readonly kind: "new" }
   | {
@@ -390,6 +393,8 @@ export type MissionDraftIntent =
       readonly host: EnvironmentId;
       readonly missionId: string;
       readonly name: string;
+      /** The missing lead the user saw. Only that one is replaced. */
+      readonly expectedLead: ThreadId;
     };
 
 /** The members a drag can take out of their Mission: joined ones the sidebar shows. */

@@ -9,9 +9,11 @@ import {
   EnvironmentId,
   type LocalApi,
   type Mission,
+  MissionError,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -36,6 +38,7 @@ import { threadFamilies } from "../../state/threads";
 import { makeThreadFixture } from "../../test-fixtures";
 import type { Project } from "../../types";
 import { useUiStateStore } from "../../uiStateStore";
+import { toastManager } from "../ui/toast";
 import Sidebar from "../Sidebar";
 import { SidebarProvider } from "../ui/sidebar";
 import type { MissionHost } from "./missions.logic";
@@ -191,6 +194,8 @@ async function renderSidebar(
     later?: ReadonlyArray<ReturnType<typeof shell>>;
     /** More threads, listed from the start. */
     extra?: ReadonlyArray<ReturnType<typeof shell>>;
+    /** Threads left out of the stream, by id. */
+    without?: ReadonlyArray<string>;
   } = {},
 ) {
   const previousSettings = getClientSettings();
@@ -210,7 +215,9 @@ async function renderSidebar(
   });
   onTestFinished(() => useUiStateStore.setState({ sidebarProjectScopeKeys: [] }));
   vi.mocked(useProjects).mockReturnValue([web, api]);
-  const listed = [...shells(options), ...(options.extra ?? [])];
+  const listed = [...shells(options), ...(options.extra ?? [])].filter(
+    (thread) => !(options.without ?? []).includes(thread.id),
+  );
   commands.clear();
   vi.mocked(useQuietThreadShells).mockImplementation(() => [...listed]);
   vi.mocked(useQuietThreadShell).mockImplementation(
@@ -606,13 +613,15 @@ function allowDrag(): Disposable {
 }
 
 /** A pointer drag from one element to another, as the sidebar's drag sees it. */
-async function dragBetween(
-  from: HTMLElement,
-  to: HTMLElement | { readonly clientX: number; readonly clientY: number },
-) {
-  const center = (
-    element: HTMLElement | { readonly clientX: number; readonly clientY: number },
-  ) => {
+/** An element, a point, or one the drag itself shows, found when the pointer gets there. */
+type DragTarget =
+  | HTMLElement
+  | { readonly clientX: number; readonly clientY: number }
+  | (() => HTMLElement);
+
+async function dragBetween(from: HTMLElement, to: DragTarget) {
+  const center = (target: DragTarget) => {
+    const element = typeof target === "function" ? target() : target;
     if (!(element instanceof HTMLElement)) return element;
     const box = element.getBoundingClientRect();
     return { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 };
@@ -645,6 +654,8 @@ async function dragBetween(
   };
 }
 
+const releaseZone = (root: Element) => () =>
+  root.querySelector<HTMLElement>("[data-mission-release]")!;
 const shipArea = (root: Element) =>
   root.querySelector<HTMLElement>('[data-mission-drop="local:0123456789ab"]')!;
 const hintIn = (element: Element) => element.querySelector('[role="status"]')?.textContent ?? null;
@@ -751,15 +762,64 @@ describe("dragging threads into and out of missions", () => {
     await drag.release();
   });
 
-  it("releases a member dragged onto the thread list", async () => {
+  it("reads in selected threads an unread older page holds, and names those it cannot", async () => {
     using _drag = allowDrag();
     await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
+    const toasts = vi.spyOn(toastManager, "add");
+    onTestFinished(() => toasts.mockRestore());
+    // An older settled page holds "older"; "lost" cannot be read at all.
+    const older = shell("older", "Old settled bug", { settled: true });
+    const readIn = new Set<string>();
+    const listedShell = vi.mocked(readThreadShell).getMockImplementation()!;
+    vi.mocked(readThreadShell).mockImplementation((target) =>
+      readIn.has(target.threadId) ? older : listedShell(target),
+    );
+    using _family = vi
+      .spyOn(threadFamilies, "familyAtom")
+      .mockImplementation(() => Atom.make(AsyncResult.success({ threads: [] })) as never);
+    using mount = vi.spyOn(threadFamilies, "mount").mockImplementation((_, __, threadId) => {
+      if (threadId === "older") readIn.add(threadId);
+      return () => {};
+    });
+    useThreadSelectionStore.setState({
+      selectedThreadKeys: new Set(["local:plain", "local:older", "local:lost"]),
+    });
+    onTestFinished(() => useThreadSelectionStore.setState({ selectedThreadKeys: new Set() }));
+    const drag = await dragBetween(
+      rowOf(screen.container, "Unrelated bug"),
+      rowOf(screen.container, "Plan the v2 release"),
+    );
+    await drag.release();
+    await vi.waitFor(() =>
+      expect(toasts).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "2 added, 1 refused: Not loaded." }),
+      ),
+    );
+    const added = commandFor("mission add member").mock.calls.map(
+      ([call]) => (call as { input: { member: { threadId: string } } }).input.member.threadId,
+    );
+    expect(added.toSorted()).toEqual(["older", "plain"]);
+    expect(mount.mock.calls.map((call) => call[2]).toSorted()).toEqual(["lost", "older"]);
+  });
+
+  it.each([
+    ["with the Threads heading on", {}, {}],
+    [
+      "with the heading off and every thread in a mission",
+      { sidebarThreadsHeaderVisible: false },
+      { without: ["plain", "refused"] },
+    ],
+  ] as const)("releases a member dropped on the release zone %s", async (_, settings, options) => {
+    using _drag = allowDrag();
+    await using screen = await renderSidebar(settings, options);
     await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    expect(screen.container.querySelector("[data-mission-release]")).toBeNull();
     const drag = await dragBetween(
       rowOf(screen.container, "Update the release notes"),
-      rowOf(screen.container, "Unrelated bug"),
+      releaseZone(screen.container),
     );
-    expect(screen.getByRole("heading", { name: "Release from mission" })).toBeInTheDocument();
+    expect(releaseZone(screen.container)().textContent).toBe("Release from mission");
     await drag.release();
     expect(commandFor("mission release member")).toHaveBeenCalledExactlyOnceWith({
       environmentId: LOCAL,
@@ -767,7 +827,7 @@ describe("dragging threads into and out of missions", () => {
     });
   });
 
-  it("releases only on the thread list, not on the Missions heading or between missions", async () => {
+  it("releases only on the zone, not on the Missions heading, between missions or on a thread", async () => {
     using _drag = allowDrag();
     await using screen = await renderSidebar();
     await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
@@ -780,11 +840,41 @@ describe("dragging threads into and out of missions", () => {
       clientX: first!.left + 40,
       clientY: (first!.bottom + second!.top) / 2,
     };
-    for (const to of [heading, between]) {
+    for (const to of [heading, between, rowOf(screen.container, "Unrelated bug")]) {
       const drag = await dragBetween(rowOf(screen.container, "Update the release notes"), to);
-      expect(screen.container.textContent).not.toContain("Release from mission");
       await drag.release();
     }
+    expect(commandFor("mission release member")).not.toHaveBeenCalled();
+  });
+
+  it("adds and releases nothing where the scrolled list is hidden", async () => {
+    using _drag = allowDrag();
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
+    // A short viewport scrolled down: the first mission runs up behind the header, and the
+    // release zone sits below the footer.
+    const viewport = screen.container.querySelector<HTMLElement>(
+      "[data-slot=scroll-area-viewport]",
+    )!;
+    Object.assign(viewport.style, { height: "200px", overflow: "auto" });
+    const shipTop = shipArea(screen.container).getBoundingClientRect().top;
+    viewport.scrollTop = shipTop - viewport.getBoundingClientRect().top + 40;
+    const view = viewport.getBoundingClientRect();
+    const ship = shipArea(screen.container).getBoundingClientRect();
+    expect(ship.top).toBeLessThan(view.top);
+    const behindHeader = { clientX: ship.left + 40, clientY: view.top - 5 };
+    const add = await dragBetween(rowOf(screen.container, "Unrelated bug"), behindHeader);
+    expect(hintIn(shipArea(screen.container))).toBeNull();
+    await add.release();
+    const release = await dragBetween(
+      rowOf(screen.container, "Update the release notes"),
+      releaseZone(screen.container),
+    );
+    expect(releaseZone(screen.container)().getBoundingClientRect().top).toBeGreaterThan(
+      view.bottom,
+    );
+    await release.release();
+    expect(commandFor("mission add member")).not.toHaveBeenCalled();
     expect(commandFor("mission release member")).not.toHaveBeenCalled();
   });
 
@@ -819,6 +909,40 @@ describe("new missions and missing leads", () => {
     });
   });
 
+  it.each([
+    ["under its heading", {}, "heading"],
+    [
+      "beside New thread when Missions has no heading",
+      { sidebarMissionsHeaderVisible: false },
+      "header",
+    ],
+    ["nowhere when Missions is off", { sidebarMissionsEnabled: false }, "none"],
+  ] as const)("offers the first mission %s", async (_, settings, where) => {
+    const kept = listedMissions.splice(0);
+    onTestFinished(() => {
+      listedMissions.push(...kept);
+    });
+    await using screen = await renderSidebar(settings);
+    await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
+    const plus = screen.container.querySelector<HTMLElement>('[aria-label="New mission"]');
+    const heading = [...screen.container.querySelectorAll("h2")].find((h2) =>
+      h2.textContent?.includes("Missions"),
+    );
+    expect(screen.container.querySelector("[data-mission-drop]")).toBeNull();
+    if (where === "none") {
+      expect(plus).toBeNull();
+      expect(heading).toBeUndefined();
+      return;
+    }
+    expect(heading === undefined).toBe(where === "header");
+    expect(plus?.closest("li")?.contains(heading ?? null) ?? false).toBe(where === "heading");
+    await userEvent.click(plus!);
+    expect(openCommandPalette).toHaveBeenCalledWith({
+      open: "new-thread-in",
+      mission: { kind: "new" },
+    });
+  });
+
   it("offers a gone lead's mission a new lead, or a thread with messages in no other mission", async () => {
     listedClaims.push({ threadId: ThreadId.make("guide"), missionId: "ffffffffffff", name: "X" });
     onTestFinished(() => {
@@ -834,7 +958,13 @@ describe("new missions and missing leads", () => {
     await userEvent.click(screen.getByRole("button", { name: "New lead" }));
     expect(openCommandPalette).toHaveBeenCalledWith({
       open: "new-thread-in",
-      mission: { kind: "lead", host: LOCAL, missionId: "ba9876543210", name: "Old work" },
+      mission: {
+        kind: "lead",
+        host: LOCAL,
+        missionId: "ba9876543210",
+        name: "Old work",
+        expectedLead: ThreadId.make("deleted-lead"),
+      },
     });
     await userEvent.click(screen.getByRole("button", { name: "Choose a thread…" }));
     await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(1));
@@ -847,8 +977,37 @@ describe("new missions and missing leads", () => {
     await vi.waitFor(() =>
       expect(commandFor("mission set lead")).toHaveBeenCalledExactlyOnceWith({
         environmentId: LOCAL,
-        input: { missionId: "ba9876543210", lead: ref(LOCAL, "plain") },
+        input: {
+          missionId: "ba9876543210",
+          lead: ref(LOCAL, "plain"),
+          expectedLead: ThreadId.make("deleted-lead"),
+        },
       }),
     );
+  });
+
+  it("says a menu opened before another lead took over is too late, and offers no retry", async () => {
+    const show = vi.fn().mockResolvedValue("plain");
+    vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
+    const toasts = vi.spyOn(toastManager, "add");
+    onTestFinished(() => toasts.mockRestore());
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Lead deleted")).toBeInTheDocument();
+    commandFor("mission set lead").mockResolvedValueOnce({
+      _tag: "Failure",
+      cause: Cause.fail(
+        new MissionError({
+          message: "This mission already has a new lead.",
+          reason: "lead-changed",
+        }),
+      ),
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Choose a thread…" }));
+    await vi.waitFor(() =>
+      expect(toasts).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ title: "This mission already has a new lead" }),
+      ),
+    );
+    expect(toasts.mock.calls[0]![0]).not.toHaveProperty("actionProps");
   });
 });

@@ -1,7 +1,11 @@
 import type { DraftId } from "~/composerDraftStore";
 import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDraftStore";
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
-import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedProjectKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { T, useGT, Var } from "gt-react";
 import { FolderPlusIcon } from "lucide-react";
@@ -48,6 +52,7 @@ import { InlineButton } from "../ui/button";
 import { DraftProjectName } from "./DraftProjectName";
 import { DraftHeroProjectHeading } from "./DraftHeroProjectHeading";
 import { TriageDraftHero } from "./TriageDraftHero";
+import { moveMissionDraft, useMissionDraftMachine } from "../sidebar/missionDraftStore";
 
 const ADD_PROJECT_VALUE = "add-project";
 
@@ -89,6 +94,8 @@ export function DraftHeroHeadline({
   const pickerFilter = useComboboxFilter();
   const highlightedPickerValueRef = useRef<string | null>(null);
   const { canPinProjectGroup, toggleProjectGroupPin } = useProjectPin();
+  // A Mission draft offers only its machine's projects, and never the no-project home.
+  const missionMachine = useMissionDraftMachine(draftId);
 
   const environmentLabelById = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
@@ -107,6 +114,7 @@ export function DraftHeroHeadline({
   const projectPickerEntries = buildSidebarProjectPickerEntries({
     groups: pickableProjectGroups(projectGroups),
     preferredProjectRef: activeProjectRef,
+    environmentId: missionMachine,
   });
   const projectEntryByKey = new Map(
     projectPickerEntries.map((entry) => [entry.group.projectKey, entry] as const),
@@ -180,7 +188,15 @@ export function DraftHeroHeadline({
     pendingScratchRef.current = null;
     const projectRef = scopeProjectRef(project.environmentId, project.id);
     if (!composerDraftHasUserContent(getComposerDraft(draftId))) {
-      void openProjectDraft(projectRef);
+      void openProjectDraft(projectRef).then((opened) => {
+        if (opened !== null && missionMachine !== null) {
+          moveMissionDraft(
+            draftId,
+            opened.draftId,
+            scopeThreadRef(projectRef.environmentId, opened.threadId),
+          );
+        }
+      });
       return;
     }
     setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId);
@@ -322,7 +338,10 @@ export function DraftHeroHeadline({
 
   const noProjectShortcut = shortcutLabelForCommand(keybindings, "chat.newWithoutProject");
   const orStartWithoutProject =
-    scratchWorkspaceRoot !== null && !isScratchDraft && (hasResolvedProject || canChooseProject) ? (
+    scratchWorkspaceRoot !== null &&
+    missionMachine === null &&
+    !isScratchDraft &&
+    (hasResolvedProject || canChooseProject) ? (
       <Tooltip>
         <TooltipTrigger
           render={

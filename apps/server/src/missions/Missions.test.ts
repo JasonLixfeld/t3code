@@ -560,10 +560,12 @@ it.effect(
         const mission = yield* createOne;
         yield* missions.create({ missionId: "ba9876543210", leadThreadId: otherLead.threadId });
         const refusalOf = (next: ScopedThreadRef) =>
-          missions.setLead({ missionId: mission.missionId, lead: next }).pipe(
-            Effect.flip,
-            Effect.map((error) => error.message),
-          );
+          missions
+            .setLead({ missionId: mission.missionId, lead: next, expectedLead: lead.threadId })
+            .pipe(
+              Effect.flip,
+              Effect.map((error) => error.message),
+            );
         assert.include(yield* refusalOf(laptopMember), "must be a thread on that machine");
         assert.include(yield* refusalOf(empty), "needs a lead thread with messages");
         assert.include(yield* refusalOf(otherLead), "already in the mission");
@@ -585,7 +587,11 @@ it.effect("a member becomes the lead, keeps the others, and the mission takes it
       yield* missions.addMember({ missionId: mission.missionId, member: localMember });
       yield* missions.addMember({ missionId: mission.missionId, member: laptopMember });
       world.retitle(localMember, "Two");
-      const promoted = yield* missions.setLead({ missionId: mission.missionId, lead: localMember });
+      const promoted = yield* missions.setLead({
+        missionId: mission.missionId,
+        lead: localMember,
+        expectedLead: lead.threadId,
+      });
       assert.equal(promoted.name, "Two");
       assert.deepEqual(
         promoted.members.map((member) => [keyOf(member.ref), member.role, member.state]),
@@ -624,10 +630,12 @@ it.effect("two new leads asked at once: one wins, and every claim and tag follow
       const asked = yield* Effect.forEach(
         [b, c],
         (next) =>
-          missions.setLead({ missionId: mission.missionId, lead: next }).pipe(
-            Effect.result,
-            Effect.map((result) => [next, result] as const),
-          ),
+          missions
+            .setLead({ missionId: mission.missionId, lead: next, expectedLead: lead.threadId })
+            .pipe(
+              Effect.result,
+              Effect.map((result) => [next, result] as const),
+            ),
         { concurrency: "unbounded" },
       );
       const won = asked.filter(([, result]) => result._tag === "Success");
@@ -635,7 +643,10 @@ it.effect("two new leads asked at once: one wins, and every claim and tag follow
       const [winner] = won[0]!;
       const loser = winner === b ? c : b;
       const [, refused] = asked.find(([next]) => next === loser)!;
-      assert.include(refused._tag === "Failure" ? refused.failure.message : "", "lead changed");
+      assert.deepEqual(
+        refused._tag === "Failure" ? [refused.failure.reason, refused.failure.message] : [],
+        ["lead-changed", "This mission already has a new lead."],
+      );
       const snapshot = yield* listed;
       assert.deepEqual(membersOf(snapshot.missions[0]), [[keyOf(winner), "active"]]);
       assert.deepEqual(
@@ -645,6 +656,28 @@ it.effect("two new leads asked at once: one wins, and every claim and tag follow
       assert.deepEqual(world.tags(winner), [TAG]);
       assert.deepEqual(world.tags(loser), []);
       assert.deepEqual(world.tags(lead), [WAS_TAG]);
+    }),
+  );
+});
+
+it.effect("an ask that saw an older lead is refused, and one already done answers as done", () => {
+  const [b, c] = [ref(HERE, "b"), ref(HERE, "c")];
+  const world = makeWorld([lead, b, c]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const mission = yield* createOne;
+      const ask = (next: ScopedThreadRef) =>
+        missions.setLead({ missionId: mission.missionId, lead: next, expectedLead: lead.threadId });
+      yield* ask(b);
+      // Another window, or a menu opened before B took over, still saw the old lead.
+      const stale = yield* ask(c).pipe(Effect.flip);
+      assert.equal(stale.reason, "lead-changed");
+      // The answer to B's own ask was lost, and it asks again.
+      const again = yield* ask(b);
+      assert.deepEqual(membersOf(again), [[keyOf(b), "active"]]);
+      assert.deepEqual([world.tags(b), world.tags(c)], [[TAG], []]);
     }),
   );
 });
@@ -659,7 +692,11 @@ it.effect("a title read before a new lead took over does not rename the mission"
       const store = yield* MissionStore.MissionStore;
       const mission = yield* createOne;
       world.retitle(fresh, "Fresh start");
-      yield* missions.setLead({ missionId: mission.missionId, lead: fresh });
+      yield* missions.setLead({
+        missionId: mission.missionId,
+        lead: fresh,
+        expectedLead: lead.threadId,
+      });
       // A sweep that read the old lead's title before the swap writes it after.
       const named = yield* store.renameMission({
         missionId: mission.missionId,
@@ -683,7 +720,11 @@ it.effect("a deleted lead is replaced by a thread with messages on this machine"
       const mission = yield* createOne;
       world.remove(lead);
       assert.equal(stateOf(yield* listed, lead), "deleted");
-      const replaced = yield* missions.setLead({ missionId: mission.missionId, lead: fresh });
+      const replaced = yield* missions.setLead({
+        missionId: mission.missionId,
+        lead: fresh,
+        expectedLead: lead.threadId,
+      });
       assert.equal(replaced.name, "Fresh start");
       assert.deepEqual(membersOf(replaced), [["env-here/fresh", "active"]]);
       assert.deepEqual(world.tags(fresh), ["mission:0123456789ab:Fresh start"]);

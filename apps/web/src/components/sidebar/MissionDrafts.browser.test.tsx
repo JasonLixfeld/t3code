@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, MissionError, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { useSyncExternalStore } from "react";
 import { expect, it, onTestFinished, vi } from "vite-plus/test";
@@ -64,6 +64,11 @@ async function renderDraft(draftId: DraftId) {
   );
   const screen = await render(ui());
   return Object.assign(screen, {
+    /** The app remounts the watcher, as a route change can. */
+    remount: async () => {
+      await screen.rerender(<Banner draftId={draftId} />);
+      await screen.rerender(ui());
+    },
     stream: (next: "empty" | "sent") => {
       shell = makeThreadFixture({
         environmentId: LOCAL,
@@ -120,6 +125,7 @@ it("makes a new-lead draft the mission's lead once it is sent", async () => {
     host: LOCAL,
     missionId: "ba9876543210",
     name: "Old work",
+    expectedLead: ThreadId.make("deleted-lead"),
   } as const;
   await act(() => markMissionDraft(draftId, { intent, thread }));
   await expect
@@ -130,24 +136,52 @@ it("makes a new-lead draft the mission's lead once it is sent", async () => {
   await vi.waitFor(() =>
     expect(commandFor("mission set lead")).toHaveBeenCalledExactlyOnceWith({
       environmentId: LOCAL,
-      input: { missionId: "ba9876543210", lead: thread },
+      input: {
+        missionId: "ba9876543210",
+        lead: thread,
+        expectedLead: ThreadId.make("deleted-lead"),
+      },
     }),
   );
 });
 
-it("keeps the mission until the server has it, and tries again with the same id", async () => {
-  const draftId = DraftId.make("retry-draft");
-  await using screen = await renderDraft(draftId);
+const busy = { _tag: "Failure", cause: Cause.fail(new Error("Server busy")) } as const;
+const beaten = {
+  _tag: "Failure",
+  cause: Cause.fail(
+    new MissionError({ message: "This mission already has a new lead.", reason: "lead-changed" }),
+  ),
+} as const;
+const leadIntent = {
+  kind: "lead",
+  host: LOCAL,
+  missionId: "ba9876543210",
+  name: "Old work",
+  expectedLead: ThreadId.make("deleted-lead"),
+} as const;
+const watchToasts = () => {
   const toasts = vi.spyOn(toastManager, "add");
   onTestFinished(() => toasts.mockRestore());
+  return toasts;
+};
+const retryOf = (toast: unknown) =>
+  (toast as { actionProps?: { onClick: () => void } }).actionProps;
+
+it("keeps the mission until the server has it, and only the user's retry tries again", async () => {
+  const draftId = DraftId.make("retry-draft");
+  await using screen = await renderDraft(draftId);
+  const toasts = watchToasts();
   const create = commandFor("mission create");
-  create.mockResolvedValueOnce({ _tag: "Failure", cause: Cause.fail(new Error("Server busy")) });
+  create.mockResolvedValueOnce(busy);
   await act(() => markMissionDraft(draftId, { intent: { kind: "new" }, thread }));
   await screen.stream("sent");
   await vi.waitFor(() => expect(toasts).toHaveBeenCalledOnce());
   expect(screen.container.textContent).toContain("Sending starts a mission");
-  const retry = (toasts.mock.calls[0]![0] as { actionProps: { onClick: () => void } }).actionProps;
-  await act(() => retry.onClick());
+  // A remount keeps the failure and sends nothing by itself.
+  await screen.remount();
+  await screen.stream("sent");
+  expect(create).toHaveBeenCalledTimes(1);
+  await act(() => retryOf(toasts.mock.calls[0]![0])!.onClick());
   await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(2));
   const [first, second] = create.mock.calls.map(
     ([call]) => (call as { input: { missionId: string } }).input.missionId,
@@ -156,4 +190,42 @@ it("keeps the mission until the server has it, and tries again with the same id"
   await vi.waitFor(() =>
     expect(screen.container.textContent).not.toContain("Sending starts a mission"),
   );
+});
+
+it("leaves a new-lead draft plain when another window gave the mission a lead first", async () => {
+  const draftId = DraftId.make("beaten-draft");
+  await using screen = await renderDraft(draftId);
+  const toasts = watchToasts();
+  commandFor("mission set lead").mockResolvedValueOnce(beaten);
+  await act(() => markMissionDraft(draftId, { intent: leadIntent, thread }));
+  await screen.stream("sent");
+  await vi.waitFor(() =>
+    expect(toasts).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ title: "This mission already has a new lead" }),
+    ),
+  );
+  expect(retryOf(toasts.mock.calls[0]![0])).toBeUndefined();
+  await vi.waitFor(() => expect(screen.container.textContent).not.toContain("Sending makes"));
+  await screen.remount();
+  expect(commandFor("mission set lead")).toHaveBeenCalledTimes(1);
+});
+
+it("stops offering a retry once the lead changed while the first try failed", async () => {
+  const draftId = DraftId.make("stale-retry-draft");
+  await using screen = await renderDraft(draftId);
+  const toasts = watchToasts();
+  const setLead = commandFor("mission set lead");
+  setLead.mockResolvedValueOnce(busy).mockResolvedValueOnce(beaten);
+  await act(() => markMissionDraft(draftId, { intent: leadIntent, thread }));
+  await screen.stream("sent");
+  await vi.waitFor(() => expect(toasts).toHaveBeenCalledOnce());
+  await act(() => retryOf(toasts.mock.calls[0]![0])!.onClick());
+  await vi.waitFor(() => expect(toasts).toHaveBeenCalledTimes(2));
+  expect(setLead.mock.calls.map(([call]) => (call as { input: unknown }).input)).toEqual([
+    { missionId: "ba9876543210", lead: thread, expectedLead: leadIntent.expectedLead },
+    { missionId: "ba9876543210", lead: thread, expectedLead: leadIntent.expectedLead },
+  ]);
+  expect(toasts.mock.calls[1]![0]).toMatchObject({ title: "This mission already has a new lead" });
+  expect(retryOf(toasts.mock.calls[1]![0])).toBeUndefined();
+  await vi.waitFor(() => expect(screen.container.textContent).not.toContain("Sending makes"));
 });

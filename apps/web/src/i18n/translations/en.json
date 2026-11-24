@@ -12846,5 +12846,9 @@
   "525baaf1f7b6e6e8": "Choose a thread…",
   "a7e5c19f0c796aaa": "Choose one model to start a mission",
   "9cd2c148429a61ae": "A mission starts from one thread, so it sends to one model.",
-  "ac2fd935331a784e": "It stays on this machine and sends to one model."
+  "ac2fd935331a784e": "It stays on this machine and sends to one model.",
+  "02c5972468338659": "This draft left its mission's machine",
+  "86a6437dc189ea6a": "Move it back to send it, or send it as a plain thread.",
+  "5b03d7d90b62dd82": "This mission already has a new lead",
+  "33e8e07ab6191f5b": "Not loaded."
 }

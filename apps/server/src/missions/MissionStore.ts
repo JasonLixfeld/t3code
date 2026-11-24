@@ -421,8 +421,13 @@ const make = Effect.gen(function* () {
         `;
         if (mission === undefined) return refuse("That mission was not found.");
         const previous = ThreadId.make(mission.lead_thread_id);
+        // Asked again after it took effect, as a retry whose answer was lost is.
+        if (previous === lead.threadId) return toMission(mission);
         if (previous !== lead.previous) {
-          return refuse("The mission's lead changed while this was asked. Try again.");
+          return new MissionError({
+            message: "This mission already has a new lead.",
+            reason: "lead-changed",
+          });
         }
         const held = yield* claimRow(lead.threadId);
         if (
