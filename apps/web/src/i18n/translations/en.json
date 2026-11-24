@@ -12832,7 +12832,7 @@
   "90f53409e1e8c8dd": "missions lead member group threads sidebar section",
   "783a6b7b1b1a2eac": "missions heading title label sidebar section",
   "b59dd4f7877f1064": "threads heading title label sidebar section missions",
-  "6f4c37e7d9cabe25": "Collapse mission",
-  "c320a44649e79fcc": "Expand mission",
-  "e096948ea00955cb": "No messages yet"
+  "e096948ea00955cb": "No messages yet",
+  "19cd8fa8198eabf5": "Collapse mission {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
+  "18c378583d4d0beb": "Expand mission {mission}, {count, plural, one {{count} thread} other {{count} threads}}"
 }

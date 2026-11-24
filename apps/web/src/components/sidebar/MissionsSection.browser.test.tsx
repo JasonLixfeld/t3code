@@ -12,7 +12,7 @@ import {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -97,8 +97,10 @@ const archived: Mission = {
   createdAt: "2026-11-23T00:00:00.000Z",
   members: [{ ref: ref(LOCAL, "old-lead"), role: "lead", state: "active" }],
 };
+/** A test may list one more mission, for itself only. */
+const listedMissions: Array<Mission> = [ship, gone, archived];
 const hosts: ReadonlyArray<MissionHost> = [
-  { environmentId: LOCAL, snapshot: { missions: [ship, gone, archived], links: [], claims: [] } },
+  { environmentId: LOCAL, snapshot: { missions: listedMissions, links: [], claims: [] } },
 ];
 const shells = (options: { leadSettled?: boolean; docsSnoozed?: boolean } = {}) => [
   shell("lead", "Plan the v2 release", { settled: options.leadSettled === true }),
@@ -290,8 +292,10 @@ describe("missions in the sidebar", () => {
       ["draft", "Ctrl+5"],
     ]);
     await userEvent.keyboard("{/Control}");
-    const [collapse] = screen.getByRole("button", { name: "Collapse mission" }).elements();
-    await act(() => (collapse as HTMLElement).click());
+    const collapse = screen.container.querySelector<HTMLElement>(
+      '[aria-label^="Collapse mission"]',
+    )!;
+    await act(() => collapse.click());
     await userEvent.keyboard("{Control>}");
     await expect.element(screen.getByText("Ctrl+2")).toBeVisible();
     expect(jumpsOf(screen.container, ["Plan the v2 release", "draft"])).toEqual([
@@ -351,6 +355,99 @@ describe("missions in the sidebar", () => {
     expect(ids).toContain("unsnooze");
   });
 
+  it("names the lead's row without a project, and its chevron with the mission and its size", async () => {
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    const lead = screen.container.querySelector<HTMLElement>('[data-sidebar-row="local:lead"]')!;
+    expect(lead.getAttribute("aria-label")).toBe("Plan the v2 release");
+    expect(
+      screen.getByRole("button", {
+        name: "Collapse mission Plan the v2 release, 5 threads",
+        exact: true,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Collapse mission Archive the old site, 0 threads" }),
+    ).toBeInTheDocument();
+    // A member's row still names its project.
+    expect(
+      screen.container.querySelector('[data-sidebar-row="local:docs"]')!.getAttribute("aria-label"),
+    ).toBe("Update the release notes, web");
+  });
+
+  it("sweeps Settle from the lead over its members in the same state only", async () => {
+    await using screen = await renderSidebar({}, { docsSnoozed: true });
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    const lead = screen.container.querySelector<HTMLElement>('[data-sidebar-row="local:lead"]')!;
+    const docs = screen.container.querySelector<HTMLElement>('[data-sidebar-row="local:docs"]')!;
+    const settle = lead.querySelector<HTMLElement>('[aria-label="Settle thread"]')!;
+    const at = (element: HTMLElement) => {
+      const box = element.getBoundingClientRect();
+      return { clientX: box.left + 4, clientY: box.top + box.height / 2 };
+    };
+    const pointer = (type: string, target: EventTarget, values: PointerEventInit) =>
+      target.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          isPrimary: true,
+          pointerId: 1,
+          button: 0,
+          buttons: 1,
+          ...values,
+        }),
+      );
+    await act(() => pointer("pointerdown", settle, at(settle)));
+    await act(() =>
+      pointer("pointermove", document, { ...at(settle), clientY: at(settle).clientY + 20 }),
+    );
+    await act(() => pointer("pointermove", document, at(docs)));
+    const swept = [...screen.container.querySelectorAll<HTMLElement>("[data-sidebar-row]")]
+      .filter((row) => row.querySelector('[role="status"]')?.textContent === "Settle")
+      .map((row) => row.dataset.sidebarRow);
+    await act(() => pointer("pointercancel", document, at(docs)));
+    expect(swept).toEqual(["local:lead"]);
+  });
+
+  it("stops waiting for a lead its family read did not bring, as for an archived lead", async () => {
+    // A lead no other test reads, so no earlier read of it is still held.
+    listedMissions.push({
+      missionId: "dddddddddddd",
+      name: "Retired work",
+      createdAt: "2026-11-23T00:00:00.000Z",
+      members: [{ ref: ref(LOCAL, "archived-lead"), role: "lead", state: "active" }],
+    });
+    onTestFinished(() => {
+      listedMissions.pop();
+    });
+    using _family = vi
+      .spyOn(threadFamilies, "familyAtom")
+      .mockImplementation(() => Atom.make(AsyncResult.success({ threads: [] })) as never);
+    await using scoped = await renderSidebar({}, { scope: api });
+    await expect.element(scoped.getByText("Document the API")).toBeInTheDocument();
+    await vi.waitFor(() => expect(scoped.container.textContent).not.toContain("Retired work"));
+  });
+
+  it("offers Wake for a snoozed member found by search while its mission is folded", async () => {
+    const show = vi.fn().mockResolvedValue(null);
+    vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
+    await using screen = await renderSidebar({}, { docsSnoozed: true });
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    const collapse = screen.container.querySelector<HTMLElement>(
+      '[aria-label^="Collapse mission"]',
+    )!;
+    await act(() => collapse.click());
+    await userEvent.fill(screen.getByLabelText("Search threads"), "release notes");
+    const result = screen.getByText("Update the release notes").first();
+    await expect.element(result).toBeInTheDocument();
+    await userEvent.click(result, { button: "right" });
+    await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(1));
+    const ids = (show.mock.lastCall![0] as ReadonlyArray<{ readonly id: string }>).map(
+      (item) => item.id,
+    );
+    expect(ids).toContain("unsnooze");
+  });
+
   it("offers a settled lead Un-settle, and a member Release from mission", async () => {
     const show = vi.fn().mockResolvedValue(null);
     vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
@@ -378,7 +475,7 @@ describe("missions in the sidebar", () => {
     const navigate = vi.spyOn(screen.router!, "navigate").mockResolvedValue(undefined);
     const lead = screen.container.querySelector<HTMLElement>('[data-sidebar-row="local:lead"]')!;
     expect(lead.textContent).not.toMatch(/web|WB/);
-    const chevron = lead.querySelector<HTMLElement>('[aria-label="Collapse mission"]')!;
+    const chevron = lead.querySelector<HTMLElement>('[aria-label^="Collapse mission"]')!;
     expect(chevron.parentElement!.textContent).toContain("Plan the v2 release");
     // With no status, machine or provider to show, the row is that one line.
     expect(chevron.parentElement!.nextElementSibling).toBeNull();
@@ -392,7 +489,7 @@ describe("missions in the sidebar", () => {
     // The fallback leads have the same shape: chevron and title, no project.
     for (const title of ["Lead deleted", "Archive the old site"]) {
       const line = screen.getByText(title, { exact: true }).element().closest("li")!;
-      expect(line.querySelector('[aria-label="Collapse mission"]')).not.toBeNull();
+      expect(line.querySelector('[aria-label^="Collapse mission"]')).not.toBeNull();
       expect(line.textContent).not.toMatch(/web|WB/);
     }
 
@@ -408,14 +505,16 @@ describe("missions in the sidebar", () => {
 
   it("folds one mission away and remembers it, leaving the others open", async () => {
     await using screen = await renderSidebar();
-    const [collapse] = screen.getByRole("button", { name: "Collapse mission" }).elements();
-    await act(() => (collapse as HTMLElement).click());
+    const collapse = screen.container.querySelector<HTMLElement>(
+      '[aria-label^="Collapse mission"]',
+    )!;
+    await act(() => collapse.click());
     expect(screen.container.querySelector("[data-testid=sidebar-mission-members]")).toBeNull();
     expect(screen.getByText("Update the release notes").elements()).toHaveLength(0);
     expect(useUiStateStore.getState().missionExpandedById).toEqual({
       "local:0123456789ab": false,
     });
-    expect(screen.getByRole("button", { name: "Expand mission" }).elements()).toHaveLength(1);
+    expect(screen.container.querySelectorAll('[aria-label^="Expand mission"]')).toHaveLength(1);
   });
 
   it("lists every thread as usual when Missions is off", async () => {

@@ -12830,7 +12830,7 @@
   "90f53409e1e8c8dd": "uppdrag ledare medlem grupp trådar sidofält avsnitt",
   "783a6b7b1b1a2eac": "uppdrag rubrik titel etikett sidofält avsnitt",
   "b59dd4f7877f1064": "trådar rubrik titel etikett sidofält avsnitt uppdrag",
-  "6f4c37e7d9cabe25": "Fäll ihop uppdrag",
-  "c320a44649e79fcc": "Fäll ut uppdrag",
-  "e096948ea00955cb": "Inga meddelanden än"
+  "e096948ea00955cb": "Inga meddelanden än",
+  "19cd8fa8198eabf5": "Fäll ihop uppdraget {mission}, {count, plural, one {{count} tråd} other {{count} trådar}}",
+  "18c378583d4d0beb": "Fäll ut uppdraget {mission}, {count, plural, one {{count} tråd} other {{count} trådar}}"
 }

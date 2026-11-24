@@ -12823,7 +12823,7 @@
   "90f53409e1e8c8dd": "missions principal membre groupe fils barre latérale section",
   "783a6b7b1b1a2eac": "missions en-tête titre libellé barre latérale section",
   "b59dd4f7877f1064": "conversations fils en-tête titre libellé barre latérale section missions",
-  "6f4c37e7d9cabe25": "Replier la mission",
-  "c320a44649e79fcc": "Déplier la mission",
-  "e096948ea00955cb": "Pas encore de messages"
+  "e096948ea00955cb": "Pas encore de messages",
+  "19cd8fa8198eabf5": "Replier la mission {mission}, {count, plural, one {{count} fil} other {{count} fils}}",
+  "18c378583d4d0beb": "Déplier la mission {mission}, {count, plural, one {{count} fil} other {{count} fils}}"
 }

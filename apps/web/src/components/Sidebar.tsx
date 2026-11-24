@@ -284,6 +284,7 @@ import {
   useMissionHosts,
   useMissionLeadShells,
   useMissionMenu,
+  useUnavailableMissionLeads,
 } from "./sidebar/MissionsSection";
 import { groupSidebarMissions, isMissionMenuId, type MissionHost } from "./sidebar/missions.logic";
 import {
@@ -447,6 +448,7 @@ function useSidebarThreads(input: {
   readonly threads: readonly EnvironmentThreadShell[];
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly missionHosts: ReadonlyArray<MissionHost>;
+  readonly unavailableMissionLeads: ReadonlySet<string>;
   readonly routeRowThreadKey: string | null;
   readonly departingThreadKey: string | null;
   // Set in boring mode: the project groups to fold active threads into, in order.
@@ -463,6 +465,7 @@ function useSidebarThreads(input: {
     threads,
     delegatedUnderParent,
     missionHosts,
+    unavailableMissionLeads,
     routeRowThreadKey,
     departingThreadKey,
     folderGroups,
@@ -472,7 +475,7 @@ function useSidebarThreads(input: {
     missions,
     threadKeys: missionThreadKeys,
     leads: missionLeadEntries,
-  } = groupSidebarMissions(missionHosts, threads, scopedProjectKeys);
+  } = groupSidebarMissions(missionHosts, threads, scopedProjectKeys, unavailableMissionLeads);
   const missionExpandedById = useUiStateStore((store) => store.missionExpandedById);
   const threadsOf = (entries: ReadonlyArray<{ readonly thread: EnvironmentThreadShell | null }>) =>
     entries.flatMap((entry) => (entry.thread === null ? [] : [entry.thread]));
@@ -539,18 +542,21 @@ function useSidebarThreads(input: {
   const { pinnedThreads, activeThreads, workingThreads, snoozedThreads, settledThreads } =
     partition;
   // A mission row keeps its own state, so a snoozed one can be woken and a settled one un-settled.
+  // Every mission thread, folded ones too: search lists them, and their menus read this.
   const missionSectionByKey = new Map(
-    [...missionLeads, ...missionThreads].map((thread) => {
-      const configLoaded = serverConfigs.has(thread.environmentId);
-      return [
-        threadShellKey(thread),
-        resolveSidebarThreadSection({
-          snoozed: configLoaded && effectiveSnoozed(thread, { now: partition.snoozeNow }),
-          settled: configLoaded && thread.settledOverride === "settled",
-          pinned: false,
-        }),
-      ] as const;
-    }),
+    missions
+      .flatMap((mission) => threadsOf([mission.lead, ...mission.members]))
+      .map((thread) => {
+        const configLoaded = serverConfigs.has(thread.environmentId);
+        return [
+          threadShellKey(thread),
+          resolveSidebarThreadSection({
+            snoozed: configLoaded && effectiveSnoozed(thread, { now: partition.snoozeNow }),
+            settled: configLoaded && thread.settledOverride === "settled",
+            pinned: false,
+          }),
+        ] as const;
+      }),
   );
   const missionKeysIn = (section: SidebarSection) =>
     [...missionSectionByKey].flatMap(([key, value]) => (value === section ? [key] : []));
@@ -627,6 +633,8 @@ function useSidebarThreads(input: {
   ] as const) {
     for (const thread of list) sectionByThreadKey.set(threadShellKey(thread), section);
   }
+  // A sweep applies only to rows in its origin's state, mission rows included.
+  for (const [key, section] of missionSectionByKey) sectionByThreadKey.set(key, section);
   return {
     ...partition,
     threads,
@@ -1391,6 +1399,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   );
 
+  const unavailableMissionLeads = useUnavailableMissionLeads(missionHosts, listedThreads);
   const {
     workingShelfEnabled,
     missions,
@@ -1440,6 +1449,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     threads: listedThreads,
     delegatedUnderParent,
     missionHosts,
+    unavailableMissionLeads,
     routeRowThreadKey,
     departingThreadKey,
     folderGroups: boringSidebarEnabled

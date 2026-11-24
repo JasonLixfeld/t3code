@@ -12823,7 +12823,7 @@
   "90f53409e1e8c8dd": "missionen leitung mitglied gruppe threads seitenleiste bereich",
   "783a6b7b1b1a2eac": "missionen überschrift titel beschriftung seitenleiste bereich",
   "b59dd4f7877f1064": "threads überschrift titel beschriftung seitenleiste bereich missionen",
-  "6f4c37e7d9cabe25": "Mission einklappen",
-  "c320a44649e79fcc": "Mission ausklappen",
-  "e096948ea00955cb": "Noch keine Nachrichten"
+  "e096948ea00955cb": "Noch keine Nachrichten",
+  "19cd8fa8198eabf5": "Mission {mission} einklappen, {count, plural, one {{count} Thread} other {{count} Threads}}",
+  "18c378583d4d0beb": "Mission {mission} ausklappen, {count, plural, one {{count} Thread} other {{count} Threads}}"
 }

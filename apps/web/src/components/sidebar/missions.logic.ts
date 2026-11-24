@@ -314,6 +314,8 @@ export function groupSidebarMissions<T extends ListedThread>(
   hosts: ReadonlyArray<MissionHost>,
   threads: readonly T[],
   scopedProjectKeys: ReadonlySet<string> | null,
+  /** Leads whose thread was read for and not found, such as an archived one. */
+  unavailableLeads: ReadonlySet<string> = new Set(),
 ): {
   readonly missions: ReadonlyArray<SidebarMission<T>>;
   readonly threadKeys: ReadonlySet<string>;
@@ -336,8 +338,16 @@ export function groupSidebarMissions<T extends ListedThread>(
   const threadKeys = new Set<string>();
   const leads: Array<SidebarMissionEntry<T>> = [];
   const missions = listed.flatMap(({ key, host, mission }): Array<SidebarMission<T>> => {
-    const entries = mission.members.flatMap((member): Array<SidebarMissionEntry<T>> => {
-      const threadKey = scopedThreadKey(member.ref);
+    const entries = mission.members.flatMap((listed): Array<SidebarMissionEntry<T>> => {
+      const threadKey = scopedThreadKey(listed.ref);
+      // Shown as a deleted lead is: it heads its mission, and nothing waits for it.
+      const member: MissionMember =
+        listed.role === "lead" &&
+        listed.state === "active" &&
+        !threadByKey.has(threadKey) &&
+        unavailableLeads.has(threadKey)
+          ? { ...listed, state: "deleted" }
+          : listed;
       const claimed = member.state !== "deleted" && member.state !== "add-refused";
       if (claimed && holders.get(threadKey)?.key !== key) return [];
       const thread = claimed ? (threadByKey.get(threadKey) ?? null) : null;

@@ -72,6 +72,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   /** Every thread is titled "One" and has messages, unless a test says otherwise. */
   const titles = new Map<string, string>();
   const empty = new Set<string>();
+  const archived = new Set<string>();
   const laptop = {
     claims: undefined as Claims | undefined,
     /**
@@ -118,6 +119,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
               : {
                   id: threadId,
                   deletedAt: null,
+                  archivedAt: archived.has(key) ? "2026-01-02T00:00:00.000Z" : null,
                   tags: [...current],
                   title: titles.get(key) ?? "One",
                   latestUserMessageAt: empty.has(key) ? null : "2026-01-01T00:00:00.000Z",
@@ -229,6 +231,8 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     /** The thread's own user deletes it. */
     remove: (thread: ScopedThreadRef) => tags.delete(keyOf(thread)),
     retitle: (thread: ScopedThreadRef, title: string) => titles.set(keyOf(thread), title),
+    /** The thread's own user archives it. */
+    archive: (thread: ScopedThreadRef) => archived.add(keyOf(thread)),
     /** The thread has no messages yet, as a new draft thread. */
     empty: (thread: ScopedThreadRef) => empty.add(keyOf(thread)),
     laptop,
@@ -517,6 +521,18 @@ it.effect("a member's build without renames keeps the old name and stays reachab
       assert.equal(snapshot.missions[0]?.name, "Two");
       assert.equal(stateOf(snapshot, laptopMember), "active");
       assert.deepEqual(world.tags(laptopMember), [TAG]);
+    }),
+  );
+});
+
+it.effect("an archived lead shows as gone, as a deleted one does", () => {
+  const world = makeWorld([lead]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      yield* createOne;
+      world.archive(lead);
+      assert.equal(stateOf(yield* listed, lead), "deleted");
     }),
   );
 });

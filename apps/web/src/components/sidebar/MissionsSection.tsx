@@ -10,7 +10,13 @@ import type { EnvironmentId, MissionMember, ScopedThreadRef } from "@t3tools/con
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon, XIcon } from "lucide-react";
-import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  parseScopedThreadKey,
+  scopedThreadKey,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
+import { threadFamilyRead } from "@t3tools/client-runtime/state/threads";
+import { Atom } from "effect/reactivity";
 import { Fragment, type ReactNode, useContext, useEffect, useRef, useState } from "react";
 
 import { m } from "../../i18n/messages";
@@ -266,7 +272,17 @@ function MemberRow(props: {
           <button
             type="button"
             aria-expanded={toggle.expanded}
-            aria-label={toggle.expanded ? gt("Collapse mission") : gt("Expand mission")}
+            aria-label={
+              toggle.expanded
+                ? gt(
+                    "Collapse mission {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
+                    { mission: title, count: toggle.memberCount },
+                  )
+                : gt(
+                    "Expand mission {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
+                    { mission: title, count: toggle.memberCount },
+                  )
+            }
             onClick={toggle.onToggle}
             className="mt-0.5 inline-flex size-4 shrink-0 cursor-pointer items-center justify-center self-start rounded-sm text-sidebar-muted-foreground hover:text-sidebar-foreground"
           >
@@ -432,4 +448,43 @@ export function useMissionLeadShells(
     },
     [],
   );
+}
+
+// Keyed by a JSON array of scoped lead keys.
+const settledLeadReadsAtom = Atom.family((keys: string) =>
+  Atom.make(
+    (get): ReadonlySet<string> =>
+      new Set(
+        (JSON.parse(keys) as ReadonlyArray<string>).filter((key) => {
+          const ref = parseScopedThreadKey(key);
+          return (
+            ref !== null &&
+            threadFamilyRead(get(threadFamilies.familyAtom(ref.environmentId, ref.threadId))) ===
+              "settled"
+          );
+        }),
+      ),
+  ),
+);
+
+/**
+ * The listed leads the shell left out whose family read has answered. That read brings every
+ * thread it can, so a lead still missing after it is gone from the lists, as an archived one is.
+ */
+export function useUnavailableMissionLeads(
+  hosts: ReadonlyArray<MissionHost>,
+  threads: ReadonlyArray<EnvironmentThreadShell>,
+): ReadonlySet<string> {
+  const listed = new Set(
+    threads.map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+  );
+  const missing = hosts.flatMap((host) =>
+    host.snapshot.missions.flatMap((mission) =>
+      mission.members.flatMap((member) => {
+        const key = scopedThreadKey(member.ref);
+        return member.role === "lead" && member.state === "active" && !listed.has(key) ? [key] : [];
+      }),
+    ),
+  );
+  return useAtomValue(settledLeadReadsAtom(JSON.stringify(missing)));
 }

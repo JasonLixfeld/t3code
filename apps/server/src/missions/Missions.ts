@@ -201,9 +201,13 @@ const make = Effect.gen(function* () {
     waiting: Waiting,
   ) {
     const lead = { environmentId: here, threadId: mission.leadThreadId };
-    // A lead thread that cannot be read is not taken for a deleted one.
+    // A lead thread that cannot be read is not taken for a deleted one. An archived lead is gone
+    // from every list a client reads, so it shows as deleted too.
     const leadDeleted = yield* threads.getThreadShell(mission.leadThreadId).pipe(
-      Effect.map((shell) => shell === null || shell.deletedAt !== null),
+      Effect.map(
+        (shell) =>
+          shell === null || shell.deletedAt !== null || (shell.archivedAt ?? null) !== null,
+      ),
       Effect.orElseSucceed(() => false),
     );
     const members = new Map<string, MissionMember>([

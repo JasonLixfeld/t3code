@@ -1078,7 +1078,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const accessibility = resolveSidebarRowAccessibility({
     title: thread.title,
     statusLabel: topStatus?.label ?? null,
-    projectDisplayName: props.projectDisplayName,
+    // A mission can span projects, so its lead's row names none.
+    projectDisplayName: props.missionToggle ? null : props.projectDisplayName,
     isActive: props.isActive,
   });
 
@@ -1238,7 +1239,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     <button
       type="button"
       aria-expanded={missionToggle.expanded}
-      aria-label={missionToggle.expanded ? gt("Collapse mission") : gt("Expand mission")}
+      aria-label={
+        missionToggle.expanded
+          ? gt(
+              "Collapse mission {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
+              { mission: thread.title, count: missionToggle.memberCount },
+            )
+          : gt(
+              "Expand mission {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
+              { mission: thread.title, count: missionToggle.memberCount },
+            )
+      }
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
