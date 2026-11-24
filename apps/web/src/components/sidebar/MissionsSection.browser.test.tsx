@@ -436,7 +436,9 @@ describe("missions in the sidebar", () => {
     const collapse = screen.container.querySelector<HTMLElement>(
       '[aria-label^="Collapse mission"]',
     )!;
-    await act(() => collapse.click());
+    // A real click: an earlier sweep's click guard on the document would swallow a bare one.
+    await userEvent.click(collapse);
+    expect(screen.container.querySelector("[data-testid=sidebar-mission-members]")).toBeNull();
     await userEvent.fill(screen.getByLabelText("Search threads"), "release notes");
     const result = screen.getByText("Update the release notes").first();
     await expect.element(result).toBeInTheDocument();
