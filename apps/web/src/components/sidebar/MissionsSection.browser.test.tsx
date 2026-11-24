@@ -39,6 +39,7 @@ import { makeThreadFixture } from "../../test-fixtures";
 import type { Project } from "../../types";
 import { useUiStateStore } from "../../uiStateStore";
 import { toastManager } from "../ui/toast";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import Sidebar from "../Sidebar";
 import { SidebarProvider } from "../ui/sidebar";
 import type { MissionHost } from "./missions.logic";
@@ -646,7 +647,7 @@ async function dragBetween(from: HTMLElement, to: DragTarget) {
   // The pointer is let go where it last moved to.
   let at = to;
   return {
-    moveTo: (next: HTMLElement) => {
+    moveTo: (next: DragTarget) => {
       at = next;
       return act(() => pointer("pointermove", document, center(next)));
     },
@@ -767,6 +768,47 @@ describe("dragging threads into and out of missions", () => {
     await drag.release();
   });
 
+  it("waits for a selected thread's family read that answers late, and adds it", async () => {
+    using _drag = allowDrag();
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
+    const toasts = vi.spyOn(toastManager, "add");
+    onTestFinished(() => toasts.mockRestore());
+    // The family read answers 300 ms after the drop; only then is the thread there.
+    const older = shell("older", "Old settled bug", { settled: true });
+    let answered = false;
+    const listedShell = vi.mocked(readThreadShell).getMockImplementation()!;
+    vi.mocked(readThreadShell).mockImplementation((target) =>
+      answered && target.threadId === "older" ? older : listedShell(target),
+    );
+    const family = Atom.make<AsyncResult.AsyncResult<{ threads: [] }, never>>(
+      AsyncResult.initial(true),
+    );
+    using _family = vi.spyOn(threadFamilies, "familyAtom").mockReturnValue(family as never);
+    using _mount = vi.spyOn(threadFamilies, "mount").mockImplementation(() => {
+      setTimeout(() => {
+        answered = true;
+        appAtomRegistry.set(family, AsyncResult.success({ threads: [] }));
+      }, 300);
+      return () => {};
+    });
+    useThreadSelectionStore.setState({
+      selectedThreadKeys: new Set(["local:plain", "local:older"]),
+    });
+    onTestFinished(() => useThreadSelectionStore.setState({ selectedThreadKeys: new Set() }));
+    const drag = await dragBetween(
+      rowOf(screen.container, "Unrelated bug"),
+      rowOf(screen.container, "Plan the v2 release"),
+    );
+    await drag.release();
+    const added = () =>
+      commandFor("mission add member").mock.calls.map(
+        ([call]) => (call as { input: { member: { threadId: string } } }).input.member.threadId,
+      );
+    await vi.waitFor(() => expect(added().toSorted()).toEqual(["older", "plain"]));
+    expect(toasts).not.toHaveBeenCalled();
+  });
+
   it("reads in selected threads an unread older page holds, and names those it cannot", async () => {
     using _drag = allowDrag();
     await using screen = await renderSidebar();
@@ -830,6 +872,23 @@ describe("dragging threads into and out of missions", () => {
       environmentId: LOCAL,
       input: { missionId: "0123456789ab", member: ref(LOCAL, "docs") },
     });
+  });
+
+  it("releases only on the dashed box, not on the padding around it", async () => {
+    using _drag = allowDrag();
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    const drag = await dragBetween(
+      rowOf(screen.container, "Update the release notes"),
+      releaseZone(screen.container),
+    );
+    // Tailwind's padding is not loaded here, so the row gets its own.
+    const row = releaseZone(screen.container)().closest("li")!;
+    row.style.padding = "20px 0";
+    const box = row.firstElementChild!.getBoundingClientRect();
+    await drag.moveTo({ clientX: box.left + 20, clientY: box.top - 10 });
+    await drag.release();
+    expect(commandFor("mission release member")).not.toHaveBeenCalled();
   });
 
   it("releases only on the zone, not on the Missions heading, between missions or on a thread", async () => {

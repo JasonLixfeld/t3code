@@ -33,6 +33,7 @@ import stylesheet from "~/index.css?inline";
 import { environmentContextRecord } from "~/lib/composerContextRecords";
 import { startWorkspaceFocus } from "~/lib/workspaceFocus";
 import { usePromptStashStore } from "~/promptStashStore";
+import { clearMissionDraft, markMissionDraft } from "~/components/sidebar/missionDraftStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -671,6 +672,41 @@ it("retains each thread's diff selection when returning from another thread or S
     kind: "turn",
     turnId: a.runs[0]!.id,
   });
+});
+
+it("refuses to send a mission draft that left its mission's machine", async () => {
+  using _environment = installFakeEnvironment([], { acceptCommands: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-moved-mission");
+  const threadId = ThreadId.make("thread-moved-mission");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, { threadId });
+  // The mission waits for this thread on another machine, so the draft has moved off it.
+  markMissionDraft(draftId, {
+    intent: { kind: "new" },
+    thread: { environmentId: EnvironmentId.make("mission-machine"), threadId },
+  });
+  using _mark = { [Symbol.dispose]: () => clearMissionDraft(draftId) };
+  using launch = holdRpc(ORCHESTRATION_V2_WS_METHODS.launchThread, Effect.interrupt);
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const editor = page.getByTestId("composer-editor");
+  await expect.element(editor).toBeVisible();
+  await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
+
+  await userEvent.click(editor);
+  await userEvent.keyboard("start the mission{Enter}");
+  await expect.element(page.getByText("This draft left its mission's machine")).toBeVisible();
+  expect(launch.calls).toHaveLength(0);
+  expect(dispatchedCommands()).toHaveLength(0);
 });
 
 it("a stashed prompt ending in a file chip restores with the chip", async () => {
