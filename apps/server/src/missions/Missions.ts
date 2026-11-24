@@ -209,6 +209,13 @@ const make = Effect.gen(function* () {
    * would otherwise free valid members. Claims made under an earlier link session stop appearing
    * here after a re-pair; the member's own Leave frees those.
    */
+  /** Deleted here, or never here. A thread that cannot be read is not taken for gone. */
+  const threadGone = (threadId: ThreadId) =>
+    threads.getThreadShell(threadId).pipe(
+      Effect.map((shell) => shell === null || shell.deletedAt !== null),
+      Effect.orElseSucceed(() => false),
+    );
+
   const missionView = Effect.fn("Missions.view")(function* (
     mission: MissionRecord,
     held: ReadonlyMap<EnvironmentId, Machine>,
@@ -231,6 +238,8 @@ const make = Effect.gen(function* () {
     for (const [environmentId, machine] of held) {
       for (const claim of machine.claims) {
         if (claim.missionId !== mission.missionId || claim.role === "lead") continue;
+        // A member deleted here is no longer one, whether or not its claim was let go yet.
+        if (environmentId === here && (yield* threadGone(claim.threadId))) continue;
         const ref = { environmentId, threadId: claim.threadId };
         const isReleasing = releasing.some(
           (release) =>
@@ -362,7 +371,7 @@ const make = Effect.gen(function* () {
     if (environmentId === here) {
       switch (call.kind) {
         case "join": {
-          const joined = yield* claims.join(here, call);
+          const joined = yield* claims.join(here, { ...call, ledHere: true });
           return joined === "intent-spent" ? [] : [joined];
         }
         case "release":
@@ -458,7 +467,7 @@ const make = Effect.gen(function* () {
           else {
             const stale = yield* staleAdd(add);
             if (stale !== undefined) {
-              yield* store.setPendingAdd({ ...add, refusal: stale });
+              yield* store.expireAdd({ ...add, refusal: stale });
               continue;
             }
             yield* sendJoin(mission, add).pipe(
@@ -468,7 +477,11 @@ const make = Effect.gen(function* () {
             );
           }
         }
-        if (!discover) return;
+        // Only a list settles an add no answer came for, so such a machine is listed every time.
+        const uncertain = (yield* store.uncertainAdds).some(
+          (add) => add.environmentId === environmentId,
+        );
+        if (!discover && !uncertain) return;
         let held = yield* onMember(environmentId, { kind: "list" });
         // A member's claim, and so its tag, carries the Mission's name. A lead renamed since is
         // sent to the member's machine here, as often as it still answers with the old name.
@@ -494,8 +507,12 @@ const make = Effect.gen(function* () {
     );
 
   /** The machines that owe an answer to an add or a release. They stay in every sweep. */
-  const owingAnAnswer = Effect.map(waiting, ({ releases, adds }) =>
-    [...releases, ...adds.filter((add) => add.refusal === null)].map((owed) => owed.environmentId),
+  const owingAnAnswer = Effect.map(
+    Effect.all([waiting, store.uncertainAdds]),
+    ([{ releases, adds }, uncertain]) =>
+      [...releases, ...adds.filter((add) => add.refusal === null), ...uncertain].map(
+        (owed) => owed.environmentId,
+      ),
   );
   // Set by whoever wants the machines' claims read again; a sweep without it only sends again
   // what still waits for an answer.
@@ -588,6 +605,24 @@ const make = Effect.gen(function* () {
     readonly missionId: string;
   }) {
     const mission = yield* missionNamed(input.missionId);
+    // An add its machine never answered may have made a claim there.
+    const { adds } = yield* waiting;
+    const [owed] = [
+      ...adds.filter((add) => add.refusal === null),
+      ...(yield* store.uncertainAdds),
+    ].filter((add) => add.missionId === mission.missionId);
+    if (owed !== undefined) {
+      const label = yield* linkTo(owed.environmentId).pipe(
+        Effect.map((link) => link.label),
+        Effect.orElseSucceed(() => owed.environmentId as string),
+      );
+      return yield* fail(`Waiting to hear from ${label}.`);
+    }
+    // A member whose thread is gone holds nothing back.
+    for (const claim of yield* claims.list(here)) {
+      if (claim.missionId !== mission.missionId || claim.role !== "member") continue;
+      if (yield* threadGone(claim.threadId)) yield* claims.leaveHere(claim.threadId);
+    }
     yield* claims.deleteMission({ missionId: mission.missionId, lead: mission.leadThreadId });
   });
 

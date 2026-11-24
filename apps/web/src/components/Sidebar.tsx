@@ -3837,7 +3837,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           />
                         ) : null,
                         threadsHeaderVisible && (missions.length > 0 || missionsHeadingShown) ? (
-                          <SidebarHeading key="threads-heading">
+                          <SidebarHeading key="threads-heading" releasesMembers>
                             {gt("Threads", { $context: "sidebar section" })}
                           </SidebarHeading>
                         ) : null,

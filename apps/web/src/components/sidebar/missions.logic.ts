@@ -143,6 +143,9 @@ export function missionRowItems(
       id: `${NEW_THREAD_PREFIX}${target}`,
       label: resolve(msg("New thread in this mission")),
       icon: "message-square-plus",
+      // Its first send adds it, so it needs the right an add needs.
+      disabled: !input.canChange,
+      ...(input.canChange ? {} : { detail: blockLabel("not-allowed", "", resolve) }),
     },
     ...(input.leadGone
       ? [

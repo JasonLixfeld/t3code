@@ -583,11 +583,13 @@ describe("missions in the sidebar", () => {
         mission: { kind: "member", host: LOCAL, missionId: "ba9876543210", name: "Old work" },
       }),
     );
-    // A lead not read in yet, as an archived one, still gets the menu, and can delete it.
+    // A lead not read in yet, as an archived one, still gets the menu, a new lead, and delete.
     const loading = screen.getByText("Archive the old site").element().closest("li")!;
     expect(await menuOf(loading, "mission-delete:local:cccccccccccc")).toEqual([
       "Mission",
       "New thread in this mission",
+      "New lead",
+      "Choose a thread…",
       "Delete mission",
     ]);
     await vi.waitFor(() =>
@@ -686,7 +688,7 @@ function allowDrag(): Disposable {
 type DragTarget =
   | HTMLElement
   | { readonly clientX: number; readonly clientY: number }
-  | (() => HTMLElement);
+  | (() => HTMLElement | { readonly clientX: number; readonly clientY: number });
 
 async function dragBetween(from: HTMLElement, to: DragTarget) {
   const center = (target: DragTarget) => {
@@ -729,7 +731,7 @@ async function dragBetween(from: HTMLElement, to: DragTarget) {
 }
 
 const releaseZone = (root: Element) => () =>
-  root.querySelector<HTMLElement>("[data-mission-release]")!;
+  root.querySelector<HTMLElement>('[data-mission-release="zone"]')!;
 const shipArea = (root: Element) =>
   root.querySelector<HTMLElement>('[data-mission-drop="local:0123456789ab"]')!;
 const hintIn = (element: Element) => element.querySelector('[role="status"]')?.textContent ?? null;
@@ -954,7 +956,7 @@ describe("dragging threads into and out of missions", () => {
     using _drag = allowDrag();
     await using screen = await renderSidebar(settings, options);
     await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
-    expect(screen.container.querySelector("[data-mission-release]")).toBeNull();
+    expect(screen.container.querySelector('[data-mission-release="zone"]')).toBeNull();
     const drag = await dragBetween(
       rowOf(screen.container, "Update the release notes"),
       releaseZone(screen.container),
@@ -1010,6 +1012,32 @@ describe("dragging threads into and out of missions", () => {
       await drag.release();
     }
     expect(commandFor("mission release member")).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases nothing on blank space below the last row or in a gap under the Threads heading", async () => {
+    using _drag = allowDrag();
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    const headingRow = [...screen.container.querySelectorAll<HTMLElement>("h2")]
+      .find((h2) => h2.textContent?.includes("Threads"))!
+      .closest("li")!;
+    // Room the stylesheet would leave: a gap under the heading, and space under the last row.
+    headingRow.style.marginBottom = "24px";
+    const list = headingRow.parentElement!;
+    list.style.paddingBottom = "120px";
+    const gap = () => ({
+      clientX: headingRow.getBoundingClientRect().left + 40,
+      clientY: headingRow.getBoundingClientRect().bottom + 12,
+    });
+    const blank = () => ({
+      clientX: list.getBoundingClientRect().left + 40,
+      clientY: list.getBoundingClientRect().bottom - 40,
+    });
+    for (const to of [gap, blank]) {
+      const drag = await dragBetween(rowOf(screen.container, "Update the release notes"), to);
+      await drag.release();
+    }
+    expect(commandFor("mission release member")).not.toHaveBeenCalled();
   });
 
   /** A 200px viewport over the list, as a short window has. */

@@ -220,15 +220,15 @@ export function buildSidebarProjectSnapshots(
 export function buildSidebarProjectPickerEntries(input: {
   groups: ReadonlyArray<SidebarProjectSnapshot>;
   preferredProjectRef: ScopedProjectRef | null;
-  /** Offers only copies on this machine, when set. */
-  environmentId?: EnvironmentId | null;
+  /** Offers only copies on these machines, when set. */
+  environmentIds?: ReadonlySet<EnvironmentId> | null;
 }) {
   const preferredProjectRef = input.preferredProjectRef;
   const entries = input.groups.flatMap((group): SidebarProjectPickerEntry[] => {
     const members = group.memberProjects.filter(
       (project) =>
         isPickableProjectMember(project) &&
-        (input.environmentId == null || project.environmentId === input.environmentId),
+        (input.environmentIds == null || input.environmentIds.has(project.environmentId)),
     );
     const isPreferred = preferredProjectRef
       ? group.memberProjectRefs.some(

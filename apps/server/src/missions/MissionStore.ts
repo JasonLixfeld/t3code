@@ -120,6 +120,18 @@ const migrations = Migrator.fromRecord({
     yield* sql`ALTER TABLE pending_adds ADD COLUMN link_id TEXT NOT NULL DEFAULT ''`;
     yield* sql`ALTER TABLE pending_adds ADD COLUMN added_at TEXT NOT NULL DEFAULT ''`;
   }),
+  "6_UncertainAdds": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    // Adds no machine answered, forgotten or given up on. The thread may hold a claim there.
+    yield* sql`
+      CREATE TABLE uncertain_adds (
+        environment_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        mission_id TEXT NOT NULL,
+        PRIMARY KEY (environment_id, thread_id, mission_id)
+      )
+    `;
+  }),
 });
 
 interface MissionRow {
@@ -201,6 +213,8 @@ interface ClaimInput {
   readonly generation: string;
   /** The lead's add this join belongs to. Absent for a lead's own claim and a join made here. */
   readonly intentId?: string | undefined;
+  /** The Mission is led here, so it must still be here when the claim is written. */
+  readonly ledHere?: boolean | undefined;
 }
 
 const toMission = (row: MissionRow): MissionRecord => ({
@@ -304,6 +318,13 @@ export class MissionStore extends Context.Service<
     readonly pendingAdds: Effect.Effect<ReadonlyArray<PendingAdd>>;
     /** Records the add, or what became of it. One row per thread and Mission. */
     readonly setPendingAdd: (add: PendingAdd) => Effect.Effect<void>;
+    /**
+     * Gives up on an add no machine answered, saying why. Its thread may still hold a claim
+     * there, so the add stays uncertain until that machine lists its claims.
+     */
+    readonly expireAdd: (add: PendingAdd & { readonly refusal: string }) => Effect.Effect<void>;
+    /** Adds forgotten or given up on, until their machine lists its claims again. */
+    readonly uncertainAdds: Effect.Effect<ReadonlyArray<AddKey>>;
     readonly clearPendingAdd: (add: AddKey) => Effect.Effect<void>;
     /** Replaces a pending add with the claim its join made, both or neither. */
     readonly settleAdd: (add: AddKey, claim: MissionClaim) => Effect.Effect<void>;
@@ -312,13 +333,16 @@ export class MissionStore extends Context.Service<
      * is away: only that machine's answer is the truth.
      */
     readonly knownClaims: Effect.Effect<ReadonlyMap<EnvironmentId, ReadonlyArray<MissionClaim>>>;
-    /** Replaces what a machine last said. */
+    /** Replaces what a machine last said, which settles the adds uncertain there. */
     readonly setKnownClaims: (
       environmentId: EnvironmentId,
       claims: ReadonlyArray<MissionClaim>,
     ) => Effect.Effect<void>;
     readonly forgetClaim: (release: Omit<PendingRelease, "missionId">) => Effect.Effect<void>;
-    /** Drops what this lead waits for and last knew about one thread, in one Mission only. */
+    /**
+     * Drops what this lead waits for and last knew about one thread, in one Mission only. An
+     * unanswered add stays uncertain.
+     */
     readonly forgetThread: (thread: AddKey) => Effect.Effect<void>;
   }
 >()("t3/missions/MissionStore") {}
@@ -440,6 +464,7 @@ const make = Effect.gen(function* () {
           UNION ALL SELECT 1 FROM pending_adds
             WHERE mission_id = ${input.missionId} AND refusal IS NULL
           UNION ALL SELECT 1 FROM pending_releases WHERE mission_id = ${input.missionId}
+          UNION ALL SELECT 1 FROM uncertain_adds WHERE mission_id = ${input.missionId}
           LIMIT 1
         `;
         if (held !== undefined) {
@@ -518,6 +543,12 @@ const make = Effect.gen(function* () {
             WHERE mission_id = ${input.missionId} AND intent_id = ${intentId}
           `;
           if (spent.length > 0) return "intent-spent" as const;
+        }
+        if (input.ledHere === true) {
+          const [mission] = yield* sql`
+            SELECT 1 FROM missions WHERE mission_id = ${input.missionId}
+          `;
+          if (mission === undefined) return refuse("This mission no longer exists.");
         }
         const held = yield* claimRow(input.threadId);
         if (held === undefined) return yield* insertClaim(input, "member", claimedAt);
@@ -708,6 +739,38 @@ const make = Effect.gen(function* () {
         ${add.linkId}, ${add.addedAt}, ${add.refusal})
     `.pipe(Effect.andThen(changed), Effect.asVoid, Effect.orDie);
 
+  const uncertain = (add: AddKey) => sql`
+    INSERT OR IGNORE INTO uncertain_adds (environment_id, thread_id, mission_id)
+    VALUES (${add.environmentId}, ${add.threadId}, ${add.missionId})
+  `;
+
+  const expireAdd = (add: PendingAdd & { readonly refusal: string }) =>
+    sql
+      .withTransaction(
+        sql`
+          INSERT OR REPLACE INTO pending_adds
+            (environment_id, thread_id, mission_id, intent_id, link_id, added_at, refusal)
+          VALUES (${add.environmentId}, ${add.threadId}, ${add.missionId}, ${add.intentId},
+            ${add.linkId}, ${add.addedAt}, ${add.refusal})
+        `.pipe(Effect.andThen(uncertain(add))),
+      )
+      .pipe(Effect.andThen(changed), Effect.asVoid, Effect.orDie);
+
+  const uncertainAdds = sql<{
+    readonly environment_id: string;
+    readonly thread_id: string;
+    readonly mission_id: string;
+  }>`SELECT environment_id, thread_id, mission_id FROM uncertain_adds ORDER BY rowid`.pipe(
+    Effect.map((rows) =>
+      rows.map((row): AddKey => ({
+        environmentId: EnvironmentId.make(row.environment_id),
+        threadId: ThreadId.make(row.thread_id),
+        missionId: row.mission_id,
+      })),
+    ),
+    Effect.orDie,
+  );
+
   const deletePendingAdd = (add: AddKey) =>
     sql`
       DELETE FROM pending_adds
@@ -751,6 +814,7 @@ const make = Effect.gen(function* () {
     yield* sql.withTransaction(
       Effect.gen(function* () {
         yield* sql`DELETE FROM known_claims WHERE environment_id = ${environmentId}`;
+        yield* sql`DELETE FROM uncertain_adds WHERE environment_id = ${environmentId}`;
         yield* Effect.forEach(claims, (held) => insertKnownClaim(environmentId, held));
       }),
     );
@@ -779,6 +843,11 @@ const make = Effect.gen(function* () {
       AND thread_id = ${thread.threadId} AND mission_id = ${thread.missionId}`;
     yield* sql.withTransaction(
       Effect.all([
+        sql`
+          INSERT OR IGNORE INTO uncertain_adds (environment_id, thread_id, mission_id)
+          SELECT environment_id, thread_id, mission_id FROM pending_adds
+          WHERE ${theThread} AND refusal IS NULL
+        `,
         sql`DELETE FROM pending_adds WHERE ${theThread}`,
         sql`DELETE FROM pending_releases WHERE ${theThread}`,
         sql`DELETE FROM known_claims WHERE ${theThread}`,
@@ -794,6 +863,8 @@ const make = Effect.gen(function* () {
     setLead,
     deleteMission,
     join,
+    expireAdd,
+    uncertainAdds,
     release,
     leave,
     renameMission,

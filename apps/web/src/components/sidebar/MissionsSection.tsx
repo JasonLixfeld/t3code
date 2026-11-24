@@ -325,9 +325,13 @@ function MemberRow(props: {
   const onRelease = async () => {
     if (forgets) {
       const confirmed = await readLocalApi()?.dialogs.confirm(
-        gt(
-          "Forget this thread? Nothing is sent to its machine. If that machine comes back still holding the thread, someone there can free it with Leave mission.",
-        ),
+        props.member.state === "add-pending"
+          ? gt(
+              "Forget this thread? Nothing is sent to its machine. The add may have reached it, so this mission cannot be deleted until that machine answers. If it holds the thread then, the thread shows here as a member.",
+            )
+          : gt(
+              "Forget this thread? Nothing is sent to its machine. If that machine comes back still holding the thread, someone there can free it with Leave mission.",
+            ),
       );
       if (confirmed !== true) return;
     }
@@ -533,11 +537,13 @@ function MissionLeadRow(
     expectedLead: props.member.ref.threadId,
     hosts,
   });
-  const leadGone = props.member.state === "deleted" && missingLead.allowed;
+  // No thread row stands in for the lead, whether it is still loading or gone, so either way
+  // the Mission can take a new one from here. Only a gone lead also shows the actions inline.
+  const deleted = props.member.state === "deleted" && missingLead.allowed;
   const onContextMenu = async (event: ReactMouseEvent) => {
     event.preventDefault();
     const picked = await readLocalApi()?.contextMenu.show(
-      menu.rowItems(props.host, mission, leadGone),
+      menu.rowItems(props.host, mission, missingLead.allowed),
       { x: event.clientX, y: event.clientY },
       contextMenuSourceOf(event),
     );
@@ -549,7 +555,7 @@ function MissionLeadRow(
     <MemberRow
       {...row}
       onContextMenu={(event) => void onContextMenu(event)}
-      {...(leadGone ? { missingLead } : {})}
+      {...(deleted ? { missingLead } : {})}
     />
   );
 }
@@ -851,10 +857,20 @@ export function useMissionDrop(missions: ReadonlyArray<SidebarMission<Environmen
     const viewport = list.closest<HTMLElement>("[data-slot=scroll-area-viewport]");
     if (viewport !== null && !contains(viewport)) return null;
     const mission = [...list.querySelectorAll<HTMLElement>("[data-mission-drop]")].find(contains);
-    // A dragged member shows the release zone; it and the thread list below it release one.
-    const release = list.querySelector<HTMLElement>("[data-mission-release]");
+    // A dragged member shows the release zone. It, the Threads heading and the rows under them
+    // release one; blank space does not.
+    const zone = list.querySelector<HTMLElement>('[data-mission-release="zone"]');
+    const below = zone?.getBoundingClientRect().top ?? Infinity;
     const releases =
-      release !== null && contains(list) && point.y >= release.getBoundingClientRect().top;
+      zone !== null &&
+      ([...list.querySelectorAll<HTMLElement>("[data-mission-release]")].some(contains) ||
+        [...list.querySelectorAll<HTMLElement>("[data-sidebar-row]")].some(
+          (row) =>
+            // Shelf headers and drafts are rows too, but not threads.
+            !/^(shelf|draft):/.test(row.dataset.sidebarRow ?? "") &&
+            row.getBoundingClientRect().top >= below &&
+            contains(row),
+        ));
     return resolveMissionDrop({
       dragged,
       threads,

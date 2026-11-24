@@ -79,6 +79,8 @@ interface JoinInput {
   readonly name: string;
   /** Names one add on the lead, the same in every copy of its join. */
   readonly intentId?: string | undefined;
+  /** The Mission is led here: its record must still be here when the claim is written. */
+  readonly ledHere?: boolean | undefined;
 }
 
 /**

@@ -350,3 +350,49 @@ it("New thread in this mission opens a project's draft that joins the mission on
   await expect.element(page.getByRole("button", { name: "Mission" })).toHaveTextContent("Ship v2");
   await expect.element(page.getByText('Sending adds this thread to "Ship v2"')).toBeVisible();
 });
+
+it("the Mission choice shows the mission a draft joins on another machine", async () => {
+  using _environment = installFakeEnvironment([]);
+  const laptop = EnvironmentId.make("laptop");
+  missionHosts.listed = [
+    {
+      environmentId: laptop,
+      snapshot: {
+        missions: [
+          {
+            missionId: "ba9876543210",
+            name: "Ship v2",
+            createdAt: "2026-11-23T00:00:00.000Z",
+            members: [],
+          },
+        ],
+        links: [],
+        claims: [],
+      },
+    },
+  ];
+  onTestFinished(() => {
+    missionHosts.listed = [];
+  });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-joins-elsewhere");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId);
+  const threadId = useComposerDraftStore.getState().getDraftSession(draftId)!.threadId;
+  markMissionDraft(draftId, {
+    intent: { kind: "member", host: laptop, missionId: "ba9876543210", name: "Ship v2" },
+    thread: { environmentId: ENVIRONMENT_ID, threadId },
+  });
+  onTestFinished(() => clearMissionDraft(draftId));
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByRole("button", { name: "Mission" })).toHaveTextContent("Ship v2");
+});

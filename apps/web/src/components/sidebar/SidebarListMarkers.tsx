@@ -54,7 +54,7 @@ export function SidebarReleaseZone(props: { label: string; isDropTarget: boolean
   return (
     <li className="mx-0.5 list-none py-1">
       <div
-        data-mission-release=""
+        data-mission-release="zone"
         className={cn(DROP_ZONE_CLASS, props.isDropTarget && DROP_ZONE_TARGET_CLASS)}
       >
         {props.label}
@@ -170,9 +170,14 @@ export function SidebarHeading(props: {
   children: ReactNode;
   /** A button at the end of the row. */
   action?: ReactNode;
+  /** A Mission member dropped on it leaves its Mission, as on the release zone. */
+  releasesMembers?: boolean;
 }) {
   return (
-    <li className="mx-0.5 flex list-none items-center">
+    <li
+      className="mx-0.5 flex list-none items-center"
+      {...(props.releasesMembers ? { "data-mission-release": "heading" } : {})}
+    >
       <h2 className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-xs font-medium text-sidebar-muted-foreground">
         <span className="min-w-0 truncate">{props.children}</span>
         <span aria-hidden className="h-px min-w-2 flex-1 bg-sidebar-border/50" />

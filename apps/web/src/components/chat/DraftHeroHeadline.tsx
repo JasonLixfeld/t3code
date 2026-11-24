@@ -115,7 +115,7 @@ export function DraftHeroHeadline({
   const projectPickerEntries = buildSidebarProjectPickerEntries({
     groups: pickableProjectGroups(projectGroups),
     preferredProjectRef: activeProjectRef,
-    environmentId: missionMachine,
+    environmentIds: missionMachine === null ? null : new Set([missionMachine]),
   });
   const projectEntryByKey = new Map(
     projectPickerEntries.map((entry) => [entry.group.projectKey, entry] as const),

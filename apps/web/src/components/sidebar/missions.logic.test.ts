@@ -159,6 +159,12 @@ describe("buildMissionMenuItems", () => {
       true,
       "Has threads",
     ]);
+    // Without the right to add, there is no new thread to add either.
+    const barred = buildMissionMenuItems([thread(DESK, "lead")], led([]), label, () => false);
+    expect(barred.find((item) => item.id.startsWith("mission-new-thread:"))).toMatchObject({
+      disabled: true,
+      detail: "Not allowed here",
+    });
     // A refused add never joined, so the mission can still go.
     expect(group([member("add-refused")]).at(-1)![1]).toBe(false);
     expect(parseMissionTarget("mission-delete:env-desk:0123456789ab")).toEqual({

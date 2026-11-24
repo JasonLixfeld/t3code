@@ -245,6 +245,7 @@ import {
   useSortedProjectGroups,
 } from "./CommandPaletteLookups";
 import { markMissionDraft } from "./sidebar/missionDraftStore";
+import { useMissionHosts } from "./sidebar/MissionsSection";
 import {
   buildNewThreadInProjectItems,
   buildProjectSearchItems,
@@ -566,7 +567,21 @@ function OpenCommandPaletteDialog(props: {
   const currentView = viewStack.at(-1)?.view ?? null;
   // A draft made from this view starts or leads a Mission once it is sent.
   const missionIntent = currentView?.mission;
-  const missionHost = missionIntent?.kind === "lead" ? missionIntent.host : null;
+  const missionHosts = useMissionHosts();
+  // Where a draft from this view can do what it is for: a new lead only on its Mission's
+  // machine, a member also on machines that machine links to with full access.
+  const missionMachines: ReadonlySet<EnvironmentId> | null =
+    missionIntent === undefined || missionIntent.kind === "new"
+      ? null
+      : new Set([
+          missionIntent.host,
+          ...(missionIntent.kind === "member"
+            ? (missionHosts
+                .find((host) => host.environmentId === missionIntent.host)
+                ?.snapshot.links.filter((link) => link.fullAccess)
+                .map((link) => link.environmentId) ?? [])
+            : []),
+        ]);
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
   const [browseGeneration, setBrowseGeneration] = useState(0);
   const [browseNavigation] = useState(createBrowseNavigationCoordinator);
@@ -601,7 +616,7 @@ function OpenCommandPaletteDialog(props: {
     groups: pickableProjectGroups(projectGroups),
     preferredProjectRef: contextualProjectRef,
     // A Mission's lead lives on its machine, so only that machine's copies can give one.
-    environmentId: missionHost,
+    environmentIds: missionMachines,
   });
   const pickerProjects = projectPickerEntries.map(({ group, targetProject }) => ({
     ...targetProject,
@@ -749,11 +764,12 @@ function OpenCommandPaletteDialog(props: {
   const scratchTargetEnvironmentId = scratchEnvironmentId(currentProjectEnvironmentId);
   // A new lead must be on its Mission's machine, so "No project" opens there or not at all.
   const noProjectEnvironmentId =
-    missionHost === null
+    missionMachines === null ||
+    (scratchTargetEnvironmentId !== null && missionMachines.has(scratchTargetEnvironmentId))
       ? scratchTargetEnvironmentId
-      : scratchWorkspaceRootFor(missionHost) !== null
-        ? missionHost
-        : null;
+      : ([...missionMachines].find(
+          (environmentId) => scratchWorkspaceRootFor(environmentId) !== null,
+        ) ?? null);
   // A draft opened from this view starts, leads or joins a Mission once it is sent.
   const openDraftIn = async (projectRef: ScopedProjectRef) => {
     const created = await handleNewThread(projectRef);
@@ -944,7 +960,7 @@ function OpenCommandPaletteDialog(props: {
             );
           const projectRef =
             contextualProjectIsEligible &&
-            (missionHost === null || contextualProjectRef.environmentId === missionHost)
+            (missionMachines === null || missionMachines.has(contextualProjectRef.environmentId))
               ? contextualProjectRef
               : scopeProjectRef(project.environmentId, project.id);
           await openDraftIn(projectRef);

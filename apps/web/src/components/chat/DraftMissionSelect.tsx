@@ -34,8 +34,22 @@ export function DraftMissionSelect(props: {
   const threadId = useComposerDraftStore(
     (store) => store.getDraftSession(draftId)?.threadId ?? null,
   );
+  const missionOn = (host: EnvironmentId) =>
+    hosts.find((candidate) => candidate.environmentId === host)?.snapshot.missions ?? [];
+  // The Mission this draft joins, wherever it lives: New thread in this mission can mark it to
+  // join one on a machine that links to this one.
+  const target =
+    marked?.intent.kind === "member"
+      ? missionOn(marked.intent.host).find(
+          (mission) =>
+            marked.intent.kind === "member" && mission.missionId === marked.intent.missionId,
+        )
+      : undefined;
+  const here = missionOn(environmentId);
   const missions =
-    hosts.find((host) => host.environmentId === environmentId)?.snapshot.missions ?? [];
+    target === undefined || here.some((mission) => mission.missionId === target.missionId)
+      ? here
+      : [target, ...here];
   if (missions.length === 0 || threadId === null) return null;
   if (marked !== undefined && marked.intent.kind !== "member") return null;
   const items: ReadonlyArray<MissionItem> = [
@@ -65,7 +79,10 @@ export function DraftMissionSelect(props: {
               markMissionDraft(draftId, {
                 intent: {
                   kind: "member",
-                  host: environmentId,
+                  host:
+                    mission === target && marked?.intent.kind === "member"
+                      ? marked.intent.host
+                      : environmentId,
                   missionId: mission.missionId,
                   name: mission.name,
                 },

@@ -58,6 +58,7 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as MissionClaims from "../missions/MissionClaims.ts";
 import * as Missions from "../missions/Missions.ts";
+import * as MissionThreadDeletions from "../missions/MissionThreadDeletions.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
 import * as WorkflowRuntime from "../workflows/WorkflowRuntime.ts";
@@ -329,7 +330,10 @@ const layerWorkflowsProvided = WorkflowRuntime.layer.pipe(
   // Layers memoize by reference, so these are the links Settings and agents use.
   Layer.provide(PeerMcpClient.layer.pipe(Layer.provideMerge(PeerLinks.layer))),
 );
-const layerMissionsProvided = Missions.layer.pipe(
+const layerMissionsProvided = Layer.merge(
+  Missions.layer,
+  MissionThreadDeletions.layer.pipe(Layer.provide(layerOrchestratorProvided)),
+).pipe(
   Layer.provide(MissionClaims.layerLive),
   Layer.provide(layerThreadManagementProvided),
   Layer.provide(PeerMcpClient.layer.pipe(Layer.provideMerge(PeerLinks.layer))),

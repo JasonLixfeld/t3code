@@ -12,6 +12,7 @@ import { makeThreadFixture } from "../test-fixtures";
 import type { Project, Thread } from "../types";
 import { CommandPalette } from "./CommandPalette";
 import { markMissionDraft } from "./sidebar/missionDraftStore";
+import { useMissionHosts } from "./sidebar/MissionsSection";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { DraftId } from "../composerDraftStore";
 
@@ -48,6 +49,7 @@ vi.mock("../hooks/useHandleNewThread", async (original) => {
   };
 });
 vi.mock("./sidebar/missionDraftStore", { spy: true });
+vi.mock("./sidebar/MissionsSection", { spy: true });
 vi.mock("../hooks/useScratchProject", { spy: true });
 vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
@@ -293,6 +295,38 @@ describe("CommandPalette open intents", () => {
         projectId: open.id,
       }),
     );
+  });
+
+  it("offers a new member only machines its mission's machine can add from", async () => {
+    const local = makeProject("web");
+    const linked = { ...makeProject("api"), environmentId: EnvironmentId.make("linked") };
+    const fenced = { ...makeProject("docs"), environmentId: EnvironmentId.make("fenced") };
+    setup({ projects: [local, linked, fenced] });
+    vi.mocked(useMissionHosts).mockReturnValue([
+      {
+        environmentId: local.environmentId,
+        snapshot: {
+          missions: [],
+          claims: [],
+          links: [
+            { environmentId: linked.environmentId, label: "Linked", fullAccess: true },
+            { environmentId: fenced.environmentId, label: "Fenced", fullAccess: false },
+          ],
+        },
+      },
+    ]);
+    onTestFinished(() => vi.mocked(useMissionHosts).mockRestore());
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    const member = {
+      kind: "member",
+      host: local.environmentId,
+      missionId: "0123456789ab",
+      name: "Ship v2",
+    } as const;
+    openCommandPalette({ open: "new-thread-in", mission: member });
+    await expect.element(page.getByRole("option", { name: /web/ })).toBeInTheDocument();
+    await expect.element(page.getByRole("option", { name: /api/ })).toBeInTheDocument();
+    await expect.element(page.getByRole("option", { name: /docs/ })).not.toBeInTheDocument();
   });
 
   it("titles the New mission picker and offers No project, on the lead's machine for a new lead", async () => {

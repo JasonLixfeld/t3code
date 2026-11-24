@@ -39,6 +39,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
 import * as MissionClaims from "./MissionClaims.ts";
+import { releaseDeletedThreads } from "./MissionThreadDeletions.ts";
 import * as MissionStore from "./MissionStore.ts";
 import * as Missions from "./Missions.ts";
 
@@ -284,7 +285,11 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
 const withMissions = <A, E>(
   world: ReturnType<typeof makeWorld>,
   ...sessions: ReadonlyArray<
-    Effect.Effect<A, E, Missions.Missions | MissionStore.MissionStore | Scope.Scope>
+    Effect.Effect<
+      A,
+      E,
+      Missions.Missions | MissionStore.MissionStore | MissionClaims.MissionClaims | Scope.Scope
+    >
   >
 ) =>
   Effect.gen(function* () {
@@ -742,6 +747,126 @@ it.effect("a mission with a member is not deleted; once released, its lead stays
   );
 });
 
+it.effect("an add here that was under way when its mission was deleted makes no claim", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const mission = yield* createOne;
+      // The add reads its thread, and waits there while the mission is deleted.
+      const reading = yield* Deferred.make<void>();
+      const letGo = yield* Deferred.make<void>();
+      world.beforeShellRead = (threadId) => {
+        if (threadId !== localMember.threadId) return Effect.void;
+        world.beforeShellRead = () => Effect.void;
+        return Deferred.succeed(reading, undefined).pipe(Effect.andThen(Deferred.await(letGo)));
+      };
+      const adding = yield* Effect.forkChild(
+        missions.addMember({ missionId: mission.missionId, member: localMember }).pipe(Effect.flip),
+      );
+      yield* Deferred.await(reading);
+      yield* missions.deleteMission({ missionId: mission.missionId });
+      yield* Deferred.succeed(letGo, undefined);
+      assert.include((yield* Fiber.join(adding)).message, "no longer exists");
+      assert.deepEqual((yield* listed).claims, []);
+      assert.deepEqual(world.tags(localMember), []);
+    }),
+  );
+});
+
+it.effect("a forgotten add holds off delete until its machine answers, here with no claim", () => {
+  const world = makeWorld([lead, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      // No client watches, so only the waiting add has the laptop listed.
+      const mission = yield* createOne;
+      const member = { missionId: mission.missionId, member: laptopMember };
+      world.laptop.mode = "offline";
+      yield* missions.addMember(member);
+      yield* missions.forgetMember(member);
+      assert.equal(stateOf(yield* listed, laptopMember), undefined);
+      assert.equal(yield* deleteRefusal(mission.missionId), "Waiting to hear from Laptop.");
+      // The laptop answers: the add never got there.
+      world.laptop.mode = "up";
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* world.untilAnswered("list");
+      yield* missions.deleteMission({ missionId: mission.missionId });
+      assert.deepEqual((yield* listed).missions, []);
+    }),
+  );
+});
+
+it.effect("a forgotten add whose reply was lost shows as a member once its machine answers", () => {
+  const world = makeWorld([lead, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const until = yield* openSidebar;
+      const mission = yield* createOne;
+      const member = { missionId: mission.missionId, member: laptopMember };
+      world.laptop.mode = "lostReply";
+      yield* missions.addMember(member);
+      yield* missions.forgetMember(member);
+      assert.equal(yield* deleteRefusal(mission.missionId), "Waiting to hear from Laptop.");
+      world.laptop.mode = "up";
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* until((snapshot) => stateOf(snapshot, laptopMember) === "active");
+      assert.equal(
+        yield* deleteRefusal(mission.missionId),
+        "Release this mission's threads before deleting it.",
+      );
+    }),
+  );
+});
+
+it.effect("a member deleted here drops out of its mission and does not hold off delete", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const mission = yield* createOne;
+      yield* missions.addMember({ missionId: mission.missionId, member: localMember });
+      world.remove(localMember);
+      assert.equal(stateOf(yield* listed, localMember), undefined);
+      yield* missions.deleteMission({ missionId: mission.missionId });
+      assert.deepEqual(yield* listed, { ...(yield* listed), missions: [], claims: [] });
+    }),
+  );
+});
+
+it.effect(
+  "deleting a member thread here lets go of its claim; a deleted lead keeps its own",
+  () => {
+    const world = makeWorld([lead, localMember]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const mission = yield* createOne;
+        yield* missions.addMember({ missionId: mission.missionId, member: localMember });
+        // As a delete, or T3 dropping an unused side chat, reports them.
+        yield* releaseDeletedThreads(
+          Stream.make(
+            { type: "thread.deleted", threadId: localMember.threadId },
+            { type: "thread.deleted", threadId: lead.threadId },
+          ),
+        );
+        assert.deepEqual(
+          (yield* listed).claims.map((claim) => claim.threadId),
+          [lead.threadId],
+        );
+        // A member's tag says where it was, as on release.
+        assert.deepEqual(world.tags(localMember), ["mission-was:0123456789ab:One"]);
+      }),
+    );
+  },
+);
+
 it.effect("a mission is not deleted while an add to another machine waits for its answer", () => {
   const world = makeWorld([lead, laptopMember]);
   return withMissions(
@@ -752,10 +877,7 @@ it.effect("a mission is not deleted while an add to another machine waits for it
       world.laptop.mode = "lostReply";
       yield* missions.addMember({ missionId: mission.missionId, member: laptopMember });
       assert.equal(stateOf(yield* listed, laptopMember), "add-pending");
-      assert.equal(
-        yield* deleteRefusal(mission.missionId),
-        "Release this mission's threads before deleting it.",
-      );
+      assert.equal(yield* deleteRefusal(mission.missionId), "Waiting to hear from Laptop.");
       assert.deepEqual(world.tags(lead), [TAG]);
     }),
   );
@@ -948,11 +1070,12 @@ it.effect("an add the laptop turns down once it is back says why, until it is di
 });
 
 it.effect.each([
-  { waitsOn: "an add", sentBefore: ["join", "join"] },
-  { waitsOn: "a release", sentBefore: ["join", "release", "release"] },
+  // A forgotten add may have made a claim there, so its machine is listed once to settle it.
+  { waitsOn: "an add", sentBefore: ["join", "join"], settled: ["list"] },
+  { waitsOn: "a release", sentBefore: ["join", "release", "release"], settled: [] },
 ] as const)(
   "forgetting $waitsOn that still waits removes the row and stops asking, and the thread can be added again",
-  ({ waitsOn, sentBefore }) => {
+  ({ waitsOn, sentBefore, settled }) => {
     const world = makeWorld([lead, laptopMember]);
     return withMissions(
       world,
@@ -979,7 +1102,8 @@ it.effect.each([
         yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
         // The laptop is listed again only now, after the new add, and nothing was sent in between.
         yield* world.untilAnswered("list");
-        assert.deepEqual(world.laptop.calls, [...sentBefore, "join", "list"]);
+        if (settled.length > 0) yield* world.untilAnswered("list");
+        assert.deepEqual(world.laptop.calls, [...sentBefore, ...settled, "join", "list"]);
         assert.equal(stateOf(yield* listed, laptopMember), "active");
         assert.equal((yield* world.laptop.claims!.list(LEAD_ON_LAPTOP)).length, 1);
       }),
