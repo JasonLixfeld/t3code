@@ -7673,6 +7673,86 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect(
+    "a lead turn stopped or failed after offering a new status sends the current one next",
+    () =>
+      Effect.gen(function* () {
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) => Queue.shutdown(sdkMessages),
+          freshQueueOnReopen: true,
+        });
+        const turn = Effect.fnUntraced(function* (ordinal: number, status: string) {
+          yield* harness.runtime.startTurn({
+            ...makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`stale-status-${ordinal}`),
+              providerTurnOrdinal: ordinal,
+              text: "Go on",
+              attachments: [],
+            }),
+            missionContext: {
+              role: "lead",
+              prompt: "You lead a mission (id 0123456789ab).",
+              status,
+            },
+          });
+          return JSON.stringify(harness.offeredMessages.at(-1)?.message.content);
+        });
+        const end = Effect.fnUntraced(function* (ordinal: number, failed = false) {
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: `stale-status-result-${ordinal}`,
+              result: failed ? "API Error: 529 overloaded" : "Done.",
+              ...(failed
+                ? {
+                    subtype: "error_during_execution",
+                    isError: true,
+                    errors: ["API Error: 529 overloaded"],
+                    terminalReason: "model_error" as const,
+                  }
+                : {}),
+            }),
+          );
+          return (yield* Queue.take(harness.terminalReceipts)).status;
+        });
+        assert.include(yield* turn(0, "Status: A."), "Status: A.");
+        assert.equal(yield* end(0), "completed");
+        // B is offered, Claude starts answering, and the user stops the turn.
+        assert.include(yield* turn(1, "Status: B."), "Status: B.");
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({ uuid: "stale-status-answer-1", text: "Looking at B" }),
+        );
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: "turn:stale-status-1",
+          }),
+        });
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+        // Claude may hold B, so A goes again; the prompt, which did not change, does not.
+        const afterStop = yield* turn(2, "Status: A.");
+        assert.include(afterStop, "Status: A.");
+        assert.notInclude(afterStop, "<t3_code_mission>");
+        assert.equal(yield* end(2), "completed");
+        assert.include(yield* turn(3, "Status: B."), "Status: B.");
+        assert.equal(yield* end(3, true), "failed");
+        assert.include(yield* turn(4, "Status: A."), "Status: A.");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect("a steer sent after a compaction leaves the lead's mission blocks to send again", () =>
     Effect.gen(function* () {
       const idAllocator = yield* IdAllocator.IdAllocatorV2;

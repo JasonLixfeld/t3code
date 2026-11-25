@@ -9790,8 +9790,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           } else {
             yield* cutOffStreamedText(input.context);
           }
-          if (input.status === "completed" && input.context.appContextOffered !== undefined) {
-            deliveredAppContext.set(input.context.nativeThreadId, input.context.appContextOffered);
+          const offered = input.context.appContextOffered;
+          const delivered = deliveredAppContext.get(input.context.nativeThreadId);
+          if (input.status === "completed" && offered !== undefined) {
+            deliveredAppContext.set(input.context.nativeThreadId, offered);
+          } else if (offered !== undefined && delivered !== undefined) {
+            // Claude may hold what a stopped turn offered, or not: those keys go again next turn.
+            deliveredAppContext.set(
+              input.context.nativeThreadId,
+              new Map([...delivered].filter(([key, text]) => (offered.get(key) ?? text) === text)),
+            );
           }
           // A live Claude still runs a steer queued at a completed result, and Stop drops them unread
           // with a notice below. A steer whose process exited stays pending: nothing can read it now,
