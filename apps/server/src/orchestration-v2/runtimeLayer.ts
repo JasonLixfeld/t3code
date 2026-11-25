@@ -202,6 +202,8 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
       layerRunExecutionServiceProvided,
       layerRuntimePolicyProvided,
       TurnItemPositionStore.layer,
+      // The same instance as thread management's, which hands over send-time recreations.
+      layerThreadWorktreeRestore,
     ),
   ),
 );
@@ -401,6 +403,7 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
       layerThreadTitleRegenerationProvided,
       layerThreadManagementProvided,
       ProjectionStore.layer,
+      layerProjectionMaintenanceProvided,
     ),
   ),
 );
