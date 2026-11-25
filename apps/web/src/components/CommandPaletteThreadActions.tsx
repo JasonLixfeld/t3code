@@ -1,4 +1,3 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ContextMenuItem, KeybindingCommand, ScopedThreadRef } from "@t3tools/contracts";
 import {
   ArchiveIcon,
@@ -70,6 +69,19 @@ const MISSION_ADD_VALUE = "thread-action:mission-add";
 /** Add to mission's view is read from the thread's live rows, so its group names the thread. */
 export const MISSION_ADD_GROUP_PREFIX = `${MISSION_ADD_VALUE}@`;
 
+export function missionAddGroupValue(threadRef: ScopedThreadRef): string {
+  return `${MISSION_ADD_GROUP_PREFIX}${JSON.stringify([threadRef.environmentId, threadRef.threadId])}`;
+}
+
+/** The open view holds only Add to mission's own disabled row, which explains why it is empty. */
+export function isMissionAddReason(groups: ReadonlyArray<CommandPaletteGroup>): boolean {
+  return (
+    groups.length === 1 &&
+    groups[0]?.items.length === 1 &&
+    groups[0].items[0]?.value === MISSION_ADD_VALUE
+  );
+}
+
 /**
  * The open Add to mission view as the thread's rows show it now: its missions, or the disabled
  * row with its reason once none can be picked. Null once the thread has no such row.
@@ -79,11 +91,7 @@ export function liveMissionAddGroups(
   threadRef: ScopedThreadRef | null,
   items: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>,
 ): ReadonlyArray<CommandPaletteGroup> | null {
-  if (
-    threadRef === null ||
-    openGroup.value !== `${MISSION_ADD_GROUP_PREFIX}${scopedThreadKey(threadRef)}`
-  )
-    return null;
+  if (threadRef === null || openGroup.value !== missionAddGroupValue(threadRef)) return null;
   const row = items.find((item) => item.value === MISSION_ADD_VALUE);
   if (row === undefined) return null;
   return row.kind === "submenu"
@@ -144,7 +152,7 @@ export function useCommandPaletteThreadActions(input: {
           {
             value:
               shared.value === MISSION_ADD_VALUE && input.threadRef
-                ? `${MISSION_ADD_GROUP_PREFIX}${scopedThreadKey(input.threadRef)}`
+                ? missionAddGroupValue(input.threadRef)
                 : shared.value,
             label: item.label,
             items: children,

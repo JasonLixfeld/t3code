@@ -12,6 +12,7 @@ import { removeLocalStorageItem } from "../hooks/useLocalStorage";
 import { makeThreadFixture } from "../test-fixtures";
 import type { Project, Thread } from "../types";
 import { CommandPalette } from "./CommandPalette";
+import { missionAddGroupValue } from "./CommandPaletteThreadActions";
 import { markMissionDraft } from "./sidebar/missionDraftStore";
 import { useMissionHosts, useMissionMenu } from "./sidebar/MissionsSection";
 import { buildMissionMenuItems, type MissionHost } from "./sidebar/missions.logic";
@@ -749,5 +750,55 @@ describe("CommandPalette mission thread actions", () => {
       expect(shown).not.toContain(command);
     }
     expect(page.getByText("Mission", { exact: true }).elements()).toHaveLength(0);
+  });
+
+  it("keeps a search in Add to mission to that view, and its reason row while text is typed", async () => {
+    listMissions([hostWith(["Ship v2"])]);
+    openThread(true);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    openCommandPalette();
+    await page.getByRole("option", { name: /Add to mission/ }).click();
+    const search = page.getByRole("combobox");
+    await userEvent.fill(search, "Copy");
+    await expect
+      .element(page.getByText("No matching commands, projects, or threads."))
+      .toBeVisible();
+    expect(page.getByRole("option", { name: "Copy", exact: true }).elements()).toHaveLength(0);
+    await userEvent.fill(search, "Ship v2");
+    await expect.element(page.getByRole("option", { name: /Ship v2/ })).toBeVisible();
+    await relistMissions([hostWith([])]);
+    await expect.element(page.getByText("No missions yet")).toBeVisible();
+    await expect.element(page.getByText("Backspace", { exact: true })).toBeVisible();
+  });
+
+  it("closes Add to mission when another thread opens, even one whose plain key reads the same", async () => {
+    const first = {
+      environmentId: EnvironmentId.make("lab:team"),
+      threadId: ThreadId.make("task"),
+    };
+    const second = {
+      environmentId: EnvironmentId.make("lab"),
+      threadId: ThreadId.make("team:task"),
+    };
+    expect(missionAddGroupValue(first)).not.toBe(missionAddGroupValue(second));
+    const [threadA, threadB] = [first, second].map((ref) =>
+      makeThreadFixture({
+        environmentId: ref.environmentId,
+        id: ref.threadId,
+        title: "Plan the launch",
+        latestUserMessageAt: "2026-11-24T00:00:00.000Z",
+        visibleItemCount: 1,
+      }),
+    );
+    const hosts = [hostWith(["Ship v2"])];
+    listMissions(hosts);
+    setup({ threads: [threadA!, threadB!], activeThread: threadA });
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    openCommandPalette();
+    await page.getByRole("option", { name: /Add to mission/ }).click();
+    await expect.element(page.getByText("Backspace", { exact: true })).toBeVisible();
+    entities.activeThread = threadB;
+    await relistMissions([...hosts]);
+    await expect.element(page.getByText("Backspace", { exact: true })).not.toBeInTheDocument();
   });
 });

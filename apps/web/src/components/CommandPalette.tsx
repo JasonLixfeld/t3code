@@ -260,6 +260,7 @@ import {
   sourceControlHostIcon,
 } from "./CommandPaletteAddProject";
 import {
+  isMissionAddReason,
   liveMissionAddGroups,
   MISSION_ADD_GROUP_PREFIX,
   useCommandPaletteThreadActions,
@@ -2004,12 +2005,13 @@ function OpenCommandPaletteDialog(props: {
 
   const isLinkedThreadSearch =
     linkedThreadSearch?.linkedThreads !== undefined && deferredQuery === linkedThreadSearch.query;
-  const searchedGroups = filterCommandPaletteGroups(
+  const searchResults = filterCommandPaletteGroups(
     {
       activeGroups,
       query: deferredQuery,
       isInSubmenu: currentView !== null,
-      ...(deferredQuery.trim().length > 0
+      // Add to mission never falls back to searching beyond itself.
+      ...(deferredQuery.trim().length > 0 && liveMissionAdd === undefined
         ? {
             allOptions: {
               rootGroups,
@@ -2048,6 +2050,9 @@ function OpenCommandPaletteDialog(props: {
     },
     messages,
   );
+  // Add to mission's reason row explains its empty view whatever is typed.
+  const searchedGroups =
+    liveMissionAdd && isMissionAddReason(liveMissionAdd) ? [...liveMissionAdd] : searchResults;
   // Jump shortcuts number the project rows as shown, so a pin cannot move a number to another row.
   const filteredGroups = searchedGroups.map((group) => {
     if (group.value !== NEW_THREAD_IN_GROUP) return group;
