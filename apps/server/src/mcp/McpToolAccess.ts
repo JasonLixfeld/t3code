@@ -237,16 +237,21 @@ export const writesThreads = <P, A, E, R>(
   );
 
 /**
- * The check `writesThreads` makes on each target, for a handler that changes a thread outside the
- * orchestrator to make again under its own lock: the modes can rise while it waits for that lock.
+ * What a caller may change through a service that writes outside the orchestrator: its modes, the
+ * check `writesThreads` makes on each target, to make again under the service's own lock since
+ * modes can rise while it waits, and whether it may reach other machines through this one's links.
  */
-export const threadWriteAccess = Effect.map(
-  writingCaller,
-  (caller) => (target: OrchestrationV2ThreadShell) =>
+export const writeAuthority = Effect.map(writingCaller, (caller) => ({
+  limits: caller.limits,
+  mayChange: (target: OrchestrationV2ThreadShell) =>
     assertTargetWithinLimits(caller.limits, target).pipe(
       Effect.andThen(assertSameLink(caller, target)),
     ),
-);
+  // As PeerForwarding: the peer would see this machine's session, not the fencing link.
+  mayUseLinks: assertNotLinked(caller, "use this environment's links"),
+}));
+
+export const threadWriteAccess = Effect.map(writeAuthority, (authority) => authority.mayChange);
 
 const escalationDenied = (refusal: DispatchModeRefusal) =>
   new OrchestratorMcpFailure({

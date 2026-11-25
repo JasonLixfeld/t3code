@@ -7,6 +7,8 @@ import {
   CommandId,
   EnvironmentId,
   type Mission,
+  type OrchestrationV2ThreadShell,
+  ProviderInstanceId,
   type MissionError,
   type MissionsSnapshot,
   OrchestratorMcpFailure,
@@ -36,7 +38,13 @@ import * as RpcTest from "effect/rpc/RpcTest";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import { McpSchema, McpServer } from "effect/ai";
+
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
+import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import * as MissionHandlers from "../mcp/toolkits/mission/handlers.ts";
+import { MissionToolkit } from "../mcp/toolkits/mission/tools.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -112,6 +120,8 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     linkedAt: "2026-01-01T00:00:00.000Z",
     /** Every call this lead made to the laptop, in order. */
     calls: [] as Array<ClaimKind>,
+    /** The modes each join and release to the laptop was sent with, in order. */
+    limits: [] as Array<unknown>,
     /** The same calls, to wait on: each is offered as it starts, under the mode set by then. */
     started: undefined as Queue.Queue<ClaimKind> | undefined,
     /** The calls the laptop answered, each offered once its answer is ready. */
@@ -141,6 +151,8 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
                       latestUserMessageAt: empty.has(key) ? null : "2026-01-01T00:00:00.000Z",
                       visibleItemCount: empty.has(key) ? 0 : 1,
                       projectId: "project-web",
+                      runtimeMode: "full-access",
+                      interactionMode: "default",
                       status: "idle",
                       activeRunId: null,
                       pendingRuntimeRequest: null,
@@ -187,16 +199,25 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
         return Effect.map(claims.list(owner), (held) =>
           held.map((claim) => ({
             ...claim,
-            detail: {
-              status: memberStatusOf({
+            detail: (() => {
+              const shell = {
                 status: "idle",
+                latestRunId: null,
                 pendingRuntimeRequest: null,
                 hasActionableProposedPlan: false,
                 ...activity.get(keyOf(ref(LAPTOP, claim.threadId))),
-              } as never),
-              title: "One",
-              project: "api",
-            },
+              } as never as OrchestrationV2ThreadShell;
+              const request = shell.pendingRuntimeRequest;
+              return {
+                status: memberStatusOf(shell),
+                title: "One",
+                project: "api",
+                ...(shell.latestRunId === null
+                  ? {}
+                  : { run: { id: shell.latestRunId, status: shell.status } }),
+                requests: request === null ? [] : [{ id: request.id, kind: request.kind }],
+              };
+            })(),
           })),
         );
       case "rename":
@@ -204,10 +225,16 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     }
   };
   const peers = Layer.mock(PeerMcpClient.PeerMcpClient)({
-    call: ((input: { readonly arguments: { readonly kind: ClaimKind } }) =>
+    call: ((input: {
+      readonly arguments: { readonly kind: ClaimKind };
+      readonly limits: unknown;
+    }) =>
       Effect.gen(function* () {
         const mode = laptop.mode;
         laptop.calls.push(input.arguments.kind);
+        if (input.arguments.kind === "join" || input.arguments.kind === "release") {
+          laptop.limits.push(input.limits);
+        }
         yield* Queue.offer(laptop.started!, input.arguments.kind);
         const stoppedAnswering = new OrchestratorMcpFailure({
           code: "orchestration_error",
@@ -2043,31 +2070,36 @@ it.effect(
         yield* world.untilAnswered("list");
 
         assert.deepEqual(yield* turnContextOf(lead), {
+          role: "lead",
           prompt: `${HEADER}\n\nReview every pull request.`,
           status: [
             "Status: 2 members. 1 need you (awaiting input, pending approval), 0 failed, 1 working, 0 idle, 0 offline.",
-            "Needs attention: local on this machine (web), awaiting input.",
+            "Needs attention: local on this machine, awaiting input.",
             "For titles and the full list, call t3_mission_roster.",
           ].join("\n"),
         });
         assert.isUndefined(yield* turnContextOf(localMember));
 
         yield* missions.setPrompt({ missionId: mission.missionId, prompt: "  Ship it.  " });
-        assert.equal((yield* turnContextOf(lead))?.prompt, `${HEADER}\n\nShip it.`);
+        assert.deepInclude(yield* turnContextOf(lead), { prompt: `${HEADER}\n\nShip it.` });
         assert.equal((yield* listed).missions[0]?.prompt, "Ship it.");
         yield* missions.setPrompt({ missionId: mission.missionId, prompt: "" });
-        assert.equal(
-          (yield* turnContextOf(lead))?.prompt,
-          `${HEADER}\n\nReview every pull request.`,
-        );
+        assert.deepInclude(yield* turnContextOf(lead), {
+          prompt: `${HEADER}\n\nReview every pull request.`,
+        });
 
         yield* missions.setLead({
           missionId: mission.missionId,
           lead: localMember,
           expectedLead: lead.threadId,
         });
-        assert.isUndefined(yield* turnContextOf(lead));
-        assert.isDefined(yield* turnContextOf(localMember));
+        assert.deepEqual(yield* turnContextOf(lead), { role: "former-lead" });
+        assert.deepInclude(yield* turnContextOf(localMember), { role: "lead" });
+      }),
+      // After a restart the old lead is still told it no longer leads.
+      Effect.gen(function* () {
+        assert.deepEqual(yield* turnContextOf(lead), { role: "former-lead" });
+        assert.isUndefined(yield* turnContextOf(laptopMember));
       }),
     );
   },
@@ -2086,21 +2118,31 @@ it.effect("with no client watching, a lead still hears its members on another ma
         Stream.runCollect,
         Effect.forkScoped,
       );
-      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      // With nothing busy there, the laptop is asked every IDLE_POLL_INTERVALS intervals.
+      const idleWait = Duration.times(Missions.REFRESH_INTERVAL, Missions.IDLE_POLL_INTERVALS);
+      yield* TestClock.adjust(idleWait);
       yield* world.untilAnswered("list");
+      world.laptop.calls.length = 0;
       world.shell(laptopMember, {
         status: "waiting",
         pendingRuntimeRequest: { id: "r1", kind: "command", createdAt: "2026-01-01" },
       });
+      yield* TestClock.adjust(Duration.subtract(idleWait, Missions.REFRESH_INTERVAL));
+      assert.deepEqual(world.laptop.calls, []);
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* world.untilAnswered("list");
+      // A member waiting there is busy, so the laptop is asked every interval again.
+      world.laptop.calls.length = 0;
       yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
       yield* world.untilAnswered("list");
       assert.deepEqual(
-        [...(yield* Fiber.join(heard))].map((change) => change.status),
+        [...(yield* Fiber.join(heard))].map((change) => change.detail.status),
         ["idle", "pending-approval"],
       );
       const [row] = yield* missions.roster(mission.missionId);
       assert.deepEqual(row, {
         ref: laptopMember,
+        place: LAPTOP,
         machine: "Laptop",
         project: "api",
         status: "pending-approval",
@@ -2109,3 +2151,177 @@ it.effect("with no client watching, a lead still hears its members on another ma
     }),
   );
 });
+
+const leadScope: McpInvocationContext.McpInvocationScope = {
+  environmentId: HERE,
+  requestNamespace: "provider:lead",
+  thread: {
+    threadId: lead.threadId,
+    providerSessionId: "provider:lead",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  },
+  client: undefined,
+  capabilities: new Set(["orchestration"]),
+  issuedAt: 0,
+  missionLead: true,
+};
+const mcpClient = McpSchema.McpServerClient.of({
+  clientId: 1,
+  protocolVersion: "2025-06-18",
+  clientCapabilities: {},
+  clientInfo: { name: "mcp-test", version: "1" },
+  initializePayload: {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "mcp-test", version: "1" },
+  },
+  getClient: Effect.die("unused"),
+});
+
+/** The lead's agent calls a lead tool over this machine's own /mcp tools. */
+const leadTool = (world: ReturnType<typeof makeWorld>, name: string, args: object) =>
+  Effect.gen(function* () {
+    const services = Layer.mergeAll(
+      Layer.succeed(Missions.Missions, yield* Missions.Missions),
+      Layer.succeed(MissionClaims.MissionClaims, yield* MissionClaims.MissionClaims),
+      world.threadsOn(HERE),
+      Layer.mock(Project.ProjectService)({}),
+      NodeServices.layer,
+    );
+    const result = yield* McpServer.McpServer.pipe(
+      Effect.flatMap((server) => server.callTool({ name, arguments: { ...args } })),
+      Effect.provideService(McpSchema.McpServerClient, mcpClient),
+      Effect.provideService(McpInvocationContext.McpInvocationContext, leadScope),
+      Effect.provide(
+        McpHttpServer.toolkitRegistration(MissionToolkit, MissionHandlers.layer).pipe(
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+          Layer.provide(services),
+        ),
+      ),
+    );
+    return result.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+  });
+
+/** The lead thread is mid-turn, as when its agent calls a tool, in these modes. */
+const leadRuns = (world: ReturnType<typeof makeWorld>, fields: Record<string, unknown> = {}) =>
+  world.shell(lead, { activeRunId: "run-lead", providerInstanceId: "codex", ...fields });
+
+it.effect("a lead agent adds and releases with its own modes, here and on the laptop", () => {
+  const world = makeWorld([lead, localMember, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      yield* createOne;
+      leadRuns(world, { runtimeMode: "auto-accept-edits" });
+      // A thread here above the lead's modes stays out, though the user could add it.
+      const above = yield* leadTool(world, "t3_mission_add", {
+        threadRef: { threadId: localMember.threadId },
+      });
+      assert.include(above, "capability_denied");
+      assert.include(above, "above this caller's auto-accept-edits/default limit");
+      assert.deepEqual(world.tags(localMember), []);
+      // Its modes rise after the first look: the check under the claim's locks refuses it.
+      world.shell(localMember, { runtimeMode: "auto-accept-edits" });
+      let looks = 0;
+      world.beforeShellRead = (threadId) =>
+        Effect.sync(() => {
+          if (threadId === localMember.threadId && ++looks === 2) {
+            world.shell(localMember, { runtimeMode: "full-access" });
+          }
+        });
+      assert.include(
+        yield* leadTool(world, "t3_mission_add", { threadRef: { threadId: localMember.threadId } }),
+        "above this caller's auto-accept-edits/default limit",
+      );
+      assert.deepEqual(world.tags(localMember), []);
+      world.beforeShellRead = () => Effect.void;
+      // On the laptop the join carries the lead's modes, also when it is sent again.
+      world.laptop.mode = "offline";
+      assert.include(
+        yield* leadTool(world, "t3_mission_add", { threadRef: laptopMember }),
+        '"pending"',
+      );
+      world.laptop.mode = "up";
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* world.untilAnswered("join");
+      assert.include(
+        yield* leadTool(world, "t3_mission_release", { threadRef: laptopMember }),
+        "released",
+      );
+      const leadModes = { runtimeMode: "auto-accept-edits", interactionMode: "default" };
+      assert.deepEqual(world.laptop.limits, [leadModes, leadModes, leadModes]);
+    }),
+  );
+});
+
+it.effect(
+  "a lead a fenced link started may add only that link's threads, and no linked machine's",
+  () => {
+    const world = makeWorld([lead, localMember, laptopMember, ref(HERE, "linked")]);
+    const desk = { sessionId: "desk-session", label: "Desk", access: "auto" as const };
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        yield* createOne;
+        leadRuns(world, { linkOrigin: desk });
+        world.shell(ref(HERE, "linked"), { linkOrigin: desk });
+        const unrelated = yield* leadTool(world, "t3_mission_add", {
+          threadRef: { threadId: localMember.threadId },
+        });
+        assert.include(unrelated, "capability_denied");
+        assert.include(unrelated, "only threads that link started");
+        const remote = yield* leadTool(world, "t3_mission_add", { threadRef: laptopMember });
+        assert.include(remote, "use this environment's links");
+        assert.deepEqual(world.laptop.calls, []);
+        assert.deepEqual(
+          (yield* listed).missions[0]?.members.map((member) => member.ref.threadId),
+          [lead.threadId],
+        );
+        // The link's own thread joins.
+        assert.include(
+          yield* leadTool(world, "t3_mission_add", { threadRef: { threadId: "linked" } }),
+          "joined",
+        );
+        // The UI keeps the user's authority.
+        assert.equal(
+          yield* missions.addMember({ missionId: "0123456789ab", member: localMember }),
+          "joined",
+        );
+      }),
+    );
+  },
+);
+
+it.effect(
+  "a thread a lead started joins once: a replayed start after its release does not rejoin",
+  () => {
+    const world = makeWorld([lead, localMember]);
+    const authority: Missions.LeadAuthority = {
+      limits: { runtimeMode: "full-access", interactionMode: "default" },
+      mayChange: () => Effect.void,
+      mayUseLinks: Effect.void,
+    };
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const { missionId } = yield* createOne;
+        const started = { missionId, member: localMember };
+        assert.equal(yield* missions.joinStarted(started, authority), "joined");
+        assert.equal(yield* missions.releaseMember(started, authority), "released");
+      }),
+      // A retry of the same launch, after a restart even, returns the same thread.
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        assert.isUndefined(
+          yield* missions.joinStarted(
+            { missionId: "0123456789ab", member: localMember },
+            authority,
+          ),
+        );
+        assert.deepEqual(world.tags(localMember), [WAS_TAG]);
+      }),
+    );
+  },
+);

@@ -22,11 +22,28 @@ const needs = <A>(value: A | undefined, field: string) =>
     : Effect.succeed(value);
 
 const refused = (error: MissionError) =>
-  new OrchestratorMcpFailure({ code: "invalid_request", message: error.message });
+  new OrchestratorMcpFailure({
+    code: error.reason === "denied" ? "capability_denied" : "invalid_request",
+    message: error.message,
+  });
+
+const denied = (failure: OrchestratorMcpFailure) =>
+  new MissionError({ message: failure.message, reason: "denied" });
+
+/** The calling lead's own reach, which its mission writes keep to: never the UI's. */
+const leadAuthority = Effect.map(
+  McpToolAccess.writeAuthority,
+  (authority): Missions.LeadAuthority => ({
+    limits: authority.limits,
+    mayChange: (thread) => Effect.mapError(authority.mayChange(thread), denied),
+    mayUseLinks: Effect.mapError(authority.mayUseLinks, denied),
+  }),
+);
 
 /**
- * A top-level thread a mission's lead starts joins its Mission. A refused join leaves the thread
- * as it is, and says why. Any other caller's threads join nothing.
+ * A top-level thread a mission's lead started joins its Mission, by the lead's own authority. A
+ * refused join leaves the thread as it is, and says why. A replayed start, and any other caller's
+ * threads, join nothing.
  */
 export const joinCallersMission = Effect.fn("MissionHandlers.joinCallersMission")(function* (
   missions: Option.Option<MissionsService>,
@@ -36,14 +53,18 @@ export const joinCallersMission = Effect.fn("MissionHandlers.joinCallersMission"
   if (Option.isNone(missions) || scope.thread === undefined) return undefined;
   const mission = yield* missions.value.ledBy(scope.thread.threadId);
   if (mission === undefined) return undefined;
-  // The UI's add: a thread on another machine joins only over a full-access link.
-  return yield* missions.value.addMember({ missionId: mission.missionId, member }).pipe(
-    Effect.map((state): MissionJoinOutcome => ({ state })),
-    Effect.catchTags({
-      MissionError: (error) =>
-        Effect.succeed<MissionJoinOutcome>({ state: "refused", reason: error.message }),
-    }),
-  );
+  const authority = yield* leadAuthority;
+  return yield* missions.value
+    .joinStarted({ missionId: mission.missionId, member }, authority)
+    .pipe(
+      Effect.map((state): MissionJoinOutcome | undefined =>
+        state === undefined ? undefined : { state },
+      ),
+      Effect.catchTags({
+        MissionError: (error) =>
+          Effect.succeed<MissionJoinOutcome>({ state: "refused", reason: error.message }),
+      }),
+    );
 });
 
 // Only a linked environment's session can call t3_mission_tag (see `shownOnlyToLinks`).
@@ -161,7 +182,12 @@ export const layer = McpToolAccess.toLayer(
             environmentId: input.threadRef.environmentId ?? environmentId,
             threadId: input.threadRef.threadId,
           };
-          return { state: yield* missions.addMember({ missionId: mission.missionId, member }) };
+          return {
+            state: yield* missions.addMember(
+              { missionId: mission.missionId, member },
+              yield* leadAuthority,
+            ),
+          };
         }).pipe(Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) })),
       ),
       t3_mission_release: McpToolAccess.actsAsCaller((input) =>
@@ -172,7 +198,10 @@ export const layer = McpToolAccess.toLayer(
             threadId: input.threadRef.threadId,
           };
           return {
-            state: yield* missions.releaseMember({ missionId: mission.missionId, member }),
+            state: yield* missions.releaseMember(
+              { missionId: mission.missionId, member },
+              yield* leadAuthority,
+            ),
           };
         }).pipe(Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) })),
       ),

@@ -109,8 +109,11 @@ export const MissionLeaveInput = Schema.Struct({ threadId: ThreadId });
 
 export class MissionError extends Schema.TaggedError<MissionError>()("MissionError", {
   message: Schema.String,
-  /** `lead-changed`: another ask gave the Mission a new lead first, so asking again cannot help. */
-  reason: Schema.optional(Schema.Literals(["lead-changed"])),
+  /**
+   * `lead-changed`: another ask gave the Mission a new lead first, so asking again cannot help.
+   * `denied`: the asking lead agent may not change that thread, or reach its machine.
+   */
+  reason: Schema.optional(Schema.Literals(["lead-changed", "denied"])),
 }) {}
 
 export const MISSION_TAG_PREFIX = "mission:";

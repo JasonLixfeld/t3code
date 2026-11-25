@@ -1,6 +1,5 @@
 import {
   CommandId,
-  type EnvironmentId,
   MessageId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
@@ -8,7 +7,6 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
-import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -18,23 +16,23 @@ import * as Stream from "effect/Stream";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import { MissionStore } from "./MissionStore.ts";
+import { MissionStore, type MissionRecord } from "./MissionStore.ts";
 import { Missions } from "./Missions.ts";
 import {
-  type MemberStatus,
+  type MemberDetail,
+  markOf,
   missionUpdateText,
-  type MissionUpdateEvent,
-  updateFor,
+  placeOf,
+  remoteUpdates,
+  type SourcedUpdate,
   updateFromEvent,
 } from "./missionStatus.ts";
 
 /** A lead is woken at most this often. What happens in between goes in its next wake. */
 export const WAKE_INTERVAL = Duration.seconds(30);
 
-/** Each update is told once, though its event may be written again. */
+/** Sources already recorded, since a run's ending may be written again after it was told. */
 const TOLD_KEPT = 1_000;
-
-const keyOf = (ref: ScopedThreadRef) => JSON.stringify([ref.environmentId, ref.threadId]);
 
 const parked = (lead: OrchestrationV2ThreadShell | null) =>
   lead === null ||
@@ -54,14 +52,13 @@ export const layer = Layer.effectDiscard(
     const store = yield* MissionStore;
     const threads = yield* ThreadManagement.ThreadManagementService;
     const engine = yield* Orchestrator.OrchestratorV2;
-    const random = yield* SecureRandom.SecureRandom;
     const here = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
     const scope = yield* Effect.scope;
 
-    const seen = new Map<string, MemberStatus>();
-    const told = new Set<string>();
-    const lastWake = new Map<string, number>();
+    // By lead thread: a new lead is a new reader, and its first wake need not wait.
+    const lastWake = new Map<ThreadId, number>();
     const timed = new Set<string>();
+    const told = new Set<string>();
     const due = yield* Queue.unbounded<string>();
 
     const shellOf = (threadId: ThreadId) =>
@@ -70,20 +67,28 @@ export const layer = Layer.effectDiscard(
     const record = Effect.fn("MissionWakes.record")(function* (
       missionId: string,
       ref: ScopedThreadRef,
-      event: MissionUpdateEvent,
+      updates: ReadonlyArray<SourcedUpdate>,
     ) {
-      yield* store.addMissionUpdate({ missionId, ...ref, event });
-      yield* Queue.offer(due, missionId);
+      const toldKey = (source: string) =>
+        `${ref.environmentId}\u0000${ref.threadId}\u0000${source}`;
+      const fresh = updates.filter((update) => !told.has(toldKey(update.source)));
+      for (const update of fresh) {
+        told.add(toldKey(update.source));
+        if (told.size > TOLD_KEPT) told.delete(told.values().next().value!);
+        yield* store.addMissionUpdate({ missionId, ...ref, ...update });
+      }
+      if (fresh.length > 0) yield* Queue.offer(due, missionId);
     });
 
+    /** Compared with what the member last said, kept on disk, so a restart misses nothing. */
     const observeRemote = Effect.fn("MissionWakes.observeRemote")(function* (
       missionId: string,
       ref: ScopedThreadRef,
-      status: MemberStatus,
+      detail: MemberDetail,
     ) {
-      const event = updateFor(seen.get(keyOf(ref)), status);
-      seen.set(keyOf(ref), status);
-      if (event !== undefined) yield* record(missionId, ref, event);
+      const before = yield* store.memberMark(ref);
+      yield* record(missionId, ref, remoteUpdates(before, detail, yield* Clock.currentTimeMillis));
+      yield* store.setMemberMark(ref, markOf(detail));
     });
 
     /** The Mission led here that a thread here belongs to, and how. */
@@ -99,34 +104,41 @@ export const layer = Layer.effectDiscard(
     const onThreadEvent = Effect.fn("MissionWakes.onThreadEvent")(function* (
       event: OrchestrationV2DomainEvent,
     ) {
-      if (event.type !== "run.updated" && event.type !== "runtime-request.updated") return;
+      if (
+        event.type !== "run.updated" &&
+        event.type !== "runtime-request.updated" &&
+        event.type !== "turn-item.updated"
+      ) {
+        return;
+      }
+      // Read first: most turn items are text, and they cost no lookup.
+      const update = updateFromEvent(event);
+      if (update === undefined && event.type !== "run.updated") return;
       const claim = yield* missionOf(event.threadId);
       if (claim === undefined) return;
       // A lead whose run ended may now hear what waited for it.
       if (claim.role === "lead") return yield* Queue.offer(due, claim.missionId);
-      const update = updateFromEvent(event);
-      if (update === undefined || told.has(update.key)) return;
-      told.add(update.key);
-      if (told.size > TOLD_KEPT) told.delete(told.values().next().value!);
-      yield* record(
-        claim.missionId,
-        { environmentId: here, threadId: event.threadId },
-        update.event,
-      );
+      if (update === undefined) return;
+      yield* record(claim.missionId, { environmentId: here, threadId: event.threadId }, [update]);
     });
 
-    const deliver = Effect.fn("MissionWakes.deliver")(function* (missionId: string) {
-      const updates = (yield* store.missionUpdates).filter(
-        (update) => update.missionId === missionId,
+    /** Puts away every update of a Mission whose lead may not be woken. */
+    const dropUpdates = (missionId: string): Effect.Effect<void> =>
+      Effect.flatMap(store.takeMissionUpdates(missionId), ({ key, updates }) =>
+        updates.length === 0
+          ? Effect.void
+          : Effect.andThen(store.clearMissionUpdates(missionId, key), dropUpdates(missionId)),
       );
-      if (updates.length === 0) return;
-      const mission = (yield* store.missions).find((found) => found.missionId === missionId);
-      const lead = mission === undefined ? null : yield* shellOf(mission.leadThreadId);
-      if (mission === undefined || parked(lead)) return yield* store.clearMissionUpdates(updates);
+
+    /** Runs under the Mission's lock, so the lead it names stays the lead until it is sent. */
+    const deliverTo = Effect.fn("MissionWakes.deliverTo")(function* (mission: MissionRecord) {
+      const { missionId, leadThreadId } = mission;
+      const lead = yield* shellOf(leadThreadId);
+      if (parked(lead)) return yield* dropUpdates(missionId);
       if (lead!.activeRunId !== null) return;
       const now = yield* Clock.currentTimeMillis;
       const next =
-        (lastWake.get(missionId) ?? Number.NEGATIVE_INFINITY) + Duration.toMillis(WAKE_INTERVAL);
+        (lastWake.get(leadThreadId) ?? Number.NEGATIVE_INFINITY) + Duration.toMillis(WAKE_INTERVAL);
       if (now < next) {
         if (timed.has(missionId)) return;
         timed.add(missionId);
@@ -137,48 +149,39 @@ export const layer = Layer.effectDiscard(
         );
         return;
       }
-      const roster = yield* missions
-        .roster(missionId)
-        .pipe(Effect.orElseSucceed(() => [] as const));
-      const placeOf = (environmentId: EnvironmentId, threadId: ThreadId) =>
-        roster.find(
-          (row) => row.ref.environmentId === environmentId && row.ref.threadId === threadId,
-        );
-      const id = yield* random.uuidV4().pipe(Effect.orDie);
+      // A wake a stop cut off comes back with its key, so the orchestrator replays it once.
+      const { key, updates } = yield* store.takeMissionUpdates(missionId);
+      if (updates.length === 0) return;
       yield* threads.dispatch({
         type: "message.dispatch",
-        commandId: CommandId.make(`server:mission-update:${id}`),
-        threadId: mission.leadThreadId,
-        messageId: MessageId.make(`message:mission-update:${id}`),
+        commandId: CommandId.make(`server:mission-update:${missionId}:${key}`),
+        threadId: leadThreadId,
+        messageId: MessageId.make(`message:mission-update:${missionId}:${key}`),
         text: missionUpdateText(
-          updates.map((update) => {
-            const place = placeOf(update.environmentId, update.threadId);
-            return {
-              ref: update,
-              machine:
-                place?.machine ??
-                (update.environmentId === here ? "this machine" : update.environmentId),
-              project: place?.project ?? "",
-              event: update.event,
-            };
-          }),
+          updates.map((update) => ({
+            ref: update,
+            place: placeOf(update.environmentId, here),
+            event: update.event,
+          })),
         ),
         attachments: [],
         dispatchMode: { type: "queue_after_active" },
         createdBy: "agent",
         creationSource: "server",
+        // A lead settled since the read above stays settled; its updates go with this one.
+        unlessParked: true,
       });
-      lastWake.set(missionId, now);
-      yield* store.clearMissionUpdates(updates);
+      lastWake.set(leadThreadId, now);
+      yield* store.clearMissionUpdates(missionId, key);
     });
 
-    for (const update of yield* store.missionUpdates) yield* Queue.offer(due, update.missionId);
+    for (const missionId of yield* store.missionsWithUpdates) yield* Queue.offer(due, missionId);
 
     const logged = (message: string) =>
-      Effect.catchCause((cause) => Effect.logError(message, cause));
+      Effect.catchCause((cause) => Effect.logWarning(message, cause));
     yield* Queue.take(due).pipe(
       Effect.flatMap((missionId) =>
-        deliver(missionId).pipe(logged("A mission update was not delivered")),
+        missions.withLead(missionId, deliverTo).pipe(logged("A mission update was not delivered")),
       ),
       Effect.forever,
       Effect.forkIn(scope),
@@ -191,8 +194,15 @@ export const layer = Layer.effectDiscard(
       Effect.forkIn(scope),
     );
     yield* missions.remoteChanges.pipe(
-      Stream.runForEach((change) => observeRemote(change.missionId, change.ref, change.status)),
-      logged("Mission wakes stopped following other machines"),
+      Stream.runForEach((change) =>
+        observeRemote(change.missionId, change.ref, change.detail).pipe(
+          logged("A remote member's change was not read"),
+        ),
+      ),
+      Effect.forkIn(scope),
+    );
+    yield* missions.leadChanges.pipe(
+      Stream.runForEach((missionId) => Queue.offer(due, missionId)),
       Effect.forkIn(scope),
     );
   }),

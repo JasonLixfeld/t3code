@@ -35,13 +35,14 @@ import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
 import * as Project from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { MissionClaims } from "./MissionClaims.ts";
+import { MissionClaims, type ThreadAccess } from "./MissionClaims.ts";
 import {
   type MemberDetail,
-  type MemberStatus,
+  markOf,
   memberDetail,
   missionPromptText,
   missionStatusText,
+  placeOf,
   type RosterMember,
 } from "./missionStatus.ts";
 import { MissionTurnContexts } from "./MissionTurnContexts.ts";
@@ -49,6 +50,7 @@ import {
   type MissionClaim,
   type MissionRecord,
   MissionStore,
+  type ModeLimits,
   type PendingAdd,
   type PendingRelease,
 } from "./MissionStore.ts";
@@ -58,6 +60,8 @@ import { afterAnswer, afterMiss } from "./tombstoneChecks.ts";
 export const MEMBER_CALL_DEADLINE = Duration.seconds(10);
 /** How often a lead asks its linked machines again, while a client watches or a release waits. */
 export const REFRESH_INTERVAL = Duration.seconds(15);
+/** With no client watching and no remote member busy, members are asked this many intervals apart. */
+export const IDLE_POLL_INTERVALS = 4;
 /**
  * How long an add may wait for its machine before the lead stops sending it. Well inside the time
  * a member's machine remembers a spent add, so a lead restored from a backup cannot replay one.
@@ -91,16 +95,19 @@ export class Missions extends Context.Service<
     readonly deleteMission: (input: {
       readonly missionId: string;
     }) => Effect.Effect<void, MissionError>;
-    /** Leaves the add pending when the member's machine does not say what became of it. */
-    readonly addMember: (input: {
-      readonly missionId: string;
-      readonly member: ScopedThreadRef;
-    }) => Effect.Effect<"joined" | "pending", MissionError>;
+    /**
+     * Leaves the add pending when the member's machine does not say what became of it. A lead
+     * agent asks with its own authority; the UI asks with none and has the user's.
+     */
+    readonly addMember: (
+      input: { readonly missionId: string; readonly member: ScopedThreadRef },
+      authority?: LeadAuthority,
+    ) => Effect.Effect<"joined" | "pending", MissionError>;
     /** Leaves the release pending when the member's machine cannot be reached. */
-    readonly releaseMember: (input: {
-      readonly missionId: string;
-      readonly member: ScopedThreadRef;
-    }) => Effect.Effect<"released" | "pending", MissionError>;
+    readonly releaseMember: (
+      input: { readonly missionId: string; readonly member: ScopedThreadRef },
+      authority?: LeadAuthority,
+    ) => Effect.Effect<"released" | "pending", MissionError>;
     /** Stops waiting on a thread whose add or release its machine has not answered. Sends nothing. */
     readonly forgetMember: (input: {
       readonly missionId: string;
@@ -124,14 +131,47 @@ export class Missions extends Context.Service<
       readonly missionId: string;
       readonly prompt: string;
     }) => Effect.Effect<void, MissionError>;
-    /** Members on other machines whose status a sweep heard change, or heard for the first time. */
+    /** Members on other machines whose detail a sweep heard change, or heard for the first time. */
     readonly remoteChanges: Stream.Stream<{
       readonly missionId: string;
       readonly ref: ScopedThreadRef;
-      readonly status: MemberStatus;
+      readonly detail: MemberDetail;
     }>;
+    /**
+     * A thread its lead started joins the lead's Mission, once: a replayed start that returns it
+     * again, after a release say, does not. Undefined when it was started before.
+     */
+    readonly joinStarted: (
+      input: { readonly missionId: string; readonly member: ScopedThreadRef },
+      authority: LeadAuthority,
+    ) => Effect.Effect<"joined" | "pending" | undefined, MissionError>;
+    /** Each Mission whose lead was replaced. */
+    readonly leadChanges: Stream.Stream<string>;
+    /**
+     * Runs `use` with the Mission as it is now, under the lock its lead changes take, so the lead
+     * it is given stays the lead until it is done. Undefined when the Mission is gone.
+     */
+    readonly withLead: <A, E, R>(
+      missionId: string,
+      use: (mission: MissionRecord) => Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A | undefined, E, R>;
   }
 >()("t3/missions/Missions") {}
+
+/**
+ * What a lead agent's add or release may touch: what its own MCP calls may. The UI asks with
+ * none, and keeps the user's authority.
+ */
+export interface LeadAuthority {
+  readonly limits: ModeLimits;
+  /** Refuses a thread here the lead may not change: run before the claim and under its locks. */
+  readonly mayChange: ThreadAccess<MissionError>;
+  /** Refuses a lead that may not reach other machines through this machine's links. */
+  readonly mayUseLinks: Effect.Effect<void, MissionError>;
+}
+
+/** The user's own reach, which the lead machine's bookkeeping calls go out with. */
+const USER_LIMITS: ModeLimits = { runtimeMode: "full-access", interactionMode: "default" };
 
 /** The member's machine did not answer in time: the call may or may not have happened there. */
 class Unreachable extends Schema.TaggedError<Unreachable>()("MissionMemberUnreachable", {
@@ -206,8 +246,11 @@ const make = Effect.gen(function* () {
   const remoteChanged = yield* PubSub.unbounded<{
     readonly missionId: string;
     readonly ref: ScopedThreadRef;
-    readonly status: MemberStatus;
+    readonly detail: MemberDetail;
   }>();
+  const leadChanged = yield* PubSub.unbounded<string>();
+  // Held across a lead change, a delete, and the wake that names a Mission's lead.
+  const missionLocks = yield* KeyedLock.make<string>();
 
   const setAnswering = (environmentId: EnvironmentId, answers: boolean) =>
     Ref.update(answering, (current) => {
@@ -425,6 +468,8 @@ const make = Effect.gen(function* () {
   const onMember = Effect.fn("Missions.onMember")(function* (
     environmentId: EnvironmentId,
     call: ClaimCall,
+    /** The lead agent's own reach: its check on a thread here, its modes on another machine. */
+    grant: { readonly mayChange?: ThreadAccess<MissionError>; readonly limits?: ModeLimits } = {},
   ): Effect.fn.Return<
     ReadonlyArray<MissionClaim & { readonly detail?: MemberDetail | undefined }>,
     MissionError | Unreachable
@@ -432,11 +477,11 @@ const make = Effect.gen(function* () {
     if (environmentId === here) {
       switch (call.kind) {
         case "join": {
-          const joined = yield* claims.join(here, { ...call, ledHere: true });
+          const joined = yield* claims.join(here, { ...call, ledHere: true }, grant.mayChange);
           return joined === "intent-spent" ? [] : [joined];
         }
         case "release":
-          yield* claims.release(here, call);
+          yield* claims.release(here, call, grant.mayChange);
           return [];
         case "list":
           return yield* claims.list(here);
@@ -456,7 +501,7 @@ const make = Effect.gen(function* () {
         environmentId,
         tool: "t3_mission_tag",
         arguments: { ...call },
-        limits: { runtimeMode: "full-access", interactionMode: "default" },
+        limits: grant.limits ?? USER_LIMITS,
         success: MissionClaimResult,
       })
       .pipe(Effect.timeoutOption(MEMBER_CALL_DEADLINE), Effect.result);
@@ -479,13 +524,20 @@ const make = Effect.gen(function* () {
   });
 
   /** Call only under the machine's lock. An answer settles the release, whatever it found there. */
-  const sendRelease = Effect.fn("Missions.sendRelease")(function* (release: PendingRelease) {
-    yield* onMember(release.environmentId, {
-      kind: "release",
-      threadId: release.threadId,
-      missionId: release.missionId,
-      generation: release.generation,
-    });
+  const sendRelease = Effect.fn("Missions.sendRelease")(function* (
+    release: PendingRelease,
+    mayChange?: ThreadAccess<MissionError>,
+  ) {
+    yield* onMember(
+      release.environmentId,
+      {
+        kind: "release",
+        threadId: release.threadId,
+        missionId: release.missionId,
+        generation: release.generation,
+      },
+      { ...(mayChange === undefined ? {} : { mayChange }), limits: release.limits ?? USER_LIMITS },
+    );
     yield* store.clearPendingRelease(release);
     yield* store.forgetClaim(release);
   });
@@ -498,16 +550,21 @@ const make = Effect.gen(function* () {
   const sendJoin = Effect.fn("Missions.sendJoin")(function* (
     mission: MissionRecord,
     add: Omit<PendingAdd, "refusal">,
+    mayChange?: ThreadAccess<MissionError>,
   ) {
     // Read again under the machine's lock: a rename since the add began must not be lost.
     const { name } = yield* missionNamed(mission.missionId);
-    const [claim] = yield* onMember(add.environmentId, {
-      kind: "join",
-      threadId: add.threadId,
-      missionId: mission.missionId,
-      name,
-      intentId: add.intentId,
-    });
+    const [claim] = yield* onMember(
+      add.environmentId,
+      {
+        kind: "join",
+        threadId: add.threadId,
+        missionId: mission.missionId,
+        name,
+        intentId: add.intentId,
+      },
+      { ...(mayChange === undefined ? {} : { mayChange }), limits: add.limits ?? USER_LIMITS },
+    );
     // This machine's own threads have no pending row, and their claims are read, not remembered.
     if (add.environmentId === here) return;
     yield* claim === undefined ? store.clearPendingAdd(add) : store.settleAdd(add, claim);
@@ -602,11 +659,12 @@ const make = Effect.gen(function* () {
       if (claim.detail === undefined) continue;
       const ref = { environmentId, threadId: claim.threadId };
       next.set(memberKey(ref), claim.detail);
-      if (before.get(memberKey(ref))?.status === claim.detail.status) continue;
+      const seen = before.get(memberKey(ref));
+      if (seen !== undefined && markOf(seen) === markOf(claim.detail)) continue;
       yield* PubSub.publish(remoteChanged, {
         missionId: claim.missionId,
         ref,
-        status: claim.detail.status,
+        detail: claim.detail,
       });
     }
     yield* Ref.set(remoteDetails, next);
@@ -687,12 +745,22 @@ const make = Effect.gen(function* () {
     Effect.forever,
     Effect.forkIn(background),
   );
+  // Members on other machines are asked with no one watching too, so their lead hears when one
+  // needs it: each interval while one is busy, and every IDLE_POLL_INTERVALS intervals otherwise.
+  const idleTicks = yield* Ref.make(0);
   yield* Effect.sleep(REFRESH_INTERVAL).pipe(
     Effect.andThen(Effect.all([Ref.get(watchers), owingAnAnswer, store.knownClaims])),
-    // Members on other machines are asked with no one watching too, so their lead hears when
-    // one needs it.
     Effect.flatMap(([watching, owing, known]) =>
-      watching > 0 || known.size > 0 ? refresh : owing.length > 0 ? retryWaiting : Effect.void,
+      Effect.gen(function* () {
+        const busy = [...(yield* Ref.get(remoteDetails)).values()].some(
+          (detail) => detail.status !== "idle" && detail.status !== "failed",
+        );
+        const ticks = yield* Ref.updateAndGet(idleTicks, (count) => count + 1);
+        if (watching > 0 || busy || (known.size > 0 && ticks % IDLE_POLL_INTERVALS === 0)) {
+          return yield* refresh;
+        }
+        if (owing.length > 0) yield* retryWaiting;
+      }),
     ),
     Effect.forever,
     Effect.forkIn(background),
@@ -732,11 +800,10 @@ const make = Effect.gen(function* () {
     const machines = (yield* missionLinks)
       .filter((link) => link.fullAccess)
       .map((link) => link.environmentId);
-    yield* claims.deleteMission({
-      missionId: mission.missionId,
-      lead: mission.leadThreadId,
-      machines,
-    });
+    yield* missionLocks.withLock(
+      mission.missionId,
+      claims.deleteMission({ missionId: mission.missionId, lead: mission.leadThreadId, machines }),
+    );
   });
 
   const setLead = Effect.fn("Missions.setLead")(function* (input: {
@@ -753,21 +820,46 @@ const make = Effect.gen(function* () {
     const shell = yield* threads
       .getThreadShell(input.lead.threadId)
       .pipe(Effect.catch((error) => fail(`The thread could not be read: ${error.message}`)));
-    const record = yield* claims.setLead(here, {
-      missionId: mission.missionId,
-      name: missionNameFromTitle(shell?.title ?? ""),
-      leadThreadId: input.lead.threadId,
-      previous: input.expectedLead,
-    });
+    // The write takes the lock a wake holds, so no wake is sent to a lead replaced meanwhile.
+    const record = yield* missionLocks.withLock(
+      mission.missionId,
+      claims.setLead(here, {
+        missionId: mission.missionId,
+        name: missionNameFromTitle(shell?.title ?? ""),
+        leadThreadId: input.lead.threadId,
+        previous: input.expectedLead,
+      }),
+    );
+    // Updates belong to the Mission, so its new lead hears what its old one had not.
+    if (record.leadThreadId !== input.expectedLead) {
+      yield* PubSub.publish(leadChanged, record.missionId);
+    }
     return yield* missionView(record, yield* machines, yield* shown);
   });
 
-  const addMember = Effect.fn("Missions.addMember")(function* (input: {
-    readonly missionId: string;
-    readonly member: ScopedThreadRef;
-  }) {
+  /**
+   * A lead agent's check before anything is written: a thread here it may not change, or a link
+   * it may not use. The claim write checks a thread here again under its locks.
+   */
+  const leadMayTouch = Effect.fn("Missions.leadMayTouch")(function* (
+    member: ScopedThreadRef,
+    authority: LeadAuthority | undefined,
+  ) {
+    if (authority === undefined) return;
+    if (member.environmentId !== here) return yield* authority.mayUseLinks;
+    const shell = yield* threads
+      .getThreadShell(member.threadId)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (shell !== null && shell.deletedAt === null) yield* authority.mayChange(shell);
+  });
+
+  const addMember = Effect.fn("Missions.addMember")(function* (
+    input: { readonly missionId: string; readonly member: ScopedThreadRef },
+    authority?: LeadAuthority,
+  ) {
     const mission = yield* missionNamed(input.missionId);
     const { environmentId } = input.member;
+    yield* leadMayTouch(input.member, authority);
     const intentId = yield* random.uuidV4().pipe(Effect.orDie);
     const setSending = (isSending: boolean) =>
       Ref.update(sending, (current) => {
@@ -790,6 +882,7 @@ const make = Effect.gen(function* () {
             linkId,
             addedAt: DateTime.formatIso(yield* DateTime.now),
             refusal: null,
+            ...(authority === undefined ? {} : { limits: authority.limits }),
           };
           return yield* Effect.gen(function* () {
             // Written before anything is sent. If this call is cut off, or the server stops, the
@@ -800,7 +893,7 @@ const make = Effect.gen(function* () {
             for (const release of yield* store.pendingReleases) {
               if (memberKey(release) === memberKey(input.member)) yield* sendRelease(release);
             }
-            yield* sendJoin(mission, add);
+            yield* sendJoin(mission, add, authority?.mayChange);
             return "joined" as const;
           }).pipe(
             Effect.catchTags({
@@ -816,11 +909,12 @@ const make = Effect.gen(function* () {
       .pipe(Effect.ensuring(setSending(false).pipe(Effect.andThen(storeChanged))));
   });
 
-  const releaseMember = Effect.fn("Missions.releaseMember")(function* (input: {
-    readonly missionId: string;
-    readonly member: ScopedThreadRef;
-  }) {
+  const releaseMember = Effect.fn("Missions.releaseMember")(function* (
+    input: { readonly missionId: string; readonly member: ScopedThreadRef },
+    authority?: LeadAuthority,
+  ) {
     const mission = yield* missionNamed(input.missionId);
+    yield* leadMayTouch(input.member, authority);
     const { environmentId, threadId } = input.member;
     const refused = (yield* store.pendingAdds).find(
       (add) =>
@@ -841,10 +935,15 @@ const make = Effect.gen(function* () {
     if (claim.role === "lead") {
       return yield* fail("A mission keeps its lead thread, so the lead cannot be released.");
     }
-    const release = { ...input.member, missionId: mission.missionId, generation: claim.generation };
+    const release = {
+      ...input.member,
+      missionId: mission.missionId,
+      generation: claim.generation,
+      ...(authority === undefined ? {} : { limits: authority.limits }),
+    };
     return yield* machineLocks.withLock(
       environmentId,
-      sendRelease(release).pipe(
+      sendRelease(release, authority?.mayChange).pipe(
         Effect.as("released" as const),
         Effect.catchTags({
           MissionMemberUnreachable: () =>
@@ -927,6 +1026,7 @@ const make = Effect.gen(function* () {
       if (ref.environmentId === here && detail === undefined) continue;
       rows.push({
         ref,
+        place: placeOf(ref.environmentId, here),
         machine:
           ref.environmentId === here
             ? "this machine"
@@ -943,9 +1043,12 @@ const make = Effect.gen(function* () {
   yield* turnContexts.serve((threadId) =>
     Effect.gen(function* () {
       const mission = yield* ledBy(threadId);
-      if (mission === undefined) return undefined;
+      if (mission === undefined) {
+        return (yield* store.ledBefore(threadId)) ? { role: "former-lead" as const } : undefined;
+      }
       const { missionDefaultPrompt } = yield* settings.getSettings;
       return {
+        role: "lead" as const,
         prompt: missionPromptText(mission.name, mission.prompt || missionDefaultPrompt),
         status: missionStatusText(yield* roster(mission.missionId)),
       };
@@ -965,7 +1068,30 @@ const make = Effect.gen(function* () {
     yield* store.setPrompt({ missionId: input.missionId, prompt: input.prompt.trim() });
   });
 
+  const withLead = <A, E, R>(
+    missionId: string,
+    use: (mission: MissionRecord) => Effect.Effect<A, E, R>,
+  ): Effect.Effect<A | undefined, E, R> =>
+    missionLocks.withLock(
+      missionId,
+      Effect.flatMap(store.missions, (missions) => {
+        const mission = missions.find((candidate) => candidate.missionId === missionId);
+        return mission === undefined ? Effect.undefined : use(mission);
+      }),
+    );
+
+  const joinStarted = Effect.fn("Missions.joinStarted")(function* (
+    input: { readonly missionId: string; readonly member: ScopedThreadRef },
+    authority: LeadAuthority,
+  ) {
+    if (!(yield* store.firstStartedJoin(input.member))) return undefined;
+    return yield* addMember(input, authority);
+  });
+
   return Missions.of({
+    joinStarted,
+    withLead,
+    leadChanges: Stream.fromPubSub(leadChanged),
     ledBy,
     roster,
     setPrompt,

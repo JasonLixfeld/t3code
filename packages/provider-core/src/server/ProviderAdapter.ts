@@ -604,11 +604,13 @@ export interface ProviderAdapterV2TurnInput {
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
   /**
-   * Set on every turn of a mission's lead thread, absent on any other. `prompt` is the user's
-   * mission prompt under its header, to follow as instructions; `status` is app-written data.
-   * Only Codex and OpenCode deliver it so far. Claude, ACP and Pi leads get no mission context.
+   * Set on every turn of a mission's lead thread, and of a thread that led one before. `prompt`
+   * is the user's mission prompt under its header, to follow as instructions; `status` is
+   * app-written data. Only Codex and OpenCode deliver it so far; Claude, ACP and Pi get none.
    */
-  readonly missionContext?: { readonly prompt: string; readonly status: string };
+  readonly missionContext?:
+    | { readonly role: "lead"; readonly prompt: string; readonly status: string }
+    | { readonly role: "former-lead" };
 }
 
 export type ProviderAdapterV2ResumeTurnInput = Omit<

@@ -336,7 +336,7 @@ describe("CodexAdapterV2 runtime policy", () => {
         const build = (
           input: Pick<
             Parameters<typeof CodexAdapterV2.buildCodexTurnStartParams>[0],
-            "missionContext" | "missionEnded"
+            "missionContext"
           >,
         ) =>
           CodexAdapterV2.buildCodexTurnStartParams({
@@ -346,13 +346,16 @@ describe("CodexAdapterV2 runtime policy", () => {
             modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
             ...input,
           });
-        const lead = yield* build({ missionContext: { prompt: "Lead it.", status: "Status: 0." } });
+        const lead = yield* build({
+          missionContext: { role: "lead", prompt: "Lead it.", status: "Status: 0." },
+        });
         assert.deepEqual(lead.additionalContext, {
           t3_code_mission: { kind: "application", value: "Lead it." },
           t3_code_mission_status: { kind: "untrusted", value: "Status: 0." },
         });
-        // Codex keeps what it was sent, so a thread that stops leading is told so.
-        const ended = yield* build({ missionEnded: true });
+        // Its history keeps what it was sent, so a thread that led is told so on every turn,
+        // the first one of a new session included: nothing here remembers the last session.
+        const ended = yield* build({ missionContext: { role: "former-lead" } });
         assert.deepEqual(Object.keys(ended.additionalContext ?? {}), ["t3_code_mission"]);
         assert.include(
           ended.additionalContext?.t3_code_mission?.value,

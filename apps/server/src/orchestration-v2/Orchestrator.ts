@@ -7214,6 +7214,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }
         : undefined,
     );
+    // Checked here, in the thread's own command order, so no settle can land between the check
+    // and the message that would otherwise reopen the thread.
+    if (
+      command.unlessParked === true &&
+      (projection.thread.settledOverride === "settled" ||
+        projection.thread.settledAt !== null ||
+        projection.thread.archivedAt !== null ||
+        projection.thread.deletedAt !== null)
+    ) {
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        occurredAt: yield* DateTime.now,
+        payload: projection.thread,
+      });
+      return;
+    }
     if (command.steerFollowUpOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.steerFollowUpOfRunId);
       if (

@@ -1816,7 +1816,8 @@ function pendingRuntimeRequestSummary(
   };
 }
 
-function secretRequestAsPendingInput(
+/** A secret or link card the user must answer, as pending input. Mission wakes use it too. */
+export function secretRequestAsPendingInput(
   item: OrchestrationV2TurnItem | null,
 ): OrchestrationV2PendingRuntimeRequestSummary | null {
   if ((item?.type !== "secret_request" && item?.type !== "link_request") || item.nodeId === null)

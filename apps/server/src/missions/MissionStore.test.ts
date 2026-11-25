@@ -255,6 +255,9 @@ it.effect("upgrades a version-6 database: its missions get an empty prompt that 
             [""],
           );
           yield* store.setPrompt({ missionId: "m1", prompt: "Ship the release." });
+          // The lead of a Mission from before the upgrade counts as one that led.
+          assert.isTrue(yield* store.ledBefore(lead));
+          assert.isFalse(yield* store.ledBefore(member));
           const missing = yield* store
             .setPrompt({ missionId: "gone", prompt: "x" })
             .pipe(Effect.flip);
@@ -270,28 +273,63 @@ it.effect("upgrades a version-6 database: its missions get an empty prompt that 
   ),
 );
 
-it.effect("keeps one untold update per member, across a reopen, until it is told", () =>
+it.effect(
+  "a wake takes its updates by source, keeps its key across a reopen, and clears only them",
+  () =>
+    withDatabase((filename) =>
+      Effect.gen(function* () {
+        const of = (source: string, event: "completed" | "awaiting-input" = "completed") => ({
+          missionId: "m1",
+          environmentId: EnvironmentId.make("env-a"),
+          threadId: member,
+          source,
+          event,
+        });
+        const first = yield* usingStore(filename, (store) =>
+          Effect.gen(function* () {
+            yield* store.addMissionUpdate(of("run:r1"));
+            // The same source written again is the same update.
+            yield* store.addMissionUpdate(of("run:r1"));
+            yield* store.addMissionUpdate(of("request:q1", "awaiting-input"));
+            const taken = yield* store.takeMissionUpdates("m1");
+            assert.deepEqual(taken.updates, [of("run:r1"), of("request:q1", "awaiting-input")]);
+            // A second turn of the same member ends while the wake is being sent.
+            yield* store.addMissionUpdate(of("run:r2"));
+            return taken;
+          }),
+        );
+        yield* usingStore(filename, (store) =>
+          Effect.gen(function* () {
+            // A stop before the clear: the same wake comes back, with the same key.
+            assert.deepEqual(yield* store.takeMissionUpdates("m1"), first);
+            yield* store.clearMissionUpdates("m1", first.key);
+            const next = yield* store.takeMissionUpdates("m1");
+            assert.deepEqual(next.updates, [of("run:r2")]);
+            assert.notEqual(next.key, first.key);
+            assert.deepEqual(yield* store.missionsWithUpdates, ["m1"]);
+            yield* store.clearMissionUpdates("m1", next.key);
+            assert.deepEqual((yield* store.takeMissionUpdates("m1")).updates, []);
+          }),
+        );
+      }),
+    ),
+);
+
+it.effect("a started thread joins once, and a remote member's mark outlives a reopen", () =>
   withDatabase((filename) =>
     Effect.gen(function* () {
-      const update = {
-        missionId: "m1",
-        environmentId: EnvironmentId.make("env-a"),
-        threadId: member,
-      };
+      const started = { environmentId: EnvironmentId.make("env-a"), threadId: member };
       yield* usingStore(filename, (store) =>
         Effect.gen(function* () {
-          yield* store.addMissionUpdate({ ...update, event: "pending-approval" });
-          yield* store.addMissionUpdate({ ...update, event: "awaiting-input" });
+          assert.isTrue(yield* store.firstStartedJoin(started));
+          assert.isFalse(yield* store.firstStartedJoin(started));
+          yield* store.setMemberMark(started, "mark-1");
         }),
       );
       yield* usingStore(filename, (store) =>
         Effect.gen(function* () {
-          const told = yield* store.missionUpdates;
-          assert.deepEqual(told, [{ ...update, event: "awaiting-input" }]);
-          // A newer change arrives while the first is being told, so it stays.
-          yield* store.addMissionUpdate({ ...update, event: "completed" });
-          yield* store.clearMissionUpdates(told);
-          assert.deepEqual(yield* store.missionUpdates, [{ ...update, event: "completed" }]);
+          assert.isFalse(yield* store.firstStartedJoin(started));
+          assert.equal(yield* store.memberMark(started), "mark-1");
         }),
       );
     }),

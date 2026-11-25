@@ -827,7 +827,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           { onInstructions: (input) => instructions.push((input as { value: string }).value) },
         );
         for (const missionContext of [
-          { prompt: "Lead the ship.", status: "Status: 0 members." },
+          { role: "lead" as const, prompt: "Lead the ship.", status: "Status: 0 members." },
           undefined,
         ]) {
           const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);

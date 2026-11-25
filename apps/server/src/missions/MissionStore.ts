@@ -1,4 +1,10 @@
-import { EnvironmentId, MissionError, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MissionError,
+  type ProviderInteractionMode,
+  type RuntimeMode,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -160,14 +166,43 @@ export const MIGRATIONS = {
   "7_MissionLeadPrompt": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`ALTER TABLE missions ADD COLUMN prompt TEXT NOT NULL DEFAULT ''`;
-    // What the lead has not been told yet, at most one per member, so a restart keeps it.
+    // An add or release a lead agent asked for goes out with its modes, also when sent again.
+    // Null is the user's own.
+    for (const table of ["pending_adds", "pending_releases"]) {
+      yield* sql.unsafe(`ALTER TABLE ${table} ADD COLUMN runtime_mode TEXT`);
+      yield* sql.unsafe(`ALTER TABLE ${table} ADD COLUMN interaction_mode TEXT`);
+    }
+    // What the lead has not been told yet, one row per run, request or card it came from.
+    // `delivery_key` marks the rows of a wake under way, so a restart sends that wake again.
     yield* sql`
       CREATE TABLE mission_updates (
         mission_id TEXT NOT NULL,
         environment_id TEXT NOT NULL,
         thread_id TEXT NOT NULL,
+        source TEXT NOT NULL,
         event TEXT NOT NULL,
-        PRIMARY KEY (mission_id, environment_id, thread_id)
+        delivery_key TEXT,
+        PRIMARY KEY (mission_id, environment_id, thread_id, source)
+      )
+    `;
+    // What each member on another machine last said it was doing, so a restart compares with it.
+    yield* sql`
+      CREATE TABLE member_marks (
+        environment_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        mark TEXT NOT NULL,
+        PRIMARY KEY (environment_id, thread_id)
+      )
+    `;
+    // Every thread that ever led a Mission here, so one that stops leading is told so.
+    yield* sql`CREATE TABLE former_leads (thread_id TEXT PRIMARY KEY)`;
+    yield* sql`INSERT OR IGNORE INTO former_leads SELECT lead_thread_id FROM missions`;
+    // Each thread a lead started joins its Mission once: a replayed start finds it here.
+    yield* sql`
+      CREATE TABLE started_joins (
+        environment_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        PRIMARY KEY (environment_id, thread_id)
       )
     `;
   }),
@@ -210,12 +245,22 @@ export interface MissionRecord {
   readonly prompt: string;
 }
 
-/** A member's change its lead has not been told about yet. */
+/**
+ * A member's change its lead has not been told about yet. `source` names the run, request or
+ * card it came from, so each is told once and a newer one is never cleared in its place.
+ */
 export interface MissionUpdate {
   readonly missionId: string;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly source: string;
   readonly event: MissionUpdateEvent;
+}
+
+/** The modes a lead agent's add or release was asked with. Absent: the user's own. */
+export interface ModeLimits {
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
 }
 
 /** A thread on this machine held by a Mission. `generation` names the join that made the claim. */
@@ -241,6 +286,7 @@ export interface PendingAdd {
   readonly linkId: string;
   readonly addedAt: string;
   readonly refusal: string | null;
+  readonly limits?: ModeLimits | undefined;
 }
 
 type AddKey = Pick<PendingAdd, "environmentId" | "threadId" | "missionId">;
@@ -254,6 +300,7 @@ export interface PendingRelease {
   readonly threadId: ThreadId;
   readonly generation: string;
   readonly missionId: string;
+  readonly limits?: ModeLimits | undefined;
 }
 
 interface ClaimInput {
@@ -267,6 +314,31 @@ interface ClaimInput {
   /** The Mission is led here, so it must still be here when the claim is written. */
   readonly ledHere?: boolean | undefined;
 }
+
+interface LimitColumns {
+  readonly runtime_mode: RuntimeMode | null;
+  readonly interaction_mode: ProviderInteractionMode | null;
+}
+const limitsOf = (row: LimitColumns): { readonly limits?: ModeLimits } =>
+  row.runtime_mode === null || row.interaction_mode === null
+    ? {}
+    : { limits: { runtimeMode: row.runtime_mode, interactionMode: row.interaction_mode } };
+
+/**
+ * The same updates make the same key (FNV-1a over their sources), so a wake sent again after a
+ * stop is the same command. Each source is told once, so no later wake reuses a key.
+ */
+const deliveryKey = (updates: ReadonlyArray<MissionUpdate>) => {
+  let hash = 0xcbf29ce484222325n;
+  const text = updates
+    .map((update) => `${update.environmentId}\u0000${update.threadId}\u0000${update.source}`)
+    .toSorted()
+    .join("\u0001");
+  for (const unit of new TextEncoder().encode(text)) {
+    hash = ((hash ^ BigInt(unit)) * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return hash.toString(16).padStart(16, "0");
+};
 
 const toMission = (row: MissionRow): MissionRecord => ({
   missionId: row.mission_id,
@@ -401,11 +473,35 @@ export class MissionStore extends Context.Service<
       readonly missionId: string;
       readonly prompt: string;
     }) => Effect.Effect<void, MissionError>;
-    readonly missionUpdates: Effect.Effect<ReadonlyArray<MissionUpdate>>;
-    /** Keeps the member's newest change, in place of one not told yet. */
+    /** Each untold update once: one already recorded from the same source is not added again. */
     readonly addMissionUpdate: (update: MissionUpdate) => Effect.Effect<void>;
-    /** Drops these once told. A member's newer, different change stays. */
-    readonly clearMissionUpdates: (updates: ReadonlyArray<MissionUpdate>) => Effect.Effect<void>;
+    /** The Missions with updates not told yet. */
+    readonly missionsWithUpdates: Effect.Effect<ReadonlyArray<string>>;
+    /**
+     * The next wake of a Mission: the one under way, if a stop cut it off, else every update not
+     * told yet, marked with a key made from their sources. The same updates get the same key.
+     */
+    readonly takeMissionUpdates: (
+      missionId: string,
+    ) => Effect.Effect<{ readonly key: string; readonly updates: ReadonlyArray<MissionUpdate> }>;
+    /** Drops the updates of one wake. Updates recorded since stay for the next. */
+    readonly clearMissionUpdates: (missionId: string, key: string) => Effect.Effect<void>;
+    /** What a member on another machine last said; undefined if it never said. */
+    readonly memberMark: (member: {
+      readonly environmentId: EnvironmentId;
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<string | undefined>;
+    readonly setMemberMark: (
+      member: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId },
+      mark: string,
+    ) => Effect.Effect<void>;
+    /** Whether the thread ever led a Mission here. */
+    readonly ledBefore: (threadId: ThreadId) => Effect.Effect<boolean>;
+    /** Records that a started thread joined, or tried to. False when it was recorded before. */
+    readonly firstStartedJoin: (thread: {
+      readonly environmentId: EnvironmentId;
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<boolean>;
   }
 >()("t3/missions/MissionStore") {}
 
@@ -501,6 +597,7 @@ const make = Effect.gen(function* () {
           INSERT INTO missions (mission_id, name, lead_thread_id, created_at)
           VALUES (${lead.missionId}, ${lead.name}, ${lead.threadId}, ${createdAt})
         `;
+        yield* sql`INSERT OR IGNORE INTO former_leads (thread_id) VALUES (${lead.threadId})`;
         yield* insertClaim(lead, "lead", createdAt);
         return toMission({
           mission_id: lead.missionId,
@@ -614,6 +711,13 @@ const make = Effect.gen(function* () {
         yield* sql`
           UPDATE missions SET lead_thread_id = ${lead.threadId}, name = ${lead.name}
           WHERE mission_id = ${lead.missionId}
+        `;
+        yield* sql`INSERT OR IGNORE INTO former_leads (thread_id) VALUES (${lead.threadId})`;
+        // The new lead is no member to tell itself about.
+        yield* sql`
+          DELETE FROM mission_updates
+          WHERE mission_id = ${lead.missionId} AND thread_id = ${lead.threadId}
+            AND delivery_key IS NULL
         `;
         return toMission({ ...mission, lead_thread_id: lead.threadId, name: lead.name });
       }),
@@ -766,8 +870,9 @@ const make = Effect.gen(function* () {
   const tagsSynced = (threadId: ThreadId) =>
     sql`DELETE FROM unsynced_tags WHERE thread_id = ${threadId}`.pipe(Effect.asVoid, Effect.orDie);
 
-  const pendingReleases = sql<PendingReleaseRow>`
-    SELECT environment_id, thread_id, generation, mission_id FROM pending_releases ORDER BY rowid
+  const pendingReleases = sql<PendingReleaseRow & LimitColumns>`
+    SELECT environment_id, thread_id, generation, mission_id, runtime_mode, interaction_mode
+    FROM pending_releases ORDER BY rowid
   `.pipe(
     Effect.map((rows) =>
       rows.map((row): PendingRelease => ({
@@ -775,6 +880,7 @@ const make = Effect.gen(function* () {
         threadId: ThreadId.make(row.thread_id),
         generation: row.generation,
         missionId: row.mission_id,
+        ...limitsOf(row),
       })),
     ),
     Effect.orDie,
@@ -787,9 +893,11 @@ const make = Effect.gen(function* () {
 
   const addPendingRelease = (pending: PendingRelease) =>
     sql`
-      INSERT OR IGNORE INTO pending_releases (environment_id, thread_id, generation, mission_id)
+      INSERT OR IGNORE INTO pending_releases
+        (environment_id, thread_id, generation, mission_id, runtime_mode, interaction_mode)
       VALUES (${pending.environmentId}, ${pending.threadId}, ${pending.generation},
-        ${pending.missionId})
+        ${pending.missionId}, ${pending.limits?.runtimeMode ?? null},
+        ${pending.limits?.interactionMode ?? null})
     `.pipe(
       Effect.andThen(touches(pending.missionId, pending.environmentId)),
       Effect.andThen(changed),
@@ -804,16 +912,19 @@ const make = Effect.gen(function* () {
         AND generation = ${pending.generation}
     `.pipe(Effect.andThen(changed), Effect.asVoid, Effect.orDie);
 
-  const pendingAdds = sql<{
-    readonly environment_id: string;
-    readonly thread_id: string;
-    readonly mission_id: string;
-    readonly intent_id: string;
-    readonly link_id: string;
-    readonly added_at: string;
-    readonly refusal: string | null;
-  }>`
-    SELECT environment_id, thread_id, mission_id, intent_id, link_id, added_at, refusal
+  const pendingAdds = sql<
+    {
+      readonly environment_id: string;
+      readonly thread_id: string;
+      readonly mission_id: string;
+      readonly intent_id: string;
+      readonly link_id: string;
+      readonly added_at: string;
+      readonly refusal: string | null;
+    } & LimitColumns
+  >`
+    SELECT environment_id, thread_id, mission_id, intent_id, link_id, added_at, refusal,
+      runtime_mode, interaction_mode
     FROM pending_adds ORDER BY rowid
   `.pipe(
     Effect.map((rows) =>
@@ -825,6 +936,7 @@ const make = Effect.gen(function* () {
         linkId: row.link_id,
         addedAt: row.added_at,
         refusal: row.refusal,
+        ...limitsOf(row),
       })),
     ),
     Effect.orDie,
@@ -833,9 +945,11 @@ const make = Effect.gen(function* () {
   const setPendingAdd = (add: PendingAdd) =>
     sql`
       INSERT OR REPLACE INTO pending_adds
-        (environment_id, thread_id, mission_id, intent_id, link_id, added_at, refusal)
+        (environment_id, thread_id, mission_id, intent_id, link_id, added_at, refusal,
+          runtime_mode, interaction_mode)
       VALUES (${add.environmentId}, ${add.threadId}, ${add.missionId}, ${add.intentId},
-        ${add.linkId}, ${add.addedAt}, ${add.refusal})
+        ${add.linkId}, ${add.addedAt}, ${add.refusal}, ${add.limits?.runtimeMode ?? null},
+        ${add.limits?.interactionMode ?? null})
     `.pipe(
       Effect.andThen(touches(add.missionId, add.environmentId)),
       Effect.andThen(changed),
@@ -967,51 +1081,131 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const missionUpdates = sql<{
+  const updateRows = (missionId: string, condition: "untold" | "under way") =>
+    sql<{
+      readonly mission_id: string;
+      readonly environment_id: string;
+      readonly thread_id: string;
+      readonly source: string;
+      readonly event: MissionUpdateEvent;
+      readonly delivery_key: string | null;
+    }>`
+      SELECT mission_id, environment_id, thread_id, source, event, delivery_key
+      FROM mission_updates
+      WHERE mission_id = ${missionId}
+        AND delivery_key IS ${condition === "untold" ? sql`NULL` : sql`NOT NULL`}
+      ORDER BY rowid
+    `;
+  const toUpdate = (row: {
     readonly mission_id: string;
     readonly environment_id: string;
     readonly thread_id: string;
+    readonly source: string;
     readonly event: MissionUpdateEvent;
-  }>`
-    SELECT mission_id, environment_id, thread_id, event FROM mission_updates ORDER BY rowid
-  `.pipe(
-    Effect.map((rows) =>
-      rows.map((row): MissionUpdate => ({
-        missionId: row.mission_id,
-        environmentId: EnvironmentId.make(row.environment_id),
-        threadId: ThreadId.make(row.thread_id),
-        event: row.event,
-      })),
-    ),
-    Effect.orDie,
-  );
+  }): MissionUpdate => ({
+    missionId: row.mission_id,
+    environmentId: EnvironmentId.make(row.environment_id),
+    threadId: ThreadId.make(row.thread_id),
+    source: row.source,
+    event: row.event,
+  });
 
   const addMissionUpdate = (update: MissionUpdate) =>
     sql`
-      INSERT OR REPLACE INTO mission_updates (mission_id, environment_id, thread_id, event)
-      VALUES (${update.missionId}, ${update.environmentId}, ${update.threadId}, ${update.event})
+      INSERT OR IGNORE INTO mission_updates (mission_id, environment_id, thread_id, source, event)
+      VALUES (${update.missionId}, ${update.environmentId}, ${update.threadId}, ${update.source},
+        ${update.event})
     `.pipe(Effect.asVoid, Effect.orDie);
 
-  const clearMissionUpdates = (updates: ReadonlyArray<MissionUpdate>) =>
+  const missionsWithUpdates = sql<{ readonly mission_id: string }>`
+    SELECT DISTINCT mission_id FROM mission_updates
+  `.pipe(
+    Effect.map((rows) => rows.map((row) => row.mission_id)),
+    Effect.orDie,
+  );
+
+  const takeMissionUpdates = (missionId: string) =>
     sql
       .withTransaction(
-        Effect.forEach(
-          updates,
-          (update) => sql`
-            DELETE FROM mission_updates
-            WHERE mission_id = ${update.missionId} AND environment_id = ${update.environmentId}
-              AND thread_id = ${update.threadId} AND event = ${update.event}
-          `,
-          { discard: true },
-        ),
+        Effect.gen(function* () {
+          const underWay = yield* updateRows(missionId, "under way");
+          const first = underWay[0];
+          if (first !== undefined) {
+            return {
+              key: first.delivery_key!,
+              updates: underWay
+                .filter((row) => row.delivery_key === first.delivery_key)
+                .map(toUpdate),
+            };
+          }
+          const updates = (yield* updateRows(missionId, "untold")).map(toUpdate);
+          const key = deliveryKey(updates);
+          if (updates.length > 0) {
+            yield* sql`
+              UPDATE mission_updates SET delivery_key = ${key}
+              WHERE mission_id = ${missionId} AND delivery_key IS NULL
+            `;
+          }
+          return { key, updates };
+        }),
       )
       .pipe(Effect.orDie);
 
+  const clearMissionUpdates = (missionId: string, key: string) =>
+    sql`
+      DELETE FROM mission_updates WHERE mission_id = ${missionId} AND delivery_key = ${key}
+    `.pipe(Effect.asVoid, Effect.orDie);
+
+  const memberMark = (member: {
+    readonly environmentId: EnvironmentId;
+    readonly threadId: ThreadId;
+  }) =>
+    sql<{ readonly mark: string }>`
+      SELECT mark FROM member_marks
+      WHERE environment_id = ${member.environmentId} AND thread_id = ${member.threadId}
+    `.pipe(
+      Effect.map((rows) => rows[0]?.mark),
+      Effect.orDie,
+    );
+
+  const setMemberMark = (
+    member: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId },
+    mark: string,
+  ) =>
+    sql`
+      INSERT OR REPLACE INTO member_marks (environment_id, thread_id, mark)
+      VALUES (${member.environmentId}, ${member.threadId}, ${mark})
+    `.pipe(Effect.asVoid, Effect.orDie);
+
+  const ledBefore = (threadId: ThreadId) =>
+    sql`SELECT 1 FROM former_leads WHERE thread_id = ${threadId}`.pipe(
+      Effect.map((rows) => rows.length > 0),
+      Effect.orDie,
+    );
+
+  const firstStartedJoin = (thread: {
+    readonly environmentId: EnvironmentId;
+    readonly threadId: ThreadId;
+  }) =>
+    sql`
+      INSERT OR IGNORE INTO started_joins (environment_id, thread_id)
+      VALUES (${thread.environmentId}, ${thread.threadId})
+      RETURNING thread_id
+    `.pipe(
+      Effect.map((rows) => rows.length > 0),
+      Effect.orDie,
+    );
+
   return MissionStore.of({
     setPrompt,
-    missionUpdates,
     addMissionUpdate,
+    missionsWithUpdates,
+    takeMissionUpdates,
     clearMissionUpdates,
+    memberMark,
+    setMemberMark,
+    ledBefore,
+    firstStartedJoin,
     changes,
     missions,
     createMission,

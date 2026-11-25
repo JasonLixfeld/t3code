@@ -3600,6 +3600,8 @@ export const OrchestrationV2Command = Schema.Union([
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     /** Start a new provider session without the thread's earlier context. Never steers. */
     freshContext: Schema.optional(Schema.Boolean),
+    /** A server wake: a settled, archived or deleted thread is left as it is, and sent nothing. */
+    unlessParked: Schema.optional(Schema.Literal(true)),
     /** Asks the run for a result as data matching this JSON Schema. Never steers. */
     outputSchema: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
     commandId: CommandId,

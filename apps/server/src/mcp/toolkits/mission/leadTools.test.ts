@@ -67,6 +67,7 @@ const notLead = threadScope("member", false);
 
 const row = (index: number, status: RosterMember["status"]): RosterMember => ({
   ref: { environmentId: LAPTOP, threadId: ThreadId.make(`t${index}`) },
+  place: LAPTOP,
   machine: "Laptop",
   project: "web",
   status,
@@ -79,8 +80,41 @@ const makeMissions = () => {
     readonly kind: string;
     readonly missionId: string;
     readonly member: ScopedThreadRef;
+    /** The lead's own modes, which every lead call must carry. */
+    readonly limits: unknown;
   }> = [];
+  const started = new Set<string>();
+  const add = (
+    input: { readonly missionId: string; readonly member: ScopedThreadRef },
+    authority: Missions.LeadAuthority | undefined,
+  ) =>
+    Effect.suspend(() => {
+      calls.push({ kind: "add", ...input, limits: authority?.limits });
+      if (input.member.environmentId === FENCED) {
+        return Effect.fail(
+          new MissionError({
+            message:
+              "The link to Fenced box has auto access. A link below full access may change only threads it started, so relink Fenced box with full access to use its threads in a mission.",
+          }),
+        );
+      }
+      if (input.member.threadId === "taken") {
+        return Effect.fail(
+          new MissionError({ message: 'This thread is already in the mission "Other".' }),
+        );
+      }
+      return Effect.succeed(
+        input.member.environmentId === LAPTOP ? ("pending" as const) : ("joined" as const),
+      );
+    });
   const layer = Layer.mock(Missions.Missions)({
+    joinStarted: (input, authority) =>
+      Effect.suspend(() => {
+        const key = `${input.member.environmentId}/${input.member.threadId}`;
+        if (started.has(key)) return Effect.undefined;
+        started.add(key);
+        return add(input, authority);
+      }),
     ledBy: (threadId) =>
       Effect.succeed(
         threadId === lead.thread.threadId
@@ -93,27 +127,10 @@ const makeMissions = () => {
           row(index, index === 0 ? "pending-approval" : "idle"),
         ),
       ),
-    addMember: (input) =>
+    addMember: add,
+    releaseMember: (input, authority) =>
       Effect.suspend(() => {
-        calls.push({ kind: "add", ...input });
-        if (input.member.environmentId === FENCED) {
-          return Effect.fail(
-            new MissionError({
-              message:
-                "The link to Fenced box has auto access. A link below full access may change only threads it started, so relink Fenced box with full access to use its threads in a mission.",
-            }),
-          );
-        }
-        if (input.member.threadId === "taken") {
-          return Effect.fail(
-            new MissionError({ message: 'This thread is already in the mission "Other".' }),
-          );
-        }
-        return Effect.succeed(input.member.environmentId === LAPTOP ? "pending" : "joined");
-      }),
-    releaseMember: (input) =>
-      Effect.suspend(() => {
-        calls.push({ kind: "release", ...input });
+        calls.push({ kind: "release", ...input, limits: authority?.limits });
         return input.member.threadId === "elsewhere"
           ? Effect.fail(new MissionError({ message: "That thread is not in this mission." }))
           : Effect.succeed("released" as const);
@@ -224,6 +241,10 @@ it.effect("add and release act on the caller's own mission, by the UI's rules", 
         ["release", MISSION, HERE],
       ],
     );
+    // Each goes with the calling lead's own modes, never the UI's.
+    for (const call of missions.calls) {
+      assert.deepEqual(call.limits, { runtimeMode: "full-access", interactionMode: "default" });
+    }
     // A thread that leads nothing is not offered the tools.
     const hidden = yield* callLeadTool(missions, notLead, "t3_mission_add", {
       threadRef: { threadId: "x" },
@@ -323,6 +344,12 @@ it.effect(
         ],
       );
 
+      // The same call again, as a retry that returns the threads it made: none joins again.
+      const replayed = (yield* callOrchestratorTool(missions, lead, "create_threads", {
+        threads: [{ title: "One" }, { title: "Two" }],
+      })) as { readonly threads: ReadonlyArray<{ readonly mission?: unknown }> };
+      for (const thread of replayed.threads) assert.notProperty(thread, "mission");
+
       const byOther = (yield* callOrchestratorTool(missions, notLead, "create_threads", {
         threads: [{ title: "One" }],
       })) as { readonly threads: ReadonlyArray<{ readonly mission?: unknown }> };
@@ -383,6 +410,9 @@ it.effect(
           return results.at(-1)?.result as { readonly mission?: unknown };
         });
       assert.deepEqual((yield* launch(LAPTOP)).mission, { state: "pending" });
+      // The same launch again, as a retry with its clientRequestId returns the thread it made,
+      // after the lead released it: the thread does not join again.
+      assert.notProperty(yield* launch(LAPTOP), "mission");
       assert.deepEqual((yield* launch(FENCED)).mission, {
         state: "refused",
         reason:

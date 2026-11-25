@@ -861,26 +861,26 @@ function codexCyberAccess(
   return descriptor?.type === "select" ? { defaultProgram: descriptor.currentValue } : undefined;
 }
 
-const CODEX_MISSION_KEY = "t3_code_mission";
 const CODEX_MISSION_ENDED =
   "This thread no longer leads a mission. Earlier mission instructions and status no longer apply.";
 
 /**
  * The user's mission prompt goes as instructions, the app's status of its members as quoted data.
- * Codex keeps what it was sent in the thread, so a thread that stops leading is told so instead.
+ * A thread that led one is told on every turn that it no longer does, from the first turn of each
+ * session, since earlier context stays in its history. Unverified: whether Codex keeps an entry a
+ * turn no longer sends, or drops it; no Codex source is at hand. Either way the retraction holds.
  */
 const codexMissionContext = (
   context: ProviderAdapter.ProviderAdapterV2TurnInput["missionContext"],
-  ended: boolean,
 ) =>
-  context !== undefined
-    ? {
-        [CODEX_MISSION_KEY]: { kind: "application" as const, value: context.prompt },
-        t3_code_mission_status: { kind: "untrusted" as const, value: context.status },
-      }
-    : ended
-      ? { [CODEX_MISSION_KEY]: { kind: "application" as const, value: CODEX_MISSION_ENDED } }
-      : undefined;
+  context === undefined
+    ? undefined
+    : context.role === "former-lead"
+      ? { t3_code_mission: { kind: "application" as const, value: CODEX_MISSION_ENDED } }
+      : {
+          t3_code_mission: { kind: "application" as const, value: context.prompt },
+          t3_code_mission_status: { kind: "untrusted" as const, value: context.status },
+        };
 
 export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTurnStartParams")(
   function* (input: {
@@ -896,8 +896,6 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
     readonly missionContext?: ProviderAdapter.ProviderAdapterV2TurnInput["missionContext"];
-    /** The thread was told it leads a mission, and no longer does. */
-    readonly missionEnded?: boolean;
     /** Set only for a model that offers Cyber Access; custom models never do. */
     readonly cyberAccess?: { readonly defaultProgram: string | undefined } | undefined;
     /** The user's `model_reasoning_summary` from the Codex config, when set. */
@@ -966,7 +964,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       workspaceInstructions === ""
         ? undefined
         : { t3_code_workspace: { kind: "application" as const, value: workspaceInstructions } };
-    const missionContext = codexMissionContext(input.missionContext, input.missionEnded === true);
+    const missionContext = codexMissionContext(input.missionContext);
     const additionalContext =
       t3Context === undefined &&
       workspaceContext === undefined &&
@@ -7839,9 +7837,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(turnInput.missionContext === undefined
                 ? {}
                 : { missionContext: turnInput.missionContext }),
-              missionEnded:
-                (yield* Ref.get(additionalContextByThread)).get(threadId)?.[CODEX_MISSION_KEY] !==
-                undefined,
               ...(configuredReasoningSummary === undefined ? {} : { configuredReasoningSummary }),
             });
             yield* Ref.update(pendingRootTurns, (current) => {
