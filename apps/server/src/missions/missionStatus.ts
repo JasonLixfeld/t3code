@@ -13,7 +13,7 @@ import * as Schema from "effect/Schema";
 import { secretRequestAsPendingInput } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as Project from "../project/ProjectService.ts";
-import { MemberWorkspace, MemberWorkspaces } from "./MemberWorkspaces.ts";
+import { ListedWorkspace, MemberWorkspaces } from "./MemberWorkspaces.ts";
 
 /** What a member is doing, as its own machine reads it. */
 export const MemberStatus = Schema.Literals([
@@ -42,7 +42,7 @@ export const MemberDetail = Schema.Struct({
     Schema.Array(Schema.Struct({ id: Schema.String, kind: Schema.String })),
   ),
   /** Its checkouts, branches and pull requests, as data for the roster only. Absent from older machines. */
-  workspace: Schema.optional(MemberWorkspace),
+  workspace: Schema.optional(ListedWorkspace),
 });
 export type MemberDetail = typeof MemberDetail.Type;
 
@@ -59,7 +59,7 @@ export interface RosterMember {
   readonly project: string;
   readonly status: RosterStatus;
   readonly title: string;
-  readonly workspace?: MemberWorkspace | undefined;
+  readonly workspace?: ListedWorkspace | undefined;
 }
 
 const WORKING: ReadonlySet<string> = new Set([
@@ -234,7 +234,7 @@ export const memberDetail = Effect.fn("missionStatus.memberDetail")(function* (t
     ...shellDetail(shell),
     title: shell.title,
     project,
-    workspace: yield* workspaces.of(shell),
+    workspace: yield* workspaces.cached(shell),
   } satisfies MemberDetail;
 });
 
@@ -245,6 +245,26 @@ const ATTENTION_LINES = 10;
 const PROMPT_CUT_NOTE = "\n\n[The mission prompt was cut here to fit 4,000 bytes.]";
 
 const bytes = (text: string) => Buffer.byteLength(text, "utf8");
+
+/** The most workspace detail one list answer carries, so it stays one small message. */
+export const LISTED_WORKSPACE_MAX_BYTES = 48_000;
+
+/** In list order: a workspace past the room left is `omitted`. */
+export const withinWorkspaceRoom = <
+  Listed extends { readonly threadId: ThreadId; readonly detail?: MemberDetail | undefined },
+>(
+  listed: ReadonlyArray<Listed>,
+): ReadonlyArray<Listed> => {
+  let room = LISTED_WORKSPACE_MAX_BYTES;
+  return listed.map((claim) => {
+    const workspace = claim.detail?.workspace;
+    if (workspace === undefined || typeof workspace === "string") return claim;
+    const size = bytes(JSON.stringify(workspace));
+    if (size > room) return { ...claim, detail: { ...claim.detail!, workspace: "omitted" } };
+    room -= size;
+    return claim;
+  });
+};
 
 /** Whole code points only, so a cut never splits a character. */
 const cutToBytes = (text: string, max: number) => {
@@ -261,7 +281,7 @@ const cutToBytes = (text: string, max: number) => {
 const MISSION_LEAD_GUIDANCE = [
   "The mission has no branch or checkout of its own: each repository's work is done in its members' threads.",
   "- Changes to several repositories that must land together: one member, in a multi-repository project.",
-  "- Separable changes: a member each with t3_thread_launch. For code edits, name the environmentId, projectId, repositories and baseRef.",
+  '- Separable changes: a member each with t3_thread_launch. For code edits, pass `environmentId` and `projectId` at the top level, and `workspaceStrategy: { type: "worktree", baseRef, repositories: [{ path }] }`. `repositories` lists tracked extra repositories, not the project root.',
   "- Use create_threads only for members that should share your checkout.",
   "- Drive each repository to a pull request. Track which repositories need changes, need none, or are blocked; t3_mission_roster lists them by repository.",
   "- Never pull, push, merge or switch branches only because a thread joined or finished.",

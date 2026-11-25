@@ -12,7 +12,7 @@ import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
-import { MemberWorkspace, MemberWorkspaces } from "../../../missions/MemberWorkspaces.ts";
+import { ListedWorkspace, MemberWorkspaces } from "../../../missions/MemberWorkspaces.ts";
 import { MissionClaimKind, MissionClaims } from "../../../missions/MissionClaims.ts";
 import { MemberDetail, MemberStatus } from "../../../missions/missionStatus.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -86,7 +86,7 @@ export const MissionToolkit = Toolkit.make(
     .annotate(McpSchema.EnabledWhen, shownOnlyToLinks),
   Tool.make("t3_mission_roster", {
     description:
-      "List the member threads of the mission you lead: machine, project, status, title, whether each needs you, and its workspace: kind, and each repository's branch and pull requests. `byRepository` groups repository entries across all pages by remote, else `<environmentId>:<repositoryPath>`. Members with none are absent. Page with `cursor`.",
+      "List the member threads of the mission you lead: machine, project, status, title, whether each needs you, and its workspace: kind, and each repository's branch and pull requests. `byRepository` groups repository entries across all pages by remote, else `<environmentId>:<repositoryPath>`. Members with none are absent. Call again for a workspace that is `pending`, `omitted` or `stale`. Page with `cursor`.",
     parameters: Schema.Struct({
       cursor: Schema.optional(NonNegativeInt),
       limit: Schema.optional(clampedPositiveInt(100)),
@@ -105,8 +105,8 @@ export const MissionToolkit = Toolkit.make(
           status: Schema.Union([MemberStatus, Schema.Literal("offline")]),
           title: Schema.String,
           needsAttention: Schema.Boolean,
-          /** `unknown` from a member machine that does not say. */
-          workspace: Schema.Union([MemberWorkspace, Schema.Literal("unknown")]),
+          /** `unknown`: its machine has not said, under the member's current claim. */
+          workspace: Schema.Union([ListedWorkspace, Schema.Literal("unknown")]),
         }),
       ),
       byRepository: Schema.Array(
@@ -117,6 +117,7 @@ export const MissionToolkit = Toolkit.make(
               member: Schema.String,
               place: Schema.String,
               branch: Schema.NullOr(Schema.String),
+              branchSource: Schema.Literals(["live", "recorded"]),
               pullRequests: Schema.Array(
                 Schema.Struct({ number: Schema.Number, state: Schema.String, url: Schema.String }),
               ),

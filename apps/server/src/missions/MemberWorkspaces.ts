@@ -1,12 +1,17 @@
 import {
   type OrchestrationV2ThreadShell,
+  type ProjectId,
   PullRequestState,
   repositoryGroupingKeyOf,
+  type ThreadId,
 } from "@t3tools/contracts";
+import { withoutRemoteUrlCredentials } from "@t3tools/shared/cloneUrl";
+import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -18,6 +23,13 @@ import { sourceControlDefinitions } from "../sourceControl/sourceControlDefiniti
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as TaskFolderStore from "../workspace/TaskFolderStore.ts";
 import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
+
+export const MEMBER_REPOSITORIES_MAX = 32;
+/** How long one background read of a thread's checkouts may take before it is given up. */
+export const WORKSPACE_READ_DEADLINE = Duration.seconds(10);
+const WORKSPACE_CACHE_TTL = Duration.seconds(15);
+const PROJECT_SCAN_CACHE_TTL = Duration.seconds(30);
+const SHARED_CHECKOUT_BRANCH_CACHE_TTL = Duration.seconds(30);
 
 const MemberPullRequest = Schema.Struct({
   number: Schema.Number,
@@ -34,8 +46,10 @@ export const MemberRepository = Schema.Struct({
   /** The repository on that machine `path` is a checkout of. */
   repositoryPath: Schema.String,
   branch: Schema.NullOr(Schema.String),
+  /** `live`: read from the shared checkout. `recorded`: the branch the thread's record names. */
+  branchSource: Schema.Literals(["live", "recorded"]),
   /**
-   * Its repository grouping key: its origin's canonical key, else its own, such as
+   * The key pull requests are matched by: its origin's canonical key, else its own, such as
    * `github.com/owner/name` or `dev.azure.com/org/project/_git/repo`. Null with no remote.
    */
   remote: Schema.NullOr(Schema.String),
@@ -50,28 +64,62 @@ export type MemberRepository = typeof MemberRepository.Type;
 export const MemberWorkspace = Schema.Struct({
   kind: Schema.Literals(["project", "worktree", "task-folder"]),
   repositories: Schema.Array(MemberRepository),
+  /** It has more than `MEMBER_REPOSITORIES_MAX` repositories, and the rest are left out. */
+  truncated: Schema.Boolean,
   /** Pull requests linked to the thread from no repository it checks out, such as a review. */
   otherPullRequests: Schema.Array(
     Schema.Struct({ ...MemberPullRequest.fields, repository: Schema.String }),
   ),
+  /** Read a while ago; a new read is under way. */
+  stale: Schema.Boolean,
 });
 export type MemberWorkspace = typeof MemberWorkspace.Type;
 
-const SHARED_CHECKOUT_BRANCH_CACHE_TTL = Duration.seconds(30);
+/** `pending`: not read yet. `omitted`: left out to keep a list answer small. */
+export const ListedWorkspace = Schema.Union([
+  MemberWorkspace,
+  Schema.Literals(["pending", "omitted"]),
+]);
+export type ListedWorkspace = typeof ListedWorkspace.Type;
+
+type WorkspaceShell = Pick<
+  OrchestrationV2ThreadShell,
+  "id" | "projectId" | "worktreePath" | "branch" | "pullRequests"
+>;
 
 export class MemberWorkspaces extends Context.Service<
   MemberWorkspaces,
   {
-    readonly of: (
-      shell: Pick<
-        OrchestrationV2ThreadShell,
-        "projectId" | "worktreePath" | "branch" | "pullRequests"
-      >,
-    ) => Effect.Effect<MemberWorkspace>;
+    /** Reads the thread's checkouts now, however long that takes. */
+    readonly of: (shell: WorkspaceShell) => Effect.Effect<MemberWorkspace>;
+    /** Never waits: a missing or old read is started in the background. */
+    readonly cached: (shell: WorkspaceShell) => Effect.Effect<MemberWorkspace | "pending">;
   }
 >()("t3/missions/MemberWorkspaces") {}
 
 const keyOf = (key: string) => sourceControlDefinitions.canonicalRepositoryKey(key);
+
+interface Checkout {
+  readonly name: string;
+  readonly path: string;
+  readonly repositoryPath: string;
+}
+
+interface Probed {
+  readonly kind: MemberWorkspace["kind"];
+  readonly truncated: boolean;
+  readonly checkouts: ReadonlyArray<
+    Checkout & {
+      readonly liveBranch: string | null;
+      readonly remote: string | null;
+      readonly keys: ReadonlySet<string>;
+    }
+  >;
+}
+
+const placeOf = (shell: WorkspaceShell) => JSON.stringify([shell.projectId, shell.worktreePath]);
+const ageBelow = (at: number, now: number, ttl: Duration.Duration) =>
+  now - at < Duration.toMillis(ttl);
 
 const make = Effect.gen(function* () {
   const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
@@ -79,13 +127,24 @@ const make = Effect.gen(function* () {
   const identities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const projects = yield* Project.ProjectService;
+  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const background = yield* Effect.scope;
   const branches = new Map<string, { readonly at: number; readonly branch: string | null }>();
+  const scans = new Map<
+    ProjectId,
+    { readonly at: number; readonly checkouts: ReadonlyArray<Checkout> }
+  >();
+  const reads = new Map<
+    ThreadId,
+    { readonly at: number; readonly place: string; readonly probed: Probed }
+  >();
+  const reading = new Set<ThreadId>();
 
   const branchOf = Effect.fn("MemberWorkspaces.branchOf")(function* (cwd: string) {
     const now = yield* Clock.currentTimeMillis;
     const read = branches.get(cwd);
-    if (read !== undefined && now - read.at < Duration.toMillis(SHARED_CHECKOUT_BRANCH_CACHE_TTL)) {
+    if (read !== undefined && ageBelow(read.at, now, SHARED_CHECKOUT_BRANCH_CACHE_TTL)) {
       return read.branch;
     }
     const branch = yield* git
@@ -104,18 +163,42 @@ const make = Effect.gen(function* () {
     return branch;
   });
 
-  const checkoutsOf = Effect.fn("MemberWorkspaces.checkoutsOf")(function* (
-    shell: Pick<OrchestrationV2ThreadShell, "projectId" | "worktreePath">,
+  const at = (folder: string, repositoryPath = folder): Checkout => ({
+    name: path.basename(repositoryPath),
+    path: folder,
+    repositoryPath,
+  });
+
+  const projectCheckouts = Effect.fn("MemberWorkspaces.projectCheckouts")(function* (
+    projectId: ProjectId,
+    projectRoot: string | null,
   ) {
+    const now = yield* Clock.currentTimeMillis;
+    const scan = scans.get(projectId);
+    if (scan !== undefined && ageBelow(scan.at, now, PROJECT_SCAN_CACHE_TTL)) return scan.checkouts;
+    const tracked = yield* workspaceFolders
+      .forThread({ projectId, worktreePath: null })
+      .pipe(Effect.orElseSucceed(() => ({ folders: [] })));
+    const rootIsRepository =
+      projectRoot !== null &&
+      (yield* fileSystem
+        .exists(path.join(projectRoot, ".git"))
+        .pipe(Effect.orElseSucceed(() => false)));
+    const checkouts = [
+      ...(rootIsRepository ? [at(projectRoot)] : []),
+      ...tracked.folders
+        .filter((folder) => folder.isGitRepository && folder.path !== projectRoot)
+        .map((folder) => ({ ...at(folder.path), name: folder.name })),
+    ];
+    scans.set(projectId, { at: now, checkouts });
+    return checkouts;
+  });
+
+  const checkoutsOf = Effect.fn("MemberWorkspaces.checkoutsOf")(function* (shell: WorkspaceShell) {
     const projectRoot = yield* projects.getShell(shell.projectId).pipe(
       Effect.map((found) => (Option.isSome(found) ? found.value.workspaceRoot : null)),
       Effect.orElseSucceed(() => null),
     );
-    const at = (folder: string, repositoryPath = folder) => ({
-      name: path.basename(repositoryPath),
-      path: folder,
-      repositoryPath,
-    });
     if (shell.worktreePath !== null) {
       const taskFolder = yield* taskFolders
         .findContaining(shell.worktreePath)
@@ -140,74 +223,96 @@ const make = Effect.gen(function* () {
         ],
       };
     }
-    const tracked = yield* workspaceFolders
-      .forThread({ projectId: shell.projectId, worktreePath: null })
-      .pipe(Effect.orElseSucceed(() => ({ folders: [] })));
-    const repositories = tracked.folders.filter((folder) => folder.isGitRepository);
     return {
       kind: "project" as const,
-      checkouts:
-        repositories.length > 0
-          ? repositories.map((folder) => ({ ...at(folder.path), name: folder.name }))
-          : projectRoot === null
-            ? []
-            : [at(projectRoot)],
+      checkouts: yield* projectCheckouts(shell.projectId, projectRoot),
     };
   });
 
-  const of = Effect.fn("MemberWorkspaces.of")(function* (
-    shell: Pick<
-      OrchestrationV2ThreadShell,
-      "projectId" | "worktreePath" | "branch" | "pullRequests"
-    >,
-  ) {
+  const readNow = Effect.fn("MemberWorkspaces.readNow")(function* (shell: WorkspaceShell) {
     const { kind, checkouts } = yield* checkoutsOf(shell);
-    const read = yield* Effect.forEach(
-      checkouts,
-      (checkout) =>
-        Effect.gen(function* () {
-          const identity = yield* identities.resolve(checkout.repositoryPath);
-          return {
-            checkout,
-            branch: kind === "project" ? yield* branchOf(checkout.path) : shell.branch,
-            remote: identity === null ? null : repositoryGroupingKeyOf(identity),
-            keys: new Set(
-              identity === null
-                ? []
-                : [identity.canonicalKey, identity.origin?.canonicalKey].flatMap((key) =>
-                    key === undefined ? [] : [keyOf(key)],
-                  ),
-            ),
-          };
-        }),
-      { concurrency: 4 },
-    );
-    const links = (shell.pullRequests ?? []).map((link) => ({
+    const probed: Probed = {
+      kind,
+      truncated: checkouts.length > MEMBER_REPOSITORIES_MAX,
+      checkouts: yield* Effect.forEach(
+        checkouts.slice(0, MEMBER_REPOSITORIES_MAX),
+        (checkout) =>
+          Effect.gen(function* () {
+            const identity = yield* identities.resolve(checkout.repositoryPath);
+            return {
+              ...checkout,
+              liveBranch: kind === "project" ? yield* branchOf(checkout.path) : null,
+              remote: identity === null ? null : keyOf(repositoryGroupingKeyOf(identity)),
+              keys: new Set(
+                identity === null
+                  ? []
+                  : [identity.canonicalKey, identity.origin?.canonicalKey].flatMap((key) =>
+                      key === undefined ? [] : [keyOf(key)],
+                    ),
+              ),
+            };
+          }),
+        { concurrency: 4 },
+      ),
+    };
+    reads.set(shell.id, { at: yield* Clock.currentTimeMillis, place: placeOf(shell), probed });
+    return probed;
+  });
+
+  // The pull requests come from the thread as it is now, so an unlinked one never lingers.
+  const workspaceOf = (probed: Probed, shell: WorkspaceShell, stale: boolean): MemberWorkspace => {
+    const links = visibleThreadPullRequests(shell.pullRequests ?? []).map((link) => ({
       key: keyOf(`${link.host}/${link.repository}`),
       repository: `${link.host}/${link.repository}`,
       pullRequest: {
         number: link.number,
         state: link.snapshot?.state ?? ("unknown" as const),
-        url: link.url,
+        url: withoutRemoteUrlCredentials(link.url),
       },
     }));
+    const live = probed.kind === "project";
     return {
-      kind,
-      repositories: read.map(({ checkout, branch, remote, keys }) => ({
+      kind: probed.kind,
+      repositories: probed.checkouts.map(({ keys, liveBranch, ...checkout }) => ({
         ...checkout,
-        branch,
-        remote,
+        branch: live ? liveBranch : shell.branch,
+        branchSource: live ? ("live" as const) : ("recorded" as const),
         pullRequests: links.flatMap((link) => (keys.has(link.key) ? [link.pullRequest] : [])),
       })),
+      truncated: probed.truncated,
       otherPullRequests: links.flatMap((link) =>
-        read.some(({ keys }) => keys.has(link.key))
+        probed.checkouts.some(({ keys }) => keys.has(link.key))
           ? []
           : [{ ...link.pullRequest, repository: link.repository }],
       ),
-    } satisfies MemberWorkspace;
+      stale,
+    };
+  };
+
+  const of = Effect.fn("MemberWorkspaces.of")(function* (shell: WorkspaceShell) {
+    return workspaceOf(yield* readNow(shell), shell, false);
   });
 
-  return MemberWorkspaces.of({ of });
+  const cached = Effect.fn("MemberWorkspaces.cached")(function* (shell: WorkspaceShell) {
+    const now = yield* Clock.currentTimeMillis;
+    const found = reads.get(shell.id);
+    const read = found?.place === placeOf(shell) ? found : undefined;
+    const fresh = read !== undefined && ageBelow(read.at, now, WORKSPACE_CACHE_TTL);
+    if (!fresh && !reading.has(shell.id)) {
+      reading.add(shell.id);
+      yield* readNow(shell).pipe(
+        Effect.timeout(WORKSPACE_READ_DEADLINE),
+        Effect.catchCause((cause) =>
+          Effect.logInfo("A mission member's checkouts were not read", cause),
+        ),
+        Effect.ensuring(Effect.sync(() => reading.delete(shell.id))),
+        Effect.forkIn(background),
+      );
+    }
+    return read === undefined ? ("pending" as const) : workspaceOf(read.probed, shell, !fresh);
+  });
+
+  return MemberWorkspaces.of({ of, cached });
 });
 
 export const layer = Layer.effect(MemberWorkspaces, make);

@@ -13,7 +13,9 @@ import {
   memberDetail,
   needsAttention,
   type RosterMember,
+  withinWorkspaceRoom,
 } from "../../../missions/missionStatus.ts";
+import { sourceControlDefinitions } from "../../../sourceControl/sourceControlDefinitions.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { MissionToolkit } from "./tools.ts";
@@ -38,18 +40,24 @@ const byRepository = (rows: ReadonlyArray<RosterMember>) => {
       readonly member: string;
       readonly place: string;
       readonly branch: string | null;
+      readonly branchSource: "live" | "recorded";
       readonly pullRequests: ReadonlyArray<{ number: number; state: string; url: string }>;
     }>
   >();
   for (const row of rows) {
-    for (const repository of row.workspace?.repositories ?? []) {
-      const key = repository.remote ?? `${row.ref.environmentId}:${repository.repositoryPath}`;
+    if (row.workspace === undefined || typeof row.workspace === "string") continue;
+    for (const repository of row.workspace.repositories) {
+      const key =
+        repository.remote === null
+          ? `${row.ref.environmentId}:${repository.repositoryPath}`
+          : sourceControlDefinitions.canonicalRepositoryKey(repository.remote);
       groups.set(key, [
         ...(groups.get(key) ?? []),
         {
           member: row.member,
           place: row.place,
           branch: repository.branch,
+          branchSource: repository.branchSource,
           pullRequests: repository.pullRequests,
         },
       ]);
@@ -126,11 +134,18 @@ export const layer = McpToolAccess.toLayer(
               scope.client === undefined ? scope.environmentId : linkOwner(scope.client.sessionId);
             if (input.kind === "list") {
               // Each claim says what its thread is doing, so the lead can tell when it needs it.
-              return yield* Effect.forEach(yield* claims.list(owner), (claim) =>
-                Effect.map(memberDetail(claim.threadId), (detail) =>
-                  detail === undefined ? claim : { ...claim, detail },
-                ),
+              const listed = yield* Effect.forEach(yield* claims.list(owner), (claim) =>
+                Effect.gen(function* () {
+                  const detail = yield* memberDetail(claim.threadId);
+                  // The claim may have changed hands while its thread was read.
+                  const stillHeld = (yield* claims.list(owner)).some(
+                    (held) =>
+                      held.threadId === claim.threadId && held.generation === claim.generation,
+                  );
+                  return detail === undefined || !stillHeld ? claim : { ...claim, detail };
+                }),
               );
+              return withinWorkspaceRoom(listed);
             }
             // Renames only claims this caller holds, each checked as a join is; a thread the caller
             // may no longer change keeps the old name.

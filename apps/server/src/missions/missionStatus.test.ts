@@ -1,7 +1,9 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 
+import { MEMBER_REPOSITORIES_MAX } from "./MemberWorkspaces.ts";
 import {
+  LISTED_WORKSPACE_MAX_BYTES,
   MISSION_PROMPT_MAX_BYTES,
   MISSION_STATUS_MAX_BYTES,
   markOf,
@@ -15,6 +17,7 @@ import {
   remoteUpdates,
   updateFor,
   updateFromEvent,
+  withinWorkspaceRoom,
 } from "./missionStatus.ts";
 
 const member = (
@@ -36,7 +39,7 @@ const HEADER = [
   "You lead a mission (id 0123456789ab). You orchestrate its threads. If the user asks for something different in a message, the message wins.",
   "The mission has no branch or checkout of its own: each repository's work is done in its members' threads.",
   "- Changes to several repositories that must land together: one member, in a multi-repository project.",
-  "- Separable changes: a member each with t3_thread_launch. For code edits, name the environmentId, projectId, repositories and baseRef.",
+  '- Separable changes: a member each with t3_thread_launch. For code edits, pass `environmentId` and `projectId` at the top level, and `workspaceStrategy: { type: "worktree", baseRef, repositories: [{ path }] }`. `repositories` lists tracked extra repositories, not the project root.',
   "- Use create_threads only for members that should share your checkout.",
   "- Drive each repository to a pull request. Track which repositories need changes, need none, or are blocked; t3_mission_roster lists them by repository.",
   "- Never pull, push, merge or switch branches only because a thread joined or finished.",
@@ -333,5 +336,56 @@ it("a wake names each member by the lead's own numbers", () => {
       "- member 2 on this machine failed.",
       "For details, call t3_thread_read or t3_mission_roster.",
     ].join("\n"),
+  );
+});
+
+it("one list answer carries no more workspace detail than its cap; the rest are omitted", () => {
+  const repositories = Array.from({ length: MEMBER_REPOSITORIES_MAX }, (_, index) => ({
+    name: `repo-${index}`,
+    path: `/code/app/repo-${index}`,
+    repositoryPath: `/code/app/repo-${index}`,
+    branch: "t3/a-long-branch-name-for-this-member",
+    branchSource: "recorded" as const,
+    remote: `github.com/acme/repo-${index}`,
+    pullRequests: [
+      {
+        number: index,
+        state: "open" as const,
+        url: `https://github.com/acme/repo-${index}/pull/1`,
+      },
+    ],
+  }));
+  const listed = withinWorkspaceRoom(
+    Array.from({ length: 40 }, (_, index) => ({
+      threadId: ThreadId.make(`thread-${index}`),
+      detail: {
+        status: "idle" as const,
+        title: "",
+        project: "",
+        workspace: {
+          kind: "worktree" as const,
+          repositories,
+          truncated: false,
+          otherPullRequests: [],
+          stale: false,
+        },
+      },
+    })),
+  );
+  const kept = listed.filter((claim) => typeof claim.detail.workspace !== "string");
+  assert.isAbove(kept.length, 0);
+  assert.isBelow(kept.length, listed.length);
+  assert.isAtMost(
+    kept.reduce(
+      (total, claim) => total + Buffer.byteLength(JSON.stringify(claim.detail.workspace)),
+      0,
+    ),
+    LISTED_WORKSPACE_MAX_BYTES,
+  );
+  assert.deepEqual(
+    listed
+      .slice(kept.length)
+      .map((claim) => `${claim.detail.status} ${String(claim.detail.workspace)}`),
+    Array.from({ length: listed.length - kept.length }, () => "idle omitted"),
   );
 });

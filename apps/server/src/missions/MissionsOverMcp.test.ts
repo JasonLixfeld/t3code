@@ -39,7 +39,14 @@ import * as MissionStore from "./MissionStore.ts";
 import * as Missions from "./Missions.ts";
 
 const noWorkspace = Layer.mock(MemberWorkspaces)({
-  of: () => Effect.succeed({ kind: "project" as const, repositories: [], otherPullRequests: [] }),
+  cached: () =>
+    Effect.succeed({
+      kind: "project" as const,
+      repositories: [],
+      truncated: false,
+      otherPullRequests: [],
+      stale: false,
+    }),
 });
 const webProject: OrchestrationProjectShell = {
   id: ProjectId.make("project-web"),
@@ -252,7 +259,9 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
       assert.deepEqual(foundRow?.workspace, {
         kind: "project",
         repositories: [],
+        truncated: false,
         otherPullRequests: [],
+        stale: false,
       });
 
       yield* missions.releaseMember({ missionId: mission.missionId, member: added });

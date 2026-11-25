@@ -52,7 +52,14 @@ import * as MissionHandlers from "./handlers.ts";
 import { MissionToolkit } from "./tools.ts";
 
 const noWorkspace = Layer.mock(MemberWorkspaces)({
-  of: () => Effect.succeed({ kind: "project" as const, repositories: [], otherPullRequests: [] }),
+  cached: () =>
+    Effect.succeed({
+      kind: "project" as const,
+      repositories: [],
+      truncated: false,
+      otherPullRequests: [],
+      stale: false,
+    }),
 });
 
 const HERE = EnvironmentId.make("env-here");

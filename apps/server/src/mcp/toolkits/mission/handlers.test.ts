@@ -1,16 +1,27 @@
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
-import { EnvironmentId, type MissionError, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type MissionError,
+  type OrchestrationProjectShell,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { McpSchema, McpServer } from "effect/ai";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
-import { MemberWorkspaces } from "../../../missions/MemberWorkspaces.ts";
+import {
+  layer as memberWorkspacesLayer,
+  MemberWorkspaces,
+} from "../../../missions/MemberWorkspaces.ts";
 import * as MissionClaims from "../../../missions/MissionClaims.ts";
 import * as Missions from "../../../missions/Missions.ts";
 import * as MissionStore from "../../../missions/MissionStore.ts";
@@ -18,6 +29,10 @@ import type { MissionClaim } from "../../../missions/MissionStore.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "../../../project/RepositoryIdentityResolver.ts";
+import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
+import * as TaskFolderStore from "../../../workspace/TaskFolderStore.ts";
+import * as WorkspaceFolders from "../../../workspace/WorkspaceFolders.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
@@ -26,11 +41,46 @@ import { liveThreadShell, liveThreadsLayer } from "../../McpToolAccess.testkit.t
 import * as MissionHandlers from "./handlers.ts";
 import { MissionToolkit } from "./tools.ts";
 
-const noWorkspace = Layer.mock(MemberWorkspaces)({
-  of: () => Effect.succeed({ kind: "project" as const, repositories: [], otherPullRequests: [] }),
-});
-
 const userThread = ThreadId.make("thread:user");
+
+const emptyWorkspace = {
+  kind: "project" as const,
+  repositories: [],
+  truncated: false,
+  otherPullRequests: [],
+  stale: false,
+};
+const noWorkspace = Layer.mock(MemberWorkspaces)({
+  cached: () => Effect.succeed(emptyWorkspace),
+});
+const appProject: OrchestrationProjectShell = {
+  id: liveThreadShell(userThread).projectId,
+  title: "app",
+  workspaceRoot: "/code/app",
+  defaultModelSelection: null,
+  scripts: [],
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+};
+/** The real workspace reads, on a machine where every repository probe hangs. */
+const hungWorkspaces = memberWorkspacesLayer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(TaskFolderStore.TaskFolderStore)({ findContaining: () => Effect.succeed(null) }),
+      Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+        forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+      }),
+      Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+        resolve: () => Effect.never,
+      }),
+      Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      Layer.mock(Project.ProjectService)({ getShell: () => Effect.succeedSome(appProject) }),
+      FileSystem.layerNoop({ exists: () => Effect.succeed(true) }),
+      Path.layer,
+    ),
+  ),
+);
+const decodeTagAnswer = Schema.decodeUnknownSync(MissionToolkit.tools.t3_mission_tag.successSchema);
 
 const linkedClient = (
   access: McpInvocationContext.McpClientCaller["access"],
@@ -88,6 +138,11 @@ const callOnce = (
     /** The user raises the thread to full access right after the tool's first look at it. */
     readonly modeRisesAfterFirstLook?: boolean;
     readonly runtimeMode?: "auto" | "full-access";
+    readonly workspaces?: Layer.Layer<MemberWorkspaces>;
+    /** Runs on the machine's first workspace read, as a slow list reads it. */
+    readonly duringFirstWorkspaceRead?: (
+      claims: MissionClaims.MissionClaims["Service"],
+    ) => Effect.Effect<void, MissionError>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -127,6 +182,20 @@ const callOnce = (
           return {} as never;
         }),
     });
+    let claimsHere: MissionClaims.MissionClaims["Service"] | undefined;
+    let workspaceReads = 0;
+    const workspaces =
+      options.workspaces ??
+      Layer.mock(MemberWorkspaces)({
+        cached: () =>
+          Effect.gen(function* () {
+            workspaceReads += 1;
+            if (workspaceReads === 1 && options.duringFirstWorkspaceRead !== undefined) {
+              yield* options.duringFirstWorkspaceRead(claimsHere!).pipe(Effect.orDie);
+            }
+            return emptyWorkspace;
+          }),
+      });
     const machine = Layer.mergeAll(
       threads,
       NodeCrypto.layer,
@@ -134,7 +203,7 @@ const callOnce = (
       Layer.mock(Project.ProjectService)({
         getShell: () => Effect.succeedSome({ title: "web" } as never),
       }),
-      noWorkspace,
+      workspaces,
     );
     const member = yield* Layer.build(
       MissionClaims.layer.pipe(
@@ -143,6 +212,7 @@ const callOnce = (
       ),
     );
     const claims = Context.get(member, MissionClaims.MissionClaims);
+    claimsHere = claims;
     const before = options.before === undefined ? undefined : yield* options.before(claims);
     tagWritesFail = false;
     const { content } = yield* McpServer.McpServer.pipe(
@@ -466,4 +536,58 @@ it.effect(
         assert.include(JSON.stringify(refused), "Tool 't3_mission_roster' not found");
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "a list answers every member's status at once while its repositories are still read",
+  () =>
+    Effect.gen(function* () {
+      const agentThread = agentHere.thread.threadId;
+      const { answer } = yield* callOnce(
+        linkedClient("full-access"),
+        { kind: "list" },
+        {
+          workspaces: hungWorkspaces,
+          before: (claims) =>
+            joinedBy(LINK_OWNER)(claims).pipe(
+              Effect.andThen(
+                claims.join(LINK_OWNER, { threadId: agentThread, missionId: SHIP, name: "Ship" }),
+              ),
+            ),
+        },
+      );
+      assert.deepEqual(
+        decodeTagAnswer(JSON.parse(answer)).claims.map(
+          (claim) => `${claim.threadId} ${claim.detail?.status} ${String(claim.detail?.workspace)}`,
+        ),
+        [`${userThread} working pending`, `${agentThread} working pending`],
+      );
+    }),
+);
+
+it.effect(
+  "a thread whose claim changes hands while the list reads it is listed with no detail",
+  () =>
+    Effect.gen(function* () {
+      const { answer } = yield* callOnce(
+        linkedClient("full-access"),
+        { kind: "list" },
+        {
+          before: joinedBy(LINK_OWNER),
+          duringFirstWorkspaceRead: (claims) =>
+            Effect.gen(function* () {
+              const [held] = yield* claims.list(LINK_OWNER);
+              yield* claims.release(LINK_OWNER, {
+                threadId: userThread,
+                missionId: SHIP,
+                generation: held!.generation,
+              });
+              yield* joinedBy("env-other-lead")(claims);
+            }),
+        },
+      );
+      const [listed] = decodeTagAnswer(JSON.parse(answer)).claims;
+      assert.equal(listed?.threadId, userThread);
+      assert.isUndefined(listed?.detail);
+    }),
 );

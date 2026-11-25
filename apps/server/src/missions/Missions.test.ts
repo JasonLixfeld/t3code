@@ -111,14 +111,11 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   const dispatched: Array<string> = [];
   const workspaces = new Map<string, MemberWorkspace>();
   const workspacesLayer = Layer.mock(MemberWorkspaces)({
-    of: (shell) =>
+    cached: (shell) =>
       Effect.sync(
         () =>
-          (shell.worktreePath === null ? undefined : workspaces.get(shell.worktreePath)) ?? {
-            kind: "project" as const,
-            repositories: [],
-            otherPullRequests: [],
-          },
+          (shell.worktreePath === null ? undefined : workspaces.get(shell.worktreePath)) ??
+          "pending",
       ),
   });
   /** What Settings tells every mission's lead. */
@@ -3126,6 +3123,7 @@ const repository = (
   path: `/tasks/${branch}/${name}`,
   repositoryPath: `/code/app/${name}`,
   branch,
+  branchSource: "recorded",
   remote,
   pullRequests: pullRequests.map((number) => ({
     number,
@@ -3133,25 +3131,39 @@ const repository = (
     url: `https://github.com/acme/${name}/pull/${number}`,
   })),
 });
+const workspaceOf = (
+  kind: MemberWorkspace["kind"],
+  repositories: ReadonlyArray<MemberRepository>,
+): MemberWorkspace => ({
+  kind,
+  repositories,
+  truncated: false,
+  otherPullRequests: [],
+  stale: false,
+});
+const inGroup = (
+  member: string,
+  place: string,
+  branch: string,
+  pullRequests: MemberRepository["pullRequests"],
+) => ({ member, place, branch, branchSource: "recorded" as const, pullRequests });
 
 it.effect(
   "the roster lists each member's repositories, branches and pull requests, and groups them by repository",
   () => {
     const olderLaptopMember = ref(LAPTOP, "older");
     const world = makeWorld([lead, localMember, laptopMember, olderLaptopMember]);
-    world.workspaces.set(worktreeOf(localMember.threadId), {
-      kind: "task-folder",
-      repositories: [
+    world.workspaces.set(
+      worktreeOf(localMember.threadId),
+      workspaceOf("task-folder", [
         repository("api", "github.com/acme/api", "t3/checkout", [12]),
         repository("web", null, "t3/checkout", []),
-      ],
-      otherPullRequests: [],
-    });
-    world.workspaces.set(worktreeOf(laptopMember.threadId), {
-      kind: "worktree",
-      repositories: [repository("api", "github.com/acme/api", "t3/docs", [13])],
-      otherPullRequests: [],
-    });
+      ]),
+    );
+    world.workspaces.set(
+      worktreeOf(laptopMember.threadId),
+      workspaceOf("worktree", [repository("api", "github.com/acme/api", "t3/docs", [13])]),
+    );
     return withMissions(
       world,
       Effect.gen(function* () {
@@ -3176,34 +3188,17 @@ it.effect(
           {
             repository: "github.com/acme/api",
             members: [
-              {
-                member: "member 1",
-                place: "this machine",
-                branch: "t3/checkout",
-                pullRequests: [
-                  { number: 12, state: "open", url: "https://github.com/acme/api/pull/12" },
-                ],
-              },
-              {
-                member: "member 2",
-                place: "machine 2",
-                branch: "t3/docs",
-                pullRequests: [
-                  { number: 13, state: "open", url: "https://github.com/acme/api/pull/13" },
-                ],
-              },
+              inGroup("member 1", "this machine", "t3/checkout", [
+                { number: 12, state: "open", url: "https://github.com/acme/api/pull/12" },
+              ]),
+              inGroup("member 2", "machine 2", "t3/docs", [
+                { number: 13, state: "open", url: "https://github.com/acme/api/pull/13" },
+              ]),
             ],
           },
           {
             repository: `${HERE}:/code/app/web`,
-            members: [
-              {
-                member: "member 1",
-                place: "this machine",
-                branch: "t3/checkout",
-                pullRequests: [],
-              },
-            ],
+            members: [inGroup("member 1", "this machine", "t3/checkout", [])],
           },
         ]);
         assert.deepEqual(world.dispatched, []);
@@ -3211,6 +3206,79 @@ it.effect(
         const status = context?.role === "lead" ? context.status : "";
         assert.include(status, "Status: 3 members.");
         for (const text of ["acme", "t3/", "/code/app", "pull"]) assert.notInclude(status, text);
+      }),
+    );
+  },
+);
+
+it.effect("one Azure DevOps repository spelled two ways is one group in the roster", () => {
+  const world = makeWorld([lead, localMember, laptopMember]);
+  world.workspaces.set(
+    worktreeOf(localMember.threadId),
+    workspaceOf("worktree", [repository("repo", "acme.visualstudio.com/proj/_git/repo", "a", [])]),
+  );
+  world.workspaces.set(
+    worktreeOf(laptopMember.threadId),
+    workspaceOf("worktree", [repository("repo", "dev.azure.com/acme/proj/_git/repo", "b", [])]),
+  );
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      for (const member of [localMember, laptopMember]) {
+        yield* missions.addMember({ missionId, member });
+      }
+      yield* listed;
+      yield* world.untilAnswered("list");
+      const roster = decodeRoster(JSON.parse(yield* leadTool(world, "t3_mission_roster", {})));
+      assert.deepEqual(
+        roster.byRepository.map((group) => [
+          group.repository,
+          group.members.map((member) => member.branch),
+        ]),
+        [["dev.azure.com/acme/proj/_git/repo", ["a", "b"]]],
+      );
+    }),
+  );
+});
+
+it.effect(
+  "a member added to another mission shows no workspace its machine listed under the claim before",
+  () => {
+    const otherLead = ref(HERE, "other-lead");
+    const world = makeWorld([lead, otherLead, laptopMember]);
+    const where = worktreeOf(laptopMember.threadId);
+    world.workspaces.set(
+      where,
+      workspaceOf("worktree", [repository("api", "github.com/acme/api", "t3/docs", [13])]),
+    );
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const one = yield* createOne;
+        const two = yield* missions.create({
+          missionId: "ba9876543210",
+          leadThreadId: otherLead.threadId,
+        });
+        const workspaceIn = (missionId: string) =>
+          Effect.map(
+            missions.roster(missionId),
+            (rows) => rows.find((row) => keyOf(row.ref) === keyOf(laptopMember))?.workspace,
+          );
+        yield* missions.addMember({ missionId: one.missionId, member: laptopMember });
+        yield* listed;
+        yield* world.untilAnswered("list");
+        assert.deepEqual(yield* workspaceIn(one.missionId), world.workspaces.get(where));
+
+        yield* missions.releaseMember({ missionId: one.missionId, member: laptopMember });
+        world.workspaces.set(
+          where,
+          workspaceOf("worktree", [repository("api", "github.com/acme/api", "t3/docs", [])]),
+        );
+        yield* missions.addMember({ missionId: two.missionId, member: laptopMember });
+        assert.notInclude(JSON.stringify((yield* workspaceIn(two.missionId)) ?? null), "pull/13");
       }),
     );
   },

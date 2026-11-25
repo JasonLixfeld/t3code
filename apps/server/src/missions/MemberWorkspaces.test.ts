@@ -1,67 +1,101 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   type OrchestrationProjectShell,
   ProjectId,
   type RepositoryIdentity,
+  ThreadId,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/process";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as Project from "../project/ProjectService.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as TaskFolderStore from "../workspace/TaskFolderStore.ts";
 import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 import * as MemberWorkspaces from "./MemberWorkspaces.ts";
 
 const projectId = ProjectId.make("project:app");
-const identity = (repository: string): RepositoryIdentity => ({
-  canonicalKey: `github.com/${repository}`,
-  locator: {
-    source: "git-remote",
-    remoteName: "origin",
-    remoteUrl: `git@github.com:${repository}.git`,
-  },
+const threadId = ThreadId.make("thread:one");
+const identity = (remoteUrl: string): RepositoryIdentity => ({
+  canonicalKey: sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl),
+  locator: { source: "git-remote", remoteName: "origin", remoteUrl },
 });
+const github = (repository: string) => identity(`git@github.com:${repository}.git`);
 const link = (
-  repository: string,
-  number: number,
+  url: string,
   state: "open" | "merged" | null,
-): ThreadPullRequestLink => ({
-  host: "github.com",
-  repository,
-  number,
-  url: `https://github.com/${repository}/pull/${number}`,
-  source: "manual",
-  linkedAt: "2026-01-01T00:00:00.000Z",
-  snapshot:
-    state === null
-      ? null
-      : {
-          state,
-          title: `#${number}`,
-          headBranch: "t3/checkout-v2",
-          baseBranch: "main",
-          isDraft: false,
-          updatedAt: null,
-          syncedAt: "2026-01-01T00:00:00.000Z",
-        },
-  stack: null,
-});
-const soloProject: OrchestrationProjectShell = {
+  source: ThreadPullRequestLink["source"] = "manual",
+): ThreadPullRequestLink => {
+  const parsed = sourceControlDefinitions.parseChangeRequestUrl(url)!.link;
+  return {
+    host: parsed.host,
+    repository: parsed.repository,
+    number: parsed.number,
+    url,
+    source,
+    linkedAt: "2026-01-01T00:00:00.000Z",
+    snapshot:
+      state === null
+        ? null
+        : {
+            state,
+            title: `#${parsed.number}`,
+            headBranch: "t3/checkout-v2",
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: null,
+            syncedAt: "2026-01-01T00:00:00.000Z",
+          },
+    stack: null,
+  };
+};
+const projectAt = (workspaceRoot: string): OrchestrationProjectShell => ({
   id: projectId,
-  title: "solo",
-  workspaceRoot: "/code/solo",
+  title: "app",
+  workspaceRoot,
   defaultModelSelection: null,
   scripts: [],
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
-};
+});
+const folder = (path: string, isGitRepository = true) => ({
+  name: path.split("/").at(-1)!,
+  path,
+  isGitRepository,
+});
+const noLinks: ReadonlyArray<ThreadPullRequestLink> = [];
+const inProject = (
+  overrides: {
+    readonly id?: ThreadId;
+    readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink>;
+  } = {},
+) => ({
+  id: threadId,
+  projectId,
+  worktreePath: null,
+  branch: null,
+  pullRequests: noLinks,
+  ...overrides,
+});
 
-const machine = (gitCalls: Array<string>) =>
+interface Machine {
+  readonly projectRoot?: string;
+  /** The folders the project tracks besides its root. */
+  readonly tracked?: ReadonlyArray<ReturnType<typeof folder>>;
+  /** The folders with a `.git` in them. */
+  readonly repositories?: ReadonlyArray<string>;
+  readonly identities?: Readonly<Record<string, RepositoryIdentity>>;
+  readonly resolve?: (cwd: string) => Effect.Effect<RepositoryIdentity | null>;
+}
+
+const machine = (gitCalls: Array<string>, options: Machine = {}) =>
   MemberWorkspaces.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -93,17 +127,20 @@ const machine = (gitCalls: Array<string>) =>
             ),
         }),
         Layer.mock(WorkspaceFolders.WorkspaceFolders)({
-          forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+          forThread: () => Effect.succeed({ folders: options.tracked ?? [], extraRoots: [] }),
         }),
         Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
-          resolve: (cwd) =>
-            Effect.succeed(
-              cwd === "/code/app/api"
-                ? identity("acme/api")
-                : cwd === "/code/app/web"
-                  ? identity("acme/web")
-                  : null,
-            ),
+          resolve:
+            options.resolve ??
+            ((cwd) =>
+              Effect.succeed(
+                (
+                  options.identities ?? {
+                    "/code/app/api": github("acme/api"),
+                    "/code/app/web": github("acme/web"),
+                  }
+                )[cwd] ?? null,
+              )),
         }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({
           execute: (input) =>
@@ -119,53 +156,73 @@ const machine = (gitCalls: Array<string>) =>
             }),
         }),
         Layer.mock(Project.ProjectService)({
-          getShell: () => Effect.succeedSome(soloProject),
+          getShell: () => Effect.succeedSome(projectAt(options.projectRoot ?? "/code/solo")),
         }),
-        NodeServices.layer,
+        FileSystem.layerNoop({
+          exists: (target) =>
+            Effect.succeed(
+              (options.repositories ?? ["/code/solo"]).some(
+                (repository) => target === `${repository}/.git`,
+              ),
+            ),
+        }),
+        Path.layer,
       ),
     ),
   );
 
+const repository = (
+  path: string,
+  repositoryPath: string,
+  branch: string | null,
+  remote: string | null,
+  pullRequests: MemberWorkspaces.MemberRepository["pullRequests"] = [],
+): MemberWorkspaces.MemberRepository => ({
+  name: repositoryPath.split("/").at(-1)!,
+  path,
+  repositoryPath,
+  branch,
+  branchSource: branch === "main" ? "live" : "recorded",
+  remote,
+  pullRequests,
+});
+
 it.effect(
-  "a task folder lists each repository on the thread's branch, with its own pull requests",
+  "a task folder lists each repository on the thread's recorded branch, with its own pull requests",
   () => {
     const gitCalls: Array<string> = [];
     return Effect.gen(function* () {
       const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
       const workspace = yield* workspaces.of({
+        id: threadId,
         projectId,
         worktreePath: "/tasks/one/app",
         branch: "t3/checkout-v2",
         pullRequests: [
-          link("acme/api", 12, "open"),
-          link("acme/web", 7, "merged"),
-          link("acme/docs", 3, null),
+          link("https://github.com/acme/api/pull/12", "open"),
+          link("https://github.com/acme/web/pull/7", "merged"),
+          link("https://github.com/acme/docs/pull/3", null),
         ],
       });
       assert.deepEqual(workspace, {
         kind: "task-folder",
         repositories: [
-          {
-            name: "api",
-            path: "/tasks/one/app/api",
-            repositoryPath: "/code/app/api",
-            branch: "t3/checkout-v2",
-            remote: "github.com/acme/api",
-            pullRequests: [
-              { number: 12, state: "open", url: "https://github.com/acme/api/pull/12" },
-            ],
-          },
-          {
-            name: "web",
-            path: "/tasks/one/app/web",
-            repositoryPath: "/code/app/web",
-            branch: "t3/checkout-v2",
-            remote: "github.com/acme/web",
-            pullRequests: [
-              { number: 7, state: "merged", url: "https://github.com/acme/web/pull/7" },
-            ],
-          },
+          repository(
+            "/tasks/one/app/api",
+            "/code/app/api",
+            "t3/checkout-v2",
+            "github.com/acme/api",
+            [{ number: 12, state: "open", url: "https://github.com/acme/api/pull/12" }],
+          ),
+          repository(
+            "/tasks/one/app/web",
+            "/code/app/web",
+            "t3/checkout-v2",
+            "github.com/acme/web",
+            [{ number: 7, state: "merged", url: "https://github.com/acme/web/pull/7" }],
+          ),
         ],
+        truncated: false,
         otherPullRequests: [
           {
             number: 3,
@@ -174,6 +231,7 @@ it.effect(
             repository: "github.com/acme/docs",
           },
         ],
+        stale: false,
       });
       assert.deepEqual(gitCalls, []);
     }).pipe(Effect.provide(machine(gitCalls)));
@@ -184,23 +242,210 @@ it.effect("a member in the project's own checkout reads its branch there, once i
   const gitCalls: Array<string> = [];
   return Effect.gen(function* () {
     const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-    const shell = { projectId, worktreePath: null, branch: null, pullRequests: [] };
     const expected = {
       kind: "project" as const,
-      repositories: [
-        {
-          name: "solo",
-          path: "/code/solo",
-          repositoryPath: "/code/solo",
-          branch: "main",
-          remote: null,
-          pullRequests: [],
-        },
-      ],
+      repositories: [repository("/code/solo", "/code/solo", "main", null)],
+      truncated: false,
       otherPullRequests: [],
+      stale: false,
     };
-    assert.deepEqual(yield* workspaces.of(shell), expected);
-    assert.deepEqual(yield* workspaces.of(shell), expected);
+    assert.deepEqual(yield* workspaces.of(inProject()), expected);
+    assert.deepEqual(yield* workspaces.of(inProject()), expected);
     assert.deepEqual(gitCalls, ["/code/solo"]);
   }).pipe(Effect.provide(machine(gitCalls)));
 });
+
+it.effect("a shared checkout lists its root repository and the repositories it tracks", () =>
+  Effect.gen(function* () {
+    const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
+    const workspace = yield* workspaces.of(
+      inProject({
+        pullRequests: [
+          link("https://github.com/acme/app/pull/1", "open"),
+          link("https://github.com/acme/api/pull/2", "open"),
+        ],
+      }),
+    );
+    assert.deepEqual(workspace.repositories, [
+      repository("/code/app", "/code/app", "main", "github.com/acme/app", [
+        { number: 1, state: "open", url: "https://github.com/acme/app/pull/1" },
+      ]),
+      repository("/code/app/api", "/code/app/api", "main", "github.com/acme/api", [
+        { number: 2, state: "open", url: "https://github.com/acme/api/pull/2" },
+      ]),
+    ]);
+    assert.deepEqual(workspace.otherPullRequests, []);
+  }).pipe(
+    Effect.provide(
+      machine([], {
+        projectRoot: "/code/app",
+        tracked: [folder("/code/app/api")],
+        repositories: ["/code/app", "/code/app/api"],
+        identities: { "/code/app": github("acme/app"), "/code/app/api": github("acme/api") },
+      }),
+    ),
+  ),
+);
+
+it.effect("a plain project folder is no repository; the repositories it tracks are", () =>
+  Effect.gen(function* () {
+    const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
+    const workspace = yield* workspaces.of(inProject());
+    assert.deepEqual(
+      workspace.repositories.map((checkout) => checkout.path),
+      ["/code/app/api", "/code/app/web"],
+    );
+  }).pipe(
+    Effect.provide(
+      machine([], {
+        projectRoot: "/code/app",
+        tracked: [
+          folder("/code/app/api"),
+          folder("/code/app/web"),
+          folder("/code/app/notes", false),
+        ],
+        repositories: ["/code/app/api", "/code/app/web"],
+      }),
+    ),
+  ),
+);
+
+it.effect(
+  "a project that tracks 128 repositories lists the first 32, and says it left some out",
+  () => {
+    const tracked = Array.from({ length: 128 }, (_, index) => folder(`/code/app/repo-${index}`));
+    return Effect.gen(function* () {
+      const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
+      const workspace = yield* workspaces.of(inProject());
+      assert.equal(workspace.repositories.length, MemberWorkspaces.MEMBER_REPOSITORIES_MAX);
+      assert.equal(workspace.repositories.at(-1)?.path, "/code/app/repo-31");
+      assert.isTrue(workspace.truncated);
+    }).pipe(
+      Effect.provide(
+        machine([], {
+          projectRoot: "/code/app",
+          tracked,
+          repositories: tracked.map((repository) => repository.path),
+        }),
+      ),
+    );
+  },
+);
+
+it.effect(
+  "a hung repository probe never holds up a read, and is given up after its deadline",
+  () => {
+    let probes = 0;
+    const members = ["thread:a", "thread:b", "thread:c"].map((id) =>
+      inProject({ id: ThreadId.make(id) }),
+    );
+    return Effect.gen(function* () {
+      const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
+      const readAll = Effect.forEach(members, (member) => workspaces.cached(member));
+      assert.deepEqual(yield* readAll, ["pending", "pending", "pending"]);
+      yield* Effect.yieldNow;
+      // A read under way is shared, not started again.
+      assert.deepEqual(yield* readAll, ["pending", "pending", "pending"]);
+      yield* Effect.yieldNow;
+      assert.equal(probes, 3);
+      yield* TestClock.adjust(MemberWorkspaces.WORKSPACE_READ_DEADLINE);
+      assert.deepEqual(yield* readAll, ["pending", "pending", "pending"]);
+      yield* Effect.yieldNow;
+      assert.equal(probes, 6);
+    }).pipe(
+      Effect.provide(
+        machine([], {
+          resolve: () =>
+            Effect.suspend(() => {
+              probes += 1;
+              return Effect.never;
+            }),
+        }),
+      ),
+    );
+  },
+);
+
+it.effect("a cached read answers at once, then goes stale and is read again", () => {
+  const gitCalls: Array<string> = [];
+  return Effect.gen(function* () {
+    const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
+    assert.equal(yield* workspaces.cached(inProject()), "pending");
+    yield* Effect.yieldNow;
+    const fresh = yield* workspaces.cached(inProject());
+    assert.isFalse(typeof fresh === "string" || fresh.stale);
+    yield* TestClock.adjust("1 minute");
+    const stale = yield* workspaces.cached(inProject());
+    assert.isTrue(typeof stale !== "string" && stale.stale);
+  }).pipe(Effect.provide(machine(gitCalls)));
+});
+
+it.effect(
+  "a dismissed stack pull request is left out, and a pull request URL loses its login",
+  () =>
+    Effect.gen(function* () {
+      const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
+      const workspace = yield* workspaces.of({
+        ...inProject(),
+        pullRequests: [
+          link("https://ci-bot:ghp_secret@github.com/acme/app/pull/4?token=abc", "open"),
+          link("https://github.com/acme/app/pull/5", "open", "stack-dismissed"),
+        ],
+      });
+      assert.deepEqual(workspace.repositories[0]?.pullRequests, [
+        { number: 4, state: "open", url: "https://github.com/acme/app/pull/4" },
+      ]);
+      assert.deepEqual(workspace.otherPullRequests, []);
+    }).pipe(
+      Effect.provide(
+        machine([], {
+          projectRoot: "/code/app",
+          repositories: ["/code/app"],
+          identities: { "/code/app": github("acme/app") },
+        }),
+      ),
+    ),
+);
+
+it.effect(
+  "an Azure DevOps repository is keyed as its pull requests are, whatever its spelling",
+  () =>
+    Effect.gen(function* () {
+      const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
+      const workspace = yield* workspaces.of({
+        ...inProject(),
+        pullRequests: [
+          link("https://dev.azure.com/acme/Proj/_git/Repo/pullrequest/7", "open"),
+          link(
+            "https://tfs.example.com:8443/tfs/DefaultCollection/Proj/_git/Server/pullrequest/5",
+            "open",
+          ),
+        ],
+      });
+      assert.deepEqual(
+        workspace.repositories.map((checkout) => [
+          checkout.remote,
+          checkout.pullRequests.map((pullRequest) => pullRequest.number),
+        ]),
+        [
+          ["dev.azure.com/acme/proj/_git/repo", [7]],
+          ["tfs.example.com/tfs/defaultcollection/proj/_git/server", [5]],
+        ],
+      );
+      assert.deepEqual(workspace.otherPullRequests, []);
+    }).pipe(
+      Effect.provide(
+        machine([], {
+          projectRoot: "/code/app",
+          tracked: [folder("/code/app/repo"), folder("/code/app/server")],
+          repositories: ["/code/app/repo", "/code/app/server"],
+          identities: {
+            "/code/app/repo": identity("https://acme.visualstudio.com/Proj/_git/Repo"),
+            "/code/app/server": identity(
+              "https://tfs.example.com:8443/tfs/DefaultCollection/Proj/_git/Server",
+            ),
+          },
+        }),
+      ),
+    ),
+);

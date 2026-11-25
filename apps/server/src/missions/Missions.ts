@@ -254,9 +254,16 @@ const make = Effect.gen(function* () {
   // The adds whose first join is on its way now. Their rows exist already, and are not shown as
   // pending until that call ends without an answer.
   const sending = yield* Ref.make<ReadonlySet<string>>(new Set());
-  // What each member on another machine was doing when its machine last listed it.
+  // What each member on another machine was doing when its machine last listed it, and the claim
+  // it was listed under: its workspace is shown only while that claim holds.
   const remoteDetails = yield* Ref.make<
-    ReadonlyMap<EnvironmentId, ReadonlyMap<ThreadId, MemberDetail>>
+    ReadonlyMap<
+      EnvironmentId,
+      ReadonlyMap<
+        ThreadId,
+        { readonly missionId: string; readonly generation: string; readonly detail: MemberDetail }
+      >
+    >
   >(new Map());
   const remoteChanged = yield* PubSub.unbounded<{
     readonly missionId: string;
@@ -797,14 +804,14 @@ const make = Effect.gen(function* () {
       next.set(
         environmentId,
         new Map(
-          listed.flatMap((claim) =>
-            claim.detail === undefined ? [] : [[claim.threadId, claim.detail] as const],
+          listed.flatMap(({ threadId, missionId, generation, detail }) =>
+            detail === undefined ? [] : [[threadId, { missionId, generation, detail }] as const],
           ),
         ),
       );
       const seen = before.get(environmentId);
       const news = listed.filter((claim) => {
-        const last = seen?.get(claim.threadId);
+        const last = seen?.get(claim.threadId)?.detail;
         return (
           claim.detail !== undefined &&
           (last === undefined || markOf(last) !== markOf(claim.detail))
@@ -906,7 +913,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const busy = [...(yield* Ref.get(remoteDetails)).values()].some((machine) =>
           [...machine.values()].some(
-            (detail) => detail.status !== "idle" && detail.status !== "failed",
+            ({ detail }) => detail.status !== "idle" && detail.status !== "failed",
           ),
         );
         const ticks = yield* Ref.updateAndGet(idleTicks, (count) => count + 1);
@@ -1249,7 +1256,8 @@ const make = Effect.gen(function* () {
    * machine labels, which only the roster tool returns, as data. A turn reads it without.
    */
   const members = Effect.fn("Missions.members")(function* (missionId: string, named: boolean) {
-    const view = yield* missionView(yield* missionNamed(missionId), yield* machines, yield* shown);
+    const held = yield* machines;
+    const view = yield* missionView(yield* missionNamed(missionId), held, yield* shown);
     const labels = named ? yield* machineLabels : new Map<EnvironmentId, string>();
     const details = yield* Ref.get(remoteDetails);
     const listed = view.members.filter(
@@ -1263,6 +1271,10 @@ const make = Effect.gen(function* () {
     const rows: Array<RosterMember> = [];
     for (const { ref, state } of listed) {
       const local = ref.environmentId === here;
+      const remote = local ? undefined : details.get(ref.environmentId)?.get(ref.threadId);
+      const claim = held
+        .get(ref.environmentId)
+        ?.claims.find((known) => known.threadId === ref.threadId && known.missionId === missionId);
       const detail: MemberDetail | undefined = local
         ? named
           ? yield* memberDetail(ref.threadId).pipe(Effect.provide(readServices))
@@ -1274,7 +1286,11 @@ const make = Effect.gen(function* () {
               ),
               Effect.orElseSucceed(() => undefined),
             )
-        : details.get(ref.environmentId)?.get(ref.threadId);
+        : remote?.detail;
+      const workspace =
+        local || (remote?.missionId === missionId && remote.generation === claim?.generation)
+          ? detail?.workspace
+          : undefined;
       if (local && detail === undefined) continue;
       rows.push({
         ref,
@@ -1288,7 +1304,7 @@ const make = Effect.gen(function* () {
         // An older member machine lists no detail, so its members read as unseen.
         status: state === "offline" || detail === undefined ? "offline" : detail.status,
         title: named ? (detail?.title ?? "") : "",
-        ...(named && detail?.workspace !== undefined ? { workspace: detail.workspace } : {}),
+        ...(named && workspace !== undefined ? { workspace } : {}),
       });
     }
     return rows;
