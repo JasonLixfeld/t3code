@@ -11,18 +11,18 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import { MissionStore, type MissionRecord } from "./MissionStore.ts";
+import { MissionStore, type MissionRecord, numberKey } from "./MissionStore.ts";
 import { Missions } from "./Missions.ts";
 import {
   type MemberDetail,
   markOf,
   missionUpdateText,
-  placeOf,
   remoteUpdates,
   type SourcedUpdate,
   updateFromEvent,
@@ -123,18 +123,18 @@ export const layer = Layer.effectDiscard(
     });
 
     /** Puts away every update of a Mission whose lead may not be woken. */
-    const dropUpdates = (missionId: string): Effect.Effect<void> =>
-      Effect.flatMap(store.takeMissionUpdates(missionId), ({ key, updates }) =>
+    const dropUpdates = (missionId: string, lead: ThreadId): Effect.Effect<void> =>
+      Effect.flatMap(store.takeMissionUpdates(missionId, lead), ({ key, updates }) =>
         updates.length === 0
           ? Effect.void
-          : Effect.andThen(store.clearMissionUpdates(missionId, key), dropUpdates(missionId)),
+          : Effect.andThen(store.clearMissionUpdates(missionId, key), dropUpdates(missionId, lead)),
       );
 
     /** Runs under the Mission's lock, so the lead it names stays the lead until it is sent. */
     const deliverTo = Effect.fn("MissionWakes.deliverTo")(function* (mission: MissionRecord) {
       const { missionId, leadThreadId } = mission;
       const lead = yield* shellOf(leadThreadId);
-      if (parked(lead)) return yield* dropUpdates(missionId);
+      if (parked(lead)) return yield* dropUpdates(missionId, leadThreadId);
       if (lead!.activeRunId !== null) return;
       const now = yield* Clock.currentTimeMillis;
       const next =
@@ -150,27 +150,34 @@ export const layer = Layer.effectDiscard(
         return;
       }
       // A wake a stop cut off comes back with its key, so the orchestrator replays it once.
-      const { key, updates } = yield* store.takeMissionUpdates(missionId);
+      const { key, updates } = yield* store.takeMissionUpdates(missionId, leadThreadId);
       if (updates.length === 0) return;
-      yield* threads.dispatch({
-        type: "message.dispatch",
-        commandId: CommandId.make(`server:mission-update:${missionId}:${key}`),
-        threadId: leadThreadId,
-        messageId: MessageId.make(`message:mission-update:${missionId}:${key}`),
-        text: missionUpdateText(
-          updates.map((update) => ({
-            ref: update,
-            place: placeOf(update.environmentId, here),
-            event: update.event,
-          })),
-        ),
-        attachments: [],
-        dispatchMode: { type: "queue_after_active" },
-        createdBy: "agent",
-        creationSource: "server",
-        // A lead settled since the read above stays settled; its updates go with this one.
-        unlessParked: true,
-      });
+      const names = yield* missions.numbers(missionId, updates);
+      const sent = yield* threads
+        .dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`server:mission-update:${missionId}:${key}`),
+          threadId: leadThreadId,
+          messageId: MessageId.make(`message:mission-update:${missionId}:${key}`),
+          text: missionUpdateText(
+            updates.map((update) => ({ ...names.get(numberKey(update))!, event: update.event })),
+          ),
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+        })
+        .pipe(
+          // A lead settled since the read above stays settled; its updates go with this one.
+          Effect.provideService(Orchestrator.UnlessParked, true),
+          Effect.result,
+        );
+      if (Result.isFailure(sent)) {
+        // Turned down: sending the same command again would only replay that. Its updates go
+        // with the next wake, under a new key.
+        yield* store.rekeyMissionUpdates(missionId, key);
+        return yield* sent.failure;
+      }
       lastWake.set(leadThreadId, now);
       yield* store.clearMissionUpdates(missionId, key);
     });

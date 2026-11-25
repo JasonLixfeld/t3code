@@ -27,21 +27,8 @@ const refused = (error: MissionError) =>
     message: error.message,
   });
 
-const denied = (failure: OrchestratorMcpFailure) =>
-  new MissionError({ message: failure.message, reason: "denied" });
-
-/** The calling lead's own reach, which its mission writes keep to: never the UI's. */
-const leadAuthority = Effect.map(
-  McpToolAccess.writeAuthority,
-  (authority): Missions.LeadAuthority => ({
-    limits: authority.limits,
-    mayChange: (thread) => Effect.mapError(authority.mayChange(thread), denied),
-    mayUseLinks: Effect.mapError(authority.mayUseLinks, denied),
-  }),
-);
-
 /**
- * A top-level thread a mission's lead started joins its Mission, by the lead's own authority. A
+ * A top-level thread a mission's lead started joins its Mission, with the lead's own reach. A
  * refused join leaves the thread as it is, and says why. A replayed start, and any other caller's
  * threads, join nothing.
  */
@@ -53,9 +40,8 @@ export const joinCallersMission = Effect.fn("MissionHandlers.joinCallersMission"
   if (Option.isNone(missions) || scope.thread === undefined) return undefined;
   const mission = yield* missions.value.ledBy(scope.thread.threadId);
   if (mission === undefined) return undefined;
-  const authority = yield* leadAuthority;
   return yield* missions.value
-    .joinStarted({ missionId: mission.missionId, member }, authority)
+    .joinStarted({ missionId: mission.missionId, member }, scope.thread.threadId)
     .pipe(
       Effect.map((state): MissionJoinOutcome | undefined =>
         state === undefined ? undefined : { state },
@@ -88,7 +74,13 @@ export const layer = McpToolAccess.toLayer(
           message: "This thread leads no mission.",
         });
       }
-      return { missions: missions.value, mission, environmentId: scope.environmentId };
+      return {
+        missions: missions.value,
+        mission,
+        environmentId: scope.environmentId,
+        // The lead's reach is read from this thread under the Mission's lock, not from the call.
+        lead: caller.thread.threadId,
+      };
     });
     return {
       t3_mission_tag: McpToolAccess.writesThreads(
@@ -163,6 +155,8 @@ export const layer = McpToolAccess.toLayer(
             missionId: mission.missionId,
             name: mission.name,
             members: rows.slice(cursor, end).map((row) => ({
+              member: row.member,
+              place: row.place,
               threadRef: row.ref,
               machine: row.machine,
               project: row.project,
@@ -177,31 +171,25 @@ export const layer = McpToolAccess.toLayer(
       ),
       t3_mission_add: McpToolAccess.actsAsCaller((input) =>
         Effect.gen(function* () {
-          const { missions, mission, environmentId } = yield* callersMission;
+          const { missions, mission, environmentId, lead } = yield* callersMission;
           const member = {
             environmentId: input.threadRef.environmentId ?? environmentId,
             threadId: input.threadRef.threadId,
           };
           return {
-            state: yield* missions.addMember(
-              { missionId: mission.missionId, member },
-              yield* leadAuthority,
-            ),
+            state: yield* missions.addMember({ missionId: mission.missionId, member }, lead),
           };
         }).pipe(Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) })),
       ),
       t3_mission_release: McpToolAccess.actsAsCaller((input) =>
         Effect.gen(function* () {
-          const { missions, mission, environmentId } = yield* callersMission;
+          const { missions, mission, environmentId, lead } = yield* callersMission;
           const member = {
             environmentId: input.threadRef.environmentId ?? environmentId,
             threadId: input.threadRef.threadId,
           };
           return {
-            state: yield* missions.releaseMember(
-              { missionId: mission.missionId, member },
-              yield* leadAuthority,
-            ),
+            state: yield* missions.releaseMember({ missionId: mission.missionId, member }, lead),
           };
         }).pipe(Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) })),
       ),

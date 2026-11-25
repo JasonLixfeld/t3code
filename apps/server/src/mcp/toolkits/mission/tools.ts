@@ -94,6 +94,9 @@ export const MissionToolkit = Toolkit.make(
       name: Schema.String,
       members: Schema.Array(
         Schema.Struct({
+          /** The names the mission status and wakes use, as "member 3" on "machine 2". */
+          member: Schema.String,
+          place: Schema.String,
           threadRef: Schema.Struct({ environmentId: EnvironmentId, threadId: ThreadId }),
           machine: Schema.String,
           project: Schema.String,

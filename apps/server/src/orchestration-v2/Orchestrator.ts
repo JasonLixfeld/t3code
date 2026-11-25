@@ -566,6 +566,14 @@ export interface OrchestratorV2Shape {
   readonly streamDomainEvents: Stream.Stream<OrchestrationV2DomainEvent, OrchestratorV2Error>;
 }
 
+/**
+ * A server wake: a settled, archived or deleted thread is left as it is, and sent nothing. Only
+ * server code sets it, around its own dispatch, so no client command can carry it.
+ */
+export const UnlessParked = Context.Reference<boolean>("t3/orchestration-v2/UnlessParked", {
+  defaultValue: () => false,
+});
+
 export class OrchestratorV2 extends Context.Service<OrchestratorV2, OrchestratorV2Shape>()(
   "t3/orchestration-v2/Orchestrator/OrchestratorV2",
 ) {}
@@ -7217,7 +7225,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // Checked here, in the thread's own command order, so no settle can land between the check
     // and the message that would otherwise reopen the thread.
     if (
-      command.unlessParked === true &&
+      (yield* UnlessParked) &&
       (projection.thread.settledOverride === "settled" ||
         projection.thread.settledAt !== null ||
         projection.thread.archivedAt !== null ||

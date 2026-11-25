@@ -48,7 +48,8 @@ export type MissionUpdateEvent = "awaiting-input" | "pending-approval" | "failed
 
 export interface RosterMember {
   readonly ref: ScopedThreadRef;
-  /** "this machine", or the member machine's environment id: never a name anyone typed. */
+  /** The lead's own names, "member 3" on "this machine" or "machine 2", which no one else sets. */
+  readonly member: string;
   readonly place: string;
   /** Names, for the roster tool's data only. */
   readonly machine: string;
@@ -161,17 +162,21 @@ export const markOf = (detail: MemberDetail): string =>
 /**
  * What a remote member's list says since its mark: a run that ended, by its id, and each request
  * not seen before, by its id. A machine that predates them is compared by status, each change its
- * own source. The first list of a member only leaves its mark.
+ * own source. With no mark yet, a member idle or working needs no one, and one that needs the lead
+ * is told all it lists, since none of it was told.
  */
 export const remoteUpdates = (
   before: string | undefined,
   detail: MemberDetail,
   listedAt: number,
 ): ReadonlyArray<SourcedUpdate> => {
-  if (before === undefined) return [];
-  const mark = JSON.parse(before) as Mark;
+  if (before === undefined && !needsAttention(detail.status)) return [];
+  const mark: Partial<Mark> = before === undefined ? {} : (JSON.parse(before) as Mark);
   if (detail.run === undefined && detail.requests === undefined) {
-    const event = updateFor(mark.status, detail.status);
+    const event =
+      before === undefined
+        ? (detail.status as MissionUpdateEvent)
+        : updateFor(mark.status, detail.status);
     return event === undefined ? [] : [{ source: `status:${event}:${listedAt}`, event }];
   }
   const updates: Array<SourcedUpdate> = [];
@@ -244,12 +249,6 @@ export const missionPromptText = (missionId: string, prompt: string) => {
   return `${cutToBytes(text, MISSION_PROMPT_MAX_BYTES - bytes(PROMPT_CUT_NOTE))}${PROMPT_CUT_NOTE}`;
 };
 
-/** Ids come from other machines too, so one is cut to a single short line. */
-const oneLine = (text: string) => {
-  const flat = [...text.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, " ").trim()];
-  return flat.length <= 80 ? flat.join("") : `${flat.slice(0, 80).join("")}…`;
-};
-
 const STATUS_LABELS: Record<RosterStatus, string> = {
   "awaiting-input": "awaiting input",
   "pending-approval": "pending approval",
@@ -260,8 +259,9 @@ const STATUS_LABELS: Record<RosterStatus, string> = {
 };
 
 /**
- * Names only ids and statuses, never a title or label anyone can edit, and no times, so it changes
- * only when a member's status does. Names are in the roster tool's result, as data.
+ * Names members and machines by the lead's own numbers, never by an id, title or label another
+ * machine or agent can set, and has no times, so it changes only when a member's status does. The
+ * roster tool maps the numbers to ids and names, as data.
  */
 export const missionStatusText = (members: ReadonlyArray<RosterMember>) => {
   const count = (statuses: ReadonlyArray<RosterStatus>) =>
@@ -271,7 +271,7 @@ export const missionStatusText = (members: ReadonlyArray<RosterMember>) => {
     .filter((member) => needsAttention(member.status))
     .map(
       (member) =>
-        `Needs attention: ${oneLine(member.ref.threadId)} on ${oneLine(member.place)}, ${STATUS_LABELS[member.status]}.`,
+        `Needs attention: ${member.member} on ${member.place}, ${STATUS_LABELS[member.status]}.`,
     );
   const build = (shown: number) => {
     const more = attention.length - shown;
@@ -294,17 +294,16 @@ const UPDATE_TEXT: Record<MissionUpdateEvent, string> = {
   completed: "finished its turn and is idle",
 };
 
-/** Names each member by id and place only, as the status does. */
+/** Names each member by the lead's own numbers, as the status does. */
 export const missionUpdateText = (
   updates: ReadonlyArray<{
-    readonly ref: ScopedThreadRef;
+    readonly member: string;
     readonly place: string;
     readonly event: MissionUpdateEvent;
   }>,
 ) => {
   const lines = updates.map(
-    (update) =>
-      `thread ${oneLine(update.ref.threadId)} on ${oneLine(update.place)} ${UPDATE_TEXT[update.event]}.`,
+    (update) => `${update.member} on ${update.place} ${UPDATE_TEXT[update.event]}.`,
   );
   const more = lines.length - ATTENTION_LINES;
   const body =
@@ -317,7 +316,3 @@ export const missionUpdateText = (
         ].join("\n");
   return `${body}\nFor details, call t3_thread_read or t3_mission_roster.`;
 };
-
-/** The place a status or wake names a member by. */
-export const placeOf = (environmentId: string, here: string) =>
-  environmentId === here ? "this machine" : environmentId;

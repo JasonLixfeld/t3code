@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import {
   CommandId,
   MessageId,
+  OrchestrationV2Command,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -9,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -40,43 +42,52 @@ const layerTest = Layer.mergeAll(
 );
 
 const threadId = ThreadId.make("thread:lead");
+const decodeCommand = Schema.decodeUnknownEffect(OrchestrationV2Command);
+
+const wakeCommand = (id: string) => ({
+  type: "message.dispatch" as const,
+  commandId: CommandId.make(`wake-${id}`),
+  threadId,
+  messageId: MessageId.make(`message:wake-${id}`),
+  text: "Mission update: member 1 on this machine failed.",
+  attachments: [],
+  dispatchMode: { type: "queue_after_active" as const },
+  createdBy: "agent" as const,
+  creationSource: "server" as const,
+});
+
+const settledLead = Effect.gen(function* () {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  yield* orchestrator.dispatch({
+    type: "thread.create",
+    commandId: CommandId.make("create"),
+    threadId,
+    projectId: ProjectId.make("project:lead"),
+    title: "Lead",
+    modelSelection: { instanceId, model: "gpt-5.1-codex" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdBy: "user",
+    creationSource: "web",
+  });
+  yield* orchestrator.dispatch({
+    type: "thread.settle",
+    commandId: CommandId.make("settle"),
+    threadId,
+  });
+  return orchestrator;
+});
 
 it.effect("a wake sent unless parked leaves a settled thread settled, and sends it nothing", () =>
   Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const orchestrator = yield* settledLead;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
-    yield* orchestrator.dispatch({
-      type: "thread.create",
-      commandId: CommandId.make("create"),
-      threadId,
-      projectId: ProjectId.make("project:lead"),
-      title: "Lead",
-      modelSelection: { instanceId, model: "gpt-5.1-codex" },
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-      createdBy: "user",
-      creationSource: "web",
-    });
-    yield* orchestrator.dispatch({
-      type: "thread.settle",
-      commandId: CommandId.make("settle"),
-      threadId,
-    });
     const wake = (id: string) =>
-      orchestrator.dispatch({
-        type: "message.dispatch",
-        commandId: CommandId.make(`wake-${id}`),
-        threadId,
-        messageId: MessageId.make(`message:wake-${id}`),
-        text: "Mission update: thread t1 on this machine failed.",
-        attachments: [],
-        dispatchMode: { type: "queue_after_active" },
-        createdBy: "agent",
-        creationSource: "server",
-        unlessParked: true,
-      });
+      orchestrator
+        .dispatch(wakeCommand(id))
+        .pipe(Effect.provideService(Orchestrator.UnlessParked, true));
     yield* wake("1");
     // The same command again is a replay of the first, and sends nothing either.
     yield* wake("1");
@@ -92,6 +103,21 @@ it.effect("a wake sent unless parked leaves a settled thread settled, and sends 
       reason: "user",
     });
     yield* wake("2");
+    assert.lengthOf((yield* projections.getThreadProjection(threadId)).messages, 1);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a client's command cannot ask to be sent unless parked", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* settledLead;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    // What a client sends is decoded by the command schema, which has no such field.
+    const sent = yield* decodeCommand({
+      ...wakeCommand("client"),
+      unlessParked: true,
+    });
+    assert.notProperty(sent, "unlessParked");
+    yield* orchestrator.dispatch(sent);
     assert.lengthOf((yield* projections.getThreadProjection(threadId)).messages, 1);
   }).pipe(Effect.provide(layerTest)),
 );

@@ -67,7 +67,8 @@ const notLead = threadScope("member", false);
 
 const row = (index: number, status: RosterMember["status"]): RosterMember => ({
   ref: { environmentId: LAPTOP, threadId: ThreadId.make(`t${index}`) },
-  place: LAPTOP,
+  member: `member ${index + 1}`,
+  place: "machine 2",
   machine: "Laptop",
   project: "web",
   status,
@@ -80,16 +81,16 @@ const makeMissions = () => {
     readonly kind: string;
     readonly missionId: string;
     readonly member: ScopedThreadRef;
-    /** The lead's own modes, which every lead call must carry. */
-    readonly limits: unknown;
+    /** The lead thread whose reach every lead call must be read from. */
+    readonly asLead: ThreadId | undefined;
   }> = [];
   const started = new Set<string>();
   const add = (
     input: { readonly missionId: string; readonly member: ScopedThreadRef },
-    authority: Missions.LeadAuthority | undefined,
+    asLead: ThreadId | undefined,
   ) =>
     Effect.suspend(() => {
-      calls.push({ kind: "add", ...input, limits: authority?.limits });
+      calls.push({ kind: "add", ...input, asLead });
       if (input.member.environmentId === FENCED) {
         return Effect.fail(
           new MissionError({
@@ -108,12 +109,12 @@ const makeMissions = () => {
       );
     });
   const layer = Layer.mock(Missions.Missions)({
-    joinStarted: (input, authority) =>
+    joinStarted: (input, asLead) =>
       Effect.suspend(() => {
         const key = `${input.member.environmentId}/${input.member.threadId}`;
         if (started.has(key)) return Effect.undefined;
         started.add(key);
-        return add(input, authority);
+        return add(input, asLead);
       }),
     ledBy: (threadId) =>
       Effect.succeed(
@@ -128,9 +129,9 @@ const makeMissions = () => {
         ),
       ),
     addMember: add,
-    releaseMember: (input, authority) =>
+    releaseMember: (input, asLead) =>
       Effect.suspend(() => {
-        calls.push({ kind: "release", ...input, limits: authority?.limits });
+        calls.push({ kind: "release", ...input, asLead });
         return input.member.threadId === "elsewhere"
           ? Effect.fail(new MissionError({ message: "That thread is not in this mission." }))
           : Effect.succeed("released" as const);
@@ -188,7 +189,13 @@ it.effect("the roster pages the caller's own mission, and marks who needs the le
     const first = yield* callLeadTool(missions, lead, "t3_mission_roster", {});
     const page = first.structured as {
       readonly missionId: string;
-      readonly members: ReadonlyArray<{ readonly needsAttention: boolean; readonly title: string }>;
+      readonly members: ReadonlyArray<{
+        readonly member: string;
+        readonly place: string;
+        readonly threadRef: ScopedThreadRef;
+        readonly needsAttention: boolean;
+        readonly title: string;
+      }>;
       readonly total: number;
       readonly nextCursor: number | null;
     };
@@ -199,6 +206,11 @@ it.effect("the roster pages the caller's own mission, and marks who needs the le
       [true, false],
     );
     assert.equal(page.members[0]?.title, "Title 0");
+    // The numbers the status and wakes use map to the ids, as data.
+    assert.deepEqual(
+      [page.members[0]?.member, page.members[0]?.place, page.members[0]?.threadRef],
+      ["member 1", "machine 2", { environmentId: LAPTOP, threadId: ThreadId.make("t0") }],
+    );
     assert.equal(page.total, 12);
     assert.equal(page.nextCursor, 10);
     const rest = (yield* callLeadTool(missions, lead, "t3_mission_roster", {
@@ -241,10 +253,8 @@ it.effect("add and release act on the caller's own mission, by the UI's rules", 
         ["release", MISSION, HERE],
       ],
     );
-    // Each goes with the calling lead's own modes, never the UI's.
-    for (const call of missions.calls) {
-      assert.deepEqual(call.limits, { runtimeMode: "full-access", interactionMode: "default" });
-    }
+    // Each goes as the calling lead, whose reach is read when it is sent, never as the UI.
+    for (const call of missions.calls) assert.equal(call.asLead, lead.thread.threadId);
     // A thread that leads nothing is not offered the tools.
     const hidden = yield* callLeadTool(missions, notLead, "t3_mission_add", {
       threadRef: { threadId: "x" },

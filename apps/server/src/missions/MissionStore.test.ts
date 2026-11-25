@@ -2,11 +2,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { assert, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 
@@ -291,7 +293,7 @@ it.effect(
             // The same source written again is the same update.
             yield* store.addMissionUpdate(of("run:r1"));
             yield* store.addMissionUpdate(of("request:q1", "awaiting-input"));
-            const taken = yield* store.takeMissionUpdates("m1");
+            const taken = yield* store.takeMissionUpdates("m1", lead);
             assert.deepEqual(taken.updates, [of("run:r1"), of("request:q1", "awaiting-input")]);
             // A second turn of the same member ends while the wake is being sent.
             yield* store.addMissionUpdate(of("run:r2"));
@@ -301,37 +303,106 @@ it.effect(
         yield* usingStore(filename, (store) =>
           Effect.gen(function* () {
             // A stop before the clear: the same wake comes back, with the same key.
-            assert.deepEqual(yield* store.takeMissionUpdates("m1"), first);
+            assert.deepEqual(yield* store.takeMissionUpdates("m1", lead), first);
             yield* store.clearMissionUpdates("m1", first.key);
-            const next = yield* store.takeMissionUpdates("m1");
+            const next = yield* store.takeMissionUpdates("m1", lead);
             assert.deepEqual(next.updates, [of("run:r2")]);
             assert.notEqual(next.key, first.key);
             assert.deepEqual(yield* store.missionsWithUpdates, ["m1"]);
             yield* store.clearMissionUpdates("m1", next.key);
-            assert.deepEqual((yield* store.takeMissionUpdates("m1")).updates, []);
+            assert.deepEqual((yield* store.takeMissionUpdates("m1", lead)).updates, []);
           }),
         );
       }),
     ),
 );
 
-it.effect("a started thread joins once, and a remote member's mark outlives a reopen", () =>
+it.effect(
+  "a wake under way to one lead goes to a new lead under a new key, with what came since",
+  () =>
+    withDatabase((filename) =>
+      usingStore(filename, (store) =>
+        Effect.gen(function* () {
+          const of = (source: string) => ({
+            missionId: "m1",
+            environmentId: EnvironmentId.make("env-a"),
+            threadId: member,
+            source,
+            event: "completed" as const,
+          });
+          const next = ThreadId.make("next-lead");
+          yield* store.addMissionUpdate(of("run:r1"));
+          const old = yield* store.takeMissionUpdates("m1", lead);
+          yield* store.addMissionUpdate(of("run:r2"));
+          const moved = yield* store.takeMissionUpdates("m1", next);
+          assert.deepEqual(moved.updates, [of("run:r1"), of("run:r2")]);
+          assert.notEqual(moved.key, old.key);
+          // Taken again for the same lead, it is the same wake.
+          assert.deepEqual(yield* store.takeMissionUpdates("m1", next), moved);
+          // Turned down: the same updates go again under a key no wake had.
+          yield* store.rekeyMissionUpdates("m1", moved.key);
+          const again = yield* store.takeMissionUpdates("m1", next);
+          assert.deepEqual(again.updates, moved.updates);
+          assert.notInclude([old.key, moved.key], again.key);
+        }),
+      ),
+    ),
+);
+
+it.effect("members and machines keep the numbers they were first given", () =>
   withDatabase((filename) =>
     Effect.gen(function* () {
-      const started = { environmentId: EnvironmentId.make("env-a"), threadId: member };
-      yield* usingStore(filename, (store) =>
-        Effect.gen(function* () {
-          assert.isTrue(yield* store.firstStartedJoin(started));
-          assert.isFalse(yield* store.firstStartedJoin(started));
-          yield* store.setMemberMark(started, "mark-1");
-        }),
+      const here = EnvironmentId.make("env-here");
+      const laptop = EnvironmentId.make("env-laptop");
+      const ref = (environmentId: EnvironmentId, id: string) => ({
+        environmentId,
+        threadId: ThreadId.make(id),
+      });
+      const first = yield* usingStore(filename, (store) =>
+        store.numbersOf("m1", [ref(laptop, "a"), ref(here, "b")], here),
       );
-      yield* usingStore(filename, (store) =>
-        Effect.gen(function* () {
-          assert.isFalse(yield* store.firstStartedJoin(started));
-          assert.equal(yield* store.memberMark(started), "mark-1");
-        }),
+      assert.equal(first.member.get(MissionStore.numberKey(ref(laptop, "a"))), 1);
+      assert.equal(first.member.get(MissionStore.numberKey(ref(here, "b"))), 2);
+      assert.deepEqual([...first.machine], [[laptop, 2]]);
+      const later = yield* usingStore(filename, (store) =>
+        store.numbersOf("m1", [ref(EnvironmentId.make("env-desk"), "c"), ref(laptop, "a")], here),
       );
+      assert.equal(later.member.get(MissionStore.numberKey(ref(laptop, "a"))), 1);
+      assert.equal(
+        later.member.get(MissionStore.numberKey(ref(EnvironmentId.make("env-desk"), "c"))),
+        3,
+      );
+      assert.equal(later.machine.get(laptop), 2);
+      assert.equal(later.machine.get(EnvironmentId.make("env-desk")), 3);
     }),
   ),
+);
+
+it.effect(
+  "a started thread asks to join once, stays out once released, and is forgotten in 30 days",
+  () =>
+    withDatabase((filename) =>
+      Effect.gen(function* () {
+        const started = { environmentId: EnvironmentId.make("env-a"), threadId: member };
+        const other = { environmentId: EnvironmentId.make("env-a"), threadId: lead };
+        yield* usingStore(filename, (store) =>
+          Effect.gen(function* () {
+            assert.equal(yield* store.startJoin(started), "first");
+            assert.equal(yield* store.startJoin(started), "requested");
+            yield* store.setMemberMark(started, "mark-1");
+            assert.equal(yield* store.startJoin(other), "first");
+            yield* store.startedReleased(other);
+          }),
+        );
+        yield* usingStore(filename, (store) =>
+          Effect.gen(function* () {
+            assert.equal(yield* store.startJoin(started), "requested");
+            assert.equal(yield* store.startJoin(other), "released");
+            assert.equal(yield* store.memberMark(started), "mark-1");
+            yield* TestClock.adjust(Duration.days(31));
+            assert.equal(yield* store.startJoin(started), "first");
+          }),
+        );
+      }),
+    ),
 );
