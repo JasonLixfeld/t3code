@@ -14,7 +14,11 @@ import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import { ListedWorkspace, MemberWorkspaces } from "../../../missions/MemberWorkspaces.ts";
 import { MissionClaimKind, MissionClaims } from "../../../missions/MissionClaims.ts";
-import { MemberDetail, MemberStatus } from "../../../missions/missionStatus.ts";
+import {
+  MemberDetail,
+  MemberStatus,
+  WORKSPACES_PER_CALL,
+} from "../../../missions/missionStatus.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -29,8 +33,8 @@ const shownOnlyToLinks = (): boolean => {
 
 /**
  * `join` needs threadId, missionId and name; `release` threadId, missionId and generation;
- * `rename` missionId and name. A join may name its add with intentId. It answers with no claim
- * when that add's claim was dropped.
+ * `rename` missionId and name; `workspaces` members. A join may name its add with intentId. It
+ * answers with no claim when that add's claim was dropped.
  */
 const MissionTagInput = Schema.Struct({
   kind: MissionClaimKind,
@@ -39,6 +43,12 @@ const MissionTagInput = Schema.Struct({
   name: Schema.optional(MissionName),
   generation: Schema.optional(Schema.String),
   intentId: Schema.optional(Schema.String),
+  /** The caller's claims whose workspaces a list left out. */
+  members: Schema.optional(
+    Schema.Array(Schema.Struct({ threadId: ThreadId, generation: Schema.String })).check(
+      Schema.isMaxLength(WORKSPACES_PER_CALL),
+    ),
+  ),
 });
 
 export const MissionClaimResult = Schema.Struct({
@@ -86,7 +96,7 @@ export const MissionToolkit = Toolkit.make(
     .annotate(McpSchema.EnabledWhen, shownOnlyToLinks),
   Tool.make("t3_mission_roster", {
     description:
-      "List the member threads of the mission you lead: machine, project, status, title, whether each needs you, and its workspace: kind, and each repository's branch and pull requests. `byRepository` groups repository entries across all pages by remote, else `<environmentId>:<repositoryPath>`. Members with none are absent. Call again for a workspace that is `pending`, `omitted` or `stale`. Page with `cursor`.",
+      "List the member threads of the mission you lead: machine, project, status, title, whether each needs you, and its workspace: kind, and each repository's branch and pull requests. `byRepository` groups this page's repository entries by remote, else `<environmentId>:<repositoryPath>`. Members with none are absent. A workspace is `omitted` when its machine's answer reached 48 KB of workspace JSON. Call again in a few seconds for one that is `pending`, `omitted` or `stale`. Page with `cursor`.",
     parameters: Schema.Struct({
       cursor: Schema.optional(NonNegativeInt),
       limit: Schema.optional(clampedPositiveInt(100)),

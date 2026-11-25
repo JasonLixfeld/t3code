@@ -2,9 +2,10 @@ import {
   type OrchestrationV2ThreadShell,
   type ProjectId,
   PullRequestState,
-  repositoryGroupingKeyOf,
+  type RepositoryIdentity,
   type ThreadId,
 } from "@t3tools/contracts";
+import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
 import { withoutRemoteUrlCredentials } from "@t3tools/shared/cloneUrl";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as Clock from "effect/Clock";
@@ -20,6 +21,7 @@ import * as Schema from "effect/Schema";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as Project from "../project/ProjectService.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import { normalizeThreadPullRequestKey } from "../sourceControl/threadPullRequests.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as TaskFolderStore from "../workspace/TaskFolderStore.ts";
 import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
@@ -30,6 +32,8 @@ export const WORKSPACE_READ_DEADLINE = Duration.seconds(10);
 const WORKSPACE_CACHE_TTL = Duration.seconds(15);
 const PROJECT_SCAN_CACHE_TTL = Duration.seconds(30);
 const SHARED_CHECKOUT_BRANCH_CACHE_TTL = Duration.seconds(30);
+/** Entries kept in each cache; the least recently used goes first. */
+export const CACHE_ENTRIES_MAX = 512;
 
 const MemberPullRequest = Schema.Struct({
   number: Schema.Number,
@@ -49,8 +53,9 @@ export const MemberRepository = Schema.Struct({
   /** `live`: read from the shared checkout. `recorded`: the branch the thread's record names. */
   branchSource: Schema.Literals(["live", "recorded"]),
   /**
-   * The key pull requests are matched by: its origin's canonical key, else its own, such as
-   * `github.com/owner/name` or `dev.azure.com/org/project/_git/repo`. Null with no remote.
+   * The key pull requests are matched by: its origin's, else its own, such as
+   * `github.com/owner/name`, `dev.azure.com/org/project/_git/repo` or, for a server on an
+   * explicit HTTP port, `tfs.example.com:8443/tfs/collection/project/_git/repo`. Null with no remote.
    */
   remote: Schema.NullOr(Schema.String),
   pullRequests: Schema.Array(MemberPullRequest),
@@ -90,14 +95,56 @@ type WorkspaceShell = Pick<
 export class MemberWorkspaces extends Context.Service<
   MemberWorkspaces,
   {
-    /** Reads the thread's checkouts now, however long that takes. */
-    readonly of: (shell: WorkspaceShell) => Effect.Effect<MemberWorkspace>;
     /** Never waits: a missing or old read is started in the background. */
     readonly cached: (shell: WorkspaceShell) => Effect.Effect<MemberWorkspace | "pending">;
+    /** Drops what is known of a thread. A read of it still under way then stores nothing. */
+    readonly forget: (threadId: ThreadId) => Effect.Effect<void>;
   }
 >()("t3/missions/MemberWorkspaces") {}
 
 const keyOf = (key: string) => sourceControlDefinitions.canonicalRepositoryKey(key);
+const withoutPort = (key: string) => key.replace(/^([^/:]+):\d+\//u, "$1/");
+
+/**
+ * A repository's key as a saved pull request key spells it: an HTTP remote's explicit port is
+ * kept, as a pull request URL's is. `anyPort`: an SSH remote names no HTTP port, so it matches
+ * a pull request on any port of its host.
+ */
+const repositoryKeyOf = (canonicalKey: string, remoteUrl: string | undefined) => {
+  const remote = remoteUrl === undefined ? null : parseGitRemoteHost(remoteUrl);
+  const [host = "", ...path] = canonicalKey.split("/");
+  const key = normalizeThreadPullRequestKey({
+    host,
+    repository: path.join("/"),
+    number: 1,
+    ...(remote !== null && remote.host !== remote.hostname ? { authority: remote.host } : {}),
+  });
+  return {
+    key: `${key.host}/${key.repository}`,
+    anyPort: remoteUrl === undefined || !/^https?:\/\//iu.test(remoteUrl.trim()),
+  };
+};
+const repositoryKeysOf = (identity: RepositoryIdentity) => [
+  ...(identity.origin === undefined
+    ? []
+    : [repositoryKeyOf(identity.origin.canonicalKey, identity.origin.remoteUrl)]),
+  repositoryKeyOf(identity.canonicalKey, identity.locator.remoteUrl),
+];
+
+/** Reads an entry as the most recently used. */
+const recall = <K, V>(cache: Map<K, V>, key: K) => {
+  const value = cache.get(key);
+  if (value !== undefined) {
+    cache.delete(key);
+    cache.set(key, value);
+  }
+  return value;
+};
+const remember = <K, V>(cache: Map<K, V>, key: K, value: V) => {
+  cache.delete(key);
+  cache.set(key, value);
+  if (cache.size > CACHE_ENTRIES_MAX) cache.delete(cache.keys().next().value!);
+};
 
 interface Checkout {
   readonly name: string;
@@ -113,6 +160,8 @@ interface Probed {
       readonly liveBranch: string | null;
       readonly remote: string | null;
       readonly keys: ReadonlySet<string>;
+      /** Keys from SSH remotes, matched with a pull request's port dropped. */
+      readonly anyPortKeys: ReadonlySet<string>;
     }
   >;
 }
@@ -139,11 +188,12 @@ const make = Effect.gen(function* () {
     ThreadId,
     { readonly at: number; readonly place: string; readonly probed: Probed }
   >();
-  const reading = new Set<ThreadId>();
+  // The read under way for each thread. A read stores its result only while it is still this one.
+  const reading = new Map<ThreadId, symbol>();
 
   const branchOf = Effect.fn("MemberWorkspaces.branchOf")(function* (cwd: string) {
     const now = yield* Clock.currentTimeMillis;
-    const read = branches.get(cwd);
+    const read = recall(branches, cwd);
     if (read !== undefined && ageBelow(read.at, now, SHARED_CHECKOUT_BRANCH_CACHE_TTL)) {
       return read.branch;
     }
@@ -159,7 +209,7 @@ const make = Effect.gen(function* () {
         Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() || null : null)),
         Effect.orElseSucceed(() => null),
       );
-    branches.set(cwd, { at: now, branch });
+    remember(branches, cwd, { at: now, branch });
     return branch;
   });
 
@@ -174,7 +224,7 @@ const make = Effect.gen(function* () {
     projectRoot: string | null,
   ) {
     const now = yield* Clock.currentTimeMillis;
-    const scan = scans.get(projectId);
+    const scan = recall(scans, projectId);
     if (scan !== undefined && ageBelow(scan.at, now, PROJECT_SCAN_CACHE_TTL)) return scan.checkouts;
     const tracked = yield* workspaceFolders
       .forThread({ projectId, worktreePath: null })
@@ -190,7 +240,7 @@ const make = Effect.gen(function* () {
         .filter((folder) => folder.isGitRepository && folder.path !== projectRoot)
         .map((folder) => ({ ...at(folder.path), name: folder.name })),
     ];
-    scans.set(projectId, { at: now, checkouts });
+    remember(scans, projectId, { at: now, checkouts });
     return checkouts;
   });
 
@@ -239,23 +289,18 @@ const make = Effect.gen(function* () {
         (checkout) =>
           Effect.gen(function* () {
             const identity = yield* identities.resolve(checkout.repositoryPath);
+            const keys = identity === null ? [] : repositoryKeysOf(identity);
             return {
               ...checkout,
               liveBranch: kind === "project" ? yield* branchOf(checkout.path) : null,
-              remote: identity === null ? null : keyOf(repositoryGroupingKeyOf(identity)),
-              keys: new Set(
-                identity === null
-                  ? []
-                  : [identity.canonicalKey, identity.origin?.canonicalKey].flatMap((key) =>
-                      key === undefined ? [] : [keyOf(key)],
-                    ),
-              ),
+              remote: keys[0]?.key ?? null,
+              keys: new Set(keys.map(({ key }) => key)),
+              anyPortKeys: new Set(keys.flatMap(({ key, anyPort }) => (anyPort ? [key] : []))),
             };
           }),
         { concurrency: 4 },
       ),
     };
-    reads.set(shell.id, { at: yield* Clock.currentTimeMillis, place: placeOf(shell), probed });
     return probed;
   });
 
@@ -271,17 +316,24 @@ const make = Effect.gen(function* () {
       },
     }));
     const live = probed.kind === "project";
+    const covers = (checkout: Probed["checkouts"][number], key: string) =>
+      checkout.keys.has(key) || checkout.anyPortKeys.has(withoutPort(key));
     return {
       kind: probed.kind,
-      repositories: probed.checkouts.map(({ keys, liveBranch, ...checkout }) => ({
-        ...checkout,
-        branch: live ? liveBranch : shell.branch,
+      repositories: probed.checkouts.map((checkout) => ({
+        name: checkout.name,
+        path: checkout.path,
+        repositoryPath: checkout.repositoryPath,
+        branch: live ? checkout.liveBranch : shell.branch,
         branchSource: live ? ("live" as const) : ("recorded" as const),
-        pullRequests: links.flatMap((link) => (keys.has(link.key) ? [link.pullRequest] : [])),
+        remote: checkout.remote,
+        pullRequests: links.flatMap((link) =>
+          covers(checkout, link.key) ? [link.pullRequest] : [],
+        ),
       })),
       truncated: probed.truncated,
       otherPullRequests: links.flatMap((link) =>
-        probed.checkouts.some(({ keys }) => keys.has(link.key))
+        probed.checkouts.some((checkout) => covers(checkout, link.key))
           ? []
           : [{ ...link.pullRequest, repository: link.repository }],
       ),
@@ -289,30 +341,43 @@ const make = Effect.gen(function* () {
     };
   };
 
-  const of = Effect.fn("MemberWorkspaces.of")(function* (shell: WorkspaceShell) {
-    return workspaceOf(yield* readNow(shell), shell, false);
-  });
-
   const cached = Effect.fn("MemberWorkspaces.cached")(function* (shell: WorkspaceShell) {
     const now = yield* Clock.currentTimeMillis;
-    const found = reads.get(shell.id);
+    const found = recall(reads, shell.id);
     const read = found?.place === placeOf(shell) ? found : undefined;
     const fresh = read !== undefined && ageBelow(read.at, now, WORKSPACE_CACHE_TTL);
     if (!fresh && !reading.has(shell.id)) {
-      reading.add(shell.id);
+      const token = Symbol(shell.id);
+      reading.set(shell.id, token);
+      const current = () => reading.get(shell.id) === token;
       yield* readNow(shell).pipe(
         Effect.timeout(WORKSPACE_READ_DEADLINE),
+        Effect.flatMap((probed) =>
+          Effect.map(Clock.currentTimeMillis, (at) => {
+            if (current()) remember(reads, shell.id, { at, place: placeOf(shell), probed });
+          }),
+        ),
         Effect.catchCause((cause) =>
           Effect.logInfo("A mission member's checkouts were not read", cause),
         ),
-        Effect.ensuring(Effect.sync(() => reading.delete(shell.id))),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (current()) reading.delete(shell.id);
+          }),
+        ),
         Effect.forkIn(background),
       );
     }
     return read === undefined ? ("pending" as const) : workspaceOf(read.probed, shell, !fresh);
   });
 
-  return MemberWorkspaces.of({ of, cached });
+  const forget = (threadId: ThreadId) =>
+    Effect.sync(() => {
+      reads.delete(threadId);
+      reading.delete(threadId);
+    });
+
+  return MemberWorkspaces.of({ cached, forget });
 });
 
 export const layer = Layer.effect(MemberWorkspaces, make);

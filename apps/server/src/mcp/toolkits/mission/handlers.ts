@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { linkOwner, MissionClaims } from "../../../missions/MissionClaims.ts";
+import type { MissionClaim } from "../../../missions/MissionStore.ts";
 import * as Missions from "../../../missions/Missions.ts";
 import {
   memberDetail,
@@ -132,20 +133,37 @@ export const layer = McpToolAccess.toLayer(
             // The owner comes from the authenticated caller, never from the input.
             const owner =
               scope.client === undefined ? scope.environmentId : linkOwner(scope.client.sessionId);
-            if (input.kind === "list") {
-              // Each claim says what its thread is doing, so the lead can tell when it needs it.
-              const listed = yield* Effect.forEach(yield* claims.list(owner), (claim) =>
-                Effect.gen(function* () {
-                  const detail = yield* memberDetail(claim.threadId);
-                  // The claim may have changed hands while its thread was read.
-                  const stillHeld = (yield* claims.list(owner)).some(
-                    (held) =>
-                      held.threadId === claim.threadId && held.generation === claim.generation,
-                  );
-                  return detail === undefined || !stillHeld ? claim : { ...claim, detail };
-                }),
+            // Each claim says what its thread is doing, so the lead can tell when it needs it.
+            const withDetail = Effect.fn("MissionHandlers.withDetail")(function* (
+              wanted: ReadonlyArray<MissionClaim>,
+            ) {
+              const read = yield* Effect.forEach(wanted, (claim) =>
+                Effect.map(memberDetail(claim.threadId), (detail) => ({ claim, detail })),
               );
-              return withinWorkspaceRoom(listed);
+              // A claim may have changed hands while its thread was read.
+              const held = yield* claims.list(owner);
+              return withinWorkspaceRoom(
+                read.map(({ claim, detail }) =>
+                  detail === undefined ||
+                  !held.some(
+                    (now) => now.threadId === claim.threadId && now.generation === claim.generation,
+                  )
+                    ? claim
+                    : { ...claim, detail },
+                ),
+              );
+            });
+            if (input.kind === "list") return yield* withDetail(yield* claims.list(owner));
+            if (input.kind === "workspaces") {
+              const members = yield* needs(input.members, "members");
+              return yield* withDetail(
+                (yield* claims.list(owner)).filter((claim) =>
+                  members.some(
+                    (member) =>
+                      member.threadId === claim.threadId && member.generation === claim.generation,
+                  ),
+                ),
+              );
             }
             // Renames only claims this caller holds, each checked as a join is; a thread the caller
             // may no longer change keeps the old name.
@@ -211,7 +229,7 @@ export const layer = McpToolAccess.toLayer(
               needsAttention: needsAttention(row.status),
               workspace: row.workspace ?? ("unknown" as const),
             })),
-            byRepository: byRepository(rows),
+            byRepository: byRepository(rows.slice(cursor, end)),
             total: rows.length,
             nextCursor: end < rows.length ? end : null,
           };

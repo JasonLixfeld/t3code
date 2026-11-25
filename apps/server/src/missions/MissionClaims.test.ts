@@ -14,6 +14,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { MemberWorkspaces } from "./MemberWorkspaces.ts";
 import * as MissionClaims from "./MissionClaims.ts";
 import * as MissionStore from "./MissionStore.ts";
 import type { MissionClaim } from "./MissionStore.ts";
@@ -104,6 +105,9 @@ const onMachine = <A, E>(
             threads,
             NodeCrypto.layer,
             Layer.succeed(ThreadCommandExecutor.ThreadCommandExecutor, machine.threadCommands),
+            Layer.mock(MemberWorkspaces)({
+              forget: (id) => Effect.sync(() => machine.events.push(`forgot ${id}`)),
+            }),
           ),
         ),
       ),
@@ -342,3 +346,19 @@ it.each([
   assert.isTrue(isTag(tag));
   assert.isTrue(`mission:0123456789ab:${name}`.startsWith(tag));
 });
+
+it.effect("a claim dropped by a release or a leave forgets what was read of the thread", () =>
+  onMachine((claims, machine) =>
+    Effect.gen(function* () {
+      const joined = yield* claims.join("env-lead", { threadId, missionId: "ship", name: "Ship" });
+      const generation = typeof joined === "string" ? "" : joined.generation;
+      yield* claims.release("env-lead", { threadId, missionId: "ship", generation });
+      yield* claims.join("env-lead", { threadId, missionId: "ship", name: "Ship" });
+      yield* claims.leaveHere(threadId);
+      assert.deepEqual(
+        machine.events.filter((event) => event.startsWith("forgot")),
+        [`forgot ${threadId}`, `forgot ${threadId}`],
+      );
+    }),
+  ),
+);

@@ -52,6 +52,7 @@ const emptyWorkspace = {
 };
 const noWorkspace = Layer.mock(MemberWorkspaces)({
   cached: () => Effect.succeed(emptyWorkspace),
+  forget: () => Effect.void,
 });
 const appProject: OrchestrationProjectShell = {
   id: liveThreadShell(userThread).projectId,
@@ -195,6 +196,7 @@ const callOnce = (
             }
             return emptyWorkspace;
           }),
+        forget: () => Effect.void,
       });
     const machine = Layer.mergeAll(
       threads,
@@ -590,4 +592,84 @@ it.effect(
       assert.equal(listed?.threadId, userThread);
       assert.isUndefined(listed?.detail);
     }),
+);
+
+/** A workspace of about 30 KB, so one list answer has room for only one. */
+const largeWorkspace = {
+  ...emptyWorkspace,
+  otherPullRequests: Array.from({ length: 300 }, (_, number) => ({
+    number,
+    state: "open" as const,
+    url: `https://github.com/acme/app/pull/${number}?${"x".repeat(40)}`,
+    repository: "github.com/acme/app",
+  })),
+};
+const largeWorkspaces = Layer.mock(MemberWorkspaces)({
+  cached: () => Effect.succeed(largeWorkspace),
+  forget: () => Effect.void,
+});
+const NEWER = "fedcba987654";
+
+it.effect(
+  "a newer mission's member is omitted from a full list, and its workspace comes in the follow-up",
+  () =>
+    Effect.gen(function* () {
+      const agentThread = agentHere.thread.threadId;
+      const newer = { threadId: agentThread, missionId: NEWER, name: "Next" };
+      const before = (claims: MissionClaims.MissionClaims["Service"]) =>
+        joinedBy(LINK_OWNER)(claims).pipe(Effect.andThen(claims.join(LINK_OWNER, newer)));
+      const workspaceOf = (answer: string) =>
+        decodeTagAnswer(JSON.parse(answer)).claims.map((claim) => [
+          claim.missionId,
+          typeof claim.detail?.workspace === "object" ? "workspace" : claim.detail?.workspace,
+        ]);
+      const list = yield* callOnce(
+        linkedClient("full-access"),
+        { kind: "list" },
+        { workspaces: largeWorkspaces, before },
+      );
+      assert.deepEqual(workspaceOf(list.answer), [
+        [SHIP, "workspace"],
+        [NEWER, "omitted"],
+      ]);
+      const followUp = yield* callOnce(
+        linkedClient("full-access"),
+        (held) => ({
+          kind: "workspaces",
+          members: [
+            { threadId: agentThread, generation: typeof held === "object" ? held.generation : "" },
+          ],
+        }),
+        { workspaces: largeWorkspaces, before },
+      );
+      assert.deepEqual(workspaceOf(followUp.answer), [[NEWER, "workspace"]]);
+    }),
+);
+
+it.effect("a workspaces call answers only the caller's own claims, under their generations", () =>
+  Effect.gen(function* () {
+    const { answer } = yield* callOnce(
+      linkedClient("full-access"),
+      {
+        kind: "workspaces",
+        members: [
+          { threadId: userThread, generation: "an-older-claim" },
+          { threadId: agentHere.thread.threadId, generation: "not-the-callers" },
+        ],
+      },
+      {
+        before: (claims) =>
+          joinedBy(LINK_OWNER)(claims).pipe(
+            Effect.andThen(
+              claims.join("env-other-lead", {
+                threadId: agentHere.thread.threadId,
+                missionId: SHIP,
+                name: "Ship",
+              }),
+            ),
+          ),
+      },
+    );
+    assert.equal(answer, '{"claims":[]}');
+  }),
 );

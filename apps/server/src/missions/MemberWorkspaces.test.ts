@@ -6,6 +6,7 @@ import {
   ThreadId,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -16,6 +17,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as Project from "../project/ProjectService.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import { normalizeThreadPullRequestKey } from "../sourceControl/threadPullRequests.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as TaskFolderStore from "../workspace/TaskFolderStore.ts";
 import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
@@ -33,11 +35,12 @@ const link = (
   state: "open" | "merged" | null,
   source: ThreadPullRequestLink["source"] = "manual",
 ): ThreadPullRequestLink => {
-  const parsed = sourceControlDefinitions.parseChangeRequestUrl(url)!.link;
+  // Keyed as a saved link is, its URL's explicit port kept.
+  const key = normalizeThreadPullRequestKey(
+    sourceControlDefinitions.parseChangeRequestUrl(url)!.link,
+  );
   return {
-    host: parsed.host,
-    repository: parsed.repository,
-    number: parsed.number,
+    ...key,
     url,
     source,
     linkedAt: "2026-01-01T00:00:00.000Z",
@@ -46,7 +49,7 @@ const link = (
         ? null
         : {
             state,
-            title: `#${parsed.number}`,
+            title: `#${key.number}`,
             headBranch: "t3/checkout-v2",
             baseBranch: "main",
             isDraft: false,
@@ -84,6 +87,20 @@ const inProject = (
   pullRequests: noLinks,
   ...overrides,
 });
+
+type Service = MemberWorkspaces.MemberWorkspaces["Service"];
+const READ_STEP = "1 millis";
+/**
+ * The shipped read, after its background read has landed. Every read here starts by sleeping one
+ * step on the test clock, and an adjust runs what it wakes until that is idle.
+ */
+const settled = (workspaces: Service, shell: Parameters<Service["cached"]>[0]) =>
+  Effect.gen(function* () {
+    yield* workspaces.cached(shell);
+    yield* TestClock.adjust(READ_STEP);
+    const workspace = yield* workspaces.cached(shell);
+    return workspace === "pending" ? yield* Effect.die("The workspace was never read.") : workspace;
+  });
 
 interface Machine {
   readonly projectRoot?: string;
@@ -156,7 +173,10 @@ const machine = (gitCalls: Array<string>, options: Machine = {}) =>
             }),
         }),
         Layer.mock(Project.ProjectService)({
-          getShell: () => Effect.succeedSome(projectAt(options.projectRoot ?? "/code/solo")),
+          getShell: () =>
+            Effect.sleep(READ_STEP).pipe(
+              Effect.andThen(Effect.succeedSome(projectAt(options.projectRoot ?? "/code/solo"))),
+            ),
         }),
         FileSystem.layerNoop({
           exists: (target) =>
@@ -193,7 +213,7 @@ it.effect(
     const gitCalls: Array<string> = [];
     return Effect.gen(function* () {
       const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-      const workspace = yield* workspaces.of({
+      const workspace = yield* settled(workspaces, {
         id: threadId,
         projectId,
         worktreePath: "/tasks/one/app",
@@ -249,8 +269,8 @@ it.effect("a member in the project's own checkout reads its branch there, once i
       otherPullRequests: [],
       stale: false,
     };
-    assert.deepEqual(yield* workspaces.of(inProject()), expected);
-    assert.deepEqual(yield* workspaces.of(inProject()), expected);
+    assert.deepEqual(yield* settled(workspaces, inProject()), expected);
+    assert.deepEqual(yield* settled(workspaces, inProject()), expected);
     assert.deepEqual(gitCalls, ["/code/solo"]);
   }).pipe(Effect.provide(machine(gitCalls)));
 });
@@ -258,7 +278,8 @@ it.effect("a member in the project's own checkout reads its branch there, once i
 it.effect("a shared checkout lists its root repository and the repositories it tracks", () =>
   Effect.gen(function* () {
     const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-    const workspace = yield* workspaces.of(
+    const workspace = yield* settled(
+      workspaces,
       inProject({
         pullRequests: [
           link("https://github.com/acme/app/pull/1", "open"),
@@ -290,7 +311,7 @@ it.effect("a shared checkout lists its root repository and the repositories it t
 it.effect("a plain project folder is no repository; the repositories it tracks are", () =>
   Effect.gen(function* () {
     const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-    const workspace = yield* workspaces.of(inProject());
+    const workspace = yield* settled(workspaces, inProject());
     assert.deepEqual(
       workspace.repositories.map((checkout) => checkout.path),
       ["/code/app/api", "/code/app/web"],
@@ -316,7 +337,7 @@ it.effect(
     const tracked = Array.from({ length: 128 }, (_, index) => folder(`/code/app/repo-${index}`));
     return Effect.gen(function* () {
       const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-      const workspace = yield* workspaces.of(inProject());
+      const workspace = yield* settled(workspaces, inProject());
       assert.equal(workspace.repositories.length, MemberWorkspaces.MEMBER_REPOSITORIES_MAX);
       assert.equal(workspace.repositories.at(-1)?.path, "/code/app/repo-31");
       assert.isTrue(workspace.truncated);
@@ -343,14 +364,14 @@ it.effect(
       const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
       const readAll = Effect.forEach(members, (member) => workspaces.cached(member));
       assert.deepEqual(yield* readAll, ["pending", "pending", "pending"]);
-      yield* Effect.yieldNow;
+      yield* TestClock.adjust(READ_STEP);
       // A read under way is shared, not started again.
       assert.deepEqual(yield* readAll, ["pending", "pending", "pending"]);
-      yield* Effect.yieldNow;
+      yield* TestClock.adjust(READ_STEP);
       assert.equal(probes, 3);
       yield* TestClock.adjust(MemberWorkspaces.WORKSPACE_READ_DEADLINE);
       assert.deepEqual(yield* readAll, ["pending", "pending", "pending"]);
-      yield* Effect.yieldNow;
+      yield* TestClock.adjust(READ_STEP);
       assert.equal(probes, 6);
     }).pipe(
       Effect.provide(
@@ -371,7 +392,7 @@ it.effect("a cached read answers at once, then goes stale and is read again", ()
   return Effect.gen(function* () {
     const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
     assert.equal(yield* workspaces.cached(inProject()), "pending");
-    yield* Effect.yieldNow;
+    yield* TestClock.adjust(READ_STEP);
     const fresh = yield* workspaces.cached(inProject());
     assert.isFalse(typeof fresh === "string" || fresh.stale);
     yield* TestClock.adjust("1 minute");
@@ -385,7 +406,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-      const workspace = yield* workspaces.of({
+      const workspace = yield* settled(workspaces, {
         ...inProject(),
         pullRequests: [
           link("https://ci-bot:ghp_secret@github.com/acme/app/pull/4?token=abc", "open"),
@@ -412,7 +433,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-      const workspace = yield* workspaces.of({
+      const workspace = yield* settled(workspaces, {
         ...inProject(),
         pullRequests: [
           link("https://dev.azure.com/acme/Proj/_git/Repo/pullrequest/7", "open"),
@@ -429,7 +450,7 @@ it.effect(
         ]),
         [
           ["dev.azure.com/acme/proj/_git/repo", [7]],
-          ["tfs.example.com/tfs/defaultcollection/proj/_git/server", [5]],
+          ["tfs.example.com:8443/tfs/defaultcollection/proj/_git/server", [5]],
         ],
       );
       assert.deepEqual(workspace.otherPullRequests, []);
@@ -448,4 +469,102 @@ it.effect(
         }),
       ),
     ),
+);
+
+it.effect(
+  "two servers on one host, on two ports, are two repositories with their own pull requests",
+  () =>
+    Effect.gen(function* () {
+      const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
+      const workspace = yield* settled(workspaces, {
+        ...inProject(),
+        pullRequests: [
+          link(
+            "https://tfs.example.com:8443/tfs/DefaultCollection/Proj/_git/Repo/pullrequest/1",
+            "open",
+          ),
+          link(
+            "https://tfs.example.com:9443/tfs/DefaultCollection/Proj/_git/Repo/pullrequest/2",
+            "open",
+          ),
+        ],
+      });
+      assert.deepEqual(
+        workspace.repositories.map((checkout) => [
+          checkout.remote,
+          checkout.pullRequests.map((pullRequest) => pullRequest.number),
+        ]),
+        [
+          ["tfs.example.com:8443/tfs/defaultcollection/proj/_git/repo", [1]],
+          ["tfs.example.com:9443/tfs/defaultcollection/proj/_git/repo", [2]],
+          ["tfs.example.com/tfs/defaultcollection/proj/_git/repo", [1, 2]],
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        machine([], {
+          projectRoot: "/code/app",
+          tracked: [folder("/code/app/a"), folder("/code/app/b"), folder("/code/app/ssh")],
+          repositories: ["/code/app/a", "/code/app/b", "/code/app/ssh"],
+          identities: {
+            "/code/app/a": identity(
+              "https://tfs.example.com:8443/tfs/DefaultCollection/Proj/_git/Repo",
+            ),
+            "/code/app/b": identity(
+              "https://tfs.example.com:9443/tfs/DefaultCollection/Proj/_git/Repo",
+            ),
+            // An SSH remote names no HTTP port, so it is the repository on either.
+            "/code/app/ssh": identity(
+              "ssh://tfs.example.com:22/tfs/DefaultCollection/Proj/_git/Repo",
+            ),
+          },
+        }),
+      ),
+    ),
+);
+
+it.effect("a forgotten thread is read again from the start", () => {
+  const gitCalls: Array<string> = [];
+  return Effect.gen(function* () {
+    const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
+    yield* settled(workspaces, inProject());
+    yield* workspaces.forget(threadId);
+    assert.equal(yield* workspaces.cached(inProject()), "pending");
+  }).pipe(Effect.provide(machine(gitCalls)));
+});
+
+it.effect("a read that ends after its thread is forgotten stores nothing", () => {
+  const gate = Deferred.makeUnsafe<void>();
+  return Effect.gen(function* () {
+    const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
+    assert.equal(yield* workspaces.cached(inProject()), "pending");
+    yield* TestClock.adjust(READ_STEP);
+    yield* workspaces.forget(threadId);
+    yield* Deferred.succeed(gate, undefined);
+    // The read wakes, sleeps once more on the test clock, and has ended once the adjust returns.
+    yield* TestClock.adjust(READ_STEP);
+    assert.equal(yield* workspaces.cached(inProject()), "pending");
+  }).pipe(
+    Effect.provide(
+      machine([], {
+        resolve: () =>
+          Deferred.await(gate).pipe(Effect.andThen(Effect.sleep(READ_STEP)), Effect.as(null)),
+      }),
+    ),
+  );
+});
+
+it.effect("past its cap the cache drops the thread read least recently", () =>
+  Effect.gen(function* () {
+    const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
+    const thread = (index: number) => inProject({ id: ThreadId.make(`thread:${index}`) });
+    for (let index = 0; index < MemberWorkspaces.CACHE_ENTRIES_MAX; index += 1) {
+      yield* settled(workspaces, thread(index));
+    }
+    // Read again, so the second is now the oldest.
+    yield* settled(workspaces, thread(0));
+    yield* settled(workspaces, thread(MemberWorkspaces.CACHE_ENTRIES_MAX));
+    assert.notEqual(yield* workspaces.cached(thread(0)), "pending");
+    assert.equal(yield* workspaces.cached(thread(1)), "pending");
+  }).pipe(Effect.provide(machine([]))),
 );

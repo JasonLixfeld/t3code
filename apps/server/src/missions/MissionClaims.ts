@@ -22,10 +22,17 @@ import * as Schema from "effect/Schema";
 import { DispatchModeLimit } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { MemberWorkspaces } from "./MemberWorkspaces.ts";
 import * as MissionStore from "./MissionStore.ts";
 import type { MissionClaim, MissionRecord } from "./MissionStore.ts";
 
-export const MissionClaimKind = Schema.Literals(["join", "release", "list", "rename"]);
+export const MissionClaimKind = Schema.Literals([
+  "join",
+  "release",
+  "list",
+  "rename",
+  "workspaces",
+]);
 
 /**
  * Who holds a claim: this machine's environment id for a lead here, else the link session that
@@ -158,6 +165,7 @@ const make = Effect.gen(function* () {
   const store = yield* MissionStore.MissionStore;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const random = yield* SecureRandom.SecureRandom;
+  const workspaces = yield* MemberWorkspaces;
   const locks = yield* KeyedLock.make<ThreadId>();
   // The orchestrator's lock on a thread, which a mode change takes too. It is not reentrant, and a
   // tag write dispatches under it, so it is held only across an access check and its claim write.
@@ -323,6 +331,8 @@ const make = Effect.gen(function* () {
           yield* store.release({ ...input, owner });
         }),
       );
+      // A thread no longer claimed is no longer listed, so what was read of it goes.
+      yield* workspaces.forget(input.threadId);
       yield* syncTags(input.threadId);
     },
     (effect, _owner, input) => locks.withLock(input.threadId, effect),
@@ -331,6 +341,7 @@ const make = Effect.gen(function* () {
   const leaveHere = Effect.fn("MissionClaims.leaveHere")(
     function* (threadId: ThreadId) {
       yield* threadCommands.withLock(threadId, store.leave(threadId));
+      yield* workspaces.forget(threadId);
       yield* syncTags(threadId);
     },
     (effect, threadId) => locks.withLock(threadId, effect),

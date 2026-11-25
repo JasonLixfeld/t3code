@@ -47,6 +47,7 @@ const noWorkspace = Layer.mock(MemberWorkspaces)({
       otherPullRequests: [],
       stale: false,
     }),
+  forget: () => Effect.void,
 });
 const webProject: OrchestrationProjectShell = {
   id: ProjectId.make("project-web"),
@@ -108,7 +109,12 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
       MissionClaims.layer.pipe(
         Layer.provideMerge(MissionStore.layerFromPath(`${directory}/${machine}.sqlite`)),
         Layer.provide(
-          Layer.mergeAll(threadsWith(tags), NodeCrypto.layer, ThreadCommandExecutor.layer),
+          Layer.mergeAll(
+            threadsWith(tags),
+            NodeCrypto.layer,
+            ThreadCommandExecutor.layer,
+            noWorkspace,
+          ),
         ),
       );
 

@@ -97,7 +97,7 @@ const TAG = "mission:0123456789ab:One";
 const WAS_TAG = "mission-was:0123456789ab:One";
 
 type Claims = MissionClaims.MissionClaims["Service"];
-type ClaimKind = "join" | "release" | "list" | "rename";
+type ClaimKind = "join" | "release" | "list" | "rename" | "workspaces";
 
 /** Every machine's threads and tags, and how the laptop answers this lead. */
 const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
@@ -109,7 +109,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   /** Each thread's run state, idle unless a test says otherwise. */
   const activity = new Map<string, Record<string, unknown>>();
   const dispatched: Array<string> = [];
-  const workspaces = new Map<string, MemberWorkspace>();
+  const workspaces = new Map<string, MemberWorkspace | "pending">();
   const workspacesLayer = Layer.mock(MemberWorkspaces)({
     cached: (shell) =>
       Effect.sync(
@@ -117,6 +117,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
           (shell.worktreePath === null ? undefined : workspaces.get(shell.worktreePath)) ??
           "pending",
       ),
+    forget: () => Effect.void,
   });
   /** What Settings tells every mission's lead. */
   const settings = { missionDefaultPrompt: "" };
@@ -158,6 +159,8 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     linkExpired: false,
     /** Calls of these kinds its tool refuses, whatever the mode. */
     deniedKinds: [] as Array<ClaimKind>,
+    /** Its list leaves out these threads' workspaces, as when they do not fit. */
+    omits: new Set<ThreadId>(),
     /** Its tool refuses a join or release of a thread above the modes it was sent with. */
     enforcesLimits: false,
   };
@@ -222,8 +225,33 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       readonly name: string;
       readonly generation: string;
       readonly intentId: string;
+      readonly members: ReadonlyArray<{ readonly threadId: ThreadId; readonly generation: string }>;
     };
     const owner = MissionClaims.linkOwner(laptop.session);
+    // As the laptop's /mcp answers: each claim with what its thread is doing.
+    const detailOf = (threadId: ThreadId, listing: boolean) => {
+      const shell = {
+        status: "idle",
+        latestRunId: null,
+        pendingRuntimeRequest: null,
+        hasActionableProposedPlan: false,
+        ...activity.get(keyOf(ref(LAPTOP, threadId))),
+      } as never as OrchestrationV2ThreadShell;
+      const request = shell.pendingRuntimeRequest;
+      const workspace = workspaces.get(worktreeOf(threadId));
+      return {
+        status: memberStatusOf(shell),
+        title: "One",
+        project: "api",
+        ...(shell.latestRunId === null
+          ? {}
+          : { run: { id: shell.latestRunId, status: shell.status } }),
+        requests: request === null ? [] : [{ id: request.id, kind: request.kind }],
+        ...(workspace === undefined
+          ? {}
+          : { workspace: listing && laptop.omits.has(threadId) ? "omitted" : workspace }),
+      };
+    };
     switch (args.kind) {
       case "join":
         return Effect.map(claims.join(owner, args), (claim) =>
@@ -232,33 +260,19 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       case "release":
         return Effect.as(claims.release(owner, args), []);
       case "list":
-        // As the laptop's /mcp answers: each claim with what its thread is doing.
         return Effect.map(claims.list(owner), (held) =>
-          held.map((claim) => ({
-            ...claim,
-            detail: (() => {
-              const shell = {
-                status: "idle",
-                latestRunId: null,
-                pendingRuntimeRequest: null,
-                hasActionableProposedPlan: false,
-                ...activity.get(keyOf(ref(LAPTOP, claim.threadId))),
-              } as never as OrchestrationV2ThreadShell;
-              const request = shell.pendingRuntimeRequest;
-              return {
-                status: memberStatusOf(shell),
-                title: "One",
-                project: "api",
-                ...(shell.latestRunId === null
-                  ? {}
-                  : { run: { id: shell.latestRunId, status: shell.status } }),
-                requests: request === null ? [] : [{ id: request.id, kind: request.kind }],
-                ...(workspaces.has(worktreeOf(claim.threadId))
-                  ? { workspace: workspaces.get(worktreeOf(claim.threadId)) }
-                  : {}),
-              };
-            })(),
-          })),
+          held.map((claim) => ({ ...claim, detail: detailOf(claim.threadId, true) })),
+        );
+      case "workspaces":
+        return Effect.map(claims.list(owner), (held) =>
+          held.flatMap((claim) =>
+            args.members.some(
+              (member) =>
+                member.threadId === claim.threadId && member.generation === claim.generation,
+            )
+              ? [{ ...claim, detail: detailOf(claim.threadId, false) }]
+              : [],
+          ),
         );
       case "rename":
         return claims.rename(owner, args);
@@ -506,6 +520,7 @@ const withMissions = <A, E>(
             world.threadsOn(environmentId),
             NodeCrypto.layer,
             ThreadCommandExecutor.layer,
+            world.workspacesLayer,
           ),
         ),
       );
@@ -3283,3 +3298,114 @@ it.effect(
     );
   },
 );
+
+it.effect("a member its machine's list leaves out gets its workspace through the follow-up", () => {
+  const world = makeWorld([lead, laptopMember]);
+  const workspace = workspaceOf("worktree", [
+    repository("api", "github.com/acme/api", "t3/docs", [13]),
+  ]);
+  world.workspaces.set(worktreeOf(laptopMember.threadId), workspace);
+  world.laptop.omits.add(laptopMember.threadId);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: laptopMember });
+      yield* listed;
+      yield* world.untilAnswered("workspaces");
+      const [row] = yield* missions.roster(missionId);
+      assert.deepEqual(row?.workspace, workspace);
+    }),
+  );
+});
+
+it.effect(
+  "a list that leaves a workspace out keeps the last one sent for the claim, as stale",
+  () => {
+    const world = makeWorld([lead, laptopMember]);
+    const workspace = workspaceOf("worktree", [
+      repository("api", "github.com/acme/api", "t3/docs", [13]),
+    ]);
+    world.workspaces.set(worktreeOf(laptopMember.threadId), workspace);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const { missionId } = yield* createOne;
+        yield* missions.addMember({ missionId, member: laptopMember });
+        yield* listed;
+        yield* world.untilAnswered("list");
+        assert.deepEqual((yield* missions.roster(missionId))[0]?.workspace, workspace);
+        world.laptop.omits.add(laptopMember.threadId);
+        world.laptop.deniedKinds.push("workspaces");
+        yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+        yield* listed;
+        yield* world.untilStarted("workspaces");
+        assert.deepEqual((yield* missions.roster(missionId))[0]?.workspace, {
+          ...workspace,
+          stale: true,
+        });
+      }),
+    );
+  },
+);
+
+it.effect(
+  "a roster that shows a pending workspace asks its machine again at once, once per gap",
+  () => {
+    const world = makeWorld([lead, laptopMember]);
+    const where = worktreeOf(laptopMember.threadId);
+    world.workspaces.set(where, "pending");
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const { missionId } = yield* createOne;
+        yield* missions.addMember({ missionId, member: laptopMember });
+        yield* listed;
+        yield* world.untilAnswered("list");
+        const workspace = workspaceOf("worktree", [
+          repository("api", "github.com/acme/api", "b", []),
+        ]);
+        world.workspaces.set(where, workspace);
+        const lists = () => world.laptop.calls.filter((kind) => kind === "list").length;
+        const before = lists();
+        assert.equal((yield* missions.roster(missionId))[0]?.workspace, "pending");
+        yield* missions.roster(missionId);
+        yield* world.untilAnswered("list");
+        assert.equal(lists(), before + 1);
+        assert.deepEqual((yield* missions.roster(missionId))[0]?.workspace, workspace);
+      }),
+    );
+  },
+);
+
+it.effect("two servers on one host, on two ports, are two groups in the roster", () => {
+  const second = ref(HERE, "second");
+  const world = makeWorld([lead, localMember, second]);
+  const on = (port: number) =>
+    workspaceOf("worktree", [
+      repository("repo", `tfs.example.com:${port}/tfs/defaultcollection/proj/_git/repo`, "a", []),
+    ]);
+  world.workspaces.set(worktreeOf(localMember.threadId), on(8443));
+  world.workspaces.set(worktreeOf(second.threadId), on(9443));
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      for (const member of [localMember, second]) {
+        yield* missions.addMember({ missionId, member });
+      }
+      const roster = decodeRoster(JSON.parse(yield* leadTool(world, "t3_mission_roster", {})));
+      assert.deepEqual(
+        roster.byRepository.map((group) => group.repository),
+        [
+          "tfs.example.com:8443/tfs/defaultcollection/proj/_git/repo",
+          "tfs.example.com:9443/tfs/defaultcollection/proj/_git/repo",
+        ],
+      );
+    }),
+  );
+});

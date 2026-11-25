@@ -19,6 +19,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -48,6 +49,7 @@ import {
   missionPromptText,
   missionStatusText,
   type RosterMember,
+  WORKSPACES_PER_CALL,
 } from "./missionStatus.ts";
 import { MemberWorkspaces } from "./MemberWorkspaces.ts";
 import { MissionTurnContexts } from "./MissionTurnContexts.ts";
@@ -74,6 +76,8 @@ export const IDLE_POLL_INTERVALS = 4;
 export const PENDING_ADD_DAYS = 7;
 /** How many forks back a thread's history is followed to a lead it came from. */
 export const FORK_WALK_HOPS = 64;
+/** How soon a roster that shows an unfinished workspace may ask that member's machine again. */
+const WORKSPACE_ASK_AGAIN_GAP = Duration.seconds(5);
 
 export class Missions extends Context.Service<
   Missions,
@@ -207,7 +211,11 @@ type ClaimCall =
       readonly generation: string;
     }
   | { readonly kind: "list" }
-  | { readonly kind: "rename"; readonly missionId: string; readonly name: string };
+  | { readonly kind: "rename"; readonly missionId: string; readonly name: string }
+  | {
+      readonly kind: "workspaces";
+      readonly members: ReadonlyArray<{ readonly threadId: ThreadId; readonly generation: string }>;
+    };
 
 /** The claims a machine holds for this lead, as it last said. */
 interface Machine {
@@ -254,16 +262,29 @@ const make = Effect.gen(function* () {
   // The adds whose first join is on its way now. Their rows exist already, and are not shown as
   // pending until that call ends without an answer.
   const sending = yield* Ref.make<ReadonlySet<string>>(new Set());
+  type RemoteDetail = {
+    readonly missionId: string;
+    readonly generation: string;
+    readonly detail: MemberDetail;
+  };
+  /**
+   * A machine that left a workspace out, or has not read it yet, keeps the one it last sent for
+   * the same claim, marked stale.
+   */
+  const keptWorkspace = (
+    detail: MemberDetail,
+    last: RemoteDetail | undefined,
+    generation: string,
+  ): MemberDetail =>
+    (detail.workspace === "omitted" || detail.workspace === "pending") &&
+    last?.generation === generation &&
+    typeof last.detail.workspace === "object"
+      ? { ...detail, workspace: { ...last.detail.workspace, stale: true } }
+      : detail;
   // What each member on another machine was doing when its machine last listed it, and the claim
   // it was listed under: its workspace is shown only while that claim holds.
   const remoteDetails = yield* Ref.make<
-    ReadonlyMap<
-      EnvironmentId,
-      ReadonlyMap<
-        ThreadId,
-        { readonly missionId: string; readonly generation: string; readonly detail: MemberDetail }
-      >
-    >
+    ReadonlyMap<EnvironmentId, ReadonlyMap<ThreadId, RemoteDetail>>
   >(new Map());
   const remoteChanged = yield* PubSub.unbounded<{
     readonly missionId: string;
@@ -524,6 +545,9 @@ const make = Effect.gen(function* () {
           return yield* claims.list(here);
         case "rename":
           return yield* claims.rename(here, call);
+        // A member here is read where it is, never through a list.
+        case "workspaces":
+          return [];
       }
     }
     const { label } = yield* linkTo(environmentId).pipe(
@@ -765,6 +789,7 @@ const make = Effect.gen(function* () {
           }
         }
         yield* noteRemoteDetails(environmentId, held);
+        yield* fetchOmittedWorkspaces(environmentId, held);
         if (check !== undefined) {
           yield* store.setTombstoneCheck(environmentId, afterAnswer(check, askedAt));
         }
@@ -800,16 +825,27 @@ const make = Effect.gen(function* () {
     listed: ReadonlyArray<MissionClaim & { readonly detail?: MemberDetail | undefined }>,
   ) {
     const changed = yield* Ref.modify(remoteDetails, (before) => {
+      const seen = before.get(environmentId);
       const next = new Map(before);
       next.set(
         environmentId,
         new Map(
           listed.flatMap(({ threadId, missionId, generation, detail }) =>
-            detail === undefined ? [] : [[threadId, { missionId, generation, detail }] as const],
+            detail === undefined
+              ? []
+              : [
+                  [
+                    threadId,
+                    {
+                      missionId,
+                      generation,
+                      detail: keptWorkspace(detail, seen?.get(threadId), generation),
+                    },
+                  ] as const,
+                ],
           ),
         ),
       );
-      const seen = before.get(environmentId);
       const news = listed.filter((claim) => {
         const last = seen?.get(claim.threadId)?.detail;
         return (
@@ -824,6 +860,41 @@ const make = Effect.gen(function* () {
         missionId: claim.missionId,
         ref: { environmentId, threadId: claim.threadId },
         detail: claim.detail!,
+      });
+    }
+  });
+
+  /** Workspaces a list left out for room, asked for a few at a time, under the same claims. */
+  const fetchOmittedWorkspaces = Effect.fn("Missions.fetchOmittedWorkspaces")(function* (
+    environmentId: EnvironmentId,
+    listed: ReadonlyArray<MissionClaim & { readonly detail?: MemberDetail | undefined }>,
+  ) {
+    const omitted = listed.flatMap(({ threadId, generation, detail }) =>
+      detail?.workspace === "omitted" ? [{ threadId, generation }] : [],
+    );
+    for (let start = 0; start < omitted.length; start += WORKSPACES_PER_CALL) {
+      const answered = yield* onMember(environmentId, {
+        kind: "workspaces",
+        members: omitted.slice(start, start + WORKSPACES_PER_CALL),
+      }).pipe(
+        // A machine that predates the call refuses it, and its workspaces stay as they were.
+        Effect.catchTags({ MissionError: () => Effect.succeed([]) }),
+      );
+      yield* Ref.update(remoteDetails, (before) => {
+        const known = new Map(before.get(environmentId));
+        for (const { threadId, generation, detail } of answered) {
+          const last = known.get(threadId);
+          if (last?.generation !== generation || detail?.workspace === undefined) continue;
+          known.set(threadId, {
+            ...last,
+            detail: keptWorkspace(
+              { ...last.detail, workspace: detail.workspace },
+              last,
+              generation,
+            ),
+          });
+        }
+        return new Map(before).set(environmentId, known);
       });
     }
   });
@@ -1255,6 +1326,21 @@ const make = Effect.gen(function* () {
    * The members and what each is doing, numbered. With `named`, also the titles, projects and
    * machine labels, which only the roster tool returns, as data. A turn reads it without.
    */
+  // When each machine was last asked again for a workspace a roster showed unfinished.
+  const askedAgain = new Map<EnvironmentId, number>();
+  /** Asks each machine again in the background, at most once per gap, so a second look finds it. */
+  const askAgainSoon = Effect.fn("Missions.askAgainSoon")(function* (
+    environmentIds: Iterable<EnvironmentId>,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    for (const environmentId of new Set(environmentIds)) {
+      const last = askedAgain.get(environmentId);
+      if (last !== undefined && now - last < Duration.toMillis(WORKSPACE_ASK_AGAIN_GAP)) continue;
+      askedAgain.set(environmentId, now);
+      yield* refreshMachine(environmentId).pipe(Effect.forkIn(background));
+    }
+  });
+
   const members = Effect.fn("Missions.members")(function* (missionId: string, named: boolean) {
     const held = yield* machines;
     const view = yield* missionView(yield* missionNamed(missionId), held, yield* shown);
@@ -1306,6 +1392,18 @@ const make = Effect.gen(function* () {
         title: named ? (detail?.title ?? "") : "",
         ...(named && workspace !== undefined ? { workspace } : {}),
       });
+    }
+    if (named) {
+      yield* askAgainSoon(
+        rows.flatMap(({ ref, workspace }) =>
+          ref.environmentId !== here &&
+          (workspace === "pending" ||
+            workspace === "omitted" ||
+            (typeof workspace === "object" && workspace.stale))
+            ? [ref.environmentId]
+            : [],
+        ),
+      );
     }
     return rows;
   });

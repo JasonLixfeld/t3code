@@ -246,8 +246,13 @@ const PROMPT_CUT_NOTE = "\n\n[The mission prompt was cut here to fit 4,000 bytes
 
 const bytes = (text: string) => Buffer.byteLength(text, "utf8");
 
-/** The most workspace detail one list answer carries, so it stays one small message. */
+/**
+ * The most workspace detail one answer to a lead carries, so it stays one small message. It
+ * counts the UTF-8 bytes of the workspaces' JSON only, not the claims, statuses or titles.
+ */
 export const LISTED_WORKSPACE_MAX_BYTES = 48_000;
+/** How many members' workspaces a lead asks for in one follow-up to a list. */
+export const WORKSPACES_PER_CALL = 8;
 
 /** In list order: a workspace past the room left is `omitted`. */
 export const withinWorkspaceRoom = <

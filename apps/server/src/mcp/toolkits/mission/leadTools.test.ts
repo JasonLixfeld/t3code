@@ -60,6 +60,7 @@ const noWorkspace = Layer.mock(MemberWorkspaces)({
       otherPullRequests: [],
       stale: false,
     }),
+  forget: () => Effect.void,
 });
 
 const HERE = EnvironmentId.make("env-here");
