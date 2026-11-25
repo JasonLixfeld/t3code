@@ -16,7 +16,7 @@ import {
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
@@ -41,6 +41,7 @@ import { useUiStateStore } from "../../uiStateStore";
 import { toastManager } from "../ui/toast";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import Sidebar from "../Sidebar";
+import { MissionPromptDialog } from "./MissionsSection";
 import { SidebarProvider } from "../ui/sidebar";
 import type { MissionHost } from "./missions.logic";
 
@@ -256,6 +257,7 @@ async function renderSidebar(
   const ui = () => (
     <SidebarProvider>
       <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      <MissionPromptDialog />
     </SidebarProvider>
   );
   const screen = await render(ui());
@@ -555,9 +557,10 @@ describe("missions in the sidebar", () => {
     const lead = await menuOf(rowOf(screen.container, "Plan the v2 release"), null);
     expect(lead).toContain("Pin thread");
     const group = lead.indexOf("Mission");
-    expect(lead.slice(group, group + 3)).toEqual([
+    expect(lead.slice(group, group + 4)).toEqual([
       "Mission",
       "New thread in this mission",
+      "Edit mission prompt…",
       "Delete mission",
     ]);
     // A lead cannot start, join or leave a mission, so those are not offered.
@@ -573,6 +576,7 @@ describe("missions in the sidebar", () => {
     expect(await menuOf(gone, "mission-new-thread:local:ba9876543210")).toEqual([
       "Mission",
       "New thread in this mission",
+      "Edit mission prompt…",
       "New lead",
       "Choose a thread…",
       "Delete mission",
@@ -588,6 +592,7 @@ describe("missions in the sidebar", () => {
     expect(await menuOf(loading, "mission-delete:local:cccccccccccc")).toEqual([
       "Mission",
       "New thread in this mission",
+      "Edit mission prompt…",
       "New lead",
       "Choose a thread…",
       "Delete mission",
@@ -599,6 +604,29 @@ describe("missions in the sidebar", () => {
       }),
     );
     expect(confirm).toHaveBeenCalledOnce();
+  });
+
+  it("edits a mission's prompt from its menu, starting from the one it has", async () => {
+    const show = vi.fn().mockResolvedValue("mission-prompt:local:0123456789ab");
+    vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
+    listedMissions[0] = { ...ship, prompt: "Ship it." };
+    onTestFinished(() => {
+      listedMissions[0] = ship;
+    });
+    await using screen = await renderSidebar();
+    await userEvent.click(rowOf(screen.container, "Plan the v2 release"), { button: "right" });
+    const prompt = page.getByRole("textbox", { name: "Mission prompt" });
+    await expect.element(prompt).toHaveValue("Ship it.");
+    await userEvent.fill(prompt, "Review every pull request.");
+    // In this unstyled render the modal's inert layer covers its buttons, so click the button itself.
+    (page.getByRole("button", { name: "Save" }).element() as HTMLElement).click();
+    await vi.waitFor(() =>
+      expect(commandFor("mission set prompt")).toHaveBeenCalledExactlyOnceWith({
+        environmentId: LOCAL,
+        input: { missionId: "0123456789ab", prompt: "Review every pull request." },
+      }),
+    );
+    await expect.element(prompt).not.toBeInTheDocument();
   });
 
   it("heads a mission with the lead's title beside its chevron, and names no project", async () => {

@@ -2032,6 +2032,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:missions:delete",
       tag: WS_METHODS.missionsDelete,
     }),
+    setMissionPrompt: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:missions:set-prompt",
+      tag: WS_METHODS.missionsSetPrompt,
+    }),
     createGuestShare: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:guest-share:create",
       tag: WS_METHODS.guestShareCreate,

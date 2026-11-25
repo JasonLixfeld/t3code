@@ -2,6 +2,8 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
 
+import * as Missions from "../../../missions/Missions.ts";
+import { joinCallersMission } from "../mission/handlers.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
@@ -240,4 +242,22 @@ const handlers = {
   ),
 } satisfies McpToolAccess.Handlers<typeof OrchestratorToolkit.tools>;
 
-export const layer = McpToolAccess.toLayer(OrchestratorToolkit, handlers);
+export const layer = McpToolAccess.toLayer(
+  OrchestratorToolkit,
+  Effect.map(Effect.serviceOption(Missions.Missions), (missions) => ({
+    ...handlers,
+    create_threads: McpToolAccess.followedBy(handlers.create_threads, (_input, result) =>
+      Effect.gen(function* () {
+        const { environmentId } = yield* McpInvocationContext.McpInvocationContext;
+        return {
+          threads: yield* Effect.forEach(result.threads, (thread) =>
+            Effect.map(
+              joinCallersMission(missions, { environmentId, threadId: thread.threadId }),
+              (mission) => (mission === undefined ? thread : { ...thread, mission }),
+            ),
+          ),
+        };
+      }),
+    ),
+  })),
+);

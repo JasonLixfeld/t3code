@@ -12854,5 +12854,14 @@
   "5b091f252c924026": "Preparando “Nenhum projeto”…",
   "df569eba6576b4b9": "A missão deste rascunho não permite mais essa máquina.",
   "6c4a013bdfde968d": "Nenhum projeto…",
-  "c054c0f81a20232c": "A máquina não respondeu a tempo."
+  "c054c0f81a20232c": "A máquina não respondeu a tempo.",
+  "69032cb43b75a869": "O que a thread líder de cada missão segue a cada turno, a menos que a missão tenha o próprio prompt.",
+  "91dc495b1ac61f56": "Redefinir o prompt da missão para o padrão",
+  "09bf7d819760063c": "Prompt da missão",
+  "8bdf3a508c08b7ca": "Misto. Digite um prompt para aplicar a todos os destinos selecionados.",
+  "62dbf0230a0358cf": "Confira o trabalho de cada membro antes de dar a missão por concluída.",
+  "9d0b1d2cead70261": "missão líder orquestrar instruções prompt padrão cada turno",
+  "e2cdfebe2d8a1d14": "Não foi possível salvar o prompt da missão",
+  "4cf08bfc2adf8c67": "A líder de \"{mission}\" segue isto a cada turno. Deixe vazio para usar o padrão das Configurações.",
+  "32bb9fa25796a9eb": "Editar prompt da missão…"
 }

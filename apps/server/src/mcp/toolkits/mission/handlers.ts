@@ -1,78 +1,181 @@
-import { MissionError, OrchestratorMcpFailure } from "@t3tools/contracts";
+import {
+  MissionError,
+  type MissionJoinOutcome,
+  OrchestratorMcpFailure,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import { linkOwner, MissionClaims } from "../../../missions/MissionClaims.ts";
+import * as Missions from "../../../missions/Missions.ts";
+import { memberDetail, needsAttention } from "../../../missions/missionStatus.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { MissionToolkit } from "./tools.ts";
+
+type MissionsService = Missions.Missions["Service"];
 
 const needs = <A>(value: A | undefined, field: string) =>
   value === undefined
     ? Effect.fail(new MissionError({ message: `This kind of call needs ${field}.` }))
     : Effect.succeed(value);
 
-// Only a linked environment's session can call it (see `shownOnlyToLinks`). `writesThreads`
-// holds a link below full access to the threads it started, and the claim code makes that check
-// again under the thread's lock. A release drops only a claim its own caller holds.
-export const layer = McpToolAccess.toLayer(MissionToolkit, {
-  t3_mission_tag: McpToolAccess.writesThreads(
-    (input) => [input.threadId],
-    (input) =>
-      Effect.gen(function* () {
-        const scope = yield* McpInvocationContext.McpInvocationContext;
-        const claims = yield* MissionClaims;
-        const mayChange = yield* McpToolAccess.threadWriteAccess;
-        // The owner comes from the authenticated caller, never from the input.
-        const owner =
-          scope.client === undefined ? scope.environmentId : linkOwner(scope.client.sessionId);
-        if (input.kind === "list") return yield* claims.list(owner);
-        // Renames only claims this caller holds, each checked as a join is; a thread the caller
-        // may no longer change keeps the old name.
-        if (input.kind === "rename") {
-          return yield* claims.rename(
-            owner,
-            {
-              missionId: yield* needs(input.missionId, "missionId"),
-              name: yield* needs(input.name, "name"),
-            },
-            mayChange,
-          );
-        }
-        const threadId = yield* needs(input.threadId, "threadId");
-        switch (input.kind) {
-          case "join": {
-            const joined = yield* claims.join(
-              owner,
-              {
-                threadId,
-                missionId: yield* needs(input.missionId, "missionId"),
-                name: yield* needs(input.name, "name"),
-                intentId: input.intentId,
-              },
-              mayChange,
-            );
-            return joined === "intent-spent" ? [] : [joined];
-          }
-          case "release":
-            yield* claims.release(
-              owner,
-              {
-                threadId,
-                missionId: yield* needs(input.missionId, "missionId"),
-                generation: yield* needs(input.generation, "generation"),
-              },
-              mayChange,
-            );
-            return [];
-        }
-      }).pipe(
-        Effect.map((claims) => ({ claims })),
-        Effect.catchTags({
-          MissionError: (error) =>
-            Effect.fail(
-              new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
-            ),
-        }),
-      ),
-  ),
+const refused = (error: MissionError) =>
+  new OrchestratorMcpFailure({ code: "invalid_request", message: error.message });
+
+/**
+ * A top-level thread a mission's lead starts joins its Mission. A refused join leaves the thread
+ * as it is, and says why. Any other caller's threads join nothing.
+ */
+export const joinCallersMission = Effect.fn("MissionHandlers.joinCallersMission")(function* (
+  missions: Option.Option<MissionsService>,
+  member: ScopedThreadRef,
+) {
+  const scope = yield* McpInvocationContext.McpInvocationContext;
+  if (Option.isNone(missions) || scope.thread === undefined) return undefined;
+  const mission = yield* missions.value.ledBy(scope.thread.threadId);
+  if (mission === undefined) return undefined;
+  // The UI's add: a thread on another machine joins only over a full-access link.
+  return yield* missions.value.addMember({ missionId: mission.missionId, member }).pipe(
+    Effect.map((state): MissionJoinOutcome => ({ state })),
+    Effect.catchTags({
+      MissionError: (error) =>
+        Effect.succeed<MissionJoinOutcome>({ state: "refused", reason: error.message }),
+    }),
+  );
 });
+
+// Only a linked environment's session can call t3_mission_tag (see `shownOnlyToLinks`).
+// `writesThreads` holds a link below full access to the threads it started, and the claim code
+// makes that check again under the thread's lock. A release drops only a claim its own caller
+// holds. The lead tools act only on the Mission the calling thread leads.
+export const layer = McpToolAccess.toLayer(
+  MissionToolkit,
+  Effect.gen(function* () {
+    const missions = yield* Effect.serviceOption(Missions.Missions);
+    /** The caller's own Mission, never one named in the input. */
+    const callersMission = Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const caller = yield* McpInvocationContext.requireThreadScope(scope, "This mission tool");
+      const mission = Option.isNone(missions)
+        ? undefined
+        : yield* missions.value.ledBy(caller.thread.threadId);
+      if (Option.isNone(missions) || mission === undefined) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "This thread leads no mission.",
+        });
+      }
+      return { missions: missions.value, mission, environmentId: scope.environmentId };
+    });
+    return {
+      t3_mission_tag: McpToolAccess.writesThreads(
+        (input) => [input.threadId],
+        (input) =>
+          Effect.gen(function* () {
+            const scope = yield* McpInvocationContext.McpInvocationContext;
+            const claims = yield* MissionClaims;
+            const mayChange = yield* McpToolAccess.threadWriteAccess;
+            // The owner comes from the authenticated caller, never from the input.
+            const owner =
+              scope.client === undefined ? scope.environmentId : linkOwner(scope.client.sessionId);
+            if (input.kind === "list") {
+              // Each claim says what its thread is doing, so the lead can tell when it needs it.
+              return yield* Effect.forEach(yield* claims.list(owner), (claim) =>
+                Effect.map(memberDetail(claim.threadId), (detail) =>
+                  detail === undefined ? claim : { ...claim, detail },
+                ),
+              );
+            }
+            // Renames only claims this caller holds, each checked as a join is; a thread the caller
+            // may no longer change keeps the old name.
+            if (input.kind === "rename") {
+              return yield* claims.rename(
+                owner,
+                {
+                  missionId: yield* needs(input.missionId, "missionId"),
+                  name: yield* needs(input.name, "name"),
+                },
+                mayChange,
+              );
+            }
+            const threadId = yield* needs(input.threadId, "threadId");
+            switch (input.kind) {
+              case "join": {
+                const joined = yield* claims.join(
+                  owner,
+                  {
+                    threadId,
+                    missionId: yield* needs(input.missionId, "missionId"),
+                    name: yield* needs(input.name, "name"),
+                    intentId: input.intentId,
+                  },
+                  mayChange,
+                );
+                return joined === "intent-spent" ? [] : [joined];
+              }
+              case "release":
+                yield* claims.release(
+                  owner,
+                  {
+                    threadId,
+                    missionId: yield* needs(input.missionId, "missionId"),
+                    generation: yield* needs(input.generation, "generation"),
+                  },
+                  mayChange,
+                );
+                return [];
+            }
+          }).pipe(
+            Effect.map((claims) => ({ claims })),
+            Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) }),
+          ),
+      ),
+      t3_mission_roster: McpToolAccess.readsAsCaller((input) =>
+        Effect.gen(function* () {
+          const { missions, mission } = yield* callersMission;
+          const rows = yield* missions.roster(mission.missionId);
+          const cursor = input.cursor ?? 0;
+          const end = cursor + (input.limit ?? 10);
+          return {
+            missionId: mission.missionId,
+            name: mission.name,
+            members: rows.slice(cursor, end).map((row) => ({
+              threadRef: row.ref,
+              machine: row.machine,
+              project: row.project,
+              status: row.status,
+              title: row.title,
+              needsAttention: needsAttention(row.status),
+            })),
+            total: rows.length,
+            nextCursor: end < rows.length ? end : null,
+          };
+        }).pipe(Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) })),
+      ),
+      t3_mission_add: McpToolAccess.actsAsCaller((input) =>
+        Effect.gen(function* () {
+          const { missions, mission, environmentId } = yield* callersMission;
+          const member = {
+            environmentId: input.threadRef.environmentId ?? environmentId,
+            threadId: input.threadRef.threadId,
+          };
+          return { state: yield* missions.addMember({ missionId: mission.missionId, member }) };
+        }).pipe(Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) })),
+      ),
+      t3_mission_release: McpToolAccess.actsAsCaller((input) =>
+        Effect.gen(function* () {
+          const { missions, mission, environmentId } = yield* callersMission;
+          const member = {
+            environmentId: input.threadRef.environmentId ?? environmentId,
+            threadId: input.threadRef.threadId,
+          };
+          return {
+            state: yield* missions.releaseMember({ missionId: mission.missionId, member }),
+          };
+        }).pipe(Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) })),
+      ),
+    };
+  }),
+);

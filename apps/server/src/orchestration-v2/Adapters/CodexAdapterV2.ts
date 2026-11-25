@@ -861,6 +861,27 @@ function codexCyberAccess(
   return descriptor?.type === "select" ? { defaultProgram: descriptor.currentValue } : undefined;
 }
 
+const CODEX_MISSION_KEY = "t3_code_mission";
+const CODEX_MISSION_ENDED =
+  "This thread no longer leads a mission. Earlier mission instructions and status no longer apply.";
+
+/**
+ * The user's mission prompt goes as instructions, the app's status of its members as quoted data.
+ * Codex keeps what it was sent in the thread, so a thread that stops leading is told so instead.
+ */
+const codexMissionContext = (
+  context: ProviderAdapter.ProviderAdapterV2TurnInput["missionContext"],
+  ended: boolean,
+) =>
+  context !== undefined
+    ? {
+        [CODEX_MISSION_KEY]: { kind: "application" as const, value: context.prompt },
+        t3_code_mission_status: { kind: "untrusted" as const, value: context.status },
+      }
+    : ended
+      ? { [CODEX_MISSION_KEY]: { kind: "application" as const, value: CODEX_MISSION_ENDED } }
+      : undefined;
+
 export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTurnStartParams")(
   function* (input: {
     readonly nativeThreadId: string;
@@ -874,6 +895,9 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
+    readonly missionContext?: ProviderAdapter.ProviderAdapterV2TurnInput["missionContext"];
+    /** The thread was told it leads a mission, and no longer does. */
+    readonly missionEnded?: boolean;
     /** Set only for a model that offers Cyber Access; custom models never do. */
     readonly cyberAccess?: { readonly defaultProgram: string | undefined } | undefined;
     /** The user's `model_reasoning_summary` from the Codex config, when set. */
@@ -942,12 +966,14 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       workspaceInstructions === ""
         ? undefined
         : { t3_code_workspace: { kind: "application" as const, value: workspaceInstructions } };
+    const missionContext = codexMissionContext(input.missionContext, input.missionEnded === true);
     const additionalContext =
       t3Context === undefined &&
       workspaceContext === undefined &&
+      missionContext === undefined &&
       Object.keys(appContext).length === 0
         ? undefined
-        : { ...t3Context, ...workspaceContext, ...appContext };
+        : { ...t3Context, ...workspaceContext, ...missionContext, ...appContext };
     return yield* decodeCodexTurnStartParams({
       threadId: input.nativeThreadId,
       input: input.codexInput,
@@ -7810,6 +7836,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
+              ...(turnInput.missionContext === undefined
+                ? {}
+                : { missionContext: turnInput.missionContext }),
+              missionEnded:
+                (yield* Ref.get(additionalContextByThread)).get(threadId)?.[CODEX_MISSION_KEY] !==
+                undefined,
               ...(configuredReasoningSummary === undefined ? {} : { configuredReasoningSummary }),
             });
             yield* Ref.update(pendingRootTurns, (current) => {

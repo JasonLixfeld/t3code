@@ -153,6 +153,7 @@ const replayHttpClient = (
   replayGate: ProviderReplayGate | undefined,
   onPrompt: ((input: unknown) => void) | undefined,
   beforeResponse: ((path: string) => Effect.Effect<void>) | undefined,
+  onInstructions: ((input: unknown) => void) | undefined,
 ) =>
   HttpClient.make((request, url) =>
     Effect.tryPromise({
@@ -174,6 +175,7 @@ const replayHttpClient = (
         // HTTP streams and requests use separate connections; deliver prior recorded inbound data before matching requests.
         if (operation.type !== "event.subscribe") await controller.untilInboundDelivered();
         if (operation.type === "session.prompt") onPrompt?.(operation.input);
+        if (operation.type === "session.instructions.entry.put") onInstructions?.(operation.input);
         await controller.expectOutbound(operation);
         if (operation.type === "event.subscribe") {
           controller.exited = false;
@@ -224,6 +226,7 @@ export const replayServer = (
     readonly processExit?: Effect.Effect<void>;
     readonly beforeResponse?: (path: string) => Effect.Effect<void>;
     readonly onPrompt?: (input: unknown) => void;
+    readonly onInstructions?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
   },
@@ -244,6 +247,7 @@ export const replayServer = (
           options?.replayGate,
           options?.onPrompt,
           options?.beforeResponse,
+          options?.onInstructions,
         ),
       ),
     );
@@ -280,6 +284,7 @@ const makeReplayAdapter = (
     readonly processExit?: Effect.Effect<void>;
     readonly beforeResponse?: (path: string) => Effect.Effect<void>;
     readonly onPrompt?: (input: unknown) => void;
+    readonly onInstructions?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
   },
@@ -336,6 +341,7 @@ export const openCode2ReplayRuntime = (
     readonly beforeResponse?: (path: string) => Effect.Effect<void>;
     readonly version?: string;
     readonly onPrompt?: (input: unknown) => void;
+    readonly onInstructions?: (input: unknown) => void;
     readonly borrowers?: { current: number };
     readonly replayGate?: ProviderReplayGate;
     readonly attachmentsDir?: string;

@@ -33,7 +33,18 @@ import { MissionClaimResult } from "../mcp/toolkits/mission/tools.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
+import * as Project from "../project/ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { MissionClaims } from "./MissionClaims.ts";
+import {
+  type MemberDetail,
+  type MemberStatus,
+  memberDetail,
+  missionPromptText,
+  missionStatusText,
+  type RosterMember,
+} from "./missionStatus.ts";
+import { MissionTurnContexts } from "./MissionTurnContexts.ts";
 import {
   type MissionClaim,
   type MissionRecord,
@@ -84,12 +95,12 @@ export class Missions extends Context.Service<
     readonly addMember: (input: {
       readonly missionId: string;
       readonly member: ScopedThreadRef;
-    }) => Effect.Effect<void, MissionError>;
+    }) => Effect.Effect<"joined" | "pending", MissionError>;
     /** Leaves the release pending when the member's machine cannot be reached. */
     readonly releaseMember: (input: {
       readonly missionId: string;
       readonly member: ScopedThreadRef;
-    }) => Effect.Effect<void, MissionError>;
+    }) => Effect.Effect<"released" | "pending", MissionError>;
     /** Stops waiting on a thread whose add or release its machine has not answered. Sends nothing. */
     readonly forgetMember: (input: {
       readonly missionId: string;
@@ -100,6 +111,25 @@ export class Missions extends Context.Service<
      * The lead thread of a Mission here stays.
      */
     readonly leaveHere: (threadId: ThreadId) => Effect.Effect<void, MissionError>;
+    /** The Mission a thread here leads, if it leads one. */
+    readonly ledBy: (threadId: ThreadId) => Effect.Effect<MissionRecord | undefined>;
+    /**
+     * The Mission's members, without the lead, as this machine last knew them. Asks no other
+     * machine: those on other machines are as the last sweep heard them.
+     */
+    readonly roster: (
+      missionId: string,
+    ) => Effect.Effect<ReadonlyArray<RosterMember>, MissionError>;
+    readonly setPrompt: (input: {
+      readonly missionId: string;
+      readonly prompt: string;
+    }) => Effect.Effect<void, MissionError>;
+    /** Members on other machines whose status a sweep heard change, or heard for the first time. */
+    readonly remoteChanges: Stream.Stream<{
+      readonly missionId: string;
+      readonly ref: ScopedThreadRef;
+      readonly status: MemberStatus;
+    }>;
   }
 >()("t3/missions/Missions") {}
 
@@ -156,6 +186,11 @@ const make = Effect.gen(function* () {
   const links = yield* PeerLinks.PeerLinks;
   const peers = yield* PeerMcpClient.PeerMcpClient;
   const random = yield* SecureRandom.SecureRandom;
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const turnContexts = yield* MissionTurnContexts;
+  const readServices = yield* Effect.context<
+    ThreadManagement.ThreadManagementService | Project.ProjectService
+  >();
   const here = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
   const background = yield* Effect.scope;
   // One call at a time per machine, so what is remembered of it follows the order of its answers.
@@ -166,6 +201,13 @@ const make = Effect.gen(function* () {
   // The adds whose first join is on its way now. Their rows exist already, and are not shown as
   // pending until that call ends without an answer.
   const sending = yield* Ref.make<ReadonlySet<string>>(new Set());
+  // What each member on another machine was doing when its machine last listed it.
+  const remoteDetails = yield* Ref.make<ReadonlyMap<string, MemberDetail>>(new Map());
+  const remoteChanged = yield* PubSub.unbounded<{
+    readonly missionId: string;
+    readonly ref: ScopedThreadRef;
+    readonly status: MemberStatus;
+  }>();
 
   const setAnswering = (environmentId: EnvironmentId, answers: boolean) =>
     Ref.update(answering, (current) => {
@@ -289,6 +331,7 @@ const make = Effect.gen(function* () {
       name: mission.name,
       createdAt: mission.createdAt,
       members: [...members.values()],
+      ...(mission.prompt === "" ? {} : { prompt: mission.prompt }),
     } satisfies Mission;
   });
 
@@ -382,7 +425,10 @@ const make = Effect.gen(function* () {
   const onMember = Effect.fn("Missions.onMember")(function* (
     environmentId: EnvironmentId,
     call: ClaimCall,
-  ): Effect.fn.Return<ReadonlyArray<MissionClaim>, MissionError | Unreachable> {
+  ): Effect.fn.Return<
+    ReadonlyArray<MissionClaim & { readonly detail?: MemberDetail | undefined }>,
+    MissionError | Unreachable
+  > {
     if (environmentId === here) {
       switch (call.kind) {
         case "join": {
@@ -518,6 +564,7 @@ const make = Effect.gen(function* () {
           );
         }
         held = held.filter((claim) => !deleted.has(claim.missionId));
+        yield* noteRemoteDetails(environmentId, held);
         if (check !== undefined) {
           yield* store.setTombstoneCheck(environmentId, afterAnswer(check, askedAt));
         }
@@ -543,6 +590,27 @@ const make = Effect.gen(function* () {
         Effect.catch((error) => Effect.logInfo("A mission member machine did not answer", error)),
       ),
     );
+
+  /** Remembers what a listing machine said its members are doing, and tells who listens. */
+  const noteRemoteDetails = Effect.fn("Missions.noteRemoteDetails")(function* (
+    environmentId: EnvironmentId,
+    listed: ReadonlyArray<MissionClaim & { readonly detail?: MemberDetail | undefined }>,
+  ) {
+    const before = yield* Ref.get(remoteDetails);
+    const next = new Map([...before].filter(([key]) => !key.startsWith(`["${environmentId}",`)));
+    for (const claim of listed) {
+      if (claim.detail === undefined) continue;
+      const ref = { environmentId, threadId: claim.threadId };
+      next.set(memberKey(ref), claim.detail);
+      if (before.get(memberKey(ref))?.status === claim.detail.status) continue;
+      yield* PubSub.publish(remoteChanged, {
+        missionId: claim.missionId,
+        ref,
+        status: claim.detail.status,
+      });
+    }
+    yield* Ref.set(remoteDetails, next);
+  });
 
   /** The machines that owe an answer to an add or a release. They stay in every sweep. */
   const owingAnAnswer = Effect.map(
@@ -620,9 +688,11 @@ const make = Effect.gen(function* () {
     Effect.forkIn(background),
   );
   yield* Effect.sleep(REFRESH_INTERVAL).pipe(
-    Effect.andThen(Effect.all([Ref.get(watchers), owingAnAnswer])),
-    Effect.flatMap(([watching, owing]) =>
-      watching > 0 ? refresh : owing.length > 0 ? retryWaiting : Effect.void,
+    Effect.andThen(Effect.all([Ref.get(watchers), owingAnAnswer, store.knownClaims])),
+    // Members on other machines are asked with no one watching too, so their lead hears when
+    // one needs it.
+    Effect.flatMap(([watching, owing, known]) =>
+      watching > 0 || known.size > 0 ? refresh : owing.length > 0 ? retryWaiting : Effect.void,
     ),
     Effect.forever,
     Effect.forkIn(background),
@@ -707,7 +777,7 @@ const make = Effect.gen(function* () {
         return next;
       });
     yield* setSending(true);
-    yield* machineLocks
+    return yield* machineLocks
       .withLock(
         environmentId,
         Effect.gen(function* () {
@@ -721,7 +791,7 @@ const make = Effect.gen(function* () {
             addedAt: DateTime.formatIso(yield* DateTime.now),
             refusal: null,
           };
-          yield* Effect.gen(function* () {
+          return yield* Effect.gen(function* () {
             // Written before anything is sent. If this call is cut off, or the server stops, the
             // add is still there to send again. This machine's own threads need none.
             if (environmentId !== here) yield* store.setPendingAdd(add);
@@ -731,11 +801,12 @@ const make = Effect.gen(function* () {
               if (memberKey(release) === memberKey(input.member)) yield* sendRelease(release);
             }
             yield* sendJoin(mission, add);
+            return "joined" as const;
           }).pipe(
             Effect.catchTags({
               // Nobody knows whether the join landed. The add stays, and is sent again, until
               // the thread's machine says what became of it.
-              MissionMemberUnreachable: () => refresh,
+              MissionMemberUnreachable: () => Effect.as(refresh, "pending" as const),
               MissionError: (error) =>
                 store.clearPendingAdd(add).pipe(Effect.andThen(Effect.fail(error))),
             }),
@@ -764,18 +835,22 @@ const make = Effect.gen(function* () {
     if (refused !== undefined) yield* store.clearPendingAdd(refused);
     if (claim === undefined) {
       // The thread never joined, so releasing it only puts the refusal away.
-      return refused === undefined ? yield* fail("That thread is not in this mission.") : undefined;
+      if (refused === undefined) return yield* fail("That thread is not in this mission.");
+      return "released" as const;
     }
     if (claim.role === "lead") {
       return yield* fail("A mission keeps its lead thread, so the lead cannot be released.");
     }
     const release = { ...input.member, missionId: mission.missionId, generation: claim.generation };
-    yield* machineLocks.withLock(
+    return yield* machineLocks.withLock(
       environmentId,
       sendRelease(release).pipe(
+        Effect.as("released" as const),
         Effect.catchTags({
           MissionMemberUnreachable: () =>
-            store.addPendingRelease(release).pipe(Effect.andThen(retryWaiting)),
+            store
+              .addPendingRelease(release)
+              .pipe(Effect.andThen(retryWaiting), Effect.as("pending" as const)),
         }),
       ),
     );
@@ -825,7 +900,76 @@ const make = Effect.gen(function* () {
     }),
   );
 
+  const ledBy = (threadId: ThreadId) =>
+    Effect.map(store.missions, (missions) =>
+      missions.find((mission) => mission.leadThreadId === threadId),
+    );
+
+  const machineLabels = Effect.map(
+    missionLinks,
+    (named) => new Map(named.map((link) => [link.environmentId, link.label])),
+  );
+
+  const roster = Effect.fn("Missions.roster")(function* (missionId: string) {
+    const view = yield* missionView(yield* missionNamed(missionId), yield* machines, yield* shown);
+    const labels = yield* machineLabels;
+    const details = yield* Ref.get(remoteDetails);
+    const rows: Array<RosterMember> = [];
+    for (const member of view.members) {
+      if (member.role !== "member" || (member.state !== "active" && member.state !== "offline")) {
+        continue;
+      }
+      const { ref } = member;
+      const detail =
+        ref.environmentId === here
+          ? yield* memberDetail(ref.threadId).pipe(Effect.provide(readServices))
+          : details.get(memberKey(ref));
+      if (ref.environmentId === here && detail === undefined) continue;
+      rows.push({
+        ref,
+        machine:
+          ref.environmentId === here
+            ? "this machine"
+            : (labels.get(ref.environmentId) ?? ref.environmentId),
+        project: detail?.project ?? "",
+        // An older member machine lists no detail, so its members read as unseen.
+        status: member.state === "offline" || detail === undefined ? "offline" : detail.status,
+        title: detail?.title ?? "",
+      });
+    }
+    return rows;
+  });
+
+  yield* turnContexts.serve((threadId) =>
+    Effect.gen(function* () {
+      const mission = yield* ledBy(threadId);
+      if (mission === undefined) return undefined;
+      const { missionDefaultPrompt } = yield* settings.getSettings;
+      return {
+        prompt: missionPromptText(mission.name, mission.prompt || missionDefaultPrompt),
+        status: missionStatusText(yield* roster(mission.missionId)),
+      };
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("A mission lead's context was not read", cause).pipe(
+          Effect.as(undefined),
+        ),
+      ),
+    ),
+  );
+
+  const setPrompt = Effect.fn("Missions.setPrompt")(function* (input: {
+    readonly missionId: string;
+    readonly prompt: string;
+  }) {
+    yield* store.setPrompt({ missionId: input.missionId, prompt: input.prompt.trim() });
+  });
+
   return Missions.of({
+    ledBy,
+    roster,
+    setPrompt,
+    remoteChanges: Stream.fromPubSub(remoteChanged),
     watch,
     create,
     setLead,

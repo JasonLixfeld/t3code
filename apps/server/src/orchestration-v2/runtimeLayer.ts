@@ -59,6 +59,8 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as MissionClaims from "../missions/MissionClaims.ts";
 import * as Missions from "../missions/Missions.ts";
 import * as MissionThreadDeletions from "../missions/MissionThreadDeletions.ts";
+import * as MissionTurnContexts from "../missions/MissionTurnContexts.ts";
+import * as MissionWakes from "../missions/MissionWakes.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
 import * as WorkflowRuntime from "../workflows/WorkflowRuntime.ts";
@@ -175,6 +177,8 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       McpAppModelContext.layer,
+      // The same layer value Missions fills, so turns read the one it serves.
+      MissionTurnContexts.layer,
       PreviewAgentActivity.layer,
       layerCheckpointServiceProvided,
       layerEventSink,
@@ -330,10 +334,12 @@ const layerWorkflowsProvided = WorkflowRuntime.layer.pipe(
   // Layers memoize by reference, so these are the links Settings and agents use.
   Layer.provide(PeerMcpClient.layer.pipe(Layer.provideMerge(PeerLinks.layer))),
 );
-const layerMissionsProvided = Layer.merge(
+const layerMissionsProvided = Layer.mergeAll(
   Missions.layer,
   MissionThreadDeletions.layer.pipe(Layer.provide(layerOrchestratorProvided)),
+  MissionWakes.layer.pipe(Layer.provide(Missions.layer), Layer.provide(layerOrchestratorProvided)),
 ).pipe(
+  Layer.provide(MissionTurnContexts.layer),
   Layer.provide(MissionClaims.layerLive),
   Layer.provide(layerThreadManagementProvided),
   Layer.provide(PeerMcpClient.layer.pipe(Layer.provideMerge(PeerLinks.layer))),

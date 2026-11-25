@@ -12854,5 +12854,14 @@
   "5b091f252c924026": "„Kein Projekt“ wird vorbereitet…",
   "df569eba6576b4b9": "Die Mission dieses Entwurfs erlaubt diese Maschine nicht mehr.",
   "6c4a013bdfde968d": "Kein Projekt…",
-  "c054c0f81a20232c": "Die Maschine hat nicht rechtzeitig geantwortet."
+  "c054c0f81a20232c": "Die Maschine hat nicht rechtzeitig geantwortet.",
+  "69032cb43b75a869": "Was der Lead-Thread jeder Mission in jedem Zug befolgt, sofern die Mission keinen eigenen Prompt hat.",
+  "91dc495b1ac61f56": "Missions-Prompt auf Standard zurücksetzen",
+  "09bf7d819760063c": "Missions-Prompt",
+  "8bdf3a508c08b7ca": "Gemischt. Gib einen Prompt ein, der für alle ausgewählten Ziele gilt.",
+  "62dbf0230a0358cf": "Prüfe die Arbeit jedes Mitglieds, bevor du die Mission für erledigt erklärst.",
+  "9d0b1d2cead70261": "mission lead leiten orchestrieren anweisungen standard prompt jeder zug",
+  "e2cdfebe2d8a1d14": "Missions-Prompt konnte nicht gespeichert werden",
+  "4cf08bfc2adf8c67": "Der Lead von „{mission}“ befolgt dies in jedem Zug. Lass es leer, um den Standard aus den Einstellungen zu verwenden.",
+  "32bb9fa25796a9eb": "Missions-Prompt bearbeiten…"
 }

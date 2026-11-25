@@ -1,11 +1,21 @@
-import { MissionId, MissionName, OrchestratorMcpFailure, ThreadId } from "@t3tools/contracts";
+import {
+  clampedPositiveInt,
+  EnvironmentId,
+  MissionId,
+  MissionName,
+  NonNegativeInt,
+  OrchestratorMcpFailure,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Fiber from "effect/Fiber";
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import { MissionClaimKind, MissionClaims } from "../../../missions/MissionClaims.ts";
+import { MemberDetail, MemberStatus } from "../../../missions/missionStatus.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as Project from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 /** Listed only to a linked environment's session: agents never see or call it. */
@@ -38,9 +48,22 @@ export const MissionClaimResult = Schema.Struct({
       name: Schema.String,
       role: Schema.Literals(["lead", "member"]),
       generation: Schema.String,
+      /** Absent from machines that predate it. */
+      detail: Schema.optional(MemberDetail),
     }),
   ),
 });
+
+/** Omit `environmentId` for a thread on this machine. */
+const MissionThreadRef = Schema.Struct({
+  threadId: ThreadId,
+  environmentId: Schema.optional(EnvironmentId),
+});
+
+const leadOnly = [
+  McpInvocationContext.McpInvocationContext,
+  ThreadManagementService.ThreadManagementService,
+];
 
 export const MissionToolkit = Toolkit.make(
   Tool.make("t3_mission_tag", {
@@ -53,9 +76,62 @@ export const MissionToolkit = Toolkit.make(
     dependencies: [
       McpInvocationContext.McpInvocationContext,
       ThreadManagementService.ThreadManagementService,
+      Project.ProjectService,
       MissionClaims,
     ],
   })
     .annotate(Tool.Destructive, false)
     .annotate(McpSchema.EnabledWhen, shownOnlyToLinks),
+  Tool.make("t3_mission_roster", {
+    description:
+      "List the member threads of the mission you lead: machine, project, status, title, and whether each needs you. Page with `cursor`.",
+    parameters: Schema.Struct({
+      cursor: Schema.optional(NonNegativeInt),
+      limit: Schema.optional(clampedPositiveInt(100)),
+    }),
+    success: Schema.Struct({
+      missionId: Schema.String,
+      name: Schema.String,
+      members: Schema.Array(
+        Schema.Struct({
+          threadRef: Schema.Struct({ environmentId: EnvironmentId, threadId: ThreadId }),
+          machine: Schema.String,
+          project: Schema.String,
+          status: Schema.Union([MemberStatus, Schema.Literal("offline")]),
+          title: Schema.String,
+          needsAttention: Schema.Boolean,
+        }),
+      ),
+      total: NonNegativeInt,
+      nextCursor: Schema.NullOr(NonNegativeInt),
+    }),
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies: leadOnly,
+  })
+    .annotate(Tool.Readonly, true)
+    .annotate(Tool.Destructive, false)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenUnlessMissionLead),
+  Tool.make("t3_mission_add", {
+    description:
+      "Add a thread to the mission you lead. A thread on a linked machine needs a full-access link. `pending`: its machine has not answered yet.",
+    parameters: Schema.Struct({ threadRef: MissionThreadRef }),
+    success: Schema.Struct({ state: Schema.Literals(["joined", "pending"]) }),
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies: leadOnly,
+  })
+    .annotate(Tool.Destructive, false)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenUnlessMissionLead),
+  Tool.make("t3_mission_release", {
+    description:
+      "Release a thread from the mission you lead. It stays a thread. `pending`: its machine has not answered yet.",
+    parameters: Schema.Struct({ threadRef: MissionThreadRef }),
+    success: Schema.Struct({ state: Schema.Literals(["released", "pending"]) }),
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies: leadOnly,
+  })
+    .annotate(Tool.Destructive, true)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenUnlessMissionLead),
 );

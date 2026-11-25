@@ -92,6 +92,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.missionsForgetMember]: AuthOrchestrationOperateScope,
   [WS_METHODS.missionsSetLead]: AuthOrchestrationOperateScope,
   [WS_METHODS.missionsDelete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.missionsSetPrompt]: AuthOrchestrationOperateScope,
   // Agents and links reach this machine through /mcp, which has no leave. A full-access link can
   // still mint an operate-scope client pairing here (peer/PeerClientPairing.ts) and leave with it.
   [WS_METHODS.missionsLeave]: AuthOrchestrationOperateScope,

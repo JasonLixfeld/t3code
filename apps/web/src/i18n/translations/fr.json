@@ -12854,5 +12854,14 @@
   "5b091f252c924026": "Préparation de « Aucun projet »…",
   "df569eba6576b4b9": "La mission de ce brouillon n’autorise plus cette machine.",
   "6c4a013bdfde968d": "Aucun projet…",
-  "c054c0f81a20232c": "La machine n’a pas répondu à temps."
+  "c054c0f81a20232c": "La machine n’a pas répondu à temps.",
+  "69032cb43b75a869": "Ce que le fil principal de chaque mission suit à chaque tour, sauf si sa mission a son propre prompt.",
+  "91dc495b1ac61f56": "Réinitialiser le prompt de mission à la valeur par défaut",
+  "09bf7d819760063c": "Prompt de mission",
+  "8bdf3a508c08b7ca": "Mixte. Saisissez un prompt à appliquer à toutes les cibles sélectionnées.",
+  "62dbf0230a0358cf": "Vérifiez le travail de chaque membre avant de déclarer la mission terminée.",
+  "9d0b1d2cead70261": "mission principal orchestrer instructions prompt par défaut chaque tour",
+  "e2cdfebe2d8a1d14": "Impossible d'enregistrer le prompt de mission",
+  "4cf08bfc2adf8c67": "Le fil principal de « {mission} » suit ceci à chaque tour. Laissez vide pour utiliser la valeur par défaut des Réglages.",
+  "32bb9fa25796a9eb": "Modifier le prompt de mission…"
 }

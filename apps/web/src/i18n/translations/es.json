@@ -12849,5 +12849,14 @@
   "5b091f252c924026": "Preparando «Sin proyecto»…",
   "df569eba6576b4b9": "La misión de este borrador ya no permite esa máquina.",
   "6c4a013bdfde968d": "Sin proyecto…",
-  "c054c0f81a20232c": "La máquina no respondió a tiempo."
+  "c054c0f81a20232c": "La máquina no respondió a tiempo.",
+  "69032cb43b75a869": "Lo que el hilo principal de cada misión sigue en cada turno, salvo que su misión tenga su propio prompt.",
+  "91dc495b1ac61f56": "Restablecer el prompt de la misión al valor predeterminado",
+  "09bf7d819760063c": "Prompt de la misión",
+  "8bdf3a508c08b7ca": "Mixto. Escribe un prompt para aplicarlo a todos los destinos seleccionados.",
+  "62dbf0230a0358cf": "Revisa el trabajo de cada miembro antes de dar la misión por terminada.",
+  "9d0b1d2cead70261": "misión principal orquestar instrucciones prompt predeterminado cada turno",
+  "e2cdfebe2d8a1d14": "No se pudo guardar el prompt de la misión",
+  "4cf08bfc2adf8c67": "El hilo principal de \"{mission}\" sigue esto en cada turno. Déjalo vacío para usar el predeterminado de Ajustes.",
+  "32bb9fa25796a9eb": "Editar prompt de la misión…"
 }

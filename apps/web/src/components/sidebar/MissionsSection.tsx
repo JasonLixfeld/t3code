@@ -53,6 +53,17 @@ import { waitForAtomValue } from "../../state/waitForAtomValue";
 import { threadFamilies } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useUiStateStore } from "../../uiStateStore";
+import { Button } from "../ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
+import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -242,6 +253,10 @@ export function useMissionMenu() {
         );
         return [];
       }
+      if (target.action === "prompt" && mission !== undefined) {
+        registry.set(missionPromptTargetAtom, { host: target.environmentId, mission });
+        return [];
+      }
       if (target.action === "release") {
         if (lead === undefined) return [];
         const result = await release({
@@ -268,6 +283,65 @@ export function useMissionMenu() {
       return outcome.added;
     },
   };
+}
+
+/** The Mission whose lead's prompt is being edited, from any menu that offers it. */
+const missionPromptTargetAtom = Atom.make<{
+  readonly host: EnvironmentId;
+  readonly mission: Mission;
+} | null>(null).pipe(Atom.keepAlive, Atom.withLabel("mission-prompt-target"));
+
+/** Edits what a Mission's lead is told on each turn. Empty goes back to the Settings default. */
+export function MissionPromptDialog() {
+  const gt = useGT();
+  const registry = useContext(RegistryContext);
+  const target = useAtomValue(missionPromptTargetAtom);
+  const setPrompt = useAtomCommand(serverEnvironment.setMissionPrompt, "mission set prompt");
+  const close = () => registry.set(missionPromptTargetAtom, null);
+  return (
+    <Dialog open={target !== null} onOpenChange={(open) => (open ? undefined : close())}>
+      <DialogPopup className="max-w-xl">
+        {target === null ? null : (
+          <form
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const prompt = String(new FormData(event.currentTarget).get("prompt") ?? "");
+              const result = await setPrompt({
+                environmentId: target.host,
+                input: { missionId: target.mission.missionId, prompt },
+              });
+              reportFailure(gt("Could not save the mission prompt"), result);
+              if (result._tag === "Success") close();
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>{gt("Mission prompt")}</DialogTitle>
+              <DialogDescription>
+                {gt(
+                  'The lead of "{mission}" follows this on every turn. Leave it empty to use the default from Settings.',
+                  { mission: target.mission.name },
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogPanel>
+              <Textarea
+                name="prompt"
+                aria-label={gt("Mission prompt")}
+                rows={8}
+                defaultValue={target.mission.prompt ?? ""}
+              />
+            </DialogPanel>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={close}>
+                {gt("Cancel")}
+              </Button>
+              <Button type="submit">{gt("Save")}</Button>
+            </DialogFooter>
+          </form>
+        )}
+      </DialogPopup>
+    </Dialog>
+  );
 }
 
 /** Twelve hex digits, as Mission ids in tags are. */

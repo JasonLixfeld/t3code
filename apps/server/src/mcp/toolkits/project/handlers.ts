@@ -16,6 +16,7 @@ import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Missions from "../../../missions/Missions.ts";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
 import { outputRequestProblem } from "../../../orchestration-v2/runOutput.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
@@ -42,6 +43,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
+import { joinCallersMission } from "../mission/handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
 
 const isAboveCeilingError = Schema.is(OrchestratorRuntimeModeAboveCeilingError);
@@ -211,7 +213,7 @@ const withSavedProjectSettingsAfterCreate = withSavedProjectSettings.pipe(
   Effect.orElseSucceed(() => (project: ProjectRecord) => project),
 );
 
-export const layer = McpToolAccess.toLayer(ProjectToolkit, {
+const handlers = {
   t3_thread_launch: McpToolAccess.startsThreads(
     (input) => input,
     (input, { runtimeMode, interactionMode, linkOrigin }) =>
@@ -624,4 +626,24 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     // An existing destination is never adopted.
     { linkedCallers: "allowed" },
   ),
-});
+} satisfies McpToolAccess.Handlers<typeof ProjectToolkit.tools>;
+
+export const layer = McpToolAccess.toLayer(
+  ProjectToolkit,
+  Effect.map(Effect.serviceOption(Missions.Missions), (missions) => ({
+    ...handlers,
+    // Here or on the linked machine it was launched on, the thread joins its lead's Mission.
+    t3_thread_launch: McpToolAccess.followedBy(
+      handlers.t3_thread_launch,
+      (_input, launched, environmentId) =>
+        Effect.gen(function* () {
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const mission = yield* joinCallersMission(missions, {
+            environmentId: environmentId ?? scope.environmentId,
+            threadId: launched.threadId,
+          });
+          return mission === undefined ? launched : { ...launched, mission };
+        }),
+    ),
+  })),
+);

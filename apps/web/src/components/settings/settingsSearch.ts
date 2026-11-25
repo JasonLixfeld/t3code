@@ -975,6 +975,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("generated thread titles prompt custom style naming rename regenerate")],
   },
   {
+    id: "mission-default-prompt",
+    title: msg("Mission prompt"),
+    to: "/settings/threads",
+    scope: "environment-defaults",
+    searchTerms: [msg("mission lead orchestrate instructions default prompt every turn")],
+  },
+  {
     id: "app-version",
     title: msg("Version"),
     to: "/settings/about",

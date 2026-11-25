@@ -38,6 +38,7 @@ export type MissionMenuId =
   | `mission-release:${string}`
   | `mission-new-thread:${string}`
   | `mission-delete:${string}`
+  | `mission-prompt:${string}`
   /** The heading of a Mission row's own group. */
   | "mission-group"
   | "mission-new-lead"
@@ -49,11 +50,13 @@ const ADD_PREFIX = "mission-add:";
 const RELEASE_PREFIX = "mission-release:";
 const NEW_THREAD_PREFIX = "mission-new-thread:";
 const DELETE_PREFIX = "mission-delete:";
+const PROMPT_PREFIX = "mission-prompt:";
 const TARGET_ACTIONS = {
   [ADD_PREFIX]: "add",
   [RELEASE_PREFIX]: "release",
   [NEW_THREAD_PREFIX]: "new-thread",
   [DELETE_PREFIX]: "delete",
+  [PROMPT_PREFIX]: "prompt",
 } as const;
 
 /** Mission ids are hex, so the last colon separates them from the host's environment id. */
@@ -119,8 +122,8 @@ function blockLabel(block: MissionBlock, hostLabel: string, resolve: MessageReso
 }
 
 /**
- * The "Mission" group of a Mission's own row: a new thread to join it, and deleting it once it has
- * no members. A Mission whose lead is gone also takes a new lead here.
+ * The "Mission" group of a Mission's own row: a new thread to join it, its lead's prompt, and
+ * deleting it once it has no members. A Mission whose lead is gone also takes a new lead here.
  */
 export function missionRowItems(
   input: {
@@ -144,6 +147,13 @@ export function missionRowItems(
       label: resolve(msg("New thread in this mission")),
       icon: "message-square-plus",
       // Its first send adds it, so it needs the right an add needs.
+      disabled: !input.canChange,
+      ...(input.canChange ? {} : { detail: blockLabel("not-allowed", "", resolve) }),
+    },
+    {
+      id: `${PROMPT_PREFIX}${target}`,
+      label: resolve(msg("Edit mission prompt…")),
+      icon: "pencil",
       disabled: !input.canChange,
       ...(input.canChange ? {} : { detail: blockLabel("not-allowed", "", resolve) }),
     },

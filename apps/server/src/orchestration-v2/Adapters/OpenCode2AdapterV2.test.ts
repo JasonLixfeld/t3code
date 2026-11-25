@@ -341,6 +341,7 @@ const resumed = (
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
     readonly onPrompt?: (input: unknown) => void;
+    readonly onInstructions?: (input: unknown) => void;
   },
 ) =>
   Effect.gen(function* () {
@@ -378,6 +379,9 @@ const resumed = (
         ...(options?.borrowers === undefined ? {} : { borrowers: options.borrowers }),
         ...(options?.fileSystem === undefined ? {} : { fileSystem: options.fileSystem }),
         ...(options?.onPrompt === undefined ? {} : { onPrompt: options.onPrompt }),
+        ...(options?.onInstructions === undefined
+          ? {}
+          : { onInstructions: options.onInstructions }),
         ...(options?.external === undefined ? {} : { external: options.external }),
         ...(options?.processExit === undefined ? {} : { processExit: options.processExit }),
         ...(options?.beforeResponse === undefined
@@ -797,6 +801,47 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* runtime.startTurn(turnInput(thread));
       assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
     }),
+  );
+
+  it.effect(
+    "adds a lead's mission context to its instructions, and drops it once it stops leading",
+    () =>
+      Effect.gen(function* () {
+        const instructions: Array<string> = [];
+        const finished = [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ];
+        const { runtime, thread } = yield* resumed(
+          [
+            ...finished,
+            out("session.instructions.entry.put", {
+              sessionID: SESSION,
+              key: "t3-code",
+              value: "<any>",
+            }),
+            reply("session.instructions.entry.put", null),
+            ...finished,
+          ],
+          { onInstructions: (input) => instructions.push((input as { value: string }).value) },
+        );
+        for (const missionContext of [
+          { prompt: "Lead the ship.", status: "Status: 0 members." },
+          undefined,
+        ]) {
+          const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+          yield* runtime.startTurn({
+            ...turnInput(thread),
+            ...(missionContext ? { missionContext } : {}),
+          });
+          yield* Fiber.join(terminal);
+        }
+        assert.lengthOf(instructions, 2);
+        assert.isTrue(instructions[0]!.endsWith("\n\nLead the ship.\n\nStatus: 0 members."));
+        assert.notInclude(instructions[1], "Lead the ship.");
+        assert.isTrue(instructions[0]!.startsWith(instructions[1]!));
+      }),
   );
 
   it.effect("keeps a turn running through a start event this build cannot decode", () =>

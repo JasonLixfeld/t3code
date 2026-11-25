@@ -328,6 +328,39 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.isDefined(withT3.additionalContext?.["t3_code_runtime"]);
     }),
   );
+
+  it.effect(
+    "sends a lead's mission prompt as instructions and its status as data, and retracts both",
+    () =>
+      Effect.gen(function* () {
+        const build = (
+          input: Pick<
+            Parameters<typeof CodexAdapterV2.buildCodexTurnStartParams>[0],
+            "missionContext" | "missionEnded"
+          >,
+        ) =>
+          CodexAdapterV2.buildCodexTurnStartParams({
+            nativeThreadId: "native-mission",
+            codexInput: [{ type: "text", text: "go" }],
+            runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+            ...input,
+          });
+        const lead = yield* build({ missionContext: { prompt: "Lead it.", status: "Status: 0." } });
+        assert.deepEqual(lead.additionalContext, {
+          t3_code_mission: { kind: "application", value: "Lead it." },
+          t3_code_mission_status: { kind: "untrusted", value: "Status: 0." },
+        });
+        // Codex keeps what it was sent, so a thread that stops leading is told so.
+        const ended = yield* build({ missionEnded: true });
+        assert.deepEqual(Object.keys(ended.additionalContext ?? {}), ["t3_code_mission"]);
+        assert.include(
+          ended.additionalContext?.t3_code_mission?.value,
+          "no longer leads a mission",
+        );
+        assert.isUndefined((yield* build({})).additionalContext);
+      }),
+  );
 });
 
 describe("CodexAdapterV2 native protocol logging", () => {

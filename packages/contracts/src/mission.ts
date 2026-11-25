@@ -30,6 +30,8 @@ export const Mission = Schema.Struct({
   name: Schema.String,
   createdAt: Schema.String,
   members: Schema.Array(MissionMember),
+  /** This Mission's own prompt for its lead. Empty or absent: the lead gets the Settings default. */
+  prompt: Schema.optional(Schema.String),
 });
 export type Mission = typeof Mission.Type;
 
@@ -85,6 +87,22 @@ export const MissionSetLeadInput = Schema.Struct({
 
 /** Ends a Mission with no members. Its lead stays a thread of its own. */
 export const MissionDeleteInput = Schema.Struct({ missionId: Schema.String });
+
+/** Sets the Mission's own prompt for its lead. Empty text goes back to the Settings default. */
+export const MissionSetPromptInput = Schema.Struct({
+  missionId: Schema.String,
+  prompt: Schema.String,
+});
+
+/**
+ * What became of a thread a mission's lead started: it joined the lead's Mission, it waits on
+ * its machine's answer, or it was refused and stays a thread of its own, for `reason`.
+ */
+export const MissionJoinOutcome = Schema.Struct({
+  state: Schema.Literals(["joined", "pending", "refused"]),
+  reason: Schema.optional(Schema.String),
+});
+export type MissionJoinOutcome = typeof MissionJoinOutcome.Type;
 
 /** The local user frees a thread on this machine from its Mission. */
 export const MissionLeaveInput = Schema.Struct({ threadId: ThreadId });

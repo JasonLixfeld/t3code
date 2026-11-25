@@ -12,6 +12,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type * as SqlError from "effect/sql/SqlError";
 
 import * as ServerConfig from "../config.ts";
+import type { MissionUpdateEvent } from "./missionStatus.ts";
 import { newTombstoneCheck, type TombstoneCheck } from "./tombstoneChecks.ts";
 
 /**
@@ -156,6 +157,20 @@ export const MIGRATIONS = {
       )
     `;
   }),
+  "7_MissionLeadPrompt": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE missions ADD COLUMN prompt TEXT NOT NULL DEFAULT ''`;
+    // What the lead has not been told yet, at most one per member, so a restart keeps it.
+    yield* sql`
+      CREATE TABLE mission_updates (
+        mission_id TEXT NOT NULL,
+        environment_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        event TEXT NOT NULL,
+        PRIMARY KEY (mission_id, environment_id, thread_id)
+      )
+    `;
+  }),
 };
 const migrations = Migrator.fromRecord(MIGRATIONS);
 
@@ -164,6 +179,7 @@ interface MissionRow {
   readonly name: string;
   readonly lead_thread_id: string;
   readonly created_at: string;
+  readonly prompt: string;
 }
 interface ClaimRow {
   readonly thread_id: string;
@@ -190,6 +206,16 @@ export interface MissionRecord {
   readonly name: string;
   readonly leadThreadId: ThreadId;
   readonly createdAt: string;
+  /** The Mission's own prompt for its lead; empty uses the Settings default. */
+  readonly prompt: string;
+}
+
+/** A member's change its lead has not been told about yet. */
+export interface MissionUpdate {
+  readonly missionId: string;
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly event: MissionUpdateEvent;
 }
 
 /** A thread on this machine held by a Mission. `generation` names the join that made the claim. */
@@ -247,6 +273,7 @@ const toMission = (row: MissionRow): MissionRecord => ({
   name: row.name,
   leadThreadId: ThreadId.make(row.lead_thread_id),
   createdAt: row.created_at,
+  prompt: row.prompt,
 });
 
 const toClaim = (row: Omit<ClaimRow, "owner" | "intent_id">): MissionClaim => ({
@@ -370,6 +397,15 @@ export class MissionStore extends Context.Service<
     readonly forgetClaim: (release: Omit<PendingRelease, "missionId">) => Effect.Effect<void>;
     /** Drops what this lead waits for and last knew about one thread, in one Mission only. */
     readonly forgetThread: (thread: AddKey) => Effect.Effect<void>;
+    readonly setPrompt: (input: {
+      readonly missionId: string;
+      readonly prompt: string;
+    }) => Effect.Effect<void, MissionError>;
+    readonly missionUpdates: Effect.Effect<ReadonlyArray<MissionUpdate>>;
+    /** Keeps the member's newest change, in place of one not told yet. */
+    readonly addMissionUpdate: (update: MissionUpdate) => Effect.Effect<void>;
+    /** Drops these once told. A member's newer, different change stays. */
+    readonly clearMissionUpdates: (updates: ReadonlyArray<MissionUpdate>) => Effect.Effect<void>;
   }
 >()("t3/missions/MissionStore") {}
 
@@ -435,7 +471,7 @@ const make = Effect.gen(function* () {
     );
 
   const missions = sql<MissionRow>`
-    SELECT mission_id, name, lead_thread_id, created_at FROM missions ORDER BY created_at, rowid
+    SELECT mission_id, name, lead_thread_id, created_at, prompt FROM missions ORDER BY created_at, rowid
   `.pipe(
     Effect.map((rows) => rows.map(toMission)),
     Effect.orDie,
@@ -451,7 +487,7 @@ const make = Effect.gen(function* () {
         `;
         if (deleted !== undefined) return refuse("That mission was deleted.");
         const existing = yield* sql<MissionRow>`
-          SELECT mission_id, name, lead_thread_id, created_at FROM missions
+          SELECT mission_id, name, lead_thread_id, created_at, prompt FROM missions
           WHERE mission_id = ${lead.missionId}
         `;
         if (existing[0] !== undefined) {
@@ -471,6 +507,7 @@ const make = Effect.gen(function* () {
           name: lead.name,
           lead_thread_id: lead.threadId,
           created_at: createdAt,
+          prompt: "",
         });
       }),
     );
@@ -485,7 +522,7 @@ const make = Effect.gen(function* () {
     return yield* change(
       Effect.gen(function* () {
         const [mission] = yield* sql<MissionRow>`
-          SELECT mission_id, name, lead_thread_id, created_at FROM missions
+          SELECT mission_id, name, lead_thread_id, created_at, prompt FROM missions
           WHERE mission_id = ${input.missionId}
         `;
         if (mission === undefined) return refuse("That mission was not found.");
@@ -507,6 +544,7 @@ const make = Effect.gen(function* () {
           return refuse("Release this mission's threads before deleting it.");
         }
         yield* sql`DELETE FROM pending_adds WHERE mission_id = ${input.missionId}`;
+        yield* sql`DELETE FROM mission_updates WHERE mission_id = ${input.missionId}`;
         yield* sql`
           DELETE FROM claims WHERE thread_id = ${input.lead} AND mission_id = ${input.missionId}
         `;
@@ -538,7 +576,7 @@ const make = Effect.gen(function* () {
     return yield* change(
       Effect.gen(function* () {
         const [mission] = yield* sql<MissionRow>`
-          SELECT mission_id, name, lead_thread_id, created_at FROM missions
+          SELECT mission_id, name, lead_thread_id, created_at, prompt FROM missions
           WHERE mission_id = ${lead.missionId}
         `;
         if (mission === undefined) return refuse("That mission was not found.");
@@ -914,7 +952,66 @@ const make = Effect.gen(function* () {
     yield* changed;
   }, Effect.orDie);
 
+  const setPrompt = Effect.fn("MissionStore.setPrompt")(function* (input: {
+    readonly missionId: string;
+    readonly prompt: string;
+  }) {
+    yield* change(
+      Effect.gen(function* () {
+        const rows = yield* sql`
+          UPDATE missions SET prompt = ${input.prompt} WHERE mission_id = ${input.missionId}
+          RETURNING mission_id
+        `;
+        return rows.length === 0 ? refuse("That mission was not found.") : undefined;
+      }),
+    );
+  });
+
+  const missionUpdates = sql<{
+    readonly mission_id: string;
+    readonly environment_id: string;
+    readonly thread_id: string;
+    readonly event: MissionUpdateEvent;
+  }>`
+    SELECT mission_id, environment_id, thread_id, event FROM mission_updates ORDER BY rowid
+  `.pipe(
+    Effect.map((rows) =>
+      rows.map((row): MissionUpdate => ({
+        missionId: row.mission_id,
+        environmentId: EnvironmentId.make(row.environment_id),
+        threadId: ThreadId.make(row.thread_id),
+        event: row.event,
+      })),
+    ),
+    Effect.orDie,
+  );
+
+  const addMissionUpdate = (update: MissionUpdate) =>
+    sql`
+      INSERT OR REPLACE INTO mission_updates (mission_id, environment_id, thread_id, event)
+      VALUES (${update.missionId}, ${update.environmentId}, ${update.threadId}, ${update.event})
+    `.pipe(Effect.asVoid, Effect.orDie);
+
+  const clearMissionUpdates = (updates: ReadonlyArray<MissionUpdate>) =>
+    sql
+      .withTransaction(
+        Effect.forEach(
+          updates,
+          (update) => sql`
+            DELETE FROM mission_updates
+            WHERE mission_id = ${update.missionId} AND environment_id = ${update.environmentId}
+              AND thread_id = ${update.threadId} AND event = ${update.event}
+          `,
+          { discard: true },
+        ),
+      )
+      .pipe(Effect.orDie);
+
   return MissionStore.of({
+    setPrompt,
+    missionUpdates,
+    addMissionUpdate,
+    clearMissionUpdates,
     changes,
     missions,
     createMission,

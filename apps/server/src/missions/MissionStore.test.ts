@@ -66,6 +66,7 @@ it.effect("keeps its own migration history and reopens without migrating again",
           [4, "AddIntents"],
           [5, "AddLinkAndAge"],
           [6, "MissionTombstones"],
+          [7, "MissionLeadPrompt"],
         ],
       );
     }),
@@ -224,6 +225,73 @@ it.effect("upgrades a database an earlier build left, keeping a given-up add's m
           assert.isTrue((yield* store.deletedMissionIds).has("m1"));
           const again = yield* store.createMission(claimFor(lead, "m1", "g2")).pipe(Effect.flip);
           assert.include(again.message, "was deleted");
+        }),
+      );
+    }),
+  ),
+);
+
+it.effect("upgrades a version-6 database: its missions get an empty prompt that can be set", () =>
+  withDatabase((filename) =>
+    Effect.gen(function* () {
+      yield* Effect.provide(
+        Effect.gen(function* () {
+          const earlier = Object.fromEntries(
+            Object.entries(MissionStore.MIGRATIONS).filter(([id]) => Number(id.split("_")[0]) <= 6),
+          );
+          yield* Migrator.make({})({ loader: Migrator.fromRecord(earlier) });
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`
+            INSERT INTO missions (mission_id, name, lead_thread_id, created_at)
+            VALUES ('m1', 'M1', ${lead}, '2026-01-01T00:00:00.000Z')
+          `;
+        }),
+        NodeSqliteClient.layer({ filename }),
+      );
+      yield* usingStore(filename, (store) =>
+        Effect.gen(function* () {
+          assert.deepEqual(
+            (yield* store.missions).map((mission) => mission.prompt),
+            [""],
+          );
+          yield* store.setPrompt({ missionId: "m1", prompt: "Ship the release." });
+          const missing = yield* store
+            .setPrompt({ missionId: "gone", prompt: "x" })
+            .pipe(Effect.flip);
+          assert.equal(missing.message, "That mission was not found.");
+        }),
+      );
+      const reopened = yield* usingStore(filename, (store) => store.missions);
+      assert.deepEqual(
+        reopened.map((mission) => mission.prompt),
+        ["Ship the release."],
+      );
+    }),
+  ),
+);
+
+it.effect("keeps one untold update per member, across a reopen, until it is told", () =>
+  withDatabase((filename) =>
+    Effect.gen(function* () {
+      const update = {
+        missionId: "m1",
+        environmentId: EnvironmentId.make("env-a"),
+        threadId: member,
+      };
+      yield* usingStore(filename, (store) =>
+        Effect.gen(function* () {
+          yield* store.addMissionUpdate({ ...update, event: "pending-approval" });
+          yield* store.addMissionUpdate({ ...update, event: "awaiting-input" });
+        }),
+      );
+      yield* usingStore(filename, (store) =>
+        Effect.gen(function* () {
+          const told = yield* store.missionUpdates;
+          assert.deepEqual(told, [{ ...update, event: "awaiting-input" }]);
+          // A newer change arrives while the first is being told, so it stays.
+          yield* store.addMissionUpdate({ ...update, event: "completed" });
+          yield* store.clearMissionUpdates(told);
+          assert.deepEqual(yield* store.missionUpdates, [{ ...update, event: "completed" }]);
         }),
       );
     }),

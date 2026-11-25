@@ -63,6 +63,7 @@ import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts
 import * as FeedbackHandlers from "./toolkits/feedback/handlers.ts";
 import { FeedbackToolkit } from "./toolkits/feedback/tools.ts";
 import * as MissionClaims from "../missions/MissionClaims.ts";
+import * as Missions from "../missions/Missions.ts";
 import * as MissionHandlers from "./toolkits/mission/handlers.ts";
 import { MissionToolkit } from "./toolkits/mission/tools.ts";
 import * as Feedback from "../feedback/FeedbackService.ts";
@@ -305,6 +306,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   const pullRequests = yield* Effect.serviceOption(PullRequestService.PullRequestService);
   const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
   const sessions = yield* Effect.serviceOption(SessionStore.SessionStore);
+  const missions = yield* Effect.serviceOption(Missions.Missions);
   // Auth runs once per request, so a response that streams on ends when the outside client's
   // session is revoked or expires. `events/stream` ends itself first with
   // `notifications/events/terminated`, which cutting the body here would lose.
@@ -381,12 +383,17 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       limited.thread === undefined
         ? undefined
         : yield* Cache.get(forgeOfThread, limited.thread.threadId);
+    const missionLead =
+      limited.thread !== undefined &&
+      Option.isSome(missions) &&
+      (yield* missions.value.ledBy(limited.thread.threadId)) !== undefined;
     return {
       ...limited,
       linkedEnvironments,
       agentFeedback,
       workflows,
       origin,
+      missionLead,
       ...(forge === undefined ? {} : { forge }),
     };
   });

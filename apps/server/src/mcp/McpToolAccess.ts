@@ -336,6 +336,30 @@ export const afterForwarding = <P, A, E, R, E2, R2>(
     forwarded,
   );
 
+/** Runs `after` on the tool's result, whether it ran here or in the linked environment named. */
+export const followedBy = <P, A, E, R, E2, R2>(
+  declaration: Declaration<(params: P) => Effect.Effect<A, E, R>>,
+  after: (
+    params: P,
+    result: A,
+    environmentId: EnvironmentId | undefined,
+  ) => Effect.Effect<A, E2, R2>,
+) => {
+  const forwarded = forwardedOf(declaration) as Forwarded<P, A, E, R> | undefined;
+  return declare(
+    (params: P) =>
+      Effect.flatMap(checkedHandler(declaration)(params), (result) =>
+        after(params, result, undefined),
+      ) as Effect.Effect<A, E | E2, R | R2>,
+    remoteCheckOf(declaration) as RemoteCheck<P> | undefined,
+    (params, environmentId, result) =>
+      Effect.flatMap(
+        forwarded === undefined ? Effect.succeed(result) : forwarded(params, environmentId, result),
+        (answered) => after(params, answered, environmentId),
+      ),
+  );
+};
+
 const fullAccessRequired =
   "Changing projects or environment settings needs a live full-access/default calling thread or a full-access client.";
 const changesEnvironment = "change projects or environment settings";
@@ -430,6 +454,7 @@ const linksUnavailable = new OrchestratorMcpFailure({
 const THREAD_ONLY = new Set<unknown>([
   McpInvocationContext.hiddenFromOutsideClients,
   McpInvocationContext.hiddenWithoutBackgroundWait,
+  McpInvocationContext.hiddenUnlessMissionLead,
 ]);
 
 /**

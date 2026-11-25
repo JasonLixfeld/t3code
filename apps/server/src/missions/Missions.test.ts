@@ -42,7 +42,11 @@ import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecuto
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
+import * as Project from "../project/ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as MissionClaims from "./MissionClaims.ts";
+import { memberStatusOf } from "./missionStatus.ts";
+import * as MissionTurnContexts from "./MissionTurnContexts.ts";
 import { releaseDeletedThreads } from "./MissionThreadDeletions.ts";
 import { afterAnswer, afterMiss, newTombstoneCheck } from "./tombstoneChecks.ts";
 import * as MissionStore from "./MissionStore.ts";
@@ -79,6 +83,10 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   const titles = new Map<string, string>();
   const empty = new Set<string>();
   const archived = new Set<string>();
+  /** Each thread's run state, idle unless a test says otherwise. */
+  const activity = new Map<string, Record<string, unknown>>();
+  /** What Settings tells every mission's lead. */
+  const settings = { missionDefaultPrompt: "" };
   const laptop = {
     claims: undefined as Claims | undefined,
     /**
@@ -132,6 +140,14 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
                       title: titles.get(key) ?? "One",
                       latestUserMessageAt: empty.has(key) ? null : "2026-01-01T00:00:00.000Z",
                       visibleItemCount: empty.has(key) ? 0 : 1,
+                      projectId: "project-web",
+                      status: "idle",
+                      activeRunId: null,
+                      pendingRuntimeRequest: null,
+                      hasActionableProposedPlan: false,
+                      settledAt: null,
+                      settledOverride: null,
+                      ...activity.get(key),
                     }
               ) as never;
             }),
@@ -167,7 +183,22 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       case "release":
         return Effect.as(claims.release(owner, args), []);
       case "list":
-        return claims.list(owner);
+        // As the laptop's /mcp answers: each claim with what its thread is doing.
+        return Effect.map(claims.list(owner), (held) =>
+          held.map((claim) => ({
+            ...claim,
+            detail: {
+              status: memberStatusOf({
+                status: "idle",
+                pendingRuntimeRequest: null,
+                hasActionableProposedPlan: false,
+                ...activity.get(keyOf(ref(LAPTOP, claim.threadId))),
+              } as never),
+              title: "One",
+              project: "api",
+            },
+          })),
+        );
       case "rename":
         return claims.rename(owner, args);
     }
@@ -245,6 +276,10 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     archive: (thread: ScopedThreadRef) => archived.add(keyOf(thread)),
     /** The thread has no messages yet, as a new draft thread. */
     empty: (thread: ScopedThreadRef) => empty.add(keyOf(thread)),
+    /** Sets fields of the thread's shell, such as its run status. */
+    shell: (thread: ScopedThreadRef, fields: Record<string, unknown>) =>
+      activity.set(keyOf(thread), { ...activity.get(keyOf(thread)), ...fields }),
+    settings,
     laptop,
     /** The next calls this lead starts on the laptop, waiting for each. */
     nextCalls: (count: number) => Queue.takeN(laptop.started!, count),
@@ -286,6 +321,12 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       peers,
       links,
       Layer.mock(ServerEnvironment.ServerEnvironment)({ getEnvironmentId: Effect.succeed(HERE) }),
+      Layer.mock(ServerSettings.ServerSettingsService)({
+        getSettings: Effect.sync(() => ({ ...settings }) as never),
+      }),
+      Layer.mock(Project.ProjectService)({
+        getShell: () => Effect.succeedSome({ title: "web" } as never),
+      }),
       NodeCrypto.layer,
     ),
   };
@@ -299,7 +340,11 @@ const withMissions = <A, E>(
     Effect.Effect<
       A,
       E,
-      Missions.Missions | MissionStore.MissionStore | MissionClaims.MissionClaims | Scope.Scope
+      | Missions.Missions
+      | MissionStore.MissionStore
+      | MissionClaims.MissionClaims
+      | MissionTurnContexts.MissionTurnContexts
+      | Scope.Scope
     >
   >
 ) =>
@@ -356,6 +401,7 @@ const withMissions = <A, E>(
     );
     const lead = Missions.layer.pipe(
       Layer.provideMerge(claimsOn(HERE)),
+      Layer.provideMerge(MissionTurnContexts.layer),
       Layer.provide(Layer.mergeAll(world.threadsOn(HERE), world.layer)),
     );
     return yield* Effect.forEach(sessions, (session) =>
@@ -1967,3 +2013,99 @@ it.effect("a client cannot set or clear mission tags through the generic tag com
     assert.equal((yield* setTag("private"))._tag, "Success");
   }),
 );
+
+const HEADER =
+  'You are the lead of the mission "One". You orchestrate its threads. If the user asks for something different in a message, the message wins.';
+const turnContextOf = (thread: ScopedThreadRef) =>
+  Effect.flatMap(MissionTurnContexts.MissionTurnContexts, (contexts) =>
+    contexts.read(thread.threadId),
+  );
+
+it.effect(
+  "a lead's turn gets its prompt and members' status; other threads, and an old lead, get none",
+  () => {
+    const world = makeWorld([lead, localMember, laptopMember]);
+    world.settings.missionDefaultPrompt = "Review every pull request.";
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const mission = yield* createOne;
+        yield* missions.addMember({ missionId: mission.missionId, member: localMember });
+        yield* missions.addMember({ missionId: mission.missionId, member: laptopMember });
+        world.shell(localMember, {
+          status: "waiting",
+          activeRunId: "run-1",
+          pendingRuntimeRequest: { id: "r1", kind: "user_input", createdAt: "2026-01-01" },
+        });
+        world.shell(laptopMember, { status: "running" });
+        yield* listed;
+        yield* world.untilAnswered("list");
+
+        assert.deepEqual(yield* turnContextOf(lead), {
+          prompt: `${HEADER}\n\nReview every pull request.`,
+          status: [
+            "Status: 2 members. 1 need you (awaiting input, pending approval), 0 failed, 1 working, 0 idle, 0 offline.",
+            "Needs attention: local on this machine (web), awaiting input.",
+            "For titles and the full list, call t3_mission_roster.",
+          ].join("\n"),
+        });
+        assert.isUndefined(yield* turnContextOf(localMember));
+
+        yield* missions.setPrompt({ missionId: mission.missionId, prompt: "  Ship it.  " });
+        assert.equal((yield* turnContextOf(lead))?.prompt, `${HEADER}\n\nShip it.`);
+        assert.equal((yield* listed).missions[0]?.prompt, "Ship it.");
+        yield* missions.setPrompt({ missionId: mission.missionId, prompt: "" });
+        assert.equal(
+          (yield* turnContextOf(lead))?.prompt,
+          `${HEADER}\n\nReview every pull request.`,
+        );
+
+        yield* missions.setLead({
+          missionId: mission.missionId,
+          lead: localMember,
+          expectedLead: lead.threadId,
+        });
+        assert.isUndefined(yield* turnContextOf(lead));
+        assert.isDefined(yield* turnContextOf(localMember));
+      }),
+    );
+  },
+);
+
+it.effect("with no client watching, a lead still hears its members on another machine", () => {
+  const world = makeWorld([lead, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const mission = yield* createOne;
+      yield* missions.addMember({ missionId: mission.missionId, member: laptopMember });
+      const heard = yield* missions.remoteChanges.pipe(
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* world.untilAnswered("list");
+      world.shell(laptopMember, {
+        status: "waiting",
+        pendingRuntimeRequest: { id: "r1", kind: "command", createdAt: "2026-01-01" },
+      });
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* world.untilAnswered("list");
+      assert.deepEqual(
+        [...(yield* Fiber.join(heard))].map((change) => change.status),
+        ["idle", "pending-approval"],
+      );
+      const [row] = yield* missions.roster(mission.missionId);
+      assert.deepEqual(row, {
+        ref: laptopMember,
+        machine: "Laptop",
+        project: "api",
+        status: "pending-approval",
+        title: "One",
+      });
+    }),
+  );
+});

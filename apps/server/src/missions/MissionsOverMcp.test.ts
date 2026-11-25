@@ -23,8 +23,10 @@ import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecuto
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
+import * as Project from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as MissionClaims from "./MissionClaims.ts";
+import * as MissionTurnContexts from "./MissionTurnContexts.ts";
 import * as MissionStore from "./MissionStore.ts";
 import * as Missions from "./Missions.ts";
 
@@ -87,6 +89,9 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
       MissionClaims.MissionClaims,
     );
     const settings = yield* Layer.build(ServerSettings.layerTest());
+    const projects = Layer.mock(Project.ProjectService)({
+      getShell: () => Effect.succeedSome({ title: "web" } as never),
+    });
     yield* Context.get(settings, ServerSettings.ServerSettingsService).updateSettings({
       linkedEnvironmentsEnabled: true,
     });
@@ -102,6 +107,7 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
           threadsWith(laptopTags),
           NodeCrypto.layer,
           Layer.succeed(MissionClaims.MissionClaims, laptopClaims),
+          projects,
         ),
       ),
       Layer.provide(
@@ -163,6 +169,9 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
           Layer.mock(ServerEnvironment.ServerEnvironment)({
             getEnvironmentId: Effect.succeed(DESK),
           }),
+          Layer.succeedContext(settings),
+          projects,
+          MissionTurnContexts.layer,
           NodeCrypto.layer,
         ),
       ),

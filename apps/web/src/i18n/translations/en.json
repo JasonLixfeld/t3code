@@ -12863,5 +12863,14 @@
   "5b091f252c924026": "Preparing No project…",
   "df569eba6576b4b9": "This draft's mission no longer allows that machine.",
   "6c4a013bdfde968d": "No project…",
-  "c054c0f81a20232c": "The machine did not answer in time."
+  "c054c0f81a20232c": "The machine did not answer in time.",
+  "69032cb43b75a869": "What every mission's lead thread follows on each turn, unless its mission has its own prompt.",
+  "91dc495b1ac61f56": "Reset mission prompt to default",
+  "09bf7d819760063c": "Mission prompt",
+  "8bdf3a508c08b7ca": "Mixed. Enter a prompt to apply to all selected targets.",
+  "62dbf0230a0358cf": "Check each member's work before you call the mission done.",
+  "9d0b1d2cead70261": "mission lead orchestrate instructions default prompt every turn",
+  "e2cdfebe2d8a1d14": "Could not save the mission prompt",
+  "4cf08bfc2adf8c67": "The lead of \"{mission}\" follows this on every turn. Leave it empty to use the default from Settings.",
+  "32bb9fa25796a9eb": "Edit mission prompt…"
 }

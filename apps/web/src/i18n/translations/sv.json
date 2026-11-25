@@ -12861,5 +12861,14 @@
   "5b091f252c924026": "Förbereder ”Inget projekt”…",
   "df569eba6576b4b9": "Utkastets uppdrag tillåter inte längre den maskinen.",
   "6c4a013bdfde968d": "Inget projekt…",
-  "c054c0f81a20232c": "Maskinen svarade inte i tid."
+  "c054c0f81a20232c": "Maskinen svarade inte i tid.",
+  "69032cb43b75a869": "Det som varje uppdrags ledartråd följer vid varje tur, om inte uppdraget har en egen prompt.",
+  "91dc495b1ac61f56": "Återställ uppdragsprompten till standard",
+  "09bf7d819760063c": "Uppdragsprompt",
+  "8bdf3a508c08b7ca": "Blandat. Ange en prompt som gäller för alla valda mål.",
+  "62dbf0230a0358cf": "Kontrollera varje medlems arbete innan du kallar uppdraget klart.",
+  "9d0b1d2cead70261": "uppdrag ledare orkestrera instruktioner standard prompt varje tur",
+  "e2cdfebe2d8a1d14": "Det gick inte att spara uppdragsprompten",
+  "4cf08bfc2adf8c67": "Ledaren för ”{mission}” följer detta vid varje tur. Lämna tomt för att använda standarden från Inställningar.",
+  "32bb9fa25796a9eb": "Redigera uppdragsprompt…"
 }
