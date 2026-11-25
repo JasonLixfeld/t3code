@@ -171,6 +171,11 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
                       hasActionableProposedPlan: false,
                       settledAt: null,
                       settledOverride: null,
+                      lineage: {
+                        parentThreadId: null,
+                        relationshipToParent: null,
+                        rootThreadId: threadId,
+                      },
                       ...activity.get(key),
                     }
               ) as never;
@@ -2934,3 +2939,40 @@ it.effect("a started thread released before its join landed is not joined by a r
     }),
   );
 });
+
+it.effect(
+  "a fork of a thread that leads or led a mission is told it leads none, and gets no lead tools",
+  () => {
+    const fork = ref(HERE, "fork");
+    const forkOfFork = ref(HERE, "fork-of-fork");
+    const forkOfLead = ref(HERE, "fork-of-lead");
+    const world = makeWorld([lead, localMember, fork, forkOfFork, forkOfLead]);
+    const forkedFrom = (source: ScopedThreadRef) => ({
+      lineage: {
+        parentThreadId: source.threadId,
+        relationshipToParent: "fork",
+        rootThreadId: lead.threadId,
+      },
+    });
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const { missionId } = yield* createOne;
+        yield* missions.addMember({ missionId, member: localMember });
+        yield* missions.setLead({ missionId, lead: localMember, expectedLead: lead.threadId });
+        // The old lead is forked from a turn before it was told it no longer leads.
+        world.shell(fork, forkedFrom(lead));
+        world.shell(forkOfFork, forkedFrom(fork));
+        world.shell(forkOfLead, forkedFrom(localMember));
+        for (const thread of [fork, forkOfFork, forkOfLead]) {
+          assert.deepEqual(yield* turnContextOf(thread), { role: "former-lead" });
+          assert.isUndefined(yield* missions.ledBy(thread.threadId));
+        }
+        // A thread forked from one that never led anything gets nothing.
+        world.shell(fork, forkedFrom(ref(HERE, "never-led")));
+        assert.isUndefined(yield* turnContextOf(fork));
+      }),
+    );
+  },
+);

@@ -1290,11 +1290,31 @@ const make = Effect.gen(function* () {
 
   const roster = (missionId: string) => members(missionId, true);
 
+  /**
+   * A fork starts from its source's history, so a fork of a thread that leads or led a Mission
+   * holds that Mission's instructions too. It is told it leads none, for its context only: its
+   * own claim, and so the lead tools, stay as they are.
+   */
+  const forkedFromLead = Effect.fn("Missions.forkedFromLead")(function* (threadId: ThreadId) {
+    const seen = new Set<ThreadId>([threadId]);
+    let shell = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+    while (shell !== null && shell.lineage.relationshipToParent === "fork") {
+      const source = shell.lineage.parentThreadId;
+      if (source === null || seen.has(source)) return false;
+      seen.add(source);
+      if (yield* store.ledBefore(source)) return true;
+      shell = yield* threads.getThreadShell(source).pipe(Effect.orElseSucceed(() => null));
+    }
+    return false;
+  });
+
   yield* turnContexts.serve((threadId) =>
     Effect.gen(function* () {
       const mission = yield* ledBy(threadId);
       if (mission === undefined) {
-        return (yield* store.ledBefore(threadId)) ? { role: "former-lead" as const } : undefined;
+        return (yield* store.ledBefore(threadId)) || (yield* forkedFromLead(threadId))
+          ? { role: "former-lead" as const }
+          : undefined;
       }
       const { missionDefaultPrompt } = yield* settings.getSettings;
       return {

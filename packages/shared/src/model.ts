@@ -577,6 +577,9 @@ export function resolvePromptInjectedEffort(
   return null;
 }
 
+/** Claude runs a slash command only when it opens the prompt; a name has no second slash. */
+export const isClaudeSlashCommand = (text: string): boolean => /^\/[^\s/]+(?:\s|$)/u.test(text);
+
 export function applyClaudePromptEffortPrefix(
   text: string,
   effort: string | null | undefined,
@@ -585,8 +588,8 @@ export function applyClaudePromptEffortPrefix(
   if (!trimmed) {
     return trimmed;
   }
-  // Prefixing slash commands prevents Claude invocation; command names allow any token without a second slash.
-  if (effort !== "ultrathink" || /^\/[^\s/]+(?:\s|$)/u.test(trimmed)) {
+  // Prefixing slash commands prevents Claude invocation.
+  if (effort !== "ultrathink" || isClaudeSlashCommand(trimmed)) {
     return trimmed;
   }
   if (trimmed.startsWith("Ultrathink:")) {

@@ -86,7 +86,7 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as ProviderProcesses from "../../process/providerProcesses.ts";
 import * as SpawnWorker from "../../process/SpawnWorker.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
+import { applyClaudePromptEffortPrefix, isClaudeSlashCommand } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   CLAUDE_RESUME_COMPACTION_COMPACT_ANSWER,
@@ -3373,7 +3373,7 @@ const withClaudeAppContext = (
   reservation: Effect.Success<ReturnType<typeof reserveClaudePdfBudget>>,
 ): SDKUserMessage => {
   const content = message.message.content;
-  if (appContext.length === 0 || (typeof content === "string" && content.startsWith("/"))) {
+  if (appContext.length === 0 || (typeof content === "string" && isClaudeSlashCommand(content))) {
     return message;
   }
   const contextBlocks = appContext.map((entry) => {
@@ -14559,30 +14559,34 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.provideService(Path.Path, path),
             );
             // Notes this turn's prompt or an earlier steer already carried are not sent again.
-            const appContext = turnInput.appContext ?? [];
             const seenAppContext =
               currentTurn.appContextOffered ?? deliveredAppContext.get(existing.nativeThreadId);
-            const userMessage = withClaudeAppContext(
-              steerMessage,
-              appContext.filter((entry) => seenAppContext?.get(entry.key) !== entry.text),
-              pdfReservation,
+            const sentAppContext = (turnInput.appContext ?? []).filter(
+              (entry) => seenAppContext?.get(entry.key) !== entry.text,
             );
+            const userMessage = withClaudeAppContext(steerMessage, sentAppContext, pdfReservation);
             // `offer` may call this twice; a second call must not restore notes compaction cleared.
             let offerCommitted = false;
-            const appContextBefore = currentTurn.appContextOffered;
-            const appContextOffered =
-              userMessage === steerMessage
-                ? undefined
-                : new Map([
-                    ...(seenAppContext ?? []),
-                    ...appContext.map((entry) => [entry.key, entry.text] as const),
-                  ]);
             const commitOffer = () => {
               if (offerCommitted) return;
               offerCommitted = true;
               pdfReservation.commit();
-              if (appContextOffered !== undefined) {
-                currentTurn.appContextOffered = appContextOffered;
+              if (userMessage === steerMessage) return;
+              // Merged into what the turn holds when the steer is sent, which a compaction during
+              // its wait may have cleared: then only what it sent is in Claude's history.
+              const appContextBefore = currentTurn.appContextOffered;
+              const appContextOffered = new Map([
+                ...(appContextBefore ?? deliveredAppContext.get(existing.nativeThreadId) ?? []),
+                ...sentAppContext.map((entry) => [entry.key, entry.text] as const),
+              ]);
+              currentTurn.appContextOffered = appContextOffered;
+              const pending = currentTurn.pendingSteers.get(steerUuid);
+              if (pending !== undefined) {
+                currentTurn.pendingSteers.set(steerUuid, {
+                  ...pending,
+                  appContextOffered,
+                  appContextBefore,
+                });
               }
             };
             yield* backgroundForegroundSubagents(existing, backgroundDeadline);
@@ -14611,8 +14615,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               text: turnInput.message.text,
               liveQuery: existing,
               pdfReservation,
-              appContextOffered,
-              appContextBefore,
+              // Set when the steer is sent.
+              appContextOffered: undefined,
+              appContextBefore: undefined,
             });
             yield* Ref.update(steeredTurns, (current) => {
               const next = new Set(current);

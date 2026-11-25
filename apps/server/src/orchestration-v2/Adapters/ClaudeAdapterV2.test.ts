@@ -7535,6 +7535,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const harness = yield* makeWakeHarnessWithOptions({
           close: (sdkMessages) => Queue.shutdown(sdkMessages),
           freshQueueOnReopen: true,
+          forkSession: () => Effect.succeed({ sessionId: "forked-native-session" }),
         });
         const prompt = "You lead a mission (id 0123456789ab). Review every pull request.";
         const lead = (status: string) => ({ role: "lead" as const, prompt, status });
@@ -7632,6 +7633,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* finish(6);
         assert.deepEqual(yield* turn(7, "Still there?", { role: "former-lead" }), ["Still there?"]);
         yield* finish(7);
+        // A fork of the old lead is a new session, whose first turn is told again.
+        const forked = yield* harness.runtime.forkThread({
+          sourceProviderThread: harness.providerThread,
+          targetThreadId: harness.threadId,
+        });
+        yield* harness.runtime.startTurn({
+          ...makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: forked,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("mission-context-fork"),
+            text: "Forked",
+            attachments: [],
+          }),
+          missionContext: { role: "former-lead" },
+        });
+        assert.deepEqual(messageBlocksWithoutEffortPrefix(), [ended, "Forked"]);
         const reopenedRuntime = yield* harness.adapter.openSession({
           threadId: harness.threadId,
           providerSessionId: ProviderSessionId.make("provider-session-claude-wake-restarted"),
@@ -7643,6 +7661,163 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ended,
           "Back",
         ]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect("a steer sent after a compaction leaves the lead's mission blocks to send again", () =>
+    Effect.gen(function* () {
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const backgrounding = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const harness = yield* makeWakeHarnessWithOptions({
+        backgroundTasks: () =>
+          Deferred.succeed(backgrounding, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.as(true),
+          ),
+      });
+      const leadTurn = (ordinal: number, text: string) =>
+        Effect.map(DateTime.now, (now) => ({
+          ...makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`steer-compaction-${ordinal}`),
+            providerTurnOrdinal: ordinal,
+            text,
+            attachments: [],
+          }),
+          missionContext: {
+            role: "lead" as const,
+            prompt: "You lead a mission (id 0123456789ab).",
+            status: "Status: 1 member.",
+          },
+        }));
+      const offered = () => JSON.stringify(harness.offeredMessages.at(-1)?.message.content);
+      const finish = Effect.fnUntraced(function* (ordinal: number) {
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: `steer-compaction-result-${ordinal}`, result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+      });
+      yield* harness.runtime.startTurn(yield* leadTurn(0, "Plan it"));
+      assert.include(offered(), "<t3_code_mission>");
+      yield* finish(0);
+      const audit = yield* leadTurn(1, "Audit with a subagent.");
+      yield* harness.runtime.startTurn(audit);
+      assert.notInclude(offered(), "<t3_code_mission>");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: "steer-compaction-task",
+          tool_use_id: "steer-compaction-tool",
+          description: "Audit",
+          subagent_type: "general-purpose",
+          is_backgrounded: false,
+          task_type: "local_agent",
+          prompt: "Audit.",
+          uuid: "00000000-0000-4000-8000-000000000821",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      // The steer waits on the subagent while Claude compacts the session.
+      const steering = yield* Effect.forkScoped(
+        harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: audit.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${audit.attemptId}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("steer-compaction-steer"),
+            text: "And the app?",
+            attachments: [],
+          },
+          appContext: [{ key: "mcp_app_item-1", text: "Created PROJ-42" }],
+        }),
+      );
+      yield* Deferred.await(backgrounding);
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "compact_boundary",
+          compact_metadata: { trigger: "auto", pre_tokens: 1500, post_tokens: 400 },
+          uuid: "00000000-0000-4000-8000-000000000822",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(steering);
+      assert.include(offered(), "PROJ-42");
+      yield* finish(1);
+      yield* harness.runtime.startTurn(yield* leadTurn(2, "Next"));
+      assert.include(offered(), "<t3_code_mission>");
+      assert.include(offered(), "Status: 1 member.");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect(
+    "a lead's prompt that opens with a path carries its context, and a slash command not",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) => Queue.shutdown(sdkMessages),
+          freshQueueOnReopen: true,
+        });
+        const turn = Effect.fnUntraced(function* (ordinal: number, text: string, status: string) {
+          yield* harness.runtime.startTurn({
+            ...makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`mission-path-${ordinal}`),
+              providerTurnOrdinal: ordinal,
+              text,
+              attachments: [],
+              // No effort prefix, so the prompt opens with the path itself.
+              modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, options: [] },
+            }),
+            missionContext: {
+              role: "lead",
+              prompt: "You lead a mission (id 0123456789ab).",
+              status,
+            },
+          });
+          return harness.offeredMessages.at(-1)?.message.content;
+        });
+        assert.include(
+          JSON.stringify(yield* turn(0, "/Users/me/app.ts crashes", "Status: 1 member.")),
+          "<external_t3_code_mission_status>Status: 1 member.",
+        );
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "mission-path-result-0", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        assert.equal(yield* turn(1, "/review", "Status: 2 members."), "/review");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
