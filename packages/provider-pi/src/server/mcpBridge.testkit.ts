@@ -71,10 +71,13 @@ export async function loadMcpBridge(
     readonly allowsTool?: (name: string) => boolean;
     readonly runtimeMode?: string;
     readonly inputSchema?: Record<string, unknown>;
-    readonly version?: string;
+    // Pi's exported VERSION; undefined models a Pi build without the export.
+    readonly version?: string | undefined;
     readonly extraTools?: ReadonlyArray<McpFixtureTool>;
     // Pi 0.84.3 re-activates every registered name `--tools` selects, or else only new names.
     readonly legacyRegistry?: { readonly tools?: ReadonlyArray<string> };
+    // Pi 1.2 re-activates every built-in name `--tools` selects on each registration.
+    readonly selectedBuiltins?: ReadonlyArray<string>;
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
@@ -127,7 +130,7 @@ export async function loadMcpBridge(
     AbortSignal,
     NodeCrypto,
     NodePath,
-    VERSION: options.version ?? "1.6.1",
+    PiCodingAgent: { VERSION: "version" in options ? options.version : "1.6.1" },
     Type: { Unsafe: (schema: unknown) => schema },
     fetch: async (
       url: string,
@@ -186,6 +189,7 @@ export async function loadMcpBridge(
               : tools.map(({ name }) => name).filter((name) => selected.includes(name));
           activeTools = [...new Set([...activeTools, ...reactivated])];
         }
+        activeTools = [...new Set([...activeTools, ...(options.selectedBuiltins ?? [])])];
       },
       getActiveTools: () => activeTools,
       setActiveTools: (names: string[]) => {

@@ -247,11 +247,12 @@ describe("Pi MCP tool exposure", () => {
   const roster = "mcp__t3-code__t3_mission_roster";
   const rosterAlias = "mcp__t3_code__t3_mission_roster";
 
-  async function startGatewaySession() {
+  async function startGatewaySession(options: { selectedBuiltins?: ReadonlyArray<string> } = {}) {
     const bridge = await loadMcpBridge({
       modern: true,
       toolSearchAvailable: true,
       activatesOnRegistration: true,
+      ...options,
     });
     const gatewayContext = { model: { api: "openai-completions" }, ui: { notify: assert.fail } };
     const sessionStart = bridge.handlers.get("session_start");
@@ -310,8 +311,24 @@ describe("Pi MCP tool exposure", () => {
     assert.include(bridge.declaredTools(), roster);
   });
 
-  it("does not list tools before the agent starts on Pi that is not busy yet, so a steer joins the run", async () => {
-    const bridge = await loadMcpBridge({ modern: true, version: "1.1.0" });
+  it("keeps another extension's tool restriction when T3 shows new tools", async () => {
+    const { bridge, nextAgentStart } = await startGatewaySession({
+      selectedBuiltins: ["read", "bash", "edit", "write", "tool_search"],
+    });
+    bridge.restoreActiveTools(bridge.getActiveTools().filter((name) => name !== "write"));
+
+    bridge.catalog.push(rosterTool);
+    await nextAgentStart();
+    assert.notInclude(bridge.getActiveTools(), "write");
+    assert.includeMembers(bridge.getActiveTools(), ["read", "bash", "edit", "tool_search", roster]);
+  });
+
+  it.each([
+    { name: "1.1.0, which is not busy before the hook", version: "1.1.0" },
+    { name: "a 1.2.0 prerelease", version: "1.2.0-rc.1" },
+    { name: "a build without VERSION", version: undefined },
+  ])("does not list tools before the agent starts on Pi $name", async ({ version }) => {
+    const bridge = await loadMcpBridge({ modern: true, version });
     await bridge.handlers.get("session_start")?.({ systemPrompt: "" }, discoveryContext);
     const requests = bridge.requests.length;
     bridge.catalog.push(rosterTool);

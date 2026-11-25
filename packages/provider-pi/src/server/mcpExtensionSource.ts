@@ -14,7 +14,8 @@ export const PI_T3_SERVICE_TIER_COMMAND = "t3-service-tier";
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
 export const PI_T3_MCP_EXTENSION_SOURCE = `\
-import { stripFrontmatter, VERSION, type BeforeAgentStartEvent, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { stripFrontmatter, type BeforeAgentStartEvent, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import * as PiCodingAgent from "@earendil-works/pi-coding-agent";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -399,9 +400,11 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // T3 lists the tools again before each run only on Pi 1.2 and later. Earlier Pi marks itself
   // busy after before_agent_start, so a steer sent during the listing starts a second run and is
   // dropped. Pi before 0.99 also cannot hide a tool: --tools re-activates it on every registration.
-  // On that Pi the catalog stays as the session first listed it.
-  const [major = 0, minor = 0] = VERSION.split(".").map(Number);
-  const refreshesCatalog = supportsExposure && (major > 1 || (major === 1 && minor >= 2));
+  // On that Pi, and on a Pi whose version is unknown, the catalog stays as the session first listed it.
+  const version = /^(\\d+)\\.(\\d+)\\.(\\d+)(-)?/.exec(String((PiCodingAgent as { VERSION?: unknown }).VERSION));
+  const [major = 0, minor = 0, patch = 0] = version?.slice(1, 4).map(Number) ?? [];
+  const order = major - 1 || minor - 2 || patch;
+  const refreshesCatalog = supportsExposure && version !== null && (order > 0 || (order === 0 && version[4] === undefined));
   const directTools = new Set(["orchestrator_capabilities", "delegate_task", "task_status"]);
   const ALIAS_PREFIX = "mcp__t3_code__";
   let deferOptionalTools = supportsExposure;
@@ -445,7 +448,6 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
         },
       });
     }
-    if (withdrawn.size > 0) pi.setActiveTools(pi.getActiveTools().filter((name) => !withdrawn.has(name)));
     readOnlyMcpTools.clear();
     for (const tool of catalog) {
       const name = tool.name;
@@ -520,8 +522,24 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       .then(() => client.listTools(AbortSignal.timeout(2_000)))
       .catch(() => catalog);
     if (JSON.stringify(next) === JSON.stringify(catalog)) return;
+    const t3Tool = (name: string) => /^mcp__t3[-_]code__(.+)$/.exec(name)?.[1];
+    const known = new Set(catalog.map((tool) => tool.name));
+    const listed = new Set(next.map((tool) => tool.name));
+    // Each registration re-applies --tools, which turns on tools another extension turned off.
+    // Keep every other tool as it was, drop withdrawn T3 tools, and add the T3 tools Pi turned on.
+    const before = pi.getActiveTools();
     catalog = next;
     registerTools();
+    pi.setActiveTools([
+      ...before.filter((name) => {
+        const tool = t3Tool(name);
+        return tool === undefined || listed.has(tool);
+      }),
+      ...pi.getActiveTools().filter((name) => {
+        const tool = t3Tool(name);
+        return tool !== undefined && !known.has(tool) && !before.includes(name);
+      }),
+    ]);
   };
 
   const reconcileDiscovery = (ctx: Pick<ExtensionContext, "model">) => {
