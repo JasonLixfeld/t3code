@@ -47,6 +47,7 @@ import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as MissionHandlers from "../mcp/toolkits/mission/handlers.ts";
 import { MissionToolkit } from "../mcp/toolkits/mission/tools.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
@@ -376,6 +377,8 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     beforeMissionsRead: Effect.void as Effect.Effect<void>,
     /** Runs before the lead reads the releases it waits on, as an add does under its lock. */
     beforeReleasesRead: Effect.void as Effect.Effect<void>,
+    /** How many thread rows the fork lineage walk read. */
+    lineageReads: 0,
     /** How many times a turn gave members numbers, which writes when one has none. */
     numberings: 0,
     /** Runs before a mission's new lead is written, under the lock the write takes. */
@@ -387,6 +390,15 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       peers,
       links,
       Layer.mock(ServerEnvironment.ServerEnvironment)({ getEnvironmentId: Effect.succeed(HERE) }),
+      // A thread's row stays after a delete, with its lineage, as the projection keeps it.
+      Layer.mock(ProjectionStore.ProjectionStoreV2)({
+        findThread: (threadId) =>
+          Effect.sync(() => {
+            world.lineageReads += 1;
+            const lineage = activity.get(keyOf(ref(HERE, threadId)))?.lineage;
+            return lineage === undefined ? null : ({ id: threadId, lineage } as never);
+          }),
+      }),
       Layer.mock(ServerSettings.ServerSettingsService)({
         getSettings: Effect.sync(() => ({ ...settings }) as never),
       }),
@@ -2976,3 +2988,57 @@ it.effect(
     );
   },
 );
+
+it.effect("a fork whose fork between was deleted is still told it leads none", () => {
+  const forkOfLead = ref(HERE, "fork-b");
+  const forkOfFork = ref(HERE, "fork-c");
+  const world = makeWorld([lead, forkOfLead, forkOfFork]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      yield* createOne;
+      const forkOf = (source: ScopedThreadRef) => ({
+        lineage: {
+          parentThreadId: source.threadId,
+          relationshipToParent: "fork",
+          rootThreadId: lead.threadId,
+        },
+      });
+      world.shell(forkOfLead, forkOf(lead));
+      world.shell(forkOfFork, forkOf(forkOfLead));
+      // B is deleted, and C compacts: its next turn reads its context afresh.
+      world.remove(forkOfLead);
+      assert.deepEqual(yield* turnContextOf(forkOfFork), { role: "former-lead" });
+    }),
+  );
+});
+
+it.effect("a long fork chain is followed only so far, a thread row at a time", () => {
+  const chain = Array.from({ length: 100 }, (_, index) => ref(HERE, `fork-${index}`));
+  const world = makeWorld([lead, ...chain]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      yield* createOne;
+      // fork-0 is a fork of fork-1, and so on, and fork-99 a fork of the lead, past the cap.
+      chain.forEach((thread, index) =>
+        world.shell(thread, {
+          lineage: {
+            parentThreadId: (chain[index + 1] ?? lead).threadId,
+            relationshipToParent: "fork",
+            rootThreadId: lead.threadId,
+          },
+        }),
+      );
+      const chainShellReads: Array<ThreadId> = [];
+      world.beforeShellRead = (threadId) =>
+        Effect.sync(() => {
+          if (threadId.startsWith("fork-")) chainShellReads.push(threadId);
+        });
+      world.lineageReads = 0;
+      assert.isUndefined(yield* turnContextOf(chain[0]!));
+      assert.equal(world.lineageReads, Missions.FORK_WALK_HOPS + 1);
+      assert.deepEqual(chainShellReads, []);
+    }),
+  );
+});

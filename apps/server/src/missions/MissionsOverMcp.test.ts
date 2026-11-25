@@ -22,6 +22,7 @@ import { MissionClaimResult, MissionToolkit } from "../mcp/toolkits/mission/tool
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
 import * as Project from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -169,6 +170,7 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
           Layer.mock(ServerEnvironment.ServerEnvironment)({
             getEnvironmentId: Effect.succeed(DESK),
           }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({ findThread: () => Effect.succeed(null) }),
           Layer.succeedContext(settings),
           projects,
           MissionTurnContexts.layer,

@@ -33,6 +33,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { MissionClaimResult } from "../mcp/toolkits/mission/tools.ts";
 import { assertTargetWithinLimits } from "../mcp/threadAccess.ts";
 import type { DispatchModes } from "../orchestration-v2/DispatchModeLimit.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
@@ -70,6 +71,8 @@ export const IDLE_POLL_INTERVALS = 4;
  * a member's machine remembers a spent add, so a lead restored from a backup cannot replay one.
  */
 export const PENDING_ADD_DAYS = 7;
+/** How many forks back a thread's history is followed to a lead it came from. */
+export const FORK_WALK_HOPS = 64;
 
 export class Missions extends Context.Service<
   Missions,
@@ -231,6 +234,7 @@ const make = Effect.gen(function* () {
   const store = yield* MissionStore;
   const claims = yield* MissionClaims;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const links = yield* PeerLinks.PeerLinks;
   const peers = yield* PeerMcpClient.PeerMcpClient;
   const random = yield* SecureRandom.SecureRandom;
@@ -1296,14 +1300,20 @@ const make = Effect.gen(function* () {
    * own claim, and so the lead tools, stay as they are.
    */
   const forkedFromLead = Effect.fn("Missions.forkedFromLead")(function* (threadId: ThreadId) {
+    // One thread row each, deleted ones too: a deleted fork between still passes the history on.
+    const lineageOf = (id: ThreadId) =>
+      projections.findThread(id).pipe(
+        Effect.map((thread) => thread?.lineage ?? null),
+        Effect.orElseSucceed(() => null),
+      );
     const seen = new Set<ThreadId>([threadId]);
-    let shell = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
-    while (shell !== null && shell.lineage.relationshipToParent === "fork") {
-      const source = shell.lineage.parentThreadId;
+    let lineage = yield* lineageOf(threadId);
+    for (let hop = 0; hop < FORK_WALK_HOPS && lineage?.relationshipToParent === "fork"; hop++) {
+      const source = lineage.parentThreadId;
       if (source === null || seen.has(source)) return false;
       seen.add(source);
       if (yield* store.ledBefore(source)) return true;
-      shell = yield* threads.getThreadShell(source).pipe(Effect.orElseSucceed(() => null));
+      lineage = yield* lineageOf(source);
     }
     return false;
   });

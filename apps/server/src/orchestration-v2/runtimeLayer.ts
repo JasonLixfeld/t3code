@@ -342,6 +342,7 @@ const layerMissionsProvided = Layer.mergeAll(
   Layer.provide(MissionTurnContexts.layer),
   Layer.provide(MissionClaims.layerLive),
   Layer.provide(layerThreadManagementProvided),
+  Layer.provide(ProjectionStore.layer),
   Layer.provide(PeerMcpClient.layer.pipe(Layer.provideMerge(PeerLinks.layer))),
 );
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
