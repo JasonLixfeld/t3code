@@ -58,8 +58,9 @@ import {
   type DispatchModes,
   exceededDispatchModeLimit,
 } from "../orchestration-v2/DispatchModeLimit.ts";
+import { type MemberWorkspace, MemberWorkspaces } from "./MemberWorkspaces.ts";
 import * as MissionClaims from "./MissionClaims.ts";
-import { memberStatusOf } from "./missionStatus.ts";
+import { memberStatusOf, missionPromptText } from "./missionStatus.ts";
 import * as MissionTurnContexts from "./MissionTurnContexts.ts";
 import { releaseDeletedThreads } from "./MissionThreadDeletions.ts";
 import { afterAnswer, afterMiss, newTombstoneCheck } from "./tombstoneChecks.ts";
@@ -101,6 +102,21 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   const archived = new Set<string>();
   /** Each thread's run state, idle unless a test says otherwise. */
   const activity = new Map<string, Record<string, unknown>>();
+  /** Every command a thread here or on the laptop was sent, by type. */
+  const dispatched: Array<string> = [];
+  /** What each thread's checkouts are, as its own machine reads them. */
+  const workspaces = new Map<ThreadId, MemberWorkspace>();
+  const workspacesLayer = Layer.mock(MemberWorkspaces)({
+    of: (shell) =>
+      Effect.sync(
+        () =>
+          workspaces.get((shell as unknown as { readonly id: ThreadId }).id) ?? {
+            kind: "project" as const,
+            repositories: [],
+            otherPullRequests: [],
+          },
+      ),
+  });
   /** What Settings tells every mission's lead. */
   const settings = { missionDefaultPrompt: "" };
   const laptop = {
@@ -185,6 +201,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
         ),
       dispatch: (command) =>
         Effect.sync(() => {
+          dispatched.push(command.type);
           if (command.type !== "thread.tag.set") throw new Error(`unexpected ${command.type}`);
           const current = tags.get(keyOf(ref(environmentId, command.threadId)))!;
           if (command.tagged) current.push(command.tag);
@@ -234,6 +251,10 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
                   ? {}
                   : { run: { id: shell.latestRunId, status: shell.status } }),
                 requests: request === null ? [] : [{ id: request.id, kind: request.kind }],
+                // An older laptop sends none.
+                ...(workspaces.has(claim.threadId)
+                  ? { workspace: workspaces.get(claim.threadId) }
+                  : {}),
               };
             })(),
           })),
@@ -381,6 +402,9 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     lineageReads: 0,
     /** How many times a turn gave members numbers, which writes when one has none. */
     numberings: 0,
+    dispatched,
+    workspaces,
+    workspacesLayer,
     /** Runs before a mission's new lead is written, under the lock the write takes. */
     beforeLeadWrite: Effect.void as Effect.Effect<void>,
     /** Runs after the lead renames a mission, before its claims follow. */
@@ -405,6 +429,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       Layer.mock(Project.ProjectService)({
         getShell: () => Effect.succeedSome({ title: "web" } as never),
       }),
+      workspacesLayer,
       NodeCrypto.layer,
     ),
   };
@@ -2104,8 +2129,7 @@ it.effect("a client cannot set or clear mission tags through the generic tag com
   }),
 );
 
-const HEADER =
-  "You lead a mission (id 0123456789ab). You orchestrate its threads. If the user asks for something different in a message, the message wins.";
+const HEADER = missionPromptText("0123456789ab", "");
 const turnContextOf = (thread: ScopedThreadRef) =>
   Effect.flatMap(MissionTurnContexts.MissionTurnContexts, (contexts) =>
     contexts.read(thread.threadId),
@@ -2250,6 +2274,7 @@ const leadTool = (world: ReturnType<typeof makeWorld>, name: string, args: objec
       Layer.succeed(MissionClaims.MissionClaims, yield* MissionClaims.MissionClaims),
       world.threadsOn(HERE),
       Layer.mock(Project.ProjectService)({}),
+      world.workspacesLayer,
       NodeServices.layer,
     );
     const result = yield* McpServer.McpServer.pipe(
@@ -2410,7 +2435,7 @@ it.effect("a lead title an agent wrote never reaches the lead's prompt entry", (
       const context = yield* turnContextOf(lead);
       assert.deepEqual(context, {
         role: "lead",
-        prompt: `You lead a mission (id ${missionId}). You orchestrate its threads. If the user asks for something different in a message, the message wins.`,
+        prompt: missionPromptText(missionId, ""),
         status: [
           "Status: 0 members. 0 need you (awaiting input, pending approval), 0 failed, 0 working, 0 idle, 0 offline.",
           "For titles and the full list, call t3_mission_roster.",
@@ -3084,3 +3109,114 @@ it.effect("a fork cycle is read once round, not walked to the cap", () => {
     }),
   );
 });
+
+const repository = (
+  name: string,
+  remote: string | null,
+  branch: string,
+  pullRequests: ReadonlyArray<number>,
+) => ({
+  name,
+  path: `/tasks/${branch}/${name}`,
+  repositoryPath: `/code/app/${name}`,
+  branch,
+  remote,
+  pullRequests: pullRequests.map((number) => ({
+    number,
+    state: "open",
+    url: `https://github.com/acme/${name}/pull/${number}`,
+  })),
+});
+
+it.effect(
+  "the roster lists each member's repositories, branches and pull requests, and groups them by repository",
+  () => {
+    const olderLaptopMember = ref(LAPTOP, "older");
+    const world = makeWorld([lead, localMember, laptopMember, olderLaptopMember]);
+    // Here, one member changes the API and the web app together, in one task folder.
+    world.workspaces.set(localMember.threadId, {
+      kind: "task-folder",
+      repositories: [
+        repository("api", "github.com/acme/api", "t3/checkout", [12]),
+        repository("web", null, "t3/checkout", []),
+      ],
+      otherPullRequests: [],
+    });
+    // On the laptop, another changes the API alone; a member there from an older build says nothing.
+    world.workspaces.set(laptopMember.threadId, {
+      kind: "worktree",
+      repositories: [repository("api", "github.com/acme/api", "t3/docs", [13])],
+      otherPullRequests: [],
+    });
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const { missionId } = yield* createOne;
+        for (const member of [localMember, laptopMember, olderLaptopMember]) {
+          yield* missions.addMember({ missionId, member });
+        }
+        yield* listed;
+        yield* world.untilAnswered("list");
+        world.dispatched.length = 0;
+        const roster = JSON.parse(yield* leadTool(world, "t3_mission_roster", {})) as {
+          readonly members: ReadonlyArray<{
+            readonly member: string;
+            readonly machine: string;
+            readonly workspace: unknown;
+          }>;
+          readonly byRepository: unknown;
+        };
+        assert.deepEqual(
+          roster.members.map((row) => [row.member, row.machine, row.workspace]),
+          [
+            ["member 1", "this machine", world.workspaces.get(localMember.threadId)],
+            ["member 2", "Laptop", world.workspaces.get(laptopMember.threadId)],
+            ["member 3", "Laptop", "unknown"],
+          ],
+        );
+        assert.deepEqual(roster.byRepository, [
+          {
+            repository: "github.com/acme/api",
+            members: [
+              {
+                member: "member 1",
+                place: "this machine",
+                branch: "t3/checkout",
+                pullRequests: [
+                  { number: 12, state: "open", url: "https://github.com/acme/api/pull/12" },
+                ],
+              },
+              {
+                member: "member 2",
+                place: "machine 2",
+                branch: "t3/docs",
+                pullRequests: [
+                  { number: 13, state: "open", url: "https://github.com/acme/api/pull/13" },
+                ],
+              },
+            ],
+          },
+          {
+            repository: `${HERE}:/code/app/web`,
+            members: [
+              {
+                member: "member 1",
+                place: "this machine",
+                branch: "t3/checkout",
+                pullRequests: [],
+              },
+            ],
+          },
+        ]);
+        // The pull requests stay on the threads that opened them: the lead is sent nothing.
+        assert.deepEqual(world.dispatched, []);
+        // And the lead's status names no repository, branch or pull request.
+        const context = yield* turnContextOf(lead);
+        const status = context?.role === "lead" ? context.status : "";
+        assert.include(status, "Status: 3 members.");
+        for (const text of ["acme", "t3/", "/code/app", "pull"]) assert.notInclude(status, text);
+      }),
+    );
+  },
+);

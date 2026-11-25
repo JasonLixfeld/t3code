@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 import { McpSchema, McpServer } from "effect/ai";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
+import { MemberWorkspaces } from "../../../missions/MemberWorkspaces.ts";
 import * as MissionClaims from "../../../missions/MissionClaims.ts";
 import * as Missions from "../../../missions/Missions.ts";
 import * as MissionStore from "../../../missions/MissionStore.ts";
@@ -24,6 +25,11 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { liveThreadShell, liveThreadsLayer } from "../../McpToolAccess.testkit.ts";
 import * as MissionHandlers from "./handlers.ts";
 import { MissionToolkit } from "./tools.ts";
+
+/** A member that names no repository. */
+const noWorkspace = Layer.mock(MemberWorkspaces)({
+  of: () => Effect.succeed({ kind: "project" as const, repositories: [], otherPullRequests: [] }),
+});
 
 const userThread = ThreadId.make("thread:user");
 
@@ -129,6 +135,7 @@ const callOnce = (
       Layer.mock(Project.ProjectService)({
         getShell: () => Effect.succeedSome({ title: "web" } as never),
       }),
+      noWorkspace,
     );
     const member = yield* Layer.build(
       MissionClaims.layer.pipe(
@@ -351,6 +358,7 @@ it.effect(
               NodeCrypto.layer,
               Layer.mock(MissionClaims.MissionClaims)({}),
               Layer.mock(Project.ProjectService)({}),
+              noWorkspace,
               Layer.mock(Missions.Missions)({
                 ledBy: (threadId) =>
                   Effect.succeed(

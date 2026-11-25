@@ -32,8 +32,16 @@ const member = (
   ...overrides,
 });
 
-const HEADER =
-  "You lead a mission (id 0123456789ab). You orchestrate its threads. If the user asks for something different in a message, the message wins.";
+// The app's own words, every one: the mission id is the only part not fixed.
+const HEADER = [
+  "You lead a mission (id 0123456789ab). You orchestrate its threads. If the user asks for something different in a message, the message wins.",
+  "The mission has no branch or checkout of its own: each repository's work is done in its members' threads.",
+  "- Changes to several repositories that must land together: one member, in a multi-repository project.",
+  "- Separable changes: a member each with t3_thread_launch. For code edits, name the environmentId, projectId, repositories and baseRef.",
+  "- Use create_threads only for members that should share your checkout.",
+  "- Drive each repository to a pull request. Track which repositories need changes, need none, or are blocked; t3_mission_roster lists them by repository.",
+  "- Never pull, push, merge or switch branches only because a thread joined or finished.",
+].join("\n");
 
 it("the prompt sits under the header, and without one the header stands alone", () => {
   assert.equal(missionPromptText("0123456789ab", ""), HEADER);

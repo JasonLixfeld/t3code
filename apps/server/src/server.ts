@@ -148,6 +148,7 @@ import * as LayoutCommandApprovals from "./workspace/LayoutCommandApprovals.ts";
 import * as LayoutCommandApprovalWrites from "./workspace/LayoutCommandApprovalWrites.ts";
 import * as TaskFolders from "./workspace/TaskFolders.ts";
 import * as TaskFolderStore from "./workspace/TaskFolderStore.ts";
+import * as MemberWorkspaces from "./missions/MemberWorkspaces.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -843,6 +844,14 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
             return OpenCodeServerLedger.layer({ stateDir: config.stateDir });
           }),
         ),
+      ),
+    ),
+  ),
+  // What each mission member's checkouts are, for its lead's roster and a peer's list.
+  Layer.provideMerge(
+    MemberWorkspaces.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(TaskFolderStore.layer, GitVcsDriver.layer, RuntimeLayer.layerProjectService),
       ),
     ),
   ),

@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 
+import { MemberWorkspaces } from "./MemberWorkspaces.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -30,6 +31,11 @@ import * as MissionClaims from "./MissionClaims.ts";
 import * as MissionTurnContexts from "./MissionTurnContexts.ts";
 import * as MissionStore from "./MissionStore.ts";
 import * as Missions from "./Missions.ts";
+
+/** A member that names no repository. */
+const noWorkspace = Layer.mock(MemberWorkspaces)({
+  of: () => Effect.succeed({ kind: "project" as const, repositories: [], otherPullRequests: [] }),
+});
 
 const DESK = EnvironmentId.make("env-desk");
 const LAPTOP = EnvironmentId.make("env-laptop");
@@ -90,9 +96,12 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
       MissionClaims.MissionClaims,
     );
     const settings = yield* Layer.build(ServerSettings.layerTest());
-    const projects = Layer.mock(Project.ProjectService)({
-      getShell: () => Effect.succeedSome({ title: "web" } as never),
-    });
+    const projects = Layer.merge(
+      Layer.mock(Project.ProjectService)({
+        getShell: () => Effect.succeedSome({ title: "web" } as never),
+      }),
+      noWorkspace,
+    );
     yield* Context.get(settings, ServerSettings.ServerSettingsService).updateSettings({
       linkedEnvironmentsEnabled: true,
     });
@@ -223,6 +232,15 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
         "added",
         "found",
       ]);
+      // What the laptop says of a member's checkouts comes over its /mcp with the list.
+      const foundRow = (yield* missions.roster(mission.missionId)).find(
+        (row) => row.ref.threadId === found.threadId,
+      );
+      assert.deepEqual(foundRow?.workspace, {
+        kind: "project",
+        repositories: [],
+        otherPullRequests: [],
+      });
 
       yield* missions.releaseMember({ missionId: mission.missionId, member: added });
       assert.deepEqual(laptopTags.get("added"), ["mission-was:0123456789ab:One"]);

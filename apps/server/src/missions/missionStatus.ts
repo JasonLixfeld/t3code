@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 import { secretRequestAsPendingInput } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as Project from "../project/ProjectService.ts";
+import { MemberWorkspace, MemberWorkspaces } from "./MemberWorkspaces.ts";
 
 /** What a member is doing, as its own machine reads it. */
 export const MemberStatus = Schema.Literals([
@@ -40,6 +41,8 @@ export const MemberDetail = Schema.Struct({
   requests: Schema.optional(
     Schema.Array(Schema.Struct({ id: Schema.String, kind: Schema.String })),
   ),
+  /** Its checkouts, branches and pull requests, as data for the roster only. Absent from older machines. */
+  workspace: Schema.optional(MemberWorkspace),
 });
 export type MemberDetail = typeof MemberDetail.Type;
 
@@ -56,6 +59,8 @@ export interface RosterMember {
   readonly project: string;
   readonly status: RosterStatus;
   readonly title: string;
+  /** Undefined when its machine did not say, as one that predates it. */
+  readonly workspace?: MemberWorkspace | undefined;
 }
 
 const WORKING: ReadonlySet<string> = new Set([
@@ -219,13 +224,19 @@ export const shellDetail = (
 export const memberDetail = Effect.fn("missionStatus.memberDetail")(function* (threadId: ThreadId) {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* Project.ProjectService;
+  const workspaces = yield* MemberWorkspaces;
   const shell = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
   if (shell === null || shell.deletedAt !== null) return undefined;
   const project = yield* projects.getShell(shell.projectId).pipe(
     Effect.map(Option.match({ onNone: () => "", onSome: (found) => found.title })),
     Effect.orElseSucceed(() => ""),
   );
-  return { ...shellDetail(shell), title: shell.title, project } satisfies MemberDetail;
+  return {
+    ...shellDetail(shell),
+    title: shell.title,
+    project,
+    workspace: yield* workspaces.of(shell),
+  } satisfies MemberDetail;
 });
 
 /** Codex cuts each context entry past about 1,000 tokens, counted as 4 bytes each. */
@@ -248,12 +259,25 @@ const cutToBytes = (text: string, max: number) => {
   return kept;
 };
 
+/** How a lead works across repositories. The app's own text: no member or agent writes any. */
+const MISSION_LEAD_GUIDANCE = [
+  "The mission has no branch or checkout of its own: each repository's work is done in its members' threads.",
+  "- Changes to several repositories that must land together: one member, in a multi-repository project.",
+  "- Separable changes: a member each with t3_thread_launch. For code edits, name the environmentId, projectId, repositories and baseRef.",
+  "- Use create_threads only for members that should share your checkout.",
+  "- Drive each repository to a pull request. Track which repositories need changes, need none, or are blocked; t3_mission_roster lists them by repository.",
+  "- Never pull, push, merge or switch branches only because a thread joined or finished.",
+];
+
 /**
  * The header, then the user's prompt, which acts as instructions. The header names the Mission by
  * its id only: its name is the lead's title, which any agent allowed to rename threads can set.
  */
 export const missionPromptText = (missionId: string, prompt: string) => {
-  const header = `You lead a mission (id ${missionId}). You orchestrate its threads. If the user asks for something different in a message, the message wins.`;
+  const header = [
+    `You lead a mission (id ${missionId}). You orchestrate its threads. If the user asks for something different in a message, the message wins.`,
+    ...MISSION_LEAD_GUIDANCE,
+  ].join("\n");
   const text = prompt === "" ? header : `${header}\n\n${prompt}`;
   if (bytes(text) <= MISSION_PROMPT_MAX_BYTES) return text;
   return `${cutToBytes(text, MISSION_PROMPT_MAX_BYTES - bytes(PROMPT_CUT_NOTE))}${PROMPT_CUT_NOTE}`;

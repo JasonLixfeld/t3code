@@ -12,6 +12,7 @@ import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
+import { MemberWorkspace, MemberWorkspaces } from "../../../missions/MemberWorkspaces.ts";
 import { MissionClaimKind, MissionClaims } from "../../../missions/MissionClaims.ts";
 import { MemberDetail, MemberStatus } from "../../../missions/missionStatus.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -77,6 +78,7 @@ export const MissionToolkit = Toolkit.make(
       McpInvocationContext.McpInvocationContext,
       ThreadManagementService.ThreadManagementService,
       Project.ProjectService,
+      MemberWorkspaces,
       MissionClaims,
     ],
   })
@@ -84,7 +86,7 @@ export const MissionToolkit = Toolkit.make(
     .annotate(McpSchema.EnabledWhen, shownOnlyToLinks),
   Tool.make("t3_mission_roster", {
     description:
-      "List the member threads of the mission you lead: machine, project, status, title, and whether each needs you. Page with `cursor`.",
+      "List the member threads of the mission you lead: machine, project, status, title, whether each needs you, and its workspace: kind, and each repository's branch and pull requests. `byRepository` groups all members by repository. Page with `cursor`.",
     parameters: Schema.Struct({
       cursor: Schema.optional(NonNegativeInt),
       limit: Schema.optional(clampedPositiveInt(100)),
@@ -103,6 +105,24 @@ export const MissionToolkit = Toolkit.make(
           status: Schema.Union([MemberStatus, Schema.Literal("offline")]),
           title: Schema.String,
           needsAttention: Schema.Boolean,
+          /** `unknown` from a member machine that does not say. */
+          workspace: Schema.Union([MemberWorkspace, Schema.Literal("unknown")]),
+        }),
+      ),
+      /** Every member, not only this page, by repository: its remote, else its path on its machine. */
+      byRepository: Schema.Array(
+        Schema.Struct({
+          repository: Schema.String,
+          members: Schema.Array(
+            Schema.Struct({
+              member: Schema.String,
+              place: Schema.String,
+              branch: Schema.NullOr(Schema.String),
+              pullRequests: Schema.Array(
+                Schema.Struct({ number: Schema.Number, state: Schema.String, url: Schema.String }),
+              ),
+            }),
+          ),
         }),
       ),
       total: NonNegativeInt,

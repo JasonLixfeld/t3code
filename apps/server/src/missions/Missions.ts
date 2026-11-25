@@ -49,6 +49,7 @@ import {
   missionStatusText,
   type RosterMember,
 } from "./missionStatus.ts";
+import { MemberWorkspaces } from "./MemberWorkspaces.ts";
 import { MissionTurnContexts } from "./MissionTurnContexts.ts";
 import {
   type MissionClaim,
@@ -241,7 +242,7 @@ const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const turnContexts = yield* MissionTurnContexts;
   const readServices = yield* Effect.context<
-    ThreadManagement.ThreadManagementService | Project.ProjectService
+    ThreadManagement.ThreadManagementService | Project.ProjectService | MemberWorkspaces
   >();
   const here = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
   const background = yield* Effect.scope;
@@ -1262,7 +1263,7 @@ const make = Effect.gen(function* () {
     const rows: Array<RosterMember> = [];
     for (const { ref, state } of listed) {
       const local = ref.environmentId === here;
-      const detail = local
+      const detail: MemberDetail | undefined = local
         ? named
           ? yield* memberDetail(ref.threadId).pipe(Effect.provide(readServices))
           : yield* threads.getThreadShell(ref.threadId).pipe(
@@ -1287,6 +1288,7 @@ const make = Effect.gen(function* () {
         // An older member machine lists no detail, so its members read as unseen.
         status: state === "offline" || detail === undefined ? "offline" : detail.status,
         title: named ? (detail?.title ?? "") : "",
+        ...(named && detail?.workspace !== undefined ? { workspace: detail.workspace } : {}),
       });
     }
     return rows;

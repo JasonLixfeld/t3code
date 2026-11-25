@@ -15,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
 
+import { MemberWorkspaces } from "../../../missions/MemberWorkspaces.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as MissionClaims from "../../../missions/MissionClaims.ts";
 import * as Missions from "../../../missions/Missions.ts";
@@ -49,6 +50,11 @@ import * as ThreadHandlers from "../thread/handlers.ts";
 import { ThreadToolkit } from "../thread/tools.ts";
 import * as MissionHandlers from "./handlers.ts";
 import { MissionToolkit } from "./tools.ts";
+
+/** A member that names no repository. */
+const noWorkspace = Layer.mock(MemberWorkspaces)({
+  of: () => Effect.succeed({ kind: "project" as const, repositories: [], otherPullRequests: [] }),
+});
 
 const HERE = EnvironmentId.make("env-here");
 const LAPTOP = EnvironmentId.make("env-laptop");
@@ -182,6 +188,7 @@ const callLeadTool = (
             missions.layer,
             liveThreadsLayer,
             Layer.mock(Project.ProjectService)({}),
+            noWorkspace,
             Layer.mock(MissionClaims.MissionClaims)({}),
             NodeServices.layer,
           ),

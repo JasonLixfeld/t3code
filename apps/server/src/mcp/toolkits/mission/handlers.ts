@@ -9,7 +9,11 @@ import * as Option from "effect/Option";
 
 import { linkOwner, MissionClaims } from "../../../missions/MissionClaims.ts";
 import * as Missions from "../../../missions/Missions.ts";
-import { memberDetail, needsAttention } from "../../../missions/missionStatus.ts";
+import {
+  memberDetail,
+  needsAttention,
+  type RosterMember,
+} from "../../../missions/missionStatus.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { MissionToolkit } from "./tools.ts";
@@ -26,6 +30,37 @@ const refused = (error: MissionError) =>
     code: error.reason === "denied" ? "capability_denied" : "invalid_request",
     message: error.message,
   });
+
+/**
+ * Each repository the members work in, with who works in it on which branch and the pull requests
+ * they opened there. A repository is its remote when it has one; else its path on its machine.
+ */
+const byRepository = (rows: ReadonlyArray<RosterMember>) => {
+  const groups = new Map<
+    string,
+    Array<{
+      readonly member: string;
+      readonly place: string;
+      readonly branch: string | null;
+      readonly pullRequests: ReadonlyArray<{ number: number; state: string; url: string }>;
+    }>
+  >();
+  for (const row of rows) {
+    for (const repository of row.workspace?.repositories ?? []) {
+      const key = repository.remote ?? `${row.ref.environmentId}:${repository.repositoryPath}`;
+      groups.set(key, [
+        ...(groups.get(key) ?? []),
+        {
+          member: row.member,
+          place: row.place,
+          branch: repository.branch,
+          pullRequests: repository.pullRequests,
+        },
+      ]);
+    }
+  }
+  return [...groups].map(([repository, members]) => ({ repository, members }));
+};
 
 /**
  * A top-level thread a mission's lead started joins its Mission, with the lead's own reach. A
@@ -163,7 +198,9 @@ export const layer = McpToolAccess.toLayer(
               status: row.status,
               title: row.title,
               needsAttention: needsAttention(row.status),
+              workspace: row.workspace ?? ("unknown" as const),
             })),
+            byRepository: byRepository(rows),
             total: rows.length,
             nextCursor: end < rows.length ? end : null,
           };
