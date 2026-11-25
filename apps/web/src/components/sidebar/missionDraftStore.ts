@@ -43,7 +43,7 @@ export function missionDraftOf(draftId: DraftId | null): MissionDraft | undefine
 }
 
 /** The machine a Mission draft is pinned to: it starts its Mission there, or leads one there. */
-export function useMissionDraftMachine(draftId: DraftId | null): EnvironmentId | null {
+function useMissionDraftMachine(draftId: DraftId | null): EnvironmentId | null {
   return useMissionDrafts((state) =>
     draftId === null ? null : (state.drafts.get(draftId)?.thread.environmentId ?? null),
   );
@@ -64,11 +64,11 @@ export function setMissionDraftStep(draftId: DraftId, step: MissionDraft["step"]
   });
 }
 
-/** The Mission follows the user to another draft on the same machine, as a project pick makes. */
+/** The Mission follows the user to the draft and machine a project pick makes. */
 export function moveMissionDraft(from: DraftId, to: DraftId, thread: ScopedThreadRef) {
   update((drafts) => {
     const draft = drafts.get(from);
-    if (draft === undefined || from === to) return;
+    if (draft === undefined) return;
     drafts.delete(from);
     drafts.set(to, { ...draft, thread });
   });

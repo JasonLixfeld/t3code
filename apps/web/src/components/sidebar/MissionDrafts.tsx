@@ -34,7 +34,7 @@ export function useMissionDraftBanner(
       icon: <InfoIcon />,
       title:
         draft.intent.kind === "new"
-          ? resolve(msg("Sending starts a mission led by this thread"))
+          ? resolve(msg("Sending starts a new mission led by this thread"))
           : draft.step === "held"
             ? resolve(msg("This thread will not join a mission unless you pick one."))
             : draft.intent.kind === "member"

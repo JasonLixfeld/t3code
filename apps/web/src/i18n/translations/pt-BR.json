@@ -3607,18 +3607,6 @@
   "6df4c22a9ae17336": "Gerenciar uso",
   "0469747f4bb9caac": "{additions} adições, {deletions} remoções",
   "a0e0e2640219f1b0": "Escolha um projeto",
-  "074db680e148e829": "Adicione um projeto",
-  "1bbfd30a652f7e0f": "ou comece sem projeto",
-  "b8e0e89c83a639fa": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " para começar"
-  ],
-  "99c183d2407cd36d": "Adicione um projeto para começar",
-  "06b6bb85f2e34802": "O que vamos construir em {project}?",
   "5a405f15d9985bd6": "O que vamos construir?",
   "613f8257a433cec4": "Mídia",
   "e3baa1d5c822a835": "Mostrar captura de tela",
@@ -12827,7 +12815,6 @@
   "19cd8fa8198eabf5": "Recolher missão {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
   "18c378583d4d0beb": "Expandir missão {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
   "b4ba50773b3fa3d5": "Nova missão...",
-  "58fcfae7881296c1": "Ao enviar, começa uma missão liderada por esta thread",
   "057d6deb81129c20": "Ao enviar, esta thread passa a liderar “{mission}”",
   "0cb19d38f44bcba8": "Enviar como thread comum",
   "5ef7c097912549e4": "Não foi possível tornar esta thread a principal",
@@ -12857,5 +12844,9 @@
   "41ed219e17bd8470": "Excluir missão",
   "76a0f477c383d3a2": "Tem threads",
   "37257c17dca73555": "Missão indisponível",
-  "4b0d2cbf2e3df416": "Esta thread não vai entrar em nenhuma missão a menos que você escolha uma."
+  "4b0d2cbf2e3df416": "Esta thread não vai entrar em nenhuma missão a menos que você escolha uma.",
+  "93fb497fbfe34f9e": "Nova thread principal para {mission}",
+  "581f3f0dcdc38894": "Nova missão (esta thread lidera)",
+  "7798814fecf728c1": "Esta thread lidera a própria missão, então não pode entrar em outra. Envie como thread comum para desfazer.",
+  "7003a748a9d9671a": "Ao enviar, começa uma nova missão liderada por esta thread"
 }

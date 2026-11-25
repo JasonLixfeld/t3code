@@ -3607,18 +3607,6 @@
   "6df4c22a9ae17336": "Gestionar uso",
   "0469747f4bb9caac": "{additions} adiciones, {deletions} eliminaciones",
   "a0e0e2640219f1b0": "Elige un proyecto",
-  "074db680e148e829": "Añade un proyecto",
-  "1bbfd30a652f7e0f": "o empieza sin proyecto",
-  "b8e0e89c83a639fa": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " para empezar"
-  ],
-  "99c183d2407cd36d": "Añade un proyecto para empezar",
-  "06b6bb85f2e34802": "¿Qué construimos en {project}?",
   "5a405f15d9985bd6": "¿Qué construimos?",
   "613f8257a433cec4": "Multimedia",
   "e3baa1d5c822a835": "Mostrar captura de pantalla",
@@ -12822,7 +12810,6 @@
   "19cd8fa8198eabf5": "Contraer misión {mission}, {count, plural, one {{count} hilo} other {{count} hilos}}",
   "18c378583d4d0beb": "Expandir misión {mission}, {count, plural, one {{count} hilo} other {{count} hilos}}",
   "b4ba50773b3fa3d5": "Nueva misión...",
-  "58fcfae7881296c1": "Al enviar, empieza una misión dirigida por este hilo",
   "057d6deb81129c20": "Al enviar, este hilo pasa a dirigir «{mission}»",
   "0cb19d38f44bcba8": "Enviar como hilo normal",
   "5ef7c097912549e4": "No se pudo hacer que este hilo dirija la misión",
@@ -12852,5 +12839,9 @@
   "41ed219e17bd8470": "Eliminar misión",
   "76a0f477c383d3a2": "Tiene hilos",
   "37257c17dca73555": "Misión no disponible",
-  "4b0d2cbf2e3df416": "Este hilo no se unirá a ninguna misión a menos que elijas una."
+  "4b0d2cbf2e3df416": "Este hilo no se unirá a ninguna misión a menos que elijas una.",
+  "93fb497fbfe34f9e": "Nuevo hilo principal para {mission}",
+  "581f3f0dcdc38894": "Nueva misión (este hilo la dirige)",
+  "7798814fecf728c1": "Este hilo dirige su misión, así que no puede unirse a otra. Envíalo como hilo normal para deshacerlo.",
+  "7003a748a9d9671a": "Al enviar, empieza una nueva misión dirigida por este hilo"
 }

@@ -480,6 +480,25 @@ export type MissionDraftIntent =
       readonly name: string;
     };
 
+/**
+ * Where a draft can do what it is for: a new lead only on its Mission's machine, a member also on
+ * machines that machine links to with full access. A new Mission can start anywhere.
+ */
+export function missionDraftMachines(
+  intent: MissionDraftIntent,
+  hosts: ReadonlyArray<MissionHost>,
+): ReadonlySet<EnvironmentId> | null {
+  if (intent.kind === "new") return null;
+  const links =
+    intent.kind === "member"
+      ? (hosts
+          .find((host) => host.environmentId === intent.host)
+          ?.snapshot.links.filter((link) => link.fullAccess)
+          .map((link) => link.environmentId) ?? [])
+      : [];
+  return new Set([intent.host, ...links]);
+}
+
 /** The members a drag can take out of their Mission: joined ones the sidebar shows. */
 export function missionDragKeys(missions: ReadonlyArray<SidebarMission<unknown>>) {
   return new Set(

@@ -3607,18 +3607,6 @@
   "6df4c22a9ae17336": "Hantera användning",
   "0469747f4bb9caac": "{additions} tillägg, {deletions} borttagningar",
   "a0e0e2640219f1b0": "Välj ett projekt",
-  "074db680e148e829": "Lägg till ett projekt",
-  "1bbfd30a652f7e0f": "eller starta utan projekt",
-  "b8e0e89c83a639fa": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " för att starta"
-  ],
-  "99c183d2407cd36d": "Lägg till ett projekt för att starta",
-  "06b6bb85f2e34802": "Vad ska vi bygga i {project}?",
   "5a405f15d9985bd6": "Vad ska vi bygga?",
   "613f8257a433cec4": "Media",
   "e3baa1d5c822a835": "Visa skärmbild",
@@ -12834,7 +12822,6 @@
   "19cd8fa8198eabf5": "Fäll ihop uppdraget {mission}, {count, plural, one {{count} tråd} other {{count} trådar}}",
   "18c378583d4d0beb": "Fäll ut uppdraget {mission}, {count, plural, one {{count} tråd} other {{count} trådar}}",
   "b4ba50773b3fa3d5": "Nytt uppdrag...",
-  "58fcfae7881296c1": "När du skickar startar ett uppdrag som den här tråden leder",
   "057d6deb81129c20": "När du skickar blir den här tråden ledande för ”{mission}”",
   "0cb19d38f44bcba8": "Skicka som vanlig tråd",
   "5ef7c097912549e4": "Det gick inte att göra den här tråden ledande",
@@ -12864,5 +12851,9 @@
   "41ed219e17bd8470": "Ta bort uppdrag",
   "76a0f477c383d3a2": "Har trådar",
   "37257c17dca73555": "Uppdraget är inte tillgängligt",
-  "4b0d2cbf2e3df416": "Den här tråden går inte med i något uppdrag om du inte väljer ett."
+  "4b0d2cbf2e3df416": "Den här tråden går inte med i något uppdrag om du inte väljer ett.",
+  "93fb497fbfe34f9e": "Ny ledande tråd för {mission}",
+  "581f3f0dcdc38894": "Nytt uppdrag (den här tråden leder)",
+  "7798814fecf728c1": "Den här tråden leder sitt uppdrag och kan därför inte gå med i ett annat. Skicka den som vanlig tråd för att ångra.",
+  "7003a748a9d9671a": "När du skickar startar ett nytt uppdrag som den här tråden leder"
 }

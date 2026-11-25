@@ -246,6 +246,7 @@ import {
 } from "./CommandPaletteLookups";
 import { markMissionDraft } from "./sidebar/missionDraftStore";
 import { useMissionHosts } from "./sidebar/MissionsSection";
+import { missionDraftMachines } from "./sidebar/missions.logic";
 import {
   buildNewThreadInProjectItems,
   buildProjectSearchItems,
@@ -568,20 +569,8 @@ function OpenCommandPaletteDialog(props: {
   // A draft made from this view starts or leads a Mission once it is sent.
   const missionIntent = currentView?.mission;
   const missionHosts = useMissionHosts();
-  // Where a draft from this view can do what it is for: a new lead only on its Mission's
-  // machine, a member also on machines that machine links to with full access.
-  const missionMachines: ReadonlySet<EnvironmentId> | null =
-    missionIntent === undefined || missionIntent.kind === "new"
-      ? null
-      : new Set([
-          missionIntent.host,
-          ...(missionIntent.kind === "member"
-            ? (missionHosts
-                .find((host) => host.environmentId === missionIntent.host)
-                ?.snapshot.links.filter((link) => link.fullAccess)
-                .map((link) => link.environmentId) ?? [])
-            : []),
-        ]);
+  const missionMachines =
+    missionIntent === undefined ? null : missionDraftMachines(missionIntent, missionHosts);
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
   const [browseGeneration, setBrowseGeneration] = useState(0);
   const [browseNavigation] = useState(createBrowseNavigationCoordinator);

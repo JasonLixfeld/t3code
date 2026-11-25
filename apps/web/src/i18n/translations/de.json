@@ -3608,18 +3608,6 @@
   "6df4c22a9ae17336": "Nutzung verwalten",
   "0469747f4bb9caac": "{additions} Hinzufügungen, {deletions} Löschungen",
   "a0e0e2640219f1b0": "Projekt wählen",
-  "074db680e148e829": "Projekt hinzufügen",
-  "1bbfd30a652f7e0f": "oder ohne Projekt starten",
-  "b8e0e89c83a639fa": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " zum Starten"
-  ],
-  "99c183d2407cd36d": "Füge ein Projekt hinzu, um zu starten",
-  "06b6bb85f2e34802": "Was sollen wir in {project} bauen?",
   "5a405f15d9985bd6": "Was sollen wir bauen?",
   "613f8257a433cec4": "Medien",
   "e3baa1d5c822a835": "Screenshot anzeigen",
@@ -12827,7 +12815,6 @@
   "19cd8fa8198eabf5": "Mission {mission} einklappen, {count, plural, one {{count} Thread} other {{count} Threads}}",
   "18c378583d4d0beb": "Mission {mission} ausklappen, {count, plural, one {{count} Thread} other {{count} Threads}}",
   "b4ba50773b3fa3d5": "Neue Mission...",
-  "58fcfae7881296c1": "Beim Senden startet eine Mission, die dieser Thread leitet",
   "057d6deb81129c20": "Beim Senden leitet dieser Thread die Mission „{mission}“",
   "0cb19d38f44bcba8": "Als normalen Thread senden",
   "5ef7c097912549e4": "Dieser Thread konnte nicht die Leitung übernehmen",
@@ -12857,5 +12844,9 @@
   "41ed219e17bd8470": "Mission löschen",
   "76a0f477c383d3a2": "Hat Threads",
   "37257c17dca73555": "Mission nicht verfügbar",
-  "4b0d2cbf2e3df416": "Dieser Thread tritt keiner Mission bei, solange du keine auswählst."
+  "4b0d2cbf2e3df416": "Dieser Thread tritt keiner Mission bei, solange du keine auswählst.",
+  "93fb497fbfe34f9e": "Neue Leitung für {mission}",
+  "581f3f0dcdc38894": "Neue Mission (dieser Thread leitet)",
+  "7798814fecf728c1": "Dieser Thread leitet seine Mission und kann daher keiner anderen beitreten. Sende ihn als normalen Thread, um das rückgängig zu machen.",
+  "7003a748a9d9671a": "Beim Senden startet eine neue Mission, die dieser Thread leitet"
 }

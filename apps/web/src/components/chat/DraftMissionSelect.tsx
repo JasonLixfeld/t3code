@@ -2,17 +2,28 @@ import type { EnvironmentId, Mission } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { useClientSettings } from "~/hooks/useSettings";
 import {
   clearMissionDraft,
   markMissionDraft,
   useMissionDrafts,
 } from "../sidebar/missionDraftStore";
 import { useMissionHosts } from "../sidebar/MissionsSection";
-import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
-import { InlineButton } from "../ui/button";
+import { missionDraftMachines } from "../sidebar/missions.logic";
+import {
+  Menu,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuTrigger,
+} from "../ui/menu";
+import { SelectButton } from "../ui/select";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { DraftProjectName } from "./DraftProjectName";
 
 const NO_MISSION = "";
+const NEW_MISSION = "new";
 
 interface MissionItem {
   readonly value: string;
@@ -21,9 +32,19 @@ interface MissionItem {
   readonly mission?: Mission;
 }
 
+/** The machines a Mission draft's project can be on, or null when any will do. */
+export function useDraftProjectMachines(draftId: DraftId | null) {
+  const hosts = useMissionHosts();
+  const marked = useMissionDrafts((state) =>
+    draftId === null ? undefined : state.drafts.get(draftId),
+  );
+  if (marked === undefined) return null;
+  return missionDraftMachines(marked.intent, hosts) ?? new Set([marked.thread.environmentId]);
+}
+
 /**
- * Which Mission on the draft's machine its thread joins once sent, or none. A draft that starts or
- * leads a Mission already belongs to one, so it shows no choice.
+ * Which Mission on the draft's machine its thread joins once sent, or none, or a new one it leads.
+ * A draft that starts or leads a Mission already belongs to one, so its choice is fixed.
  */
 export function DraftMissionSelect(props: {
   readonly draftId: DraftId;
@@ -31,11 +52,13 @@ export function DraftMissionSelect(props: {
 }) {
   const gt = useGT();
   const { draftId, environmentId } = props;
+  const enabled = useClientSettings((settings) => settings.sidebarMissionsEnabled);
   const hosts = useMissionHosts();
   const marked = useMissionDrafts((state) => state.drafts.get(draftId));
   const threadId = useComposerDraftStore(
     (store) => store.getDraftSession(draftId)?.threadId ?? null,
   );
+  if (!enabled || threadId === null) return null;
   const missionOn = (host: EnvironmentId) =>
     hosts.find((candidate) => candidate.environmentId === host)?.snapshot.missions ?? [];
   const keyOf = (host: EnvironmentId, missionId: string) => `${host}:${missionId}`;
@@ -64,53 +87,83 @@ export function DraftMissionSelect(props: {
         : { value: joining, label: mission.name, host, mission },
     );
   }
-  if (items.length === 1 || threadId === null) return null;
-  if (marked !== undefined && marked.intent.kind !== "member") return null;
+  const fixed =
+    marked?.intent.kind === "new"
+      ? gt("New mission")
+      : marked?.intent.kind === "lead"
+        ? gt("New lead for {mission}", { mission: marked.intent.name })
+        : null;
   const selected = items.find((item) => item.value === joining) ?? items[0]!;
-  return (
-    <p className="mt-2 flex h-6 w-full items-center justify-center gap-1.5 text-sm text-muted-foreground">
-      <T>Mission</T>
-      <Menu>
-        <MenuTrigger
-          render={<InlineButton tone="picker" />}
-          aria-label={gt("Mission")}
-          data-draft-mission-trigger=""
-          className="pointer-events-auto min-w-0 max-w-full align-baseline"
+  const menu = (
+    <Menu>
+      <MenuTrigger
+        render={<SelectButton className="w-auto min-w-0 max-w-72" />}
+        aria-label={gt("Mission")}
+        data-draft-mission-trigger=""
+        disabled={fixed !== null}
+        // A disabled button takes no hover, so the tooltip's wrapper gets it.
+        className={fixed === null ? "pointer-events-auto" : "pointer-events-none"}
+      >
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="text-muted-foreground text-xs">
+            <T>Mission</T>
+          </span>
+          <DraftProjectName value={fixed ?? selected.label} singleLine />
+        </span>
+      </MenuTrigger>
+      <MenuPopup align="center" className="w-64">
+        <MenuRadioGroup
+          value={joining}
+          onValueChange={(value) => {
+            const thread = { environmentId, threadId };
+            if (value === NEW_MISSION) {
+              return markMissionDraft(draftId, { intent: { kind: "new" }, thread });
+            }
+            const item = items.find((candidate) => candidate.value === value);
+            if (item?.mission === undefined || item.host === undefined) {
+              return clearMissionDraft(draftId);
+            }
+            markMissionDraft(draftId, {
+              intent: {
+                kind: "member",
+                host: item.host,
+                missionId: item.mission.missionId,
+                name: item.mission.name,
+              },
+              thread,
+            });
+          }}
         >
-          <DraftProjectName value={selected.label} singleLine />
-        </MenuTrigger>
-        <MenuPopup align="center" className="w-64">
-          <MenuRadioGroup
-            value={joining}
-            onValueChange={(value) => {
-              const item = items.find((candidate) => candidate.value === value);
-              if (item?.mission === undefined || item.host === undefined) {
-                return clearMissionDraft(draftId);
-              }
-              markMissionDraft(draftId, {
-                intent: {
-                  kind: "member",
-                  host: item.host,
-                  missionId: item.mission.missionId,
-                  name: item.mission.name,
-                },
-                thread: { environmentId, threadId },
-              });
-            }}
-          >
-            {items.map((item) => (
-              <MenuRadioItem
-                key={item.value}
-                value={item.value}
-                disabled={item.value !== NO_MISSION && item.mission === undefined}
-                closeOnClick
-              >
-                <span className="min-w-0 truncate">{item.label}</span>
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </MenuPopup>
-      </Menu>
-    </p>
+          {items.map((item) => (
+            <MenuRadioItem
+              key={item.value}
+              value={item.value}
+              disabled={item.value !== NO_MISSION && item.mission === undefined}
+              closeOnClick
+            >
+              <span className="min-w-0 truncate">{item.label}</span>
+            </MenuRadioItem>
+          ))}
+          <MenuSeparator />
+          <MenuRadioItem value={NEW_MISSION} closeOnClick>
+            <T>New mission (this thread leads)</T>
+          </MenuRadioItem>
+        </MenuRadioGroup>
+      </MenuPopup>
+    </Menu>
+  );
+  if (fixed === null) return menu;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="pointer-events-auto inline-flex min-w-0" />}>
+        {menu}
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        <T>
+          This thread leads its mission, so it cannot join another. Send it as a plain thread to
+          undo this.
+        </T>
+      </TooltipPopup>
+    </Tooltip>
   );
 }

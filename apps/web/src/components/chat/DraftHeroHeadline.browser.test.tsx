@@ -140,10 +140,20 @@ it("a mission draft's project picker offers only its machine's projects", async 
     router: false,
   });
   await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
-  const trigger = document.querySelector<HTMLElement>("[data-draft-project-trigger]");
-  expect(trigger).toBeNull();
-  expect(document.body.textContent).not.toContain("or start without a project");
+  expect(await projectOptions()).toEqual(["Add project"]);
 });
+
+/** The names the open Project picker offers. */
+async function projectOptions() {
+  const trigger = document.querySelector<HTMLElement>("[data-draft-project-trigger]");
+  if (!trigger) throw new Error("The draft project picker did not render.");
+  await userEvent.click(page.elementLocator(trigger));
+  await expect.element(page.getByRole("option", { name: "Add project" })).toBeVisible();
+  return page
+    .getByRole("option")
+    .elements()
+    .map((option) => option.textContent);
+}
 
 const leadIntent = {
   kind: "lead",
@@ -294,26 +304,30 @@ it("a new thread's Mission choice marks its draft to join that mission, or none"
     router: false,
   });
   const trigger = page.getByRole("button", { name: "Mission" });
-  await expect.element(trigger).toHaveTextContent("None");
+  await expect.element(trigger).toMatchTextContent(/None$/);
   await userEvent.click(trigger);
   await page.getByRole("menuitemradio", { name: "Ship v2" }).click();
   expect(missionDraftOf(draftId)).toMatchObject({
     intent: { kind: "member", host: ENVIRONMENT_ID, missionId: "ba9876543210", name: "Ship v2" },
     thread: { environmentId: ENVIRONMENT_ID, threadId },
   });
-  await expect.element(trigger).toHaveTextContent("Ship v2");
+  await expect.element(trigger).toMatchTextContent(/Ship v2$/);
   await userEvent.click(trigger);
   await page.getByRole("menuitemradio", { name: "None" }).click();
   expect(missionDraftOf(draftId)).toBeUndefined();
 
-  // A draft that starts a mission of its own offers no mission to join.
-  await act(() =>
-    markMissionDraft(draftId, {
-      intent: { kind: "new" },
-      thread: { environmentId: ENVIRONMENT_ID, threadId },
-    }),
-  );
-  await expect.element(trigger).not.toBeInTheDocument();
+  // A new mission it leads fixes the choice, as + New mission does.
+  await userEvent.click(trigger);
+  await page.getByRole("menuitemradio", { name: "New mission (this thread leads)" }).click();
+  expect(missionDraftOf(draftId)).toMatchObject({
+    intent: { kind: "new" },
+    thread: { environmentId: ENVIRONMENT_ID, threadId },
+  });
+  await expect.element(trigger).toMatchTextContent(/New mission$/);
+  await expect.element(trigger).toBeDisabled();
+  await expect
+    .element(page.getByText("Sending starts a new mission led by this thread"))
+    .toBeVisible();
 });
 
 it("New thread in this mission opens a project's draft that joins the mission once sent", async () => {
@@ -347,7 +361,9 @@ it("New thread in this mission opens a project's draft that joins the mission on
   } as const;
   const joining = await app.newThreadIn(member);
   expect(missionDraftOf(joining)?.intent).toEqual(member);
-  await expect.element(page.getByRole("button", { name: "Mission" })).toHaveTextContent("Ship v2");
+  await expect
+    .element(page.getByRole("button", { name: "Mission" }))
+    .toMatchTextContent(/Ship v2$/);
   await expect.element(page.getByText('Sending adds this thread to "Ship v2"')).toBeVisible();
 });
 
@@ -399,7 +415,9 @@ it.each([
     // AppRoot brings its own router.
     router: false,
   });
-  await expect.element(page.getByRole("button", { name: "Mission" })).toHaveTextContent(shown);
+  await expect
+    .element(page.getByRole("button", { name: "Mission" }))
+    .toMatchTextContent(new RegExp(`${shown}$`));
 });
 
 it("the Mission choice tells apart two machines' missions that share an id", async () => {
@@ -441,7 +459,7 @@ it("the Mission choice tells apart two machines' missions that share an id", asy
     router: false,
   });
   const trigger = page.getByRole("button", { name: "Mission" });
-  await expect.element(trigger).toHaveTextContent("Laptop work");
+  await expect.element(trigger).toMatchTextContent(/Laptop work$/);
   await userEvent.click(trigger);
   await page.getByRole("menuitemradio", { name: "Local work" }).click();
   expect(missionDraftOf(draftId)?.intent).toEqual({
@@ -450,5 +468,144 @@ it("the Mission choice tells apart two machines' missions that share an id", asy
     missionId: "ba9876543210",
     name: "Local work",
   });
-  await expect.element(trigger).toHaveTextContent("Local work");
+  await expect.element(trigger).toMatchTextContent(/Local work$/);
+});
+
+const shipV2 = {
+  missionId: "ba9876543210",
+  name: "Ship v2",
+  createdAt: "2026-11-23T00:00:00.000Z",
+  members: [],
+};
+const hostWith = (
+  environmentId: EnvironmentId,
+  links: ReadonlyArray<{ environmentId: EnvironmentId; label: string; fullAccess: boolean }> = [],
+) => ({ environmentId, snapshot: { missions: [shipV2], links, claims: [] } });
+function listMissions(hosts: ReadonlyArray<unknown>) {
+  missionHosts.listed = hosts;
+  onTestFinished(() => {
+    missionHosts.listed = [];
+  });
+}
+
+/** The app on a draft of the render project, marked for a Mission when given one. */
+async function openDraft(name: string, intent?: MissionDraftIntent, missionsOn = true) {
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+    sidebarMissionsEnabled: missionsOn,
+  });
+  const draftId = DraftId.make(name);
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId);
+  const threadId = useComposerDraftStore.getState().getDraftSession(draftId)!.threadId;
+  if (intent) {
+    markMissionDraft(draftId, { intent, thread: { environmentId: ENVIRONMENT_ID, threadId } });
+  }
+  onTestFinished(() => clearMissionDraft(draftId));
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  const app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
+  return Object.assign(app, { draftId, router });
+}
+
+it.each([
+  ["a machine that links to it with full access", true],
+  ["a machine without full access", false],
+] as const)(
+  "a draft joining a mission offers projects only where it can join, not on %s",
+  async (_, fullAccess) => {
+    using _environment = installFakeEnvironment([]);
+    const laptop = EnvironmentId.make("laptop");
+    listMissions([
+      hostWith(laptop, [{ environmentId: ENVIRONMENT_ID, label: "Desk", fullAccess }]),
+    ]);
+    await using _app = await openDraft("draft-join-machines", {
+      kind: "member",
+      host: laptop,
+      missionId: shipV2.missionId,
+      name: "Ship v2",
+    });
+    expect((await projectOptions()).some((name) => name?.endsWith("render"))).toBe(fullAccess);
+  },
+);
+
+it.each([
+  [
+    "starts a new mission",
+    { kind: "new" },
+    "New mission",
+    "Sending starts a new mission led by this thread",
+  ],
+  [
+    "leads a mission",
+    leadIntent,
+    "New lead for Old work",
+    'Sending makes this thread the lead of "Old work"',
+  ],
+] as const)(
+  "a draft that %s shows its mission fixed, and says why",
+  async (_, intent, shown, notice) => {
+    using _environment = installFakeEnvironment([]);
+    listMissions([hostWith(ENVIRONMENT_ID)]);
+    await using _app = await openDraft("draft-fixed-mission", intent);
+    const trigger = page.getByRole("button", { name: "Mission" });
+    await expect.element(trigger).toMatchTextContent(new RegExp(`${shown}$`));
+    await expect.element(trigger).toBeDisabled();
+    await expect.element(page.getByText(notice)).toBeVisible();
+    await userEvent.hover(page.elementLocator(trigger.element().parentElement!));
+    await expect
+      .element(
+        page.getByText(
+          "This thread leads its mission, so it cannot join another. Send it as a plain thread to undo this.",
+        ),
+      )
+      .toBeVisible();
+    // The user picks the lead's project on the mission's machine.
+    await userEvent.unhover(page.elementLocator(trigger.element().parentElement!));
+    expect(await projectOptions()).toContainEqual(expect.stringMatching(/render$/));
+  },
+);
+
+it("with Missions off, a new thread shows the Project picker and no Mission picker", async () => {
+  using _environment = installFakeEnvironment([]);
+  listMissions([hostWith(ENVIRONMENT_ID)]);
+  await using _app = await openDraft("draft-missions-off", undefined, false);
+  await expect.element(page.getByRole("combobox", { name: "Project" })).toBeVisible();
+  expect(document.querySelector("[data-draft-mission-trigger]")).toBeNull();
+});
+
+it("a Project pick retargets the draft as the headline link did", async () => {
+  using _environment = installFakeEnvironment([], {
+    extraProjects: [
+      { id: ProjectId.make("project-alpha"), title: "alpha" },
+      { id: ProjectId.make("project-beta"), title: "beta" },
+    ],
+  });
+  await using app = await openDraft("draft-project-pick");
+  // An empty draft opens the picked project's own draft.
+  await projectOptions();
+  await page.getByRole("option", { name: "beta" }).click();
+  await vi.waitFor(() =>
+    expect(app.router.state.location.pathname).not.toBe(`/draft/${app.draftId}`),
+  );
+  const opened = DraftId.make(app.router.state.location.pathname.replace("/draft/", ""));
+  expect(useComposerDraftStore.getState().getDraftSession(opened)?.projectId).toBe("project-beta");
+
+  // A draft with words in it moves to the picked project and keeps them.
+  useComposerDraftStore.getState().setPrompt(opened, "Plan the launch");
+  await projectOptions();
+  await page.getByRole("option", { name: "alpha" }).click();
+  await vi.waitFor(() =>
+    expect(useComposerDraftStore.getState().getDraftSession(opened)?.projectId).toBe(
+      "project-alpha",
+    ),
+  );
+  expect(app.router.state.location.pathname).toBe(`/draft/${opened}`);
+  expect(useComposerDraftStore.getState().getComposerDraft(opened)?.prompt).toBe("Plan the launch");
 });

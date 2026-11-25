@@ -1,15 +1,17 @@
-import { EnvironmentId, MissionError, ThreadId } from "@t3tools/contracts";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, MissionError, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { useSyncExternalStore } from "react";
+import { type ReactNode, useSyncExternalStore } from "react";
 import { expect, it, onTestFinished, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
-import { DraftId } from "../../composerDraftStore";
+import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useThreadShell } from "../../state/entities";
 import { makeThreadFixture } from "../../test-fixtures";
 import { toastManager } from "../ui/toast";
-import { markMissionDraft, missionDraftOf } from "./missionDraftStore";
+import { DraftMissionSelect } from "../chat/DraftMissionSelect";
+import { markMissionDraft, missionDraftOf, moveMissionDraft } from "./missionDraftStore";
 import { MissionDraftCoordinator, useMissionDraftBanner } from "./MissionDrafts";
 import { useMissionHosts } from "./MissionsSection";
 
@@ -44,7 +46,7 @@ function Banner(props: { readonly draftId: DraftId }) {
 }
 
 /** The draft's thread as the stream shows it: not there, there but empty, or sent. */
-async function renderDraft(draftId: DraftId) {
+async function renderDraft(draftId: DraftId, extra?: ReactNode) {
   commands.clear();
   // The stream's shells are live, as the real hook's are.
   let shell: ReturnType<typeof makeThreadFixture> | null = null;
@@ -62,6 +64,7 @@ async function renderDraft(draftId: DraftId) {
     <>
       <MissionDraftCoordinator />
       <Banner draftId={draftId} />
+      {extra}
     </>
   );
   const screen = await render(ui());
@@ -92,7 +95,7 @@ it("starts a mission only once the draft's first message lands, led by that thre
   await using screen = await renderDraft(draftId);
   await act(() => markMissionDraft(draftId, { intent: { kind: "new" }, thread }));
   await expect
-    .element(screen.getByText("Sending starts a mission led by this thread"))
+    .element(screen.getByText("Sending starts a new mission led by this thread"))
     .toBeInTheDocument();
   await screen.stream("empty");
   expect(commandFor("mission create")).not.toHaveBeenCalled();
@@ -104,10 +107,40 @@ it("starts a mission only once the draft's first message lands, led by that thre
     }),
   );
   await vi.waitFor(() =>
-    expect(screen.container.textContent).not.toContain("Sending starts a mission"),
+    expect(screen.container.textContent).not.toContain("Sending starts a new mission"),
   );
   await screen.stream("sent");
   expect(commandFor("mission create")).toHaveBeenCalledTimes(1);
+});
+
+it("starts a mission led by a draft once sent, when its Mission choice picked a new one", async () => {
+  const draftId = DraftId.make("mission-choice-draft");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(LOCAL, ProjectId.make("project")), draftId);
+  const threadId = useComposerDraftStore.getState().getDraftSession(draftId)!.threadId;
+  await using screen = await renderDraft(
+    draftId,
+    <DraftMissionSelect draftId={draftId} environmentId={LOCAL} />,
+  );
+  await userEvent.click(page.getByRole("button", { name: "Mission" }));
+  await page.getByRole("menuitemradio", { name: "New mission (this thread leads)" }).click();
+  await screen.stream("sent");
+  await vi.waitFor(() =>
+    expect(commandFor("mission create")).toHaveBeenCalledExactlyOnceWith({
+      environmentId: LOCAL,
+      input: { missionId: expect.stringMatching(/^[0-9a-f]{12}$/), leadThreadId: threadId },
+    }),
+  );
+});
+
+it("moves a draft's mission to the machine a project pick moved that draft to", () => {
+  const draftId = DraftId.make("moved-mission-draft");
+  const intent = { kind: "member", host: LOCAL, missionId: "ba9876543210", name: "Ship" } as const;
+  markMissionDraft(draftId, { intent, thread });
+  const moved = { environmentId: EnvironmentId.make("laptop"), threadId: thread.threadId };
+  moveMissionDraft(draftId, draftId, moved);
+  expect(missionDraftOf(draftId)).toMatchObject({ intent, thread: moved });
 });
 
 it("makes nothing for a draft that is abandoned or sent as a plain thread", async () => {
@@ -178,7 +211,7 @@ it("keeps the mission until the server has it, and only the user's retry tries a
   await act(() => markMissionDraft(draftId, { intent: { kind: "new" }, thread }));
   await screen.stream("sent");
   await vi.waitFor(() => expect(toasts).toHaveBeenCalledOnce());
-  expect(screen.container.textContent).toContain("Sending starts a mission");
+  expect(screen.container.textContent).toContain("Sending starts a new mission");
   // A remount keeps the failure and sends nothing by itself.
   await screen.remount();
   await screen.stream("sent");
@@ -190,7 +223,7 @@ it("keeps the mission until the server has it, and only the user's retry tries a
   );
   expect(second).toBe(first);
   await vi.waitFor(() =>
-    expect(screen.container.textContent).not.toContain("Sending starts a mission"),
+    expect(screen.container.textContent).not.toContain("Sending starts a new mission"),
   );
 });
 

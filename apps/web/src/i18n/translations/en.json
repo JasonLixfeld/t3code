@@ -3607,18 +3607,6 @@
   "6df4c22a9ae17336": "Manage usage",
   "0469747f4bb9caac": "{additions} additions, {deletions} deletions",
   "a0e0e2640219f1b0": "Choose a project",
-  "074db680e148e829": "Add a project",
-  "1bbfd30a652f7e0f": "or start without a project",
-  "b8e0e89c83a639fa": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " to start"
-  ],
-  "99c183d2407cd36d": "Add a project to start",
-  "06b6bb85f2e34802": "What should we build in {project}?",
   "5a405f15d9985bd6": "What should we build?",
   "613f8257a433cec4": "Media",
   "e3baa1d5c822a835": "Show screenshot",
@@ -12836,7 +12824,6 @@
   "19cd8fa8198eabf5": "Collapse mission {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
   "18c378583d4d0beb": "Expand mission {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
   "b4ba50773b3fa3d5": "New mission...",
-  "58fcfae7881296c1": "Sending starts a mission led by this thread",
   "057d6deb81129c20": "Sending makes this thread the lead of \"{mission}\"",
   "0cb19d38f44bcba8": "Send as a plain thread",
   "5ef7c097912549e4": "Could not make this thread the lead",
@@ -12866,5 +12853,9 @@
   "41ed219e17bd8470": "Delete mission",
   "76a0f477c383d3a2": "Has threads",
   "37257c17dca73555": "Unavailable mission",
-  "4b0d2cbf2e3df416": "This thread will not join a mission unless you pick one."
+  "4b0d2cbf2e3df416": "This thread will not join a mission unless you pick one.",
+  "93fb497fbfe34f9e": "New lead for {mission}",
+  "581f3f0dcdc38894": "New mission (this thread leads)",
+  "7798814fecf728c1": "This thread leads its mission, so it cannot join another. Send it as a plain thread to undo this.",
+  "7003a748a9d9671a": "Sending starts a new mission led by this thread"
 }
