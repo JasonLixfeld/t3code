@@ -51,6 +51,13 @@ const RELEASE_PREFIX = "mission-release:";
 const NEW_THREAD_PREFIX = "mission-new-thread:";
 const DELETE_PREFIX = "mission-delete:";
 const PROMPT_PREFIX = "mission-prompt:";
+
+/** What a thread does with Missions itself; a lead's Mission group belongs to the Mission's row. */
+export const isThreadMissionAction = (id: MissionMenuId) =>
+  id === "mission-start" ||
+  id === "mission-add" ||
+  id === "mission-leave" ||
+  id.startsWith(RELEASE_PREFIX);
 const TARGET_ACTIONS = {
   [ADD_PREFIX]: "add",
   [RELEASE_PREFIX]: "release",

@@ -259,7 +259,11 @@ import {
   remoteProjectSourceIcon,
   sourceControlHostIcon,
 } from "./CommandPaletteAddProject";
-import { useCommandPaletteThreadActions } from "./CommandPaletteThreadActions";
+import {
+  liveMissionAddGroups,
+  MISSION_ADD_GROUP_PREFIX,
+  useCommandPaletteThreadActions,
+} from "./CommandPaletteThreadActions";
 import { useCommandPaletteThreadItems } from "./CommandPaletteThreadItems";
 import { useCommandPaletteThemeItems } from "./CommandPaletteThemeItems";
 import {
@@ -793,8 +797,11 @@ function OpenCommandPaletteDialog(props: {
     currentProjectId,
   );
   const currentProjectCwd = currentProject?.workspaceRoot ?? null;
+  const currentThreadRef = activeThread
+    ? scopeThreadRef(activeThread.environmentId, activeThread.id)
+    : null;
   const currentThreadActionItems = useCommandPaletteThreadActions({
-    threadRef: activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
+    threadRef: currentThreadRef,
     projectCwd: currentProjectCwd,
   });
   const currentProjectCwdForBrowse =
@@ -1949,6 +1956,18 @@ function OpenCommandPaletteDialog(props: {
   }));
   const sourceSelectionViewValue =
     addProjectEnvironmentId === null ? null : `sources:${addProjectEnvironmentId}`;
+  // Undefined outside Add to mission; null once its thread no longer offers it.
+  const openGroup = currentView?.groups[0];
+  const liveMissionAdd = openGroup?.value.startsWith(MISSION_ADD_GROUP_PREFIX)
+    ? liveMissionAddGroups(openGroup, currentThreadRef, currentThreadActionItems)
+    : undefined;
+  const missionAddGone = liveMissionAdd === null;
+  const popViewStable = useStableCallback(popView);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- leaves Add to mission once its thread no longer offers it, so stale missions are never shown
+  useEffect(() => {
+    if (missionAddGone) popViewStable();
+  }, [missionAddGone, popViewStable]);
+
   const activeGroups =
     addProjectEnvironmentId !== null &&
     currentView !== null &&
@@ -1979,7 +1998,9 @@ function OpenCommandPaletteDialog(props: {
               ? changeThemeItem.groups
               : currentView?.groups[0]?.value === "appearance"
                 ? changeAppearanceItem.groups
-                : (currentView?.groups ?? rootGroups);
+                : liveMissionAdd !== undefined
+                  ? (liveMissionAdd ?? [])
+                  : (currentView?.groups ?? rootGroups);
 
   const isLinkedThreadSearch =
     linkedThreadSearch?.linkedThreads !== undefined && deferredQuery === linkedThreadSearch.query;

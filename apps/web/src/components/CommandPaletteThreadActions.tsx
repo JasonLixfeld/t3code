@@ -1,3 +1,4 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ContextMenuItem, KeybindingCommand, ScopedThreadRef } from "@t3tools/contracts";
 import {
   ArchiveIcon,
@@ -23,10 +24,12 @@ import {
 
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu";
 import { useMissionMenu } from "./sidebar/MissionsSection";
+import { isThreadMissionAction } from "./sidebar/missions.logic";
 import {
   ADDON_ICON_CLASS,
   ITEM_ICON_CLASS,
   type CommandPaletteActionItem,
+  type CommandPaletteGroup,
   type CommandPaletteSubmenuItem,
 } from "./CommandPalette.logic";
 import type { ThreadActionMenuId } from "./threadActionMenu.logic";
@@ -63,13 +66,47 @@ const SHORTCUTS: Partial<Record<ThreadActionMenuId, KeybindingCommand>> = {
   "regenerate-title": "thread.regenerateTitle",
 };
 
+const MISSION_ADD_VALUE = "thread-action:mission-add";
+/** Add to mission's view is read from the thread's live rows, so its group names the thread. */
+export const MISSION_ADD_GROUP_PREFIX = `${MISSION_ADD_VALUE}@`;
+
+/**
+ * The open Add to mission view as the thread's rows show it now: its missions, or the disabled
+ * row with its reason once none can be picked. Null once the thread has no such row.
+ */
+export function liveMissionAddGroups(
+  openGroup: CommandPaletteGroup,
+  threadRef: ScopedThreadRef | null,
+  items: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>,
+): ReadonlyArray<CommandPaletteGroup> | null {
+  if (
+    threadRef === null ||
+    openGroup.value !== `${MISSION_ADD_GROUP_PREFIX}${scopedThreadKey(threadRef)}`
+  )
+    return null;
+  const row = items.find((item) => item.value === MISSION_ADD_VALUE);
+  if (row === undefined) return null;
+  return row.kind === "submenu"
+    ? row.groups
+    : [{ value: openGroup.value, label: openGroup.label, items: [row] }];
+}
+
 /** The open thread's menu actions (settle, pin, snooze, archive...) as palette rows. */
 export function useCommandPaletteThreadActions(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly projectCwd: string | null;
 }): Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> {
   const missionMenu = useMissionMenu();
-  const { readMenu } = useThreadActionMenu({ ...input, canShareWithGuest: false, missionMenu });
+  const threadMissionMenu = {
+    run: missionMenu.run,
+    items: (threads: Parameters<typeof missionMenu.items>[0]) =>
+      missionMenu.items(threads).filter((item) => isThreadMissionAction(item.id)),
+  };
+  const { readMenu } = useThreadActionMenu({
+    ...input,
+    canShareWithGuest: false,
+    missionMenu: threadMissionMenu,
+  });
   const menu = readMenu();
   if (!menu) return [];
 
@@ -103,7 +140,16 @@ export function useCommandPaletteThreadActions(input: {
         ...shared,
         kind: "submenu",
         addonIcon: Icon ? <Icon className={ADDON_ICON_CLASS} /> : null,
-        groups: [{ value: shared.value, label: item.label, items: children }],
+        groups: [
+          {
+            value:
+              shared.value === MISSION_ADD_VALUE && input.threadRef
+                ? `${MISSION_ADD_GROUP_PREFIX}${scopedThreadKey(input.threadRef)}`
+                : shared.value,
+            label: item.label,
+            items: children,
+          },
+        ],
       };
     }
     const shortcutCommand = SHORTCUTS[item.id];

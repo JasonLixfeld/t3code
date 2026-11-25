@@ -1,5 +1,6 @@
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { useSyncExternalStore } from "react";
 import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -14,6 +15,7 @@ import { CommandPalette } from "./CommandPalette";
 import { markMissionDraft } from "./sidebar/missionDraftStore";
 import { useMissionHosts, useMissionMenu } from "./sidebar/MissionsSection";
 import { buildMissionMenuItems, type MissionHost } from "./sidebar/missions.logic";
+import type { Mission } from "@t3tools/contracts";
 import { __setClientSettingsForTests } from "../hooks/useSettings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { useScratchProject } from "../hooks/useScratchProject";
@@ -584,37 +586,54 @@ describe("CommandPalette open intents", () => {
 
 describe("CommandPalette mission thread actions", () => {
   const LOCAL = EnvironmentId.make("local");
-  const hostWith = (missionNames: ReadonlyArray<string>): MissionHost => ({
+  const hostWith = (
+    missionNames: ReadonlyArray<string>,
+    missionIds = missionNames.map((_, index) => `ba987654321${index}`),
+    members: Mission["members"] = [],
+  ): MissionHost => ({
     environmentId: LOCAL,
     snapshot: {
       missions: missionNames.map((name, index) => ({
-        missionId: `ba987654321${index}`,
+        missionId: missionIds[index]!,
         name,
         createdAt: "2026-11-23T00:00:00.000Z",
-        members: [],
+        members,
       })),
       links: [],
       claims: [],
     },
   });
   const missionRun = vi.fn(async () => []);
-  const listMissions = (hosts: ReadonlyArray<MissionHost>) => {
-    const items = (threads: Parameters<typeof buildMissionMenuItems>[0]) =>
+  const listed = { hosts: [] as ReadonlyArray<MissionHost>, listeners: new Set<() => void>() };
+  const subscribe = (listener: () => void) => {
+    listed.listeners.add(listener);
+    return () => listed.listeners.delete(listener);
+  };
+  const itemsOn =
+    (hosts: ReadonlyArray<MissionHost>) => (threads: Parameters<typeof buildMissionMenuItems>[0]) =>
       buildMissionMenuItems(
         threads,
         hosts,
         () => "This machine",
         () => true,
       );
+  const listMissions = (hosts: ReadonlyArray<MissionHost>) => {
+    listed.hosts = hosts;
     missionRun.mockClear();
     vi.mocked(useMissionMenu).mockImplementation(() => ({
-      items,
+      items: itemsOn(useSyncExternalStore(subscribe, () => listed.hosts)),
       rowItems: () => [],
       run: missionRun,
     }));
     onTestFinished(() => vi.mocked(useMissionMenu).mockRestore());
-    return items;
+    return itemsOn(hosts);
   };
+  /** The machine's list changes, as a mission made or deleted elsewhere changes it. */
+  const relistMissions = (hosts: ReadonlyArray<MissionHost>) =>
+    act(() => {
+      listed.hosts = hosts;
+      for (const listener of listed.listeners) listener();
+    });
   const openThread = (messages: boolean) => {
     const thread = makeThreadFixture({
       environmentId: LOCAL,
@@ -677,4 +696,58 @@ describe("CommandPalette mission thread actions", () => {
       expect(listed().includes("Add to mission")).toBe(on);
     },
   );
+
+  it("keeps Add to mission's list live while it is open", async () => {
+    listMissions([hostWith(["Ship v2", "Billing cleanup"])]);
+    const thread = openThread(true);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    openCommandPalette();
+    await page.getByRole("option", { name: /Add to mission/ }).click();
+    await expect.element(page.getByRole("option", { name: /Billing cleanup/ })).toBeVisible();
+    // Billing cleanup is deleted and Launch week is made while the view is open.
+    await relistMissions([hostWith(["Ship v2", "Launch week"], ["ba9876543210", "ba9876543212"])]);
+    await expect.element(page.getByRole("option", { name: /Launch week/ })).toBeVisible();
+    expect(page.getByText("Billing cleanup").elements()).toHaveLength(0);
+    await page.getByRole("option", { name: /Launch week/ }).click();
+    await vi.waitFor(() =>
+      expect(missionRun).toHaveBeenCalledWith("mission-add:local:ba9876543212", [
+        { environmentId: LOCAL, threadId: thread.id },
+      ]),
+    );
+  });
+
+  it("shows open Add to mission disabled once no mission is left, and leaves it once it is gone", async () => {
+    listMissions([hostWith(["Ship v2"])]);
+    const thread = openThread(true);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    openCommandPalette();
+    await page.getByRole("option", { name: /Add to mission/ }).click();
+    await expect.element(page.getByRole("option", { name: /Ship v2/ })).toBeVisible();
+    await relistMissions([hostWith([])]);
+    await expect.element(page.getByText("No missions yet")).toBeVisible();
+    await expect.element(page.getByText("Backspace", { exact: true })).toBeVisible();
+    expect(page.getByRole("option", { name: /Ship v2/ }).elements()).toHaveLength(0);
+    // The thread now leads a mission, so it has no Add to mission at all.
+    const lead = { ref: { environmentId: LOCAL, threadId: thread.id }, role: "lead" as const };
+    await relistMissions([hostWith(["Ship v2"], undefined, [{ ...lead, state: "active" }])]);
+    await expect.element(page.getByRole("option", { name: "Copy", exact: true })).toBeVisible();
+    await expect.element(page.getByText("Backspace", { exact: true })).not.toBeInTheDocument();
+  });
+
+  it("offers a mission's lead only its thread actions, not the mission's own commands", async () => {
+    const thread = openThread(true);
+    listMissions([
+      hostWith(["Ship v2"], undefined, [
+        { ref: { environmentId: LOCAL, threadId: thread.id }, role: "lead", state: "active" },
+      ]),
+    ]);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    openCommandPalette();
+    await expect.element(page.getByRole("option", { name: "Copy", exact: true })).toBeVisible();
+    const shown = document.body.textContent ?? "";
+    for (const command of ["Delete mission", "New thread in this mission", "Edit mission prompt"]) {
+      expect(shown).not.toContain(command);
+    }
+    expect(page.getByText("Mission", { exact: true }).elements()).toHaveLength(0);
+  });
 });
