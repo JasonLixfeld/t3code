@@ -12,7 +12,10 @@ import { makeThreadFixture } from "../test-fixtures";
 import type { Project, Thread } from "../types";
 import { CommandPalette } from "./CommandPalette";
 import { markMissionDraft } from "./sidebar/missionDraftStore";
-import { useMissionHosts } from "./sidebar/MissionsSection";
+import { useMissionHosts, useMissionMenu } from "./sidebar/MissionsSection";
+import { buildMissionMenuItems, type MissionHost } from "./sidebar/missions.logic";
+import { __setClientSettingsForTests } from "../hooks/useSettings";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { DraftId } from "../composerDraftStore";
 
@@ -56,6 +59,10 @@ vi.mock("../state/entities", async (original) => ({
   useProjects: () => entities.projects,
   useVisibleThreadShells: () => entities.threads,
   useDelegatedUnderParent: () => entities.delegatedUnderParent,
+  readThreadShell: ((ref: { environmentId: string; threadId: string }) =>
+    entities.threads.find(
+      (thread) => thread.environmentId === ref.environmentId && thread.id === ref.threadId,
+    ) ?? null) as never,
 }));
 
 function setup(state: Partial<typeof entities> = {}) {
@@ -569,4 +576,101 @@ describe("CommandPalette open intents", () => {
     await userEvent.keyboard("{Escape}");
     await expect.element(palette).not.toBeInTheDocument();
   });
+});
+
+describe("CommandPalette mission thread actions", () => {
+  const LOCAL = EnvironmentId.make("local");
+  const hostWith = (missionNames: ReadonlyArray<string>): MissionHost => ({
+    environmentId: LOCAL,
+    snapshot: {
+      missions: missionNames.map((name, index) => ({
+        missionId: `ba987654321${index}`,
+        name,
+        createdAt: "2026-11-23T00:00:00.000Z",
+        members: [],
+      })),
+      links: [],
+      claims: [],
+    },
+  });
+  const missionRun = vi.fn(async () => []);
+  /** The sidebar's own builder over these machines, so the rows are the context menu's. */
+  const listMissions = (hosts: ReadonlyArray<MissionHost>) => {
+    const items = (threads: Parameters<typeof buildMissionMenuItems>[0]) =>
+      buildMissionMenuItems(
+        threads,
+        hosts,
+        () => "This machine",
+        () => true,
+      );
+    missionRun.mockClear();
+    vi.mocked(useMissionMenu).mockImplementation(
+      () => ({ items, rowItems: () => [], run: missionRun }) as never,
+    );
+    onTestFinished(() => vi.mocked(useMissionMenu).mockRestore());
+    return items;
+  };
+  const openThread = (messages: boolean) => {
+    const thread = makeThreadFixture({
+      environmentId: LOCAL,
+      id: ThreadId.make(messages ? "talked" : "quiet"),
+      title: "Plan the launch",
+      ...(messages ? { latestUserMessageAt: "2026-11-24T00:00:00.000Z", visibleItemCount: 1 } : {}),
+    });
+    setup({ threads: [thread], activeThread: thread });
+    return thread;
+  };
+
+  it("lists a thread's mission actions, and Add to mission adds it to the picked mission", async () => {
+    listMissions([hostWith(["Ship v2", "Billing cleanup"])]);
+    const thread = openThread(true);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    openCommandPalette();
+    await expect
+      .element(page.getByRole("option", { name: /Start mission from this thread/ }))
+      .toBeVisible();
+    await page.getByRole("option", { name: /Add to mission/ }).click();
+    await expect.element(page.getByRole("option", { name: /Billing cleanup/ })).toBeVisible();
+    await page.getByRole("option", { name: /Ship v2/ }).click();
+    await vi.waitFor(() =>
+      expect(missionRun).toHaveBeenCalledWith("mission-add:local:ba9876543210", [
+        { environmentId: LOCAL, threadId: thread.id },
+      ]),
+    );
+  });
+
+  it("disables mission actions with the context menu's reasons", async () => {
+    const items = listMissions([hostWith([])]);
+    const thread = openThread(false);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    openCommandPalette();
+    const expected = items([thread as never]);
+    expect(expected.map((item) => item.detail)).toEqual(["No messages yet", "No missions yet"]);
+    // The palette shows a disabled action as a plain row, not an option, with its reason under it.
+    for (const item of expected) {
+      const title = page.getByText(item.label, { exact: true });
+      await expect.element(title).toBeVisible();
+      expect(title.element().closest("[role=option]")).toBeNull();
+      expect(title.element().parentElement?.parentElement?.textContent).toBe(
+        `${item.label}${item.detail}`,
+      );
+    }
+  });
+
+  it.each([
+    ["on", true],
+    ["off", false],
+  ] as const)(
+    "with Missions %s, the palette's thread actions show mission actions or none",
+    async (_, on) => {
+      __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, sidebarMissionsEnabled: on });
+      onTestFinished(() => __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS));
+      openThread(true);
+      await using screen = await render(<CommandPalette>{null}</CommandPalette>);
+      openCommandPalette();
+      await expect.element(page.getByRole("option", { name: "Copy", exact: true })).toBeVisible();
+      const listed = () => screen.container.ownerDocument.body.textContent ?? "";
+      expect(listed().includes("Add to mission")).toBe(on);
+    },
+  );
 });

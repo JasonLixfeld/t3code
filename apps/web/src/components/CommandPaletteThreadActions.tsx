@@ -5,7 +5,9 @@ import {
   ClockIcon,
   CopyIcon,
   FolderIcon,
+  FolderMinusIcon,
   FolderPlusIcon,
+  FolderTreeIcon,
   GitBranchIcon,
   HashIcon,
   type LucideIcon,
@@ -20,6 +22,7 @@ import {
 } from "lucide-react";
 
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu";
+import { useMissionMenu } from "./sidebar/MissionsSection";
 import {
   ADDON_ICON_CLASS,
   ITEM_ICON_CLASS,
@@ -34,7 +37,9 @@ const ICONS: Record<string, LucideIcon> = {
   clock: ClockIcon,
   copy: CopyIcon,
   folder: FolderIcon,
+  "folder-minus": FolderMinusIcon,
   "folder-plus": FolderPlusIcon,
+  "folder-tree": FolderTreeIcon,
   "git-branch": GitBranchIcon,
   hash: HashIcon,
   "mail-open": MailOpenIcon,
@@ -63,7 +68,8 @@ export function useCommandPaletteThreadActions(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly projectCwd: string | null;
 }): Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> {
-  const { readMenu } = useThreadActionMenu({ ...input, canShareWithGuest: false });
+  const missionMenu = useMissionMenu();
+  const { readMenu } = useThreadActionMenu({ ...input, canShareWithGuest: false, missionMenu });
   const menu = readMenu();
   if (!menu) return [];
 
@@ -85,7 +91,11 @@ export function useCommandPaletteThreadActions(input: {
       const children = item.children.flatMap(
         (child) => toPaletteItem(item.disabled ? { ...child, disabled: true } : child) ?? [],
       );
-      if (children.length === 0) return null;
+      // A disabled one without choices, like Add to mission before any mission exists, still
+      // shows why, as the context menu does.
+      if (children.length === 0) {
+        return item.disabled ? { ...shared, kind: "action", run: async () => {} } : null;
+      }
       return {
         ...shared,
         kind: "submenu",

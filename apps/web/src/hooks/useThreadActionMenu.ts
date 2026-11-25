@@ -53,6 +53,8 @@ import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { canTurnThreadIntoProject, useThreadActions } from "./useThreadActions";
+import type { useMissionMenu } from "../components/sidebar/MissionsSection";
+import { isMissionMenuId } from "../components/sidebar/missions.logic";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -71,8 +73,10 @@ export function useThreadActionMenu(input: {
   readonly onStartRename?: (() => void) | undefined;
   readonly onFind?: ((threadRef: ScopedThreadRef) => void) | undefined;
   readonly canShareWithGuest: boolean;
+  /** Adds the thread's Mission entries, as the sidebar's context menu shows them. */
+  readonly missionMenu?: Pick<ReturnType<typeof useMissionMenu>, "items" | "run"> | undefined;
 }) {
-  const { threadRef, projectCwd, onStartRename, onFind, canShareWithGuest } = input;
+  const { threadRef, projectCwd, onStartRename, onFind, canShareWithGuest, missionMenu } = input;
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -152,6 +156,7 @@ export function useThreadActionMenu(input: {
       snoozePresets,
       canShareWithGuest,
       canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+      ...(missionMenu ? { missionItems: missionMenu.items([thread]) } : {}),
     });
     const run = async (action: ThreadActionMenuId) => {
       const api = readLocalApi();
@@ -166,6 +171,10 @@ export function useThreadActionMenu(input: {
           m(msg("Thread action unavailable")),
           new Error(m(msg("This connection cannot change threads."))),
         );
+        return;
+      }
+      if (missionMenu && isMissionMenuId(action)) {
+        await missionMenu.run(action, [threadRef]);
         return;
       }
       if (action.startsWith("snooze:")) {
