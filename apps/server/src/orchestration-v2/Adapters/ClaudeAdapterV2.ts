@@ -3341,11 +3341,9 @@ const reserveClaudePdfBudget = (
       }).pipe(Effect.andThen(persist)),
   );
 
-/** A keyed block the next user message carries until Claude's history holds that text. */
 interface ClaudeAppContextEntry {
   readonly key: string;
   readonly text: string;
-  /** The user's own words, unquoted, as Codex's `application` context. Else quoted data. */
   readonly instruction?: true;
 }
 
@@ -14572,8 +14570,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // `offer` may call this twice; a second call must not restore notes compaction cleared.
             let offerCommitted = false;
             const appContextBefore = currentTurn.appContextOffered;
-            // Added to what the turn already carried, such as its mission context, which a steer
-            // does not send again.
             const appContextOffered =
               userMessage === steerMessage
                 ? undefined

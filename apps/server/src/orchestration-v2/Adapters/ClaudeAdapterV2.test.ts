@@ -7538,8 +7538,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
         const prompt = "You lead a mission (id 0123456789ab). Review every pull request.";
         const lead = (status: string) => ({ role: "lead" as const, prompt, status });
-        // The test model's effort prefix is not what this test is about.
-        const blocks = () => {
+        const messageBlocksWithoutEffortPrefix = () => {
           const content = harness.offeredMessages.at(-1)?.message.content;
           return (
             typeof content === "string"
@@ -7565,7 +7564,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }),
             ...(missionContext === undefined ? {} : { missionContext }),
           });
-          return blocks();
+          return messageBlocksWithoutEffortPrefix();
         });
         const turn = (
           ordinal: number,
@@ -7583,7 +7582,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           `<external_t3_code_mission_status>${text}</external_t3_code_mission_status>`;
         const ended = `<t3_code_mission>${ProviderAdapter.MISSION_LEAD_ENDED}</t3_code_mission>`;
 
-        // A thread that leads nothing gets no mission context.
         assert.deepEqual(yield* turn(0, "Hello"), ["Hello"]);
         yield* finish(0);
         assert.deepEqual(yield* turn(1, "Plan it", lead("Status: 1 member.")), [
@@ -7592,14 +7590,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           "Plan it",
         ]);
         yield* finish(1);
-        // Already in Claude's history, so an unchanged prompt and status are not sent again.
         assert.deepEqual(yield* turn(2, "Next", lead("Status: 1 member.")), ["Next"]);
         yield* finish(2);
         assert.deepEqual(yield* turn(3, "Again", lead("Status: 2 members.")), [
           status("Status: 2 members."),
           "Again",
         ]);
-        // A steer that carries an app note keeps the turn's mission context delivered.
         yield* harness.runtime.steerTurn({
           threadId: harness.threadId,
           runId: RunId.make("run-mission-context-3"),
@@ -7617,35 +7613,33 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           },
           appContext: [{ key: "mcp_app_item-1", text: "Created PROJ-42" }],
         });
-        assert.deepEqual(blocks(), [
+        assert.deepEqual(messageBlocksWithoutEffortPrefix(), [
           "<external_mcp_app_item-1>Created PROJ-42</external_mcp_app_item-1>",
           "And the app?",
         ]);
         yield* finish(3);
         assert.deepEqual(yield* turn(31, "Once more", lead("Status: 2 members.")), ["Once more"]);
         yield* finish(31);
-        // A slash command runs only as a plain-text prompt, so its context waits for the next turn.
-        assert.deepEqual(yield* turn(4, "/review", lead("Status: 3 members.")), ["/review"]);
+        yield* turn(4, "/review", lead("Status: 3 members."));
+        assert.equal(harness.offeredMessages.at(-1)?.message.content, "/review");
         yield* finish(4);
         assert.deepEqual(yield* turn(5, "Go on", lead("Status: 3 members.")), [
           status("Status: 3 members."),
           "Go on",
         ]);
         yield* finish(5);
-        // Handed on: told once that it leads no more, which stays in its history after the prompt.
         assert.deepEqual(yield* turn(6, "Hi", { role: "former-lead" }), [ended, "Hi"]);
         yield* finish(6);
         assert.deepEqual(yield* turn(7, "Still there?", { role: "former-lead" }), ["Still there?"]);
         yield* finish(7);
-        // A restarted adapter cannot tell what the resumed history holds, so it says so again.
-        const restarted = yield* harness.adapter.openSession({
+        const reopenedRuntime = yield* harness.adapter.openSession({
           threadId: harness.threadId,
           providerSessionId: ProviderSessionId.make("provider-session-claude-wake-restarted"),
           modelSelection: CLAUDE_TEST_MODEL_SELECTION,
           runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
           promptSuggestions: Effect.succeed(false),
         });
-        assert.deepEqual(yield* turnOn(restarted, 8, "Back", { role: "former-lead" }), [
+        assert.deepEqual(yield* turnOn(reopenedRuntime, 8, "Back", { role: "former-lead" }), [
           ended,
           "Back",
         ]);

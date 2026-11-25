@@ -613,7 +613,6 @@ export interface ProviderAdapterV2TurnInput {
     | { readonly role: "former-lead" };
 }
 
-/** What a thread that led a mission is told once it no longer does. */
 export const MISSION_LEAD_ENDED =
   "This thread no longer leads a mission. Earlier mission instructions and status no longer apply.";
 
