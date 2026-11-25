@@ -284,7 +284,7 @@ it("joins a draft marked for a mission as a member once its first message lands"
   await vi.waitFor(() =>
     expect(commandFor("mission add member")).toHaveBeenCalledExactlyOnceWith({
       environmentId: LOCAL,
-      input: { missionId: "ba9876543210", member: thread },
+      input: { missionId: "ba9876543210", member: thread, noBrief: true },
     }),
   );
   await vi.waitFor(() => expect(screen.container.textContent).not.toContain("Sending adds"));

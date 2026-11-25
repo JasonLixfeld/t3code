@@ -24,6 +24,11 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { missionWakeCommand } from "../missions/MissionWakes.ts";
+import {
+  briefMessageId,
+  briefRequestText,
+  missionBriefCommand,
+} from "../missions/missionStatus.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 /** What UnlessParked read as, each time the orchestrator asked this provider something. */
@@ -287,5 +292,70 @@ it.effect("what a wake's dispatch runs in turn never reads it as unless parked",
     assert.lengthOf((yield* projections.getThreadProjection(threadId)).messages, 1);
     assert.isNotEmpty(seen);
     assert.notInclude(seen, true);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+const briefRequest = missionBriefCommand({ missionId: "0123456789ab", threadId, askedAt: 1_000 });
+
+it.effect("a member's brief request keeps its snooze, as a mission wake does", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    yield* settledLead;
+    yield* orchestrator.dispatch({
+      type: "thread.unsettle",
+      commandId: CommandId.make("unsettle"),
+      threadId,
+      reason: "user",
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.snooze",
+      commandId: CommandId.make("snooze"),
+      threadId,
+      snoozedUntil: "2999-01-01T00:00:00.000Z",
+    });
+    yield* orchestrator
+      .dispatch(briefRequest)
+      .pipe(Effect.provideService(Orchestrator.UnlessParked, true));
+    const member = yield* projections.getThreadProjection(threadId);
+    assert.isNotNull(member.thread.snoozedUntil);
+    assert.deepEqual(
+      member.messages.map((candidate) => candidate.text),
+      [briefRequestText("0123456789ab")],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a busy member's brief request waits for the run under way", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    yield* settledLead;
+    yield* orchestrator.dispatch({
+      type: "thread.unsettle",
+      commandId: CommandId.make("unsettle"),
+      threadId,
+      reason: "user",
+    });
+    yield* orchestrator.dispatch({
+      ...wakeCommand("busy"),
+      messageId: MessageId.make("busy"),
+      text: "Fix the build.",
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator
+      .dispatch(briefRequest)
+      .pipe(Effect.provideService(Orchestrator.UnlessParked, true));
+    const member = yield* projections.getThreadProjection(threadId);
+    assert.deepEqual(
+      member.runs.map((run) => run.userMessageId),
+      [MessageId.make("busy"), MessageId.make(briefMessageId("0123456789ab", 1_000))],
+    );
+    assert.deepEqual(
+      member.runs.map((run) => run.status),
+      ["starting", "queued"],
+    );
   }).pipe(Effect.provide(layerTest)),
 );

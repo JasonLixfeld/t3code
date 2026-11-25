@@ -144,6 +144,8 @@ const callOnce = (
     readonly duringFirstWorkspaceRead?: (
       claims: MissionClaims.MissionClaims["Service"],
     ) => Effect.Effect<void, MissionError>;
+    /** This machine's Missions, which sends its threads the brief requests. */
+    readonly missions?: Partial<Missions.Missions["Service"]>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -230,7 +232,13 @@ const callOnce = (
         McpHttpServer.toolkitRegistration(MissionToolkit, MissionHandlers.layer).pipe(
           Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
           Layer.provideMerge(
-            Layer.merge(machine, Layer.succeed(MissionClaims.MissionClaims, claims)),
+            Layer.mergeAll(
+              machine,
+              Layer.succeed(MissionClaims.MissionClaims, claims),
+              options.missions === undefined
+                ? Layer.empty
+                : Layer.mock(Missions.Missions)(options.missions),
+            ),
           ),
         ),
       ),
@@ -245,6 +253,57 @@ const callOnce = (
 
 const SHIP = "0123456789ab";
 const joinShip = { kind: "join", threadId: userThread, missionId: SHIP, name: "Ship" };
+
+it.effect("a link's lead asks its own member here for a brief, and reads the answer listed", () =>
+  Effect.gen(function* () {
+    const asked: Array<unknown> = [];
+    let generation = "";
+    const missions = {
+      requestBriefHere: (input: unknown) =>
+        Effect.sync(() => {
+          asked.push(input);
+          return "asked" as const;
+        }),
+      // Only the answer asked under the claim listed now, never one from an earlier claim.
+      briefAnswer: (_threadId: ThreadId, under: string) =>
+        Effect.succeed(under === generation ? { text: "Goal: ship." } : { text: "Stale." }),
+    };
+    const joinFirst = (claims: MissionClaims.MissionClaims["Service"]) =>
+      claims
+        .join(MissionClaims.linkOwner("link"), {
+          threadId: userThread,
+          missionId: SHIP,
+          name: "Ship",
+        })
+        .pipe(
+          Effect.tap((claim) =>
+            Effect.sync(() => {
+              if (claim !== "intent-spent") generation = claim.generation;
+            }),
+          ),
+        );
+    const ask = { kind: "brief", threadId: userThread, missionId: SHIP, askedAt: 7 };
+    const { answer } = yield* callOnce(linkedClient("full-access"), ask, {
+      before: joinFirst,
+      missions,
+    });
+    assert.deepEqual(JSON.parse(answer), { claims: [], brief: "asked" });
+    assert.deepEqual(asked, [{ missionId: SHIP, threadId: userThread, askedAt: 7, generation }]);
+    // Not this link's member here: it is not asked.
+    const refused = yield* callOnce(linkedClient("full-access"), ask, { missions });
+    assert.include(refused.answer, "That thread is not in this mission.");
+    assert.lengthOf(asked, 1);
+    const listed = yield* callOnce(
+      linkedClient("full-access"),
+      { kind: "list" },
+      {
+        before: joinFirst,
+        missions,
+      },
+    );
+    assert.deepEqual(JSON.parse(listed.answer).claims[0].detail.brief, { text: "Goal: ship." });
+  }),
+);
 
 it.effect("a full-access link claims and tags a thread it did not start", () =>
   Effect.gen(function* () {
@@ -576,6 +635,7 @@ it.effect(
         { kind: "list" },
         {
           before: joinedBy(LINK_OWNER),
+          missions: { briefAnswer: () => Effect.succeed({ text: "Goal: ship." }) },
           duringFirstWorkspaceRead: (claims) =>
             Effect.gen(function* () {
               const [held] = yield* claims.list(LINK_OWNER);

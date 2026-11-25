@@ -69,6 +69,7 @@ it.effect("keeps its own migration history and reopens without migrating again",
           [5, "AddLinkAndAge"],
           [6, "MissionTombstones"],
           [7, "MissionLeadPrompt"],
+          [8, "MissionJoinBriefs"],
         ],
       );
     }),
@@ -106,6 +107,57 @@ it.effect(
         }),
       ),
     ),
+);
+
+it.effect("a member's brief is listed only with the claim it was asked under", () =>
+  withDatabase((filename) =>
+    usingStore(filename, (store) =>
+      Effect.gen(function* () {
+        yield* store.briefRequested(member, "m1", "g1");
+        assert.isUndefined(yield* store.briefAnswer(member, "g1"));
+        yield* store.briefAnswered(member, "m1", "Goal: ship.");
+        assert.deepEqual(yield* store.briefAnswer(member, "g1"), { text: "Goal: ship." });
+        assert.isUndefined(yield* store.briefAnswer(member, "g2"));
+        // Asked again under a new claim: the earlier answer goes with the earlier claim.
+        yield* store.briefRequested(member, "m1", "g2");
+        assert.isUndefined(yield* store.briefAnswer(member, "g1"));
+        assert.isUndefined(yield* store.briefAnswer(member, "g2"));
+      }),
+    ),
+  ),
+);
+
+it.effect("a member's brief answers go when its claim is released or it leaves", () =>
+  withDatabase((filename) =>
+    usingStore(filename, (store) =>
+      Effect.gen(function* () {
+        yield* store.createMission(claimFor(lead, "m1", "g1"));
+        for (const leaves of [false, true]) {
+          yield* store.join(claimFor(member, "m1", "g2"));
+          yield* store.briefRequested(member, "m1", "g2");
+          yield* store.briefAnswered(member, "m1", "Goal: ship.");
+          assert.isFalse(
+            yield* store.release({
+              threadId: member,
+              missionId: "m1",
+              owner: "env-a",
+              generation: "g0",
+            }),
+          );
+          assert.deepEqual(yield* store.briefAnswer(member, "g2"), { text: "Goal: ship." });
+          if (leaves) yield* store.leave(member);
+          else
+            yield* store.release({
+              threadId: member,
+              missionId: "m1",
+              owner: "env-a",
+              generation: "g2",
+            });
+          assert.isUndefined(yield* store.briefAnswer(member, "g2"));
+        }
+      }),
+    ),
+  ),
 );
 
 it.effect("a release drops only the member claim that its generation, mission and owner name", () =>

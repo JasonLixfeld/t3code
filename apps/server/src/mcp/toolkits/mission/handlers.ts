@@ -136,9 +136,21 @@ export const layer = McpToolAccess.toLayer(
             // Each claim says what its thread is doing, so the lead can tell when it needs it.
             const withDetail = Effect.fn("MissionHandlers.withDetail")(function* (
               wanted: ReadonlyArray<MissionClaim>,
+              withBriefs: boolean,
             ) {
               const read = yield* Effect.forEach(wanted, (claim) =>
-                Effect.map(memberDetail(claim.threadId), (detail) => ({ claim, detail })),
+                Effect.gen(function* () {
+                  const detail = yield* memberDetail(claim.threadId);
+                  const brief =
+                    !withBriefs || Option.isNone(missions)
+                      ? undefined
+                      : yield* missions.value.briefAnswer(claim.threadId, claim.generation);
+                  return {
+                    claim,
+                    detail:
+                      detail === undefined || brief === undefined ? detail : { ...detail, brief },
+                  };
+                }),
               );
               // A claim may have changed hands while its thread was read.
               const held = yield* claims.list(owner);
@@ -153,7 +165,7 @@ export const layer = McpToolAccess.toLayer(
                 ),
               );
             });
-            if (input.kind === "list") return yield* withDetail(yield* claims.list(owner));
+            if (input.kind === "list") return yield* withDetail(yield* claims.list(owner), true);
             if (input.kind === "workspaces") {
               const members = yield* needs(input.members, "members");
               return yield* withDetail(
@@ -163,7 +175,29 @@ export const layer = McpToolAccess.toLayer(
                       member.threadId === claim.threadId && member.generation === claim.generation,
                   ),
                 ),
+                false,
               );
+            }
+            if (input.kind === "brief") {
+              const threadId = yield* needs(input.threadId, "threadId");
+              const missionId = yield* needs(input.missionId, "missionId");
+              const askedAt = yield* needs(input.askedAt, "askedAt");
+              // Only the lead whose Mission holds this thread here may ask it, under that claim.
+              const held = (yield* claims.list(owner)).find(
+                (claim) => claim.threadId === threadId && claim.missionId === missionId,
+              );
+              if (held === undefined || Option.isNone(missions)) {
+                return yield* new MissionError({ message: "That thread is not in this mission." });
+              }
+              return {
+                claims: [],
+                brief: yield* missions.value.requestBriefHere({
+                  missionId,
+                  threadId,
+                  askedAt,
+                  generation: held.generation,
+                }),
+              };
             }
             // Renames only claims this caller holds, each checked as a join is; a thread the caller
             // may no longer change keeps the old name.
@@ -205,7 +239,7 @@ export const layer = McpToolAccess.toLayer(
                 return [];
             }
           }).pipe(
-            Effect.map((claims) => ({ claims })),
+            Effect.map((answer) => ("claims" in answer ? answer : { claims: answer })),
             Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) }),
           ),
       ),

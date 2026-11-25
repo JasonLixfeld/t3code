@@ -37,7 +37,9 @@ const shownOnlyToLinks = (): boolean => {
  * answers with no claim when that add's claim was dropped.
  */
 const MissionTagInput = Schema.Struct({
-  kind: MissionClaimKind,
+  /** `brief`: the lead asks a member here to brief it, the app's request, sent once. */
+  kind: Schema.Union([MissionClaimKind, Schema.Literal("brief")]),
+  askedAt: Schema.optional(Schema.Number),
   threadId: Schema.optional(ThreadId),
   missionId: Schema.optional(MissionId),
   name: Schema.optional(MissionName),
@@ -63,6 +65,8 @@ export const MissionClaimResult = Schema.Struct({
       detail: Schema.optional(MemberDetail),
     }),
   ),
+  /** What became of a `brief` request. Absent from machines that predate it. */
+  brief: Schema.optional(Schema.Literals(["asked", "empty", "parked"])),
 });
 
 /** Omit `environmentId` for a thread on this machine. */

@@ -87,7 +87,7 @@ function MissionDraftWatch(props: { readonly draftId: DraftId; readonly draft: M
             m(msg("Could not add this thread to the mission")),
             await addMember({
               environmentId: draft.intent.host,
-              input: { missionId: draft.missionId, member: draft.thread },
+              input: { missionId: draft.missionId, member: draft.thread, noBrief: true },
             }),
           ]
         : [

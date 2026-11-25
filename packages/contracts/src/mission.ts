@@ -77,6 +77,8 @@ export const MissionCreateInput = Schema.Struct({
 export const MissionMemberInput = Schema.Struct({
   missionId: Schema.String,
   member: ScopedThreadRef,
+  /** A thread its first send just started in the mission, which has no work to brief its lead. */
+  noBrief: Schema.optional(Schema.Literal(true)),
 });
 
 /** A thread on the Mission's own machine takes over as its lead, as when the old one is gone. */
