@@ -1,8 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
+import {
+  type OrchestrationProjectShell,
+  ProjectId,
+  type RepositoryIdentity,
+  type ThreadPullRequestLink,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as Project from "../project/ProjectService.ts";
@@ -20,16 +26,41 @@ const identity = (repository: string): RepositoryIdentity => ({
     remoteUrl: `git@github.com:${repository}.git`,
   },
 });
-const link = (repository: string, number: number, state: "open" | "merged" | null) =>
-  ({
-    host: "github.com",
-    repository,
-    number,
-    url: `https://github.com/${repository}/pull/${number}`,
-    snapshot: state === null ? null : { state },
-  }) as never;
+const link = (
+  repository: string,
+  number: number,
+  state: "open" | "merged" | null,
+): ThreadPullRequestLink => ({
+  host: "github.com",
+  repository,
+  number,
+  url: `https://github.com/${repository}/pull/${number}`,
+  source: "manual",
+  linkedAt: "2026-01-01T00:00:00.000Z",
+  snapshot:
+    state === null
+      ? null
+      : {
+          state,
+          title: `#${number}`,
+          headBranch: "t3/checkout-v2",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: null,
+          syncedAt: "2026-01-01T00:00:00.000Z",
+        },
+  stack: null,
+});
+const soloProject: OrchestrationProjectShell = {
+  id: projectId,
+  title: "solo",
+  workspaceRoot: "/code/solo",
+  defaultModelSelection: null,
+  scripts: [],
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+};
 
-/** One machine: a project at /code/app with two repositories, and a single-repository one. */
 const machine = (gitCalls: Array<string>) =>
   MemberWorkspaces.layer.pipe(
     Layer.provide(
@@ -79,16 +110,16 @@ const machine = (gitCalls: Array<string>) =>
             Effect.sync(() => {
               gitCalls.push(input.cwd);
               return {
-                exitCode: 0,
+                exitCode: ChildProcessSpawner.ExitCode(0),
                 stdout: "main\n",
                 stderr: "",
                 stdoutTruncated: false,
                 stderrTruncated: false,
-              } as never;
+              };
             }),
         }),
         Layer.mock(Project.ProjectService)({
-          getShell: () => Effect.succeedSome({ workspaceRoot: "/code/solo" } as never),
+          getShell: () => Effect.succeedSome(soloProject),
         }),
         NodeServices.layer,
       ),
@@ -135,7 +166,6 @@ it.effect(
             ],
           },
         ],
-        // A review of another repository stays with the thread, apart from its checkouts.
         otherPullRequests: [
           {
             number: 3,
@@ -145,7 +175,6 @@ it.effect(
           },
         ],
       });
-      // Its branch is the thread's: no Git is run for it.
       assert.deepEqual(gitCalls, []);
     }).pipe(Effect.provide(machine(gitCalls)));
   },

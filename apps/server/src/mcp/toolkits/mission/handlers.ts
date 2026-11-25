@@ -31,10 +31,6 @@ const refused = (error: MissionError) =>
     message: error.message,
   });
 
-/**
- * Each repository the members work in, with who works in it on which branch and the pull requests
- * they opened there. A repository is its remote when it has one; else its path on its machine.
- */
 const byRepository = (rows: ReadonlyArray<RosterMember>) => {
   const groups = new Map<
     string,

@@ -847,7 +847,6 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
       ),
     ),
   ),
-  // What each mission member's checkouts are, for its lead's roster and a peer's list.
   Layer.provideMerge(
     MemberWorkspaces.layer.pipe(
       Layer.provide(

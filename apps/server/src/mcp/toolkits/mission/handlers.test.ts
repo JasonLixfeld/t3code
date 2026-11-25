@@ -26,7 +26,6 @@ import { liveThreadShell, liveThreadsLayer } from "../../McpToolAccess.testkit.t
 import * as MissionHandlers from "./handlers.ts";
 import { MissionToolkit } from "./tools.ts";
 
-/** A member that names no repository. */
 const noWorkspace = Layer.mock(MemberWorkspaces)({
   of: () => Effect.succeed({ kind: "project" as const, repositories: [], otherPullRequests: [] }),
 });

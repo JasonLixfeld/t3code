@@ -86,7 +86,7 @@ export const MissionToolkit = Toolkit.make(
     .annotate(McpSchema.EnabledWhen, shownOnlyToLinks),
   Tool.make("t3_mission_roster", {
     description:
-      "List the member threads of the mission you lead: machine, project, status, title, whether each needs you, and its workspace: kind, and each repository's branch and pull requests. `byRepository` groups all members by repository. Page with `cursor`.",
+      "List the member threads of the mission you lead: machine, project, status, title, whether each needs you, and its workspace: kind, and each repository's branch and pull requests. `byRepository` groups repository entries across all pages by remote, else `<environmentId>:<repositoryPath>`. Members with none are absent. Page with `cursor`.",
     parameters: Schema.Struct({
       cursor: Schema.optional(NonNegativeInt),
       limit: Schema.optional(clampedPositiveInt(100)),
@@ -109,7 +109,6 @@ export const MissionToolkit = Toolkit.make(
           workspace: Schema.Union([MemberWorkspace, Schema.Literal("unknown")]),
         }),
       ),
-      /** Every member, not only this page, by repository: its remote, else its path on its machine. */
       byRepository: Schema.Array(
         Schema.Struct({
           repository: Schema.String,

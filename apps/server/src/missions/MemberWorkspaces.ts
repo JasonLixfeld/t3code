@@ -1,4 +1,8 @@
-import { type OrchestrationV2ThreadShell, repositoryGroupingKeyOf } from "@t3tools/contracts";
+import {
+  type OrchestrationV2ThreadShell,
+  PullRequestState,
+  repositoryGroupingKeyOf,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -17,8 +21,8 @@ import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 
 const MemberPullRequest = Schema.Struct({
   number: Schema.Number,
-  /** `open`, `closed` or `merged`, or `unknown` before its host was read. */
-  state: Schema.String,
+  /** `unknown`: no saved snapshot of the pull request. */
+  state: Schema.Union([PullRequestState, Schema.Literal("unknown")]),
   url: Schema.String,
 });
 
@@ -30,7 +34,10 @@ export const MemberRepository = Schema.Struct({
   /** The repository on that machine `path` is a checkout of. */
   repositoryPath: Schema.String,
   branch: Schema.NullOr(Schema.String),
-  /** Its remote as `host/owner/name`, null with no remote. */
+  /**
+   * Its repository grouping key: its origin's canonical key, else its own, such as
+   * `github.com/owner/name` or `dev.azure.com/org/project/_git/repo`. Null with no remote.
+   */
   remote: Schema.NullOr(Schema.String),
   pullRequests: Schema.Array(MemberPullRequest),
 });
@@ -50,8 +57,7 @@ export const MemberWorkspace = Schema.Struct({
 });
 export type MemberWorkspace = typeof MemberWorkspace.Type;
 
-/** A shared checkout can change branch under a member; it is read again after this long. */
-const BRANCH_READ_TTL = Duration.seconds(30);
+const SHARED_CHECKOUT_BRANCH_CACHE_TTL = Duration.seconds(30);
 
 export class MemberWorkspaces extends Context.Service<
   MemberWorkspaces,
@@ -79,7 +85,7 @@ const make = Effect.gen(function* () {
   const branchOf = Effect.fn("MemberWorkspaces.branchOf")(function* (cwd: string) {
     const now = yield* Clock.currentTimeMillis;
     const read = branches.get(cwd);
-    if (read !== undefined && now - read.at < Duration.toMillis(BRANCH_READ_TTL)) {
+    if (read !== undefined && now - read.at < Duration.toMillis(SHARED_CHECKOUT_BRANCH_CACHE_TTL)) {
       return read.branch;
     }
     const branch = yield* git
@@ -98,7 +104,6 @@ const make = Effect.gen(function* () {
     return branch;
   });
 
-  /** The checkouts a thread works in, and whether each is on the thread's own branch. */
   const checkoutsOf = Effect.fn("MemberWorkspaces.checkoutsOf")(function* (
     shell: Pick<OrchestrationV2ThreadShell, "projectId" | "worktreePath">,
   ) {
@@ -121,7 +126,6 @@ const make = Effect.gen(function* () {
           checkouts: [at(shell.worktreePath, projectRoot ?? shell.worktreePath)],
         };
       }
-      // Every repository of a task folder is on the thread's branch.
       return {
         kind: "task-folder" as const,
         checkouts: [
@@ -165,7 +169,6 @@ const make = Effect.gen(function* () {
           const identity = yield* identities.resolve(checkout.repositoryPath);
           return {
             checkout,
-            // A shared checkout is on whatever branch it is on now; the others, the thread's.
             branch: kind === "project" ? yield* branchOf(checkout.path) : shell.branch,
             remote: identity === null ? null : repositoryGroupingKeyOf(identity),
             keys: new Set(
@@ -182,7 +185,11 @@ const make = Effect.gen(function* () {
     const links = (shell.pullRequests ?? []).map((link) => ({
       key: keyOf(`${link.host}/${link.repository}`),
       repository: `${link.host}/${link.repository}`,
-      pullRequest: { number: link.number, state: link.snapshot?.state ?? "unknown", url: link.url },
+      pullRequest: {
+        number: link.number,
+        state: link.snapshot?.state ?? ("unknown" as const),
+        url: link.url,
+      },
     }));
     return {
       kind,

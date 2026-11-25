@@ -32,7 +32,6 @@ const member = (
   ...overrides,
 });
 
-// The app's own words, every one: the mission id is the only part not fixed.
 const HEADER = [
   "You lead a mission (id 0123456789ab). You orchestrate its threads. If the user asks for something different in a message, the message wins.",
   "The mission has no branch or checkout of its own: each repository's work is done in its members' threads.",

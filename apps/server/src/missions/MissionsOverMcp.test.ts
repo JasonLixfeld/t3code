@@ -2,7 +2,13 @@ import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { EnvironmentId, type MissionsSnapshot, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type MissionsSnapshot,
+  type OrchestrationProjectShell,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -32,10 +38,18 @@ import * as MissionTurnContexts from "./MissionTurnContexts.ts";
 import * as MissionStore from "./MissionStore.ts";
 import * as Missions from "./Missions.ts";
 
-/** A member that names no repository. */
 const noWorkspace = Layer.mock(MemberWorkspaces)({
   of: () => Effect.succeed({ kind: "project" as const, repositories: [], otherPullRequests: [] }),
 });
+const webProject: OrchestrationProjectShell = {
+  id: ProjectId.make("project-web"),
+  title: "web",
+  workspaceRoot: "/code/web",
+  defaultModelSelection: null,
+  scripts: [],
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+};
 
 const DESK = EnvironmentId.make("env-desk");
 const LAPTOP = EnvironmentId.make("env-laptop");
@@ -98,7 +112,7 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
     const settings = yield* Layer.build(ServerSettings.layerTest());
     const projects = Layer.merge(
       Layer.mock(Project.ProjectService)({
-        getShell: () => Effect.succeedSome({ title: "web" } as never),
+        getShell: () => Effect.succeedSome(webProject),
       }),
       noWorkspace,
     );
@@ -232,7 +246,6 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
         "added",
         "found",
       ]);
-      // What the laptop says of a member's checkouts comes over its /mcp with the list.
       const foundRow = (yield* missions.roster(mission.missionId)).find(
         (row) => row.ref.threadId === found.threadId,
       );

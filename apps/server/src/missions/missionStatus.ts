@@ -59,7 +59,6 @@ export interface RosterMember {
   readonly project: string;
   readonly status: RosterStatus;
   readonly title: string;
-  /** Undefined when its machine did not say, as one that predates it. */
   readonly workspace?: MemberWorkspace | undefined;
 }
 
@@ -259,7 +258,6 @@ const cutToBytes = (text: string, max: number) => {
   return kept;
 };
 
-/** How a lead works across repositories. The app's own text: no member or agent writes any. */
 const MISSION_LEAD_GUIDANCE = [
   "The mission has no branch or checkout of its own: each repository's work is done in its members' threads.",
   "- Changes to several repositories that must land together: one member, in a multi-repository project.",

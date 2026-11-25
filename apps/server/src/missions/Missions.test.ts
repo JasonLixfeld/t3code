@@ -34,6 +34,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as Stream from "effect/Stream";
@@ -58,7 +59,11 @@ import {
   type DispatchModes,
   exceededDispatchModeLimit,
 } from "../orchestration-v2/DispatchModeLimit.ts";
-import { type MemberWorkspace, MemberWorkspaces } from "./MemberWorkspaces.ts";
+import {
+  type MemberRepository,
+  type MemberWorkspace,
+  MemberWorkspaces,
+} from "./MemberWorkspaces.ts";
 import * as MissionClaims from "./MissionClaims.ts";
 import { memberStatusOf, missionPromptText } from "./missionStatus.ts";
 import * as MissionTurnContexts from "./MissionTurnContexts.ts";
@@ -84,6 +89,7 @@ const ref = (environmentId: EnvironmentId, threadId: string): ScopedThreadRef =>
   threadId: ThreadId.make(threadId),
 });
 const keyOf = (thread: ScopedThreadRef) => `${thread.environmentId}/${thread.threadId}`;
+const worktreeOf = (threadId: ThreadId) => `/worktrees/${threadId}`;
 const lead = ref(HERE, "lead");
 const localMember = ref(HERE, "local");
 const laptopMember = ref(LAPTOP, "laptop");
@@ -102,15 +108,13 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   const archived = new Set<string>();
   /** Each thread's run state, idle unless a test says otherwise. */
   const activity = new Map<string, Record<string, unknown>>();
-  /** Every command a thread here or on the laptop was sent, by type. */
   const dispatched: Array<string> = [];
-  /** What each thread's checkouts are, as its own machine reads them. */
-  const workspaces = new Map<ThreadId, MemberWorkspace>();
+  const workspaces = new Map<string, MemberWorkspace>();
   const workspacesLayer = Layer.mock(MemberWorkspaces)({
     of: (shell) =>
       Effect.sync(
         () =>
-          workspaces.get((shell as unknown as { readonly id: ThreadId }).id) ?? {
+          (shell.worktreePath === null ? undefined : workspaces.get(shell.worktreePath)) ?? {
             kind: "project" as const,
             repositories: [],
             otherPullRequests: [],
@@ -180,6 +184,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
                       latestUserMessageAt: empty.has(key) ? null : "2026-01-01T00:00:00.000Z",
                       visibleItemCount: empty.has(key) ? 0 : 1,
                       projectId: "project-web",
+                      worktreePath: worktreeOf(threadId),
                       runtimeMode: "full-access",
                       interactionMode: "default",
                       status: "idle",
@@ -251,9 +256,8 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
                   ? {}
                   : { run: { id: shell.latestRunId, status: shell.status } }),
                 requests: request === null ? [] : [{ id: request.id, kind: request.kind }],
-                // An older laptop sends none.
-                ...(workspaces.has(claim.threadId)
-                  ? { workspace: workspaces.get(claim.threadId) }
+                ...(workspaces.has(worktreeOf(claim.threadId))
+                  ? { workspace: workspaces.get(worktreeOf(claim.threadId)) }
                   : {}),
               };
             })(),
@@ -3110,12 +3114,14 @@ it.effect("a fork cycle is read once round, not walked to the cap", () => {
   );
 });
 
+const decodeRoster = Schema.decodeUnknownSync(MissionToolkit.tools.t3_mission_roster.successSchema);
+
 const repository = (
   name: string,
   remote: string | null,
   branch: string,
   pullRequests: ReadonlyArray<number>,
-) => ({
+): MemberRepository => ({
   name,
   path: `/tasks/${branch}/${name}`,
   repositoryPath: `/code/app/${name}`,
@@ -3133,8 +3139,7 @@ it.effect(
   () => {
     const olderLaptopMember = ref(LAPTOP, "older");
     const world = makeWorld([lead, localMember, laptopMember, olderLaptopMember]);
-    // Here, one member changes the API and the web app together, in one task folder.
-    world.workspaces.set(localMember.threadId, {
+    world.workspaces.set(worktreeOf(localMember.threadId), {
       kind: "task-folder",
       repositories: [
         repository("api", "github.com/acme/api", "t3/checkout", [12]),
@@ -3142,8 +3147,7 @@ it.effect(
       ],
       otherPullRequests: [],
     });
-    // On the laptop, another changes the API alone; a member there from an older build says nothing.
-    world.workspaces.set(laptopMember.threadId, {
+    world.workspaces.set(worktreeOf(laptopMember.threadId), {
       kind: "worktree",
       repositories: [repository("api", "github.com/acme/api", "t3/docs", [13])],
       otherPullRequests: [],
@@ -3159,19 +3163,12 @@ it.effect(
         yield* listed;
         yield* world.untilAnswered("list");
         world.dispatched.length = 0;
-        const roster = JSON.parse(yield* leadTool(world, "t3_mission_roster", {})) as {
-          readonly members: ReadonlyArray<{
-            readonly member: string;
-            readonly machine: string;
-            readonly workspace: unknown;
-          }>;
-          readonly byRepository: unknown;
-        };
+        const roster = decodeRoster(JSON.parse(yield* leadTool(world, "t3_mission_roster", {})));
         assert.deepEqual(
           roster.members.map((row) => [row.member, row.machine, row.workspace]),
           [
-            ["member 1", "this machine", world.workspaces.get(localMember.threadId)],
-            ["member 2", "Laptop", world.workspaces.get(laptopMember.threadId)],
+            ["member 1", "this machine", world.workspaces.get(worktreeOf(localMember.threadId))],
+            ["member 2", "Laptop", world.workspaces.get(worktreeOf(laptopMember.threadId))],
             ["member 3", "Laptop", "unknown"],
           ],
         );
@@ -3209,9 +3206,7 @@ it.effect(
             ],
           },
         ]);
-        // The pull requests stay on the threads that opened them: the lead is sent nothing.
         assert.deepEqual(world.dispatched, []);
-        // And the lead's status names no repository, branch or pull request.
         const context = yield* turnContextOf(lead);
         const status = context?.role === "lead" ? context.status : "";
         assert.include(status, "Status: 3 members.");
