@@ -487,6 +487,10 @@ it.effect(
             "https://tfs.example.com:9443/tfs/DefaultCollection/Proj/_git/Repo/pullrequest/2",
             "open",
           ),
+          link(
+            "https://tfs.example.com/tfs/DefaultCollection/Proj/_git/Repo/pullrequest/3",
+            "open",
+          ),
         ],
       });
       assert.deepEqual(
@@ -497,7 +501,7 @@ it.effect(
         [
           ["tfs.example.com:8443/tfs/defaultcollection/proj/_git/repo", [1]],
           ["tfs.example.com:9443/tfs/defaultcollection/proj/_git/repo", [2]],
-          ["tfs.example.com/tfs/defaultcollection/proj/_git/repo", [1, 2]],
+          ["tfs.example.com/tfs/defaultcollection/proj/_git/repo", [3]],
         ],
       );
     }).pipe(
@@ -513,7 +517,7 @@ it.effect(
             "/code/app/b": identity(
               "https://tfs.example.com:9443/tfs/DefaultCollection/Proj/_git/Repo",
             ),
-            // An SSH remote names no HTTP port, so it is the repository on either.
+            // An SSH remote names no HTTP port, so it is only the repository on none.
             "/code/app/ssh": identity(
               "ssh://tfs.example.com:22/tfs/DefaultCollection/Proj/_git/Repo",
             ),
@@ -567,4 +571,34 @@ it.effect("past its cap the cache drops the thread read least recently", () =>
     assert.notEqual(yield* workspaces.cached(thread(0)), "pending");
     assert.equal(yield* workspaces.cached(thread(1)), "pending");
   }).pipe(Effect.provide(machine([]))),
+);
+
+it.effect("a pull request two checkouts both match goes to neither", () =>
+  Effect.gen(function* () {
+    const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
+    const workspace = yield* settled(workspaces, {
+      ...inProject(),
+      pullRequests: [link("https://github.com/acme/api/pull/4", "open")],
+    });
+    assert.deepEqual(
+      workspace.repositories.map((checkout) => checkout.pullRequests),
+      [[], []],
+    );
+    assert.deepEqual(
+      workspace.otherPullRequests.map((pullRequest) => pullRequest.number),
+      [4],
+    );
+  }).pipe(
+    Effect.provide(
+      machine([], {
+        projectRoot: "/code/app",
+        tracked: [folder("/code/app/api"), folder("/code/app/api-copy")],
+        repositories: ["/code/app/api", "/code/app/api-copy"],
+        identities: {
+          "/code/app/api": github("acme/api"),
+          "/code/app/api-copy": github("acme/api"),
+        },
+      }),
+    ),
+  ),
 );

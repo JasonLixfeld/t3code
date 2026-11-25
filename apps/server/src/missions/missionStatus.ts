@@ -254,7 +254,11 @@ export const LISTED_WORKSPACE_MAX_BYTES = 48_000;
 /** How many members' workspaces a lead asks for in one follow-up to a list. */
 export const WORKSPACES_PER_CALL = 8;
 
-/** In list order: a workspace past the room left is `omitted`. */
+/**
+ * In list order: a workspace past the room left is `omitted`, and one past a whole answer's room
+ * is `tooLarge`. The first that fits a whole answer is always kept, so an answer to a follow-up
+ * for any workspace that is not `tooLarge` carries at least one.
+ */
 export const withinWorkspaceRoom = <
   Listed extends { readonly threadId: ThreadId; readonly detail?: MemberDetail | undefined },
 >(
@@ -265,6 +269,9 @@ export const withinWorkspaceRoom = <
     const workspace = claim.detail?.workspace;
     if (workspace === undefined || typeof workspace === "string") return claim;
     const size = bytes(JSON.stringify(workspace));
+    if (size > LISTED_WORKSPACE_MAX_BYTES) {
+      return { ...claim, detail: { ...claim.detail!, workspace: "tooLarge" } };
+    }
     if (size > room) return { ...claim, detail: { ...claim.detail!, workspace: "omitted" } };
     room -= size;
     return claim;

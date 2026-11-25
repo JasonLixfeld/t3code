@@ -550,9 +550,12 @@ const make = Effect.gen(function* () {
           return [];
       }
     }
+    // A workspaces follow-up is optional detail: its answer, or its silence, says nothing of
+    // whether the machine answers.
+    const settlesReach = call.kind !== "workspaces";
     const { label } = yield* linkTo(environmentId).pipe(
       Effect.catch((error) =>
-        setAnswering(environmentId, false).pipe(
+        (settlesReach ? setAnswering(environmentId, false) : Effect.void).pipe(
           Effect.andThen(Effect.fail(new Unreachable({ message: error.message }))),
         ),
       ),
@@ -576,7 +579,7 @@ const make = Effect.gen(function* () {
       : Option.isNone(answered.success)
         ? `${label} did not answer in time.`
         : undefined;
-    yield* setAnswering(environmentId, unreachable === undefined);
+    if (settlesReach) yield* setAnswering(environmentId, unreachable === undefined);
     if (unreachable !== undefined) return yield* new Unreachable({ message: unreachable });
     if (Result.isFailure(answered)) {
       return yield* fail(`${label} refused: ${answered.failure.message}`);
@@ -789,7 +792,8 @@ const make = Effect.gen(function* () {
           }
         }
         yield* noteRemoteDetails(environmentId, held);
-        yield* fetchOmittedWorkspaces(environmentId, held);
+        // A rename below answers claims without their detail.
+        const listed = held;
         if (check !== undefined) {
           yield* store.setTombstoneCheck(environmentId, afterAnswer(check, askedAt));
         }
@@ -811,6 +815,8 @@ const make = Effect.gen(function* () {
           }
         }
         yield* store.setKnownClaims(environmentId, held);
+        // Only once the list is kept: a slow or failed follow-up must not undo it.
+        yield* fetchOmittedWorkspaces(environmentId, listed);
       }).pipe(
         Effect.catch((error) => Effect.logInfo("A mission member machine did not answer", error)),
       ),
@@ -864,22 +870,46 @@ const make = Effect.gen(function* () {
     }
   });
 
-  /** Workspaces a list left out for room, asked for a few at a time, under the same claims. */
+  // When each workspace still omitted was last asked for, by machine, then thread and claim.
+  const lastFetched = new Map<EnvironmentId, Map<string, number>>();
+  /**
+   * Workspaces a list left out for room, asked for a few at a time, under the same claims, until
+   * each has come or is too large to.
+   */
   const fetchOmittedWorkspaces = Effect.fn("Missions.fetchOmittedWorkspaces")(function* (
     environmentId: EnvironmentId,
     listed: ReadonlyArray<MissionClaim & { readonly detail?: MemberDetail | undefined }>,
   ) {
+    const keyOf = (member: { readonly threadId: ThreadId; readonly generation: string }) =>
+      JSON.stringify([member.threadId, member.generation]);
     const omitted = listed.flatMap(({ threadId, generation, detail }) =>
       detail?.workspace === "omitted" ? [{ threadId, generation }] : [],
     );
-    for (let start = 0; start < omitted.length; start += WORKSPACES_PER_CALL) {
-      const answered = yield* onMember(environmentId, {
-        kind: "workspaces",
-        members: omitted.slice(start, start + WORKSPACES_PER_CALL),
-      }).pipe(
-        // A machine that predates the call refuses it, and its workspaces stay as they were.
-        Effect.catchTags({ MissionError: () => Effect.succeed([]) }),
+    const earlier = lastFetched.get(environmentId);
+    const fetched = new Map(
+      omitted.flatMap((member) => {
+        const at = earlier?.get(keyOf(member));
+        return at === undefined ? [] : [[keyOf(member), at] as const];
+      }),
+    );
+    lastFetched.set(environmentId, fetched);
+    // The least recently fetched go first, so a run cut short still moves on next time.
+    let left = omitted.toSorted(
+      (a, b) => (fetched.get(keyOf(a)) ?? 0) - (fetched.get(keyOf(b)) ?? 0),
+    );
+    while (left.length > 0) {
+      const batch = left.slice(0, WORKSPACES_PER_CALL);
+      const answered = yield* onMember(environmentId, { kind: "workspaces", members: batch }).pipe(
+        // A machine that predates the call refuses it, and its workspaces stay as they were. One
+        // that does not answer in time is asked on the next sweep.
+        Effect.catchTags({
+          MissionError: () => Effect.undefined,
+          MissionMemberUnreachable: () => Effect.undefined,
+        }),
       );
+      if (answered === undefined) return;
+      const now = yield* Clock.currentTimeMillis;
+      for (const member of batch) fetched.set(keyOf(member), now);
       yield* Ref.update(remoteDetails, (before) => {
         const known = new Map(before.get(environmentId));
         for (const { threadId, generation, detail } of answered) {
@@ -896,6 +926,15 @@ const make = Effect.gen(function* () {
         }
         return new Map(before).set(environmentId, known);
       });
+      const stillOmitted = new Set(
+        answered.flatMap((claim) => (claim.detail?.workspace === "omitted" ? [keyOf(claim)] : [])),
+      );
+      // Every answer carries at least one workspace, so each round settles one or more.
+      if (stillOmitted.size === batch.length) return;
+      left = [
+        ...left.slice(batch.length),
+        ...batch.filter((member) => stillOmitted.has(keyOf(member))),
+      ];
     }
   });
 
@@ -916,6 +955,8 @@ const make = Effect.gen(function* () {
   // Set by whoever wants the machines' claims read again; a sweep without it only sends again
   // what still waits for an answer.
   const discoverNext = yield* Ref.make(false);
+  // Machines a roster asked to be read again, each once, in the next sweep.
+  const machinesAsked = yield* Ref.make<ReadonlySet<EnvironmentId>>(new Set());
   /**
    * Each Mission takes its lead thread's title as its name. The claims here are checked against
    * it every time, so a stop between the two writes heals on the next sweep.
@@ -948,6 +989,7 @@ const make = Effect.gen(function* () {
     const discover = yield* Ref.getAndSet(discoverNext, false);
     const asked = new Set([
       ...(yield* owingAnAnswer),
+      ...(yield* Ref.getAndSet(machinesAsked, new Set())),
       ...(discover ? (yield* store.knownClaims).keys() : []),
     ]);
     yield* Effect.forEach(asked, refreshMachine, {
@@ -1322,10 +1364,6 @@ const make = Effect.gen(function* () {
     );
   });
 
-  /**
-   * The members and what each is doing, numbered. With `named`, also the titles, projects and
-   * machine labels, which only the roster tool returns, as data. A turn reads it without.
-   */
   // When each machine was last asked again for a workspace a roster showed unfinished.
   const askedAgain = new Map<EnvironmentId, number>();
   /** Asks each machine again in the background, at most once per gap, so a second look finds it. */
@@ -1337,10 +1375,15 @@ const make = Effect.gen(function* () {
       const last = askedAgain.get(environmentId);
       if (last !== undefined && now - last < Duration.toMillis(WORKSPACE_ASK_AGAIN_GAP)) continue;
       askedAgain.set(environmentId, now);
-      yield* refreshMachine(environmentId).pipe(Effect.forkIn(background));
+      yield* Ref.update(machinesAsked, (asked) => new Set(asked).add(environmentId));
+      yield* retryWaiting;
     }
   });
 
+  /**
+   * The members and what each is doing, numbered. With `named`, also the titles, projects and
+   * machine labels, which only the roster tool returns, as data. A turn reads it without.
+   */
   const members = Effect.fn("Missions.members")(function* (missionId: string, named: boolean) {
     const held = yield* machines;
     const view = yield* missionView(yield* missionNamed(missionId), held, yield* shown);

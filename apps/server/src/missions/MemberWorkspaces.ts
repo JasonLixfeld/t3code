@@ -80,10 +80,13 @@ export const MemberWorkspace = Schema.Struct({
 });
 export type MemberWorkspace = typeof MemberWorkspace.Type;
 
-/** `pending`: not read yet. `omitted`: left out to keep a list answer small. */
+/**
+ * `pending`: not read yet. `omitted`: left out to keep a list answer small; a follow-up sends it.
+ * `tooLarge`: bigger than a whole answer may be, so it is never sent.
+ */
 export const ListedWorkspace = Schema.Union([
   MemberWorkspace,
-  Schema.Literals(["pending", "omitted"]),
+  Schema.Literals(["pending", "omitted", "tooLarge"]),
 ]);
 export type ListedWorkspace = typeof ListedWorkspace.Type;
 
@@ -103,12 +106,11 @@ export class MemberWorkspaces extends Context.Service<
 >()("t3/missions/MemberWorkspaces") {}
 
 const keyOf = (key: string) => sourceControlDefinitions.canonicalRepositoryKey(key);
-const withoutPort = (key: string) => key.replace(/^([^/:]+):\d+\//u, "$1/");
 
 /**
  * A repository's key as a saved pull request key spells it: an HTTP remote's explicit port is
- * kept, as a pull request URL's is. `anyPort`: an SSH remote names no HTTP port, so it matches
- * a pull request on any port of its host.
+ * kept, as a pull request URL's is. An SSH remote names no HTTP port, so its key has none, and
+ * it matches only pull requests whose URL names no port either.
  */
 const repositoryKeyOf = (canonicalKey: string, remoteUrl: string | undefined) => {
   const remote = remoteUrl === undefined ? null : parseGitRemoteHost(remoteUrl);
@@ -119,10 +121,7 @@ const repositoryKeyOf = (canonicalKey: string, remoteUrl: string | undefined) =>
     number: 1,
     ...(remote !== null && remote.host !== remote.hostname ? { authority: remote.host } : {}),
   });
-  return {
-    key: `${key.host}/${key.repository}`,
-    anyPort: remoteUrl === undefined || !/^https?:\/\//iu.test(remoteUrl.trim()),
-  };
+  return `${key.host}/${key.repository}`;
 };
 const repositoryKeysOf = (identity: RepositoryIdentity) => [
   ...(identity.origin === undefined
@@ -160,8 +159,6 @@ interface Probed {
       readonly liveBranch: string | null;
       readonly remote: string | null;
       readonly keys: ReadonlySet<string>;
-      /** Keys from SSH remotes, matched with a pull request's port dropped. */
-      readonly anyPortKeys: ReadonlySet<string>;
     }
   >;
 }
@@ -293,9 +290,8 @@ const make = Effect.gen(function* () {
             return {
               ...checkout,
               liveBranch: kind === "project" ? yield* branchOf(checkout.path) : null,
-              remote: keys[0]?.key ?? null,
-              keys: new Set(keys.map(({ key }) => key)),
-              anyPortKeys: new Set(keys.flatMap(({ key, anyPort }) => (anyPort ? [key] : []))),
+              remote: keys[0] ?? null,
+              keys: new Set(keys),
             };
           }),
         { concurrency: 4 },
@@ -316,8 +312,11 @@ const make = Effect.gen(function* () {
       },
     }));
     const live = probed.kind === "project";
-    const covers = (checkout: Probed["checkouts"][number], key: string) =>
-      checkout.keys.has(key) || checkout.anyPortKeys.has(withoutPort(key));
+    // A pull request two checkouts both match belongs to neither.
+    const ownerOf = (key: string) => {
+      const owners = probed.checkouts.filter((checkout) => checkout.keys.has(key));
+      return owners.length === 1 ? owners[0] : undefined;
+    };
     return {
       kind: probed.kind,
       repositories: probed.checkouts.map((checkout) => ({
@@ -328,12 +327,12 @@ const make = Effect.gen(function* () {
         branchSource: live ? ("live" as const) : ("recorded" as const),
         remote: checkout.remote,
         pullRequests: links.flatMap((link) =>
-          covers(checkout, link.key) ? [link.pullRequest] : [],
+          ownerOf(link.key) === checkout ? [link.pullRequest] : [],
         ),
       })),
       truncated: probed.truncated,
       otherPullRequests: links.flatMap((link) =>
-        probed.checkouts.some((checkout) => covers(checkout, link.key))
+        ownerOf(link.key) !== undefined
           ? []
           : [{ ...link.pullRequest, repository: link.repository }],
       ),

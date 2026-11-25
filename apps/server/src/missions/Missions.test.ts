@@ -18,6 +18,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -65,7 +66,12 @@ import {
   MemberWorkspaces,
 } from "./MemberWorkspaces.ts";
 import * as MissionClaims from "./MissionClaims.ts";
-import { memberStatusOf, missionPromptText } from "./missionStatus.ts";
+import {
+  type MemberDetail,
+  memberStatusOf,
+  missionPromptText,
+  withinWorkspaceRoom,
+} from "./missionStatus.ts";
 import * as MissionTurnContexts from "./MissionTurnContexts.ts";
 import { releaseDeletedThreads } from "./MissionThreadDeletions.ts";
 import { afterAnswer, afterMiss, newTombstoneCheck } from "./tombstoneChecks.ts";
@@ -161,6 +167,13 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     deniedKinds: [] as Array<ClaimKind>,
     /** Its list leaves out these threads' workspaces, as when they do not fit. */
     omits: new Set<ThreadId>(),
+    /** Calls of these kinds it never answers, whatever the mode. */
+    hangingKinds: [] as Array<ClaimKind>,
+    /** How long each list takes it to answer. */
+    listTakes: undefined as Duration.Input | undefined,
+    /** Lists it is answering now, and the most it ever answered at once. */
+    listsRunning: 0,
+    mostListsAtOnce: 0,
     /** Its tool refuses a join or release of a thread above the modes it was sent with. */
     enforcesLimits: false,
   };
@@ -229,7 +242,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     };
     const owner = MissionClaims.linkOwner(laptop.session);
     // As the laptop's /mcp answers: each claim with what its thread is doing.
-    const detailOf = (threadId: ThreadId, listing: boolean) => {
+    const detailOf = (threadId: ThreadId, listing: boolean): MemberDetail => {
       const shell = {
         status: "idle",
         latestRunId: null,
@@ -261,17 +274,21 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
         return Effect.as(claims.release(owner, args), []);
       case "list":
         return Effect.map(claims.list(owner), (held) =>
-          held.map((claim) => ({ ...claim, detail: detailOf(claim.threadId, true) })),
+          withinWorkspaceRoom(
+            held.map((claim) => ({ ...claim, detail: detailOf(claim.threadId, true) })),
+          ),
         );
       case "workspaces":
         return Effect.map(claims.list(owner), (held) =>
-          held.flatMap((claim) =>
-            args.members.some(
-              (member) =>
-                member.threadId === claim.threadId && member.generation === claim.generation,
-            )
-              ? [{ ...claim, detail: detailOf(claim.threadId, false) }]
-              : [],
+          withinWorkspaceRoom(
+            held.flatMap((claim) =>
+              args.members.some(
+                (member) =>
+                  member.threadId === claim.threadId && member.generation === claim.generation,
+              )
+                ? [{ ...claim, detail: detailOf(claim.threadId, false) }]
+                : [],
+            ),
           ),
         );
       case "rename":
@@ -319,7 +336,16 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
             message: "Invalid parameters for tool 't3_mission_tag'",
           });
         }
-        if (mode === "hanging") return yield* Effect.never;
+        if (mode === "hanging" || laptop.hangingKinds.includes(input.arguments.kind)) {
+          return yield* Effect.never;
+        }
+        if (input.arguments.kind === "list" && laptop.listTakes !== undefined) {
+          laptop.listsRunning += 1;
+          laptop.mostListsAtOnce = Math.max(laptop.mostListsAtOnce, laptop.listsRunning);
+          yield* Effect.sleep(laptop.listTakes).pipe(
+            Effect.ensuring(Effect.sync(() => (laptop.listsRunning -= 1))),
+          );
+        }
         if (mode === "heldThenOffline") {
           laptop.mode = "offline";
           yield* Deferred.await(laptop.letGo!);
@@ -3409,3 +3435,110 @@ it.effect("two servers on one host, on two ports, are two groups in the roster",
     }),
   );
 });
+
+/** About 25 KB of workspace JSON: one fits an answer, two do not. */
+const workspaceOf25Kb = (name: string) =>
+  workspaceOf("worktree", [
+    repository(
+      name,
+      `github.com/acme/${name}`,
+      "t3/big",
+      Array.from({ length: 330 }, (_, number) => number + 1),
+    ),
+  ]);
+
+it.effect("three 25 KB workspaces on one machine all arrive through its follow-ups", () => {
+  const members = [laptopMember, ref(LAPTOP, "laptop-2"), ref(LAPTOP, "laptop-3")];
+  const world = makeWorld([lead, ...members]);
+  members.forEach((member, index) =>
+    world.workspaces.set(worktreeOf(member.threadId), workspaceOf25Kb(`repo-${index}`)),
+  );
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      for (const member of members) yield* missions.addMember({ missionId, member });
+      yield* listed;
+      yield* world.untilAnswered("workspaces");
+      yield* world.untilAnswered("workspaces");
+      assert.deepEqual(
+        (yield* missions.roster(missionId)).map((row) => row.workspace),
+        members.map((member) => world.workspaces.get(worktreeOf(member.threadId))),
+      );
+    }),
+  );
+});
+
+it.effect(
+  "a follow-up that times out keeps the list it followed, and its machine reachable",
+  () => {
+    const fresh = ref(LAPTOP, "fresh");
+    const world = makeWorld([lead, laptopMember, fresh]);
+    world.workspaces.set(worktreeOf(fresh.threadId), workspaceOf("worktree", []));
+    world.laptop.omits.add(fresh.threadId);
+    world.laptop.hangingKinds.push("workspaces");
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const { missionId, name } = yield* createOne;
+        yield* missions.addMember({ missionId, member: laptopMember });
+        // It joined on the laptop, so only the laptop's list says so.
+        yield* world.laptop.claims!.join(LEAD_ON_LAPTOP, {
+          threadId: fresh.threadId,
+          missionId,
+          name,
+        });
+        yield* listed;
+        yield* world.untilStarted("workspaces");
+        // Lists from now on never answer, so only the follow-up could change what is known.
+        world.laptop.hangingKinds.push("list");
+        const statuses = Effect.map(missions.roster(missionId), (rows) =>
+          rows.map((row) => `${row.ref.threadId} ${row.status}`),
+        );
+        const listedNow = [`${laptopMember.threadId} idle`, `${fresh.threadId} idle`];
+        // Kept while the follow-up still waits, and after it gives up.
+        assert.deepEqual(yield* statuses, listedNow);
+        yield* TestClock.adjust(Missions.MEMBER_CALL_DEADLINE);
+        assert.deepEqual(yield* statuses, listedNow);
+      }),
+    );
+  },
+);
+
+it.effect(
+  "a roster polled while each refresh takes 8 s queues one more at most, and adds and releases go",
+  () => {
+    const added = ref(LAPTOP, "added");
+    const world = makeWorld([lead, laptopMember, added]);
+    world.workspaces.set(worktreeOf(laptopMember.threadId), "pending");
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const { missionId } = yield* createOne;
+        yield* missions.addMember({ missionId, member: laptopMember });
+        yield* listed;
+        yield* world.untilAnswered("list");
+        world.laptop.listTakes = "8 seconds";
+        const lists = () => world.laptop.calls.filter((kind) => kind === "list").length;
+        const startedAt = yield* Clock.currentTimeMillis;
+        const addAndRelease = yield* Effect.gen(function* () {
+          yield* missions.addMember({ missionId, member: added });
+          yield* missions.releaseMember({ missionId, member: added });
+          return (yield* Clock.currentTimeMillis) - startedAt;
+        }).pipe(Effect.delay("40 seconds"), Effect.forkChild);
+        for (let second = 0; second < 80; second += 1) {
+          yield* missions.roster(missionId);
+          yield* TestClock.adjust("1 second");
+        }
+        const listedDuringPolls = lists();
+        yield* TestClock.adjust("30 seconds");
+        assert.isAtMost(lists() - listedDuringPolls, 2);
+        assert.equal(world.laptop.mostListsAtOnce, 1);
+        assert.isAtMost(yield* Fiber.join(addAndRelease), Duration.toMillis("64 seconds"));
+      }),
+    );
+  },
+);

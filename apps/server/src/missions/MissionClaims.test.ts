@@ -347,13 +347,15 @@ it.each([
   assert.isTrue(`mission:0123456789ab:${name}`.startsWith(tag));
 });
 
-it.effect("a claim dropped by a release or a leave forgets what was read of the thread", () =>
+it.effect("only a release or leave that drops the claim forgets what was read of the thread", () =>
   onMachine((claims, machine) =>
     Effect.gen(function* () {
       const joined = yield* claims.join("env-lead", { threadId, missionId: "ship", name: "Ship" });
       const generation = typeof joined === "string" ? "" : joined.generation;
       yield* claims.release("env-lead", { threadId, missionId: "ship", generation });
       yield* claims.join("env-lead", { threadId, missionId: "ship", name: "Ship" });
+      // A late release of the first join leaves the new claim, and what was read of it.
+      yield* claims.release("env-lead", { threadId, missionId: "ship", generation });
       yield* claims.leaveHere(threadId);
       assert.deepEqual(
         machine.events.filter((event) => event.startsWith("forgot")),

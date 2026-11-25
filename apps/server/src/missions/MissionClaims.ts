@@ -321,18 +321,18 @@ const make = Effect.gen(function* () {
       },
       access?: ThreadAccess<E>,
     ) {
-      yield* threadCommands.withLock(
+      const dropped = yield* threadCommands.withLock(
         input.threadId,
         Effect.gen(function* () {
           if (access !== undefined) {
             const shell = yield* readThread(input.threadId);
             if (shell !== null && shell.deletedAt === null) yield* access(shell);
           }
-          yield* store.release({ ...input, owner });
+          return yield* store.release({ ...input, owner });
         }),
       );
       // A thread no longer claimed is no longer listed, so what was read of it goes.
-      yield* workspaces.forget(input.threadId);
+      if (dropped) yield* workspaces.forget(input.threadId);
       yield* syncTags(input.threadId);
     },
     (effect, _owner, input) => locks.withLock(input.threadId, effect),

@@ -438,7 +438,8 @@ export class MissionStore extends Context.Service<
       input: ClaimInput,
     ) => Effect.Effect<MissionClaim | "intent-spent", MissionError>;
     /** Drops the member claim that one join made, if this owner still holds it. */
-    readonly release: (input: Omit<ClaimInput, "name">) => Effect.Effect<void>;
+    /** Whether a claim was dropped: a late release of an earlier join drops nothing. */
+    readonly release: (input: Omit<ClaimInput, "name">) => Effect.Effect<boolean>;
     /** Drops the thread's claim, whoever holds it. Refuses a lead's claim. */
     readonly leave: (threadId: ThreadId) => Effect.Effect<void, MissionError>;
     /**
@@ -830,7 +831,7 @@ const make = Effect.gen(function* () {
   });
 
   const release = Effect.fn("MissionStore.release")(function* (input: Omit<ClaimInput, "name">) {
-    yield* sql.withTransaction(
+    const dropped = yield* sql.withTransaction(
       Effect.gen(function* () {
         const held = yield* claimRow(input.threadId);
         if (
@@ -840,14 +841,16 @@ const make = Effect.gen(function* () {
           held.owner !== input.owner ||
           held.role !== "member"
         ) {
-          return;
+          return false;
         }
         yield* spendIntent(held);
         yield* sql`DELETE FROM claims WHERE thread_id = ${input.threadId}`;
         yield* markUnsynced(input.threadId);
+        return true;
       }),
     );
     yield* changed;
+    return dropped;
   }, Effect.orDie);
 
   const leave = Effect.fn("MissionStore.leave")(function* (threadId: ThreadId) {

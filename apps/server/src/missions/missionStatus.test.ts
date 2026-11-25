@@ -389,3 +389,30 @@ it("one list answer carries no more workspace detail than its cap; the rest are 
     Array.from({ length: listed.length - kept.length }, () => "idle omitted"),
   );
 });
+
+it("a workspace bigger than a whole answer is tooLarge, and the next still fits", () => {
+  const workspaceOf = (urls: number) => ({
+    kind: "worktree" as const,
+    repositories: [],
+    truncated: false,
+    otherPullRequests: Array.from({ length: urls }, (_, number) => ({
+      number,
+      state: "open" as const,
+      url: `https://github.com/acme/app/pull/${number}`,
+      repository: "github.com/acme/app",
+    })),
+    stale: false,
+  });
+  const listed = withinWorkspaceRoom(
+    [800, 10].map((urls, index) => ({
+      threadId: ThreadId.make(`thread-${index}`),
+      detail: { status: "idle" as const, title: "", project: "", workspace: workspaceOf(urls) },
+    })),
+  );
+  assert.deepEqual(
+    listed.map((claim) =>
+      typeof claim.detail.workspace === "string" ? claim.detail.workspace : "kept",
+    ),
+    ["tooLarge", "kept"],
+  );
+});
