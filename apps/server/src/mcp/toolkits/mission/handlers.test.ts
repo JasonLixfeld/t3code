@@ -673,3 +673,48 @@ it.effect("a workspaces call answers only the caller's own claims, under their g
     assert.equal(answer, '{"claims":[]}');
   }),
 );
+
+it.effect(
+  "a workspaces call for a claim that changes hands while it is read answers no detail",
+  () =>
+    Effect.gen(function* () {
+      const { answer } = yield* callOnce(
+        linkedClient("full-access"),
+        (held) => ({
+          kind: "workspaces",
+          members: [
+            { threadId: userThread, generation: typeof held === "object" ? held.generation : "" },
+          ],
+        }),
+        {
+          before: joinedBy(LINK_OWNER),
+          duringFirstWorkspaceRead: (claims) =>
+            Effect.gen(function* () {
+              const [held] = yield* claims.list(LINK_OWNER);
+              yield* claims.release(LINK_OWNER, {
+                threadId: userThread,
+                missionId: SHIP,
+                generation: held!.generation,
+              });
+              yield* joinedBy("env-other-lead")(claims);
+            }),
+        },
+      );
+      const [listed] = decodeTagAnswer(JSON.parse(answer)).claims;
+      assert.equal(listed?.threadId, userThread);
+      assert.isUndefined(listed?.detail);
+    }),
+);
+
+it.effect("a workspaces call for more than eight members is refused", () =>
+  Effect.gen(function* () {
+    const refused = yield* callOnce(linkedClient("full-access"), {
+      kind: "workspaces",
+      members: Array.from({ length: 9 }, (_, index) => ({
+        threadId: `thread:${index}`,
+        generation: "g",
+      })),
+    }).pipe(Effect.flip);
+    assert.include(refused.message, "Invalid parameters for tool 't3_mission_tag'");
+  }),
+);

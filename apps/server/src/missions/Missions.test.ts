@@ -174,6 +174,11 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     /** Lists it is answering now, and the most it ever answered at once. */
     listsRunning: 0,
     mostListsAtOnce: 0,
+    /** How long each workspaces follow-up takes it, and whether it omits as its list does. */
+    followUpTakes: undefined as Duration.Input | undefined,
+    followUpsOmit: false,
+    /** The members each workspaces follow-up asked for, in order. */
+    followUps: [] as Array<ReadonlyArray<ThreadId>>,
     /** Its tool refuses a join or release of a thread above the modes it was sent with. */
     enforcesLimits: false,
   };
@@ -262,7 +267,12 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
         requests: request === null ? [] : [{ id: request.id, kind: request.kind }],
         ...(workspace === undefined
           ? {}
-          : { workspace: listing && laptop.omits.has(threadId) ? "omitted" : workspace }),
+          : {
+              workspace:
+                (listing || laptop.followUpsOmit) && laptop.omits.has(threadId)
+                  ? "omitted"
+                  : workspace,
+            }),
       };
     };
     switch (args.kind) {
@@ -297,7 +307,11 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   };
   const peers = Layer.mock(PeerMcpClient.PeerMcpClient)({
     call: ((input: {
-      readonly arguments: { readonly kind: ClaimKind; readonly threadId?: string };
+      readonly arguments: {
+        readonly kind: ClaimKind;
+        readonly threadId?: string;
+        readonly members?: ReadonlyArray<{ readonly threadId: ThreadId }>;
+      };
       readonly limits: DispatchModes;
     }) =>
       Effect.gen(function* () {
@@ -338,6 +352,10 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
         }
         if (mode === "hanging" || laptop.hangingKinds.includes(input.arguments.kind)) {
           return yield* Effect.never;
+        }
+        if (input.arguments.kind === "workspaces") {
+          laptop.followUps.push((input.arguments.members ?? []).map((member) => member.threadId));
+          if (laptop.followUpTakes !== undefined) yield* Effect.sleep(laptop.followUpTakes);
         }
         if (input.arguments.kind === "list" && laptop.listTakes !== undefined) {
           laptop.listsRunning += 1;
@@ -3542,3 +3560,150 @@ it.effect(
     );
   },
 );
+
+const laptopMembers = (count: number) =>
+  Array.from({ length: count }, (_, index) => ref(LAPTOP, `laptop-${index + 1}`));
+/** Members whose workspaces the laptop's list leaves out, each small enough to send in a follow-up. */
+const omittedOnTheLaptop = (
+  world: ReturnType<typeof makeWorld>,
+  members: ReadonlyArray<ScopedThreadRef>,
+) => {
+  for (const member of members) {
+    world.workspaces.set(worktreeOf(member.threadId), workspaceOf("worktree", []));
+    world.laptop.omits.add(member.threadId);
+  }
+};
+
+it.effect(
+  "a slow machine gets two follow-ups a sweep, and the members they did not reach go first next",
+  () => {
+    const members = laptopMembers(20);
+    const world = makeWorld([lead, localMember, ...members]);
+    omittedOnTheLaptop(world, members);
+    const ids = (from: number, to: number) =>
+      members.slice(from, to).map((member) => member.threadId);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const { missionId } = yield* createOne;
+        for (const member of members) yield* missions.addMember({ missionId, member });
+        // Each follow-up answers just inside the deadline.
+        world.laptop.followUpTakes = "9 seconds";
+        const sweep = Effect.andThen(listed, world.untilStarted("workspaces"));
+        yield* sweep;
+        // A member on another machine is added while the laptop is still answering.
+        assert.equal(yield* missions.addMember({ missionId, member: localMember }), "joined");
+        yield* TestClock.adjust("30 seconds");
+        assert.deepEqual(world.laptop.followUps, [ids(0, 8), ids(8, 16)]);
+        yield* sweep;
+        yield* TestClock.adjust("30 seconds");
+        // The next sweep's two follow-ups, whatever sweeps come after.
+        assert.deepEqual(world.laptop.followUps.slice(2, 4), [
+          [...ids(16, 20), ...ids(0, 4)],
+          ids(4, 12),
+        ]);
+      }),
+    );
+  },
+);
+
+it.effect("nine omitted members are asked for in a follow-up of eight, then one of one", () => {
+  const members = laptopMembers(9);
+  const world = makeWorld([lead, ...members]);
+  omittedOnTheLaptop(world, members);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      for (const member of members) yield* missions.addMember({ missionId, member });
+      yield* listed;
+      yield* world.untilAnswered("workspaces");
+      yield* world.untilAnswered("workspaces");
+      assert.deepEqual(
+        world.laptop.followUps.slice(0, 2).map((asked) => asked.length),
+        [8, 1],
+      );
+    }),
+  );
+});
+
+it.effect("a follow-up that settles no workspace is the sweep's last to that machine", () => {
+  const world = makeWorld([lead, laptopMember]);
+  omittedOnTheLaptop(world, [laptopMember]);
+  world.laptop.followUpsOmit = true;
+  world.laptop.followUpTakes = "1 second";
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: laptopMember });
+      yield* listed;
+      yield* world.untilStarted("workspaces");
+      yield* TestClock.adjust("5 seconds");
+      assert.equal(world.laptop.followUps.length, 1);
+    }),
+  );
+});
+
+it.effect(
+  "a member released and added again to its mission shows no workspace of its old claim",
+  () => {
+    const world = makeWorld([lead, laptopMember]);
+    const where = worktreeOf(laptopMember.threadId);
+    world.workspaces.set(
+      where,
+      workspaceOf("worktree", [repository("api", "github.com/acme/api", "t3/docs", [13])]),
+    );
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const { missionId } = yield* createOne;
+        const workspace = Effect.map(missions.roster(missionId), ([row]) => row?.workspace);
+        yield* missions.addMember({ missionId, member: laptopMember });
+        yield* listed;
+        yield* world.untilAnswered("list");
+        assert.deepEqual(yield* workspace, world.workspaces.get(where));
+
+        yield* missions.releaseMember({ missionId, member: laptopMember });
+        world.workspaces.set(
+          where,
+          workspaceOf("worktree", [repository("api", "github.com/acme/api", "t3/docs", [])]),
+        );
+        yield* missions.addMember({ missionId, member: laptopMember });
+        assert.notInclude(JSON.stringify((yield* workspace) ?? null), "pull/13");
+      }),
+    );
+  },
+);
+
+it.effect("each roster page groups only its own members by repository", () => {
+  const second = ref(HERE, "second");
+  const world = makeWorld([lead, localMember, second]);
+  for (const member of [localMember, second]) {
+    world.workspaces.set(
+      worktreeOf(member.threadId),
+      workspaceOf("worktree", [repository("api", "github.com/acme/api", "a", [])]),
+    );
+  }
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      for (const member of [localMember, second]) yield* missions.addMember({ missionId, member });
+      const page = (cursor: number) =>
+        Effect.map(leadTool(world, "t3_mission_roster", { cursor, limit: 1 }), (answer) =>
+          decodeRoster(JSON.parse(answer)).byRepository.map((group) => [
+            group.repository,
+            group.members.map((member) => member.member),
+          ]),
+        );
+      assert.deepEqual(yield* page(0), [["github.com/acme/api", ["member 1"]]]);
+      assert.deepEqual(yield* page(1), [["github.com/acme/api", ["member 2"]]]);
+    }),
+  );
+});

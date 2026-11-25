@@ -253,6 +253,8 @@ const bytes = (text: string) => Buffer.byteLength(text, "utf8");
 export const LISTED_WORKSPACE_MAX_BYTES = 48_000;
 /** How many members' workspaces a lead asks for in one follow-up to a list. */
 export const WORKSPACES_PER_CALL = 8;
+/** Follow-ups to one machine per sweep, so a slow machine holds a sweep for two calls at most. */
+export const FOLLOW_UPS_PER_SWEEP = 2;
 
 /**
  * In list order: a workspace past the room left is `omitted`, and one past a whole answer's room

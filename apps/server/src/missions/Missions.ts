@@ -49,6 +49,7 @@ import {
   missionPromptText,
   missionStatusText,
   type RosterMember,
+  FOLLOW_UPS_PER_SWEEP,
   WORKSPACES_PER_CALL,
 } from "./missionStatus.ts";
 import { MemberWorkspaces } from "./MemberWorkspaces.ts";
@@ -874,7 +875,7 @@ const make = Effect.gen(function* () {
   const lastFetched = new Map<EnvironmentId, Map<string, number>>();
   /**
    * Workspaces a list left out for room, asked for a few at a time, under the same claims, until
-   * each has come or is too large to.
+   * each has come or is too large to, or this sweep's follow-ups to the machine are spent.
    */
   const fetchOmittedWorkspaces = Effect.fn("Missions.fetchOmittedWorkspaces")(function* (
     environmentId: EnvironmentId,
@@ -893,11 +894,11 @@ const make = Effect.gen(function* () {
       }),
     );
     lastFetched.set(environmentId, fetched);
-    // The least recently fetched go first, so a run cut short still moves on next time.
+    // The least recently fetched go first, so the members a sweep did not reach go first next.
     let left = omitted.toSorted(
       (a, b) => (fetched.get(keyOf(a)) ?? 0) - (fetched.get(keyOf(b)) ?? 0),
     );
-    while (left.length > 0) {
+    for (let call = 0; call < FOLLOW_UPS_PER_SWEEP && left.length > 0; call += 1) {
       const batch = left.slice(0, WORKSPACES_PER_CALL);
       const answered = yield* onMember(environmentId, { kind: "workspaces", members: batch }).pipe(
         // A machine that predates the call refuses it, and its workspaces stay as they were. One
