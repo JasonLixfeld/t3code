@@ -246,7 +246,7 @@ import {
 } from "./CommandPaletteLookups";
 import { markMissionDraft } from "./sidebar/missionDraftStore";
 import { useMissionHosts } from "./sidebar/MissionsSection";
-import { missionDraftMachines } from "./sidebar/missions.logic";
+import { missionDraftMachines, missionScratchHome } from "./sidebar/missions.logic";
 import {
   buildNewThreadInProjectItems,
   buildProjectSearchItems,
@@ -752,13 +752,11 @@ function OpenCommandPaletteDialog(props: {
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
   const scratchTargetEnvironmentId = scratchEnvironmentId(currentProjectEnvironmentId);
   // A new lead must be on its Mission's machine, so "No project" opens there or not at all.
-  const noProjectEnvironmentId =
-    missionMachines === null ||
-    (scratchTargetEnvironmentId !== null && missionMachines.has(scratchTargetEnvironmentId))
-      ? scratchTargetEnvironmentId
-      : ([...missionMachines].find(
-          (environmentId) => scratchWorkspaceRootFor(environmentId) !== null,
-        ) ?? null);
+  const noProjectEnvironmentId = missionScratchHome(
+    missionMachines,
+    scratchTargetEnvironmentId,
+    scratchWorkspaceRootFor,
+  );
   // A draft opened from this view starts, leads or joins a Mission once it is sent.
   const openDraftIn = async (projectRef: ScopedProjectRef) => {
     const created = await handleNewThread(projectRef);

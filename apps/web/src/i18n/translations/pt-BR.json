@@ -12848,5 +12848,7 @@
   "93fb497fbfe34f9e": "Nova thread principal para {mission}",
   "581f3f0dcdc38894": "Nova missão (esta thread lidera)",
   "7798814fecf728c1": "Esta thread lidera a própria missão, então não pode entrar em outra. Envie como thread comum para desfazer.",
-  "7003a748a9d9671a": "Ao enviar, começa uma nova missão liderada por esta thread"
+  "7003a748a9d9671a": "Ao enviar, começa uma nova missão liderada por esta thread",
+  "79ca5bab2b8e2539": "Projeto: {project}",
+  "ef62558587d79f58": "Missão: {mission}"
 }

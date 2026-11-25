@@ -12848,5 +12848,7 @@
   "93fb497fbfe34f9e": "Nouveau fil principal pour {mission}",
   "581f3f0dcdc38894": "Nouvelle mission (ce fil la dirige)",
   "7798814fecf728c1": "Ce fil dirige sa mission, il ne peut donc pas en rejoindre une autre. Envoyez-le comme fil normal pour annuler.",
-  "7003a748a9d9671a": "L’envoi démarre une nouvelle mission dirigée par ce fil"
+  "7003a748a9d9671a": "L’envoi démarre une nouvelle mission dirigée par ce fil",
+  "79ca5bab2b8e2539": "Projet : {project}",
+  "ef62558587d79f58": "Mission : {mission}"
 }

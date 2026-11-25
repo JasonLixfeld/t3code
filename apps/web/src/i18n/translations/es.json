@@ -12843,5 +12843,7 @@
   "93fb497fbfe34f9e": "Nuevo hilo principal para {mission}",
   "581f3f0dcdc38894": "Nueva misión (este hilo la dirige)",
   "7798814fecf728c1": "Este hilo dirige su misión, así que no puede unirse a otra. Envíalo como hilo normal para deshacerlo.",
-  "7003a748a9d9671a": "Al enviar, empieza una nueva misión dirigida por este hilo"
+  "7003a748a9d9671a": "Al enviar, empieza una nueva misión dirigida por este hilo",
+  "79ca5bab2b8e2539": "Proyecto: {project}",
+  "ef62558587d79f58": "Misión: {mission}"
 }

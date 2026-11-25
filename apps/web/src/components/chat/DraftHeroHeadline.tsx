@@ -52,7 +52,8 @@ import { SelectButton } from "../ui/select";
 import { DraftProjectName } from "./DraftProjectName";
 import { TriageDraftHero } from "./TriageDraftHero";
 import { DraftMissionSelect, useDraftProjectMachines } from "./DraftMissionSelect";
-import { moveMissionDraft } from "../sidebar/missionDraftStore";
+import { missionDraftOf, moveMissionDraft } from "../sidebar/missionDraftStore";
+import { missionScratchHome } from "../sidebar/missions.logic";
 
 const ADD_PROJECT_VALUE = "add-project";
 const NO_PROJECT_VALUE = "no-project";
@@ -141,15 +142,15 @@ export function DraftHeroHeadline({
             project.environmentId === activeProjectRef.environmentId &&
             project.id === activeProjectRef.projectId,
         ) ?? null);
-  const scratchTargetEnvironmentId = scratchEnvironmentId(activeProjectRef?.environmentId ?? null);
-  const scratchWorkspaceRoot = scratchWorkspaceRootFor(scratchTargetEnvironmentId);
+  const scratchHome = missionScratchHome(
+    missionMachines,
+    scratchEnvironmentId(activeProjectRef?.environmentId ?? null),
+    scratchWorkspaceRootFor,
+  );
   const isScratchDraft =
     activeProject !== null &&
     isScratchProject(activeProject, scratchWorkspaceRootFor(activeProject.environmentId));
-  const canStartScratch =
-    scratchTargetEnvironmentId !== null &&
-    scratchWorkspaceRoot !== null &&
-    (missionMachines === null || missionMachines.has(scratchTargetEnvironmentId));
+  const canStartScratch = scratchHome !== null && scratchWorkspaceRootFor(scratchHome) !== null;
 
   // Pinning from a row keeps rows in place while the picker is open.
   const pickerItems: readonly PickerItem[] = useOrderWhileOpen(
@@ -175,12 +176,13 @@ export function DraftHeroHeadline({
 
   // The picker can change the draft's target while the no-project home is
   // still being opened; a stale continuation must not retarget it again. Picking
-  // a project clears the pending request, and the draft session is compared
-  // against the store when the scratch project arrives.
+  // a project clears the pending request, and the draft's target and Mission mark
+  // are compared against the stores when the scratch project arrives.
   const pendingScratchRef = useRef<symbol | null>(null);
+  // Null once the draft is sending, so a request from before the send never applies.
   const draftTargetKey = () => {
     const session = draftId ? useComposerDraftStore.getState().getDraftSession(draftId) : null;
-    return session
+    return session && !session.promotedTo
       ? `${session.environmentId}:${session.projectId}:${session.logicalProjectKey}`
       : null;
   };
@@ -191,9 +193,11 @@ export function DraftHeroHeadline({
     }
     pendingScratchRef.current = null;
     const projectRef = scopeProjectRef(project.environmentId, project.id);
+    const mark = missionDraftOf(draftId);
     if (!composerDraftHasUserContent(getComposerDraft(draftId))) {
       void openProjectDraft(projectRef).then((opened) => {
-        if (opened !== null && missionMachines !== null) {
+        // A mark that changed while the project's draft opened stays on its own draft.
+        if (opened !== null && mark !== undefined && missionDraftOf(draftId) === mark) {
           moveMissionDraft(
             draftId,
             opened.draftId,
@@ -206,26 +210,33 @@ export function DraftHeroHeadline({
     setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId);
     seedDraftModelSelection(draftId, projectRef);
     const threadId = useComposerDraftStore.getState().getDraftSession(draftId)?.threadId;
-    if (missionMachines !== null && threadId !== undefined) {
+    if (mark !== undefined && threadId !== undefined) {
       moveMissionDraft(draftId, draftId, scopeThreadRef(projectRef.environmentId, threadId));
     }
   };
-  const startScratch = async (): Promise<boolean> => {
-    if (scratchTargetEnvironmentId === null || isScratchDraft) {
-      return false;
-    }
+  const startScratch = async () => {
+    if (scratchHome === null || isScratchDraft) return;
     const request = Symbol("scratch");
     pendingScratchRef.current = request;
     const requestedTarget = draftTargetKey();
-    const project = await openScratchProject(scratchTargetEnvironmentId);
-    if (!project || pendingScratchRef.current !== request || draftTargetKey() !== requestedTarget) {
-      return false;
+    const requestedMark = missionDraftOf(draftId);
+    const project = await openScratchProject(scratchHome);
+    if (
+      !project ||
+      pendingScratchRef.current !== request ||
+      requestedTarget === null ||
+      draftTargetKey() !== requestedTarget ||
+      missionDraftOf(draftId) !== requestedMark
+    ) {
+      return;
     }
     pendingScratchRef.current = null;
     selectProject(project, deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings));
-    return true;
   };
 
+  const projectValue = isScratchDraft
+    ? gt("No project")
+    : (activeProjectTitle ?? gt("Choose a project"));
   const projectSelector = (
     <Combobox
       items={pickerItems}
@@ -250,7 +261,7 @@ export function DraftHeroHeadline({
           return;
         }
         if (item.value === NO_PROJECT_VALUE) {
-          if (!isScratchDraft) void startScratch();
+          void startScratch();
           return;
         }
         const entry = projectEntryByKey.get(item.value);
@@ -265,7 +276,7 @@ export function DraftHeroHeadline({
           render={
             <ComboboxTrigger
               render={<SelectButton className="w-auto min-w-0 max-w-72" />}
-              aria-label={gt("Project")}
+              aria-label={gt("Project: {project}", { project: projectValue })}
               data-draft-project-trigger=""
               className="pointer-events-auto"
             />
@@ -280,12 +291,7 @@ export function DraftHeroHeadline({
             ) : activeProjectGroup ? (
               <ProjectFavicon project={activeProjectGroup} className="size-4" />
             ) : null}
-            <DraftProjectName
-              value={
-                isScratchDraft ? gt("No project") : (activeProjectTitle ?? gt("Choose a project"))
-              }
-              singleLine
-            />
+            <DraftProjectName value={projectValue} singleLine />
           </span>
         </TooltipTrigger>
         {activeProjectTitle && !isScratchDraft ? (
@@ -368,7 +374,7 @@ export function DraftHeroHeadline({
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
       <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl [@media(max-height:28rem)]:sr-only">
-        {isScratchDraft ? <T>What should we work on?</T> : gt("What should we build?")}
+        {gt("What should we build?")}
       </h1>
       <div className="mt-4 flex w-full flex-wrap items-center justify-center gap-2">
         {projectSelector}

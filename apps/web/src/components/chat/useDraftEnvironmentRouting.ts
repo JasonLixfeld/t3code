@@ -40,7 +40,11 @@ import { loadBalancingSendWarning } from "./composerSend.logic";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { seedDraftModelSelection } from "../../lib/seedDraftModelSelection";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
-import { isMissionDraft, useMissionDraftPinned } from "../sidebar/missionDraftStore";
+import {
+  isMissionDraft,
+  missionDraftOf,
+  useMissionDraftPinned,
+} from "../sidebar/missionDraftStore";
 
 interface DraftEnvironmentRoutingInput {
   readonly draftId: DraftId | null;
@@ -316,7 +320,10 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     // `triagePrompt` is the prompt the target machine prepared for a triage draft.
     const retarget = (project: (typeof allProjects)[number], triagePrompt?: string) => {
       const currentDraft = getDraftSession(draftId);
+      // A draft marked for a Mission while the machine prepared stays on the machine it is pinned to.
+      const pinnedTo = missionDraftOf(draftId)?.thread.environmentId;
       if (
+        (pinnedTo !== undefined && pinnedTo !== target.environmentId) ||
         environmentChangeRef.current !== request ||
         environmentChangeScopeRef.current !== request.scope ||
         sendInFlightRef.current ||

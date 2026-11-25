@@ -499,6 +499,16 @@ export function missionDraftMachines(
   return new Set([intent.host, ...links]);
 }
 
+/** Where "No project" opens for a draft kept to these machines: the usual home if allowed. */
+export function missionScratchHome(
+  machines: ReadonlySet<EnvironmentId> | null,
+  usual: EnvironmentId | null,
+  scratchRootFor: (environmentId: EnvironmentId) => string | null,
+): EnvironmentId | null {
+  if (machines === null || (usual !== null && machines.has(usual))) return usual;
+  return [...machines].find((environmentId) => scratchRootFor(environmentId) !== null) ?? null;
+}
+
 /** The members a drag can take out of their Mission: joined ones the sidebar shows. */
 export function missionDragKeys(missions: ReadonlyArray<SidebarMission<unknown>>) {
   return new Set(

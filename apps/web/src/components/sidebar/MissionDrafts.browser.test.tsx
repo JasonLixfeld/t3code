@@ -123,7 +123,7 @@ it("starts a mission led by a draft once sent, when its Mission choice picked a 
     draftId,
     <DraftMissionSelect draftId={draftId} environmentId={LOCAL} />,
   );
-  await userEvent.click(page.getByRole("button", { name: "Mission" }));
+  await userEvent.click(page.getByRole("button", { name: "Mission: None" }));
   await page.getByRole("menuitemradio", { name: "New mission (this thread leads)" }).click();
   await screen.stream("sent");
   await vi.waitFor(() =>

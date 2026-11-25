@@ -27,13 +27,24 @@ if that project exists there. Otherwise it selects an environment that has it.
 
 ### Start without a project
 
-A thread does not need a project. To start one without a project, click **or
-start without a project** under a new thread's heading, pick **No project** from
-the project menu in that heading or from **New thread in...** in the command
-palette, or press `mod+alt+n`. On mobile, pick **No project** from the project
-list. It starts on your current machine; before sending, pick another machine
-from the machine menu to move it there. To move a draft into a project, pick the
-project in the heading.
+A thread does not need a project. To start one without a project, pick **No
+project** from the **Project** picker under a new thread's heading or from **New
+thread in...** in the command palette, or press `mod+alt+n`. On mobile, pick **No
+project** from the project list. It starts on your current machine. Before
+sending, you can pick another machine from the machine menu to move it there. To
+move a draft into a project, pick the project in the **Project** picker.
+
+### Pick a project and a mission
+
+A new thread shows two pickers under its heading. **Project** sets where the
+thread works. **Mission** sets which mission the thread joins when you send it.
+It shows **None** by default and lists the missions on the thread's machine. Pick
+**New mission (this thread leads)** to start a new mission with this thread as
+its lead. A thread that starts or leads a mission shows that mission in the
+**Mission** picker, and you cannot change it there. To undo it, choose **Send as
+a plain thread** in the note above the message box. A thread that starts, joins
+or leads a mission can only use projects on the machines where it can do that.
+When Missions is off in Settings, the **Mission** picker is hidden.
 
 Each thread without a project works in its own folder under `~/.t3/scratch` (the
 `scratch` folder of your T3 data directory), named after its date, the first words

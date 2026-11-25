@@ -12848,5 +12848,7 @@
   "93fb497fbfe34f9e": "Neue Leitung für {mission}",
   "581f3f0dcdc38894": "Neue Mission (dieser Thread leitet)",
   "7798814fecf728c1": "Dieser Thread leitet seine Mission und kann daher keiner anderen beitreten. Sende ihn als normalen Thread, um das rückgängig zu machen.",
-  "7003a748a9d9671a": "Beim Senden startet eine neue Mission, die dieser Thread leitet"
+  "7003a748a9d9671a": "Beim Senden startet eine neue Mission, die dieser Thread leitet",
+  "79ca5bab2b8e2539": "Projekt: {project}",
+  "ef62558587d79f58": "Mission: {mission}"
 }

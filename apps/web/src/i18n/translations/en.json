@@ -12857,5 +12857,7 @@
   "93fb497fbfe34f9e": "New lead for {mission}",
   "581f3f0dcdc38894": "New mission (this thread leads)",
   "7798814fecf728c1": "This thread leads its mission, so it cannot join another. Send it as a plain thread to undo this.",
-  "7003a748a9d9671a": "Sending starts a new mission led by this thread"
+  "7003a748a9d9671a": "Sending starts a new mission led by this thread",
+  "79ca5bab2b8e2539": "Project: {project}",
+  "ef62558587d79f58": "Mission: {mission}"
 }

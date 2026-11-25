@@ -12855,5 +12855,7 @@
   "93fb497fbfe34f9e": "Ny ledande tråd för {mission}",
   "581f3f0dcdc38894": "Nytt uppdrag (den här tråden leder)",
   "7798814fecf728c1": "Den här tråden leder sitt uppdrag och kan därför inte gå med i ett annat. Skicka den som vanlig tråd för att ångra.",
-  "7003a748a9d9671a": "När du skickar startar ett nytt uppdrag som den här tråden leder"
+  "7003a748a9d9671a": "När du skickar startar ett nytt uppdrag som den här tråden leder",
+  "79ca5bab2b8e2539": "Projekt: {project}",
+  "ef62558587d79f58": "Uppdrag: {mission}"
 }

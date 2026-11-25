@@ -24,12 +24,13 @@ import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useDraftEnvironmentRouting } from "./useDraftEnvironmentRouting";
 import { appAtomRegistry, AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
-import { clearMissionDraft, markMissionDraft } from "../sidebar/missionDraftStore";
+import { clearMissionDraft, markMissionDraft, missionDraftOf } from "../sidebar/missionDraftStore";
 
 const resources = vi.hoisted(() => ({
   projects: [] as EnvironmentProject[],
   pickedEnvironmentId: null as EnvironmentId | null,
   refreshSelection: vi.fn<(ids: readonly EnvironmentId[]) => Promise<EnvironmentId | null>>(),
+  openScratchProject: vi.fn<(environmentId: EnvironmentId) => Promise<EnvironmentProject | null>>(),
 }));
 vi.mock("../../hooks/useLoadBalancedEnvironment", () => ({
   useLoadBalancedEnvironment: () => ({
@@ -47,7 +48,9 @@ vi.mock("../../state/entities", () => ({
       (project) => project.environmentId === ref.environmentId && project.id === ref.projectId,
     ) ?? null,
 }));
-vi.mock("../../hooks/useScratchProject", () => ({ useScratchProject: () => ({}) }));
+vi.mock("../../hooks/useScratchProject", () => ({
+  useScratchProject: () => ({ openScratchProject: resources.openScratchProject }),
+}));
 
 function setup() {
   resources.refreshSelection.mockReset();
@@ -391,3 +394,54 @@ it.each(["by hand", "by automatic routing", "before sending"] as const)(
     expect(store.getDraftSession(draftId)?.environmentId).toBe(a);
   },
 );
+
+it("drops a machine switch when the draft is marked for a mission while the machine prepares it", async () => {
+  const { a, b, draftId, input, store } = setup();
+  let openScratch = (_project: EnvironmentProject) => {};
+  resources.openScratchProject.mockReset();
+  resources.openScratchProject.mockReturnValueOnce(
+    new Promise((resolve) => {
+      openScratch = resolve;
+    }),
+  );
+  store.setDraftThreadContext(draftId, {
+    environmentSelection: "manual",
+    loadBalancedEnvironmentId: null,
+  });
+  await using screen = await render(
+    <Harness
+      input={{
+        ...input,
+        automaticEnvironment: false,
+        draftThread: store.getDraftSession(draftId),
+        // B does not have the project yet, so the switch first opens a home for it there.
+        logicalProjectEnvironments: input.logicalProjectEnvironments.map((environment) =>
+          environment.environmentId === b ? { ...environment, projectId: null } : environment,
+        ),
+      }}
+    />,
+  );
+  await screen.getByRole("button", { name: `Switch to ${b}` }).click();
+  await vi.waitFor(() => expect(resources.openScratchProject).toHaveBeenCalledOnce());
+  const mark = {
+    intent: { kind: "new" },
+    thread: scopeThreadRef(a, input.draftThread!.threadId),
+  } as const;
+  await act(() => markMissionDraft(draftId, mark));
+  onTestFinished(() => clearMissionDraft(draftId));
+  await act(async () =>
+    openScratch({
+      environmentId: b,
+      id: ProjectId.make("scratch"),
+      title: "Scratch",
+      workspaceRoot: "/scratch",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-11-10T01:00:00.000Z",
+      updatedAt: "2026-11-10T01:00:00.000Z",
+    }),
+  );
+  await expect.element(screen.getByText(a)).toBeInTheDocument();
+  expect(store.getDraftSession(draftId)?.environmentId).toBe(a);
+  expect(missionDraftOf(draftId)).toMatchObject(mark);
+});

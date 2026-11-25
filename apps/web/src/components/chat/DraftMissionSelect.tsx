@@ -34,12 +34,15 @@ interface MissionItem {
 
 /** The machines a Mission draft's project can be on, or null when any will do. */
 export function useDraftProjectMachines(draftId: DraftId | null) {
+  const enabled = useClientSettings((settings) => settings.sidebarMissionsEnabled);
   const hosts = useMissionHosts();
   const marked = useMissionDrafts((state) =>
     draftId === null ? undefined : state.drafts.get(draftId),
   );
   if (marked === undefined) return null;
-  return missionDraftMachines(marked.intent, hosts) ?? new Set([marked.thread.environmentId]);
+  const pinned = new Set([marked.thread.environmentId]);
+  // With Missions off no machine lists its links, so the draft keeps to the machine it is on.
+  return enabled ? (missionDraftMachines(marked.intent, hosts) ?? pinned) : pinned;
 }
 
 /**
@@ -94,23 +97,42 @@ export function DraftMissionSelect(props: {
         ? gt("New lead for {mission}", { mission: marked.intent.name })
         : null;
   const selected = items.find((item) => item.value === joining) ?? items[0]!;
-  const menu = (
-    <Menu>
-      <MenuTrigger
-        render={<SelectButton className="w-auto min-w-0 max-w-72" />}
-        aria-label={gt("Mission")}
-        data-draft-mission-trigger=""
-        disabled={fixed !== null}
-        // A disabled button takes no hover, so the tooltip's wrapper gets it.
-        className={fixed === null ? "pointer-events-auto" : "pointer-events-none"}
-      >
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span className="text-muted-foreground text-xs">
-            <T>Mission</T>
-          </span>
-          <DraftProjectName value={fixed ?? selected.label} singleLine />
+  const shown = fixed ?? selected.label;
+  const trigger = (
+    <SelectButton
+      className="pointer-events-auto w-auto min-w-0 max-w-72"
+      aria-label={gt("Mission: {mission}", { mission: shown })}
+      data-draft-mission-trigger=""
+      // Fixed, it stays focusable; its disabled look passes the pointer to the tooltip's wrapper.
+      {...(fixed === null ? {} : { "aria-disabled": true, "data-disabled": "" })}
+    >
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span className="text-muted-foreground text-xs">
+          <T>Mission</T>
         </span>
-      </MenuTrigger>
+        <DraftProjectName value={shown} singleLine />
+      </span>
+    </SelectButton>
+  );
+  // A draft that leads its Mission has no other choice, so its trigger only says why.
+  if (fixed !== null) {
+    return (
+      <Tooltip>
+        <TooltipTrigger render={<span className="pointer-events-auto inline-flex min-w-0" />}>
+          {trigger}
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          <T>
+            This thread leads its mission, so it cannot join another. Send it as a plain thread to
+            undo this.
+          </T>
+        </TooltipPopup>
+      </Tooltip>
+    );
+  }
+  return (
+    <Menu>
+      <MenuTrigger render={trigger} />
       <MenuPopup align="center" className="w-64">
         <MenuRadioGroup
           value={joining}
@@ -151,19 +173,5 @@ export function DraftMissionSelect(props: {
         </MenuRadioGroup>
       </MenuPopup>
     </Menu>
-  );
-  if (fixed === null) return menu;
-  return (
-    <Tooltip>
-      <TooltipTrigger render={<span className="pointer-events-auto inline-flex min-w-0" />}>
-        {menu}
-      </TooltipTrigger>
-      <TooltipPopup side="top">
-        <T>
-          This thread leads its mission, so it cannot join another. Send it as a plain thread to
-          undo this.
-        </T>
-      </TooltipPopup>
-    </Tooltip>
   );
 }
