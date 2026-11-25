@@ -10,7 +10,7 @@ import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { T, useGT } from "gt-react";
 import { FolderPlusIcon, MessageSquareDashedIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { shortcutLabelForCommand } from "~/keybindings";
@@ -54,6 +54,10 @@ import { TriageDraftHero } from "./TriageDraftHero";
 import { DraftMissionSelect, useDraftProjectMachines } from "./DraftMissionSelect";
 import { missionDraftOf, moveMissionDraft } from "../sidebar/missionDraftStore";
 import { missionScratchHome } from "../sidebar/missions.logic";
+import { Spinner } from "../ui/spinner";
+import { toastManager } from "../ui/toast";
+import { setScratchPending, useScratchPending } from "./pendingScratchStore";
+import { useStableCallback } from "~/hooks/useStableCallback";
 
 const ADD_PROJECT_VALUE = "add-project";
 const NO_PROJECT_VALUE = "no-project";
@@ -174,11 +178,21 @@ export function DraftHeroHeadline({
   const selectedValue = isScratchDraft ? NO_PROJECT_VALUE : activeProjectKey;
   const selectedPickerItem = pickerItems.find((item) => item.value === selectedValue) ?? null;
 
-  // The picker can change the draft's target while the no-project home is
-  // still being opened; a stale continuation must not retarget it again. Picking
-  // a project clears the pending request, and the draft's target and Mission mark
-  // are compared against the stores when the scratch project arrives.
+  // The request for the no-project home belongs to this mounted picker and its draft. While it
+  // is pending the draft cannot send or change project or mission; leaving the draft or
+  // unmounting the picker cancels it, so its reply never applies.
   const pendingScratchRef = useRef<symbol | null>(null);
+  const preparingScratch = useScratchPending(draftId);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels this draft's pending no-project request when the picker leaves the draft or unmounts
+  useEffect(
+    () => () => {
+      if (pendingScratchRef.current === null || draftId === null) return;
+      pendingScratchRef.current = null;
+      setScratchPending(draftId, false);
+    },
+    [draftId],
+  );
+  const readScratchHome = useStableCallback(() => scratchHome);
   // Null once the draft is sending, so a request from before the send never applies.
   const draftTargetKey = () => {
     const session = draftId ? useComposerDraftStore.getState().getDraftSession(draftId) : null;
@@ -191,7 +205,6 @@ export function DraftHeroHeadline({
     if (!draftId) {
       return;
     }
-    pendingScratchRef.current = null;
     const projectRef = scopeProjectRef(project.environmentId, project.id);
     const mark = missionDraftOf(draftId);
     if (!composerDraftHasUserContent(getComposerDraft(draftId))) {
@@ -215,28 +228,43 @@ export function DraftHeroHeadline({
     }
   };
   const startScratch = async () => {
-    if (scratchHome === null || isScratchDraft) return;
+    const requestedTarget = draftTargetKey();
+    const home = scratchHome;
+    if (!draftId || home === null || isScratchDraft || requestedTarget === null) return;
+    if (pendingScratchRef.current !== null) return;
     const request = Symbol("scratch");
     pendingScratchRef.current = request;
-    const requestedTarget = draftTargetKey();
+    setScratchPending(draftId, true);
     const requestedMark = missionDraftOf(draftId);
-    const project = await openScratchProject(scratchHome);
+    const project = await openScratchProject(home).catch(() => null);
+    if (pendingScratchRef.current !== request) return;
+    pendingScratchRef.current = null;
+    setScratchPending(draftId, false);
+    // Defence in depth: the draft cannot change while pending, but a stale reply never applies.
     if (
       !project ||
-      pendingScratchRef.current !== request ||
-      requestedTarget === null ||
       draftTargetKey() !== requestedTarget ||
       missionDraftOf(draftId) !== requestedMark
     ) {
       return;
     }
-    pendingScratchRef.current = null;
+    // The draft's mission may no longer allow that machine, for example after a link lost access.
+    if (readScratchHome() !== home) {
+      toastManager.add({
+        type: "warning",
+        title: gt("Could not start without a project"),
+        description: gt("This draft's mission no longer allows that machine."),
+      });
+      return;
+    }
     selectProject(project, deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings));
   };
 
-  const projectValue = isScratchDraft
-    ? gt("No project")
-    : (activeProjectTitle ?? gt("Choose a project"));
+  const projectValue = preparingScratch
+    ? gt("No project…")
+    : isScratchDraft
+      ? gt("No project")
+      : (activeProjectTitle ?? gt("Choose a project"));
   const projectSelector = (
     <Combobox
       items={pickerItems}
@@ -278,6 +306,7 @@ export function DraftHeroHeadline({
               render={<SelectButton className="w-auto min-w-0 max-w-72" />}
               aria-label={gt("Project: {project}", { project: projectValue })}
               data-draft-project-trigger=""
+              disabled={preparingScratch}
               className="pointer-events-auto"
             />
           }
@@ -286,7 +315,9 @@ export function DraftHeroHeadline({
             <span className="text-muted-foreground text-xs">
               <T>Project</T>
             </span>
-            {isScratchDraft ? (
+            {preparingScratch ? (
+              <Spinner size="md" tone="muted" />
+            ) : isScratchDraft ? (
               <MessageSquareDashedIcon className="size-4" />
             ) : activeProjectGroup ? (
               <ProjectFavicon project={activeProjectGroup} className="size-4" />

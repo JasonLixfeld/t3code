@@ -12850,5 +12850,8 @@
   "7798814fecf728c1": "Ce fil dirige sa mission, il ne peut donc pas en rejoindre une autre. Envoyez-le comme fil normal pour annuler.",
   "7003a748a9d9671a": "L’envoi démarre une nouvelle mission dirigée par ce fil",
   "79ca5bab2b8e2539": "Projet : {project}",
-  "ef62558587d79f58": "Mission : {mission}"
+  "ef62558587d79f58": "Mission : {mission}",
+  "5b091f252c924026": "Préparation de « Aucun projet »…",
+  "df569eba6576b4b9": "La mission de ce brouillon n’autorise plus cette machine.",
+  "6c4a013bdfde968d": "Aucun projet…"
 }

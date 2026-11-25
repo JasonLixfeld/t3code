@@ -21,6 +21,7 @@ import {
 import { SelectButton } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { DraftProjectName } from "./DraftProjectName";
+import { useScratchPending } from "./pendingScratchStore";
 
 const NO_MISSION = "";
 const NEW_MISSION = "new";
@@ -58,6 +59,7 @@ export function DraftMissionSelect(props: {
   const enabled = useClientSettings((settings) => settings.sidebarMissionsEnabled);
   const hosts = useMissionHosts();
   const marked = useMissionDrafts((state) => state.drafts.get(draftId));
+  const preparingScratch = useScratchPending(draftId);
   const threadId = useComposerDraftStore(
     (store) => store.getDraftSession(draftId)?.threadId ?? null,
   );
@@ -132,7 +134,7 @@ export function DraftMissionSelect(props: {
   }
   return (
     <Menu>
-      <MenuTrigger render={trigger} />
+      <MenuTrigger render={trigger} disabled={preparingScratch} />
       <MenuPopup align="center" className="w-64">
         <MenuRadioGroup
           value={joining}

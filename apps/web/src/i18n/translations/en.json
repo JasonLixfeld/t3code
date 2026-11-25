@@ -12859,5 +12859,8 @@
   "7798814fecf728c1": "This thread leads its mission, so it cannot join another. Send it as a plain thread to undo this.",
   "7003a748a9d9671a": "Sending starts a new mission led by this thread",
   "79ca5bab2b8e2539": "Project: {project}",
-  "ef62558587d79f58": "Mission: {mission}"
+  "ef62558587d79f58": "Mission: {mission}",
+  "5b091f252c924026": "Preparing No project…",
+  "df569eba6576b4b9": "This draft's mission no longer allows that machine.",
+  "6c4a013bdfde968d": "No project…"
 }

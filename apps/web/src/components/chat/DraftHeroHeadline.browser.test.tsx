@@ -49,11 +49,21 @@ vi.mock(import("~/hooks/useAddProjectTargets"), async (original) => ({
 }));
 
 // The Missions this machine keeps, for a test that lists some.
-const missionHosts = vi.hoisted(() => ({ listed: [] as ReadonlyArray<unknown> }));
-vi.mock(import("~/components/sidebar/MissionsSection"), async (original) => ({
-  ...(await original()),
-  useMissionHosts: (() => missionHosts.listed) as never,
+const missionHosts = vi.hoisted(() => ({
+  listed: [] as ReadonlyArray<unknown>,
+  listeners: new Set<() => void>(),
 }));
+vi.mock(import("~/components/sidebar/MissionsSection"), async (original) => {
+  const { useSyncExternalStore } = await import("react");
+  const subscribe = (listener: () => void) => {
+    missionHosts.listeners.add(listener);
+    return () => missionHosts.listeners.delete(listener);
+  };
+  return {
+    ...(await original()),
+    useMissionHosts: (() => useSyncExternalStore(subscribe, () => missionHosts.listed)) as never,
+  };
+});
 
 // A home for threads without a project, on the given machines, opened when the test says.
 const scratch = vi.hoisted(() => ({
@@ -729,8 +739,13 @@ it.each([
     await using app = await openDraft(`draft-scratch-then-mission-${prompt.length}`);
     if (prompt) await act(() => useComposerDraftStore.getState().setPrompt(app.draftId, prompt));
     await pickNoProject();
-    await userEvent.click(missionTrigger());
-    await page.getByRole("menuitemradio", { name: "New mission (this thread leads)" }).click();
+    const threadId = useComposerDraftStore.getState().getDraftSession(app.draftId)!.threadId;
+    await act(() =>
+      markMissionDraft(app.draftId, {
+        intent: { kind: "new" },
+        thread: scopeThreadRef(ENVIRONMENT_ID, threadId),
+      }),
+    );
     await finish();
     await act(async () => {});
     expect(app.router.state.location.pathname).toBe(`/draft/${app.draftId}`);
@@ -759,4 +774,72 @@ it("No project left pending does not move a mission draft that started sending",
   await act(async () => {});
   expect(app.router.state.location.pathname).toBe(`/draft/${app.draftId}`);
   expect(missionDraftOf(app.draftId)).toBe(marked);
+});
+
+it("while No project is preparing, the draft cannot send and its pickers are disabled", async () => {
+  const { finish } = holdScratch([ENVIRONMENT_ID]);
+  using _environment = installFakeEnvironment([], {
+    extraProjects: [{ id: alphaProject.id, title: "alpha" }],
+  });
+  listMissions([hostWith(ENVIRONMENT_ID)]);
+  await using app = await openDraft("draft-scratch-preparing");
+  await act(() => useComposerDraftStore.getState().setPrompt(app.draftId, "Plan the launch"));
+  await pickNoProject();
+  const project = page.getByRole("combobox", { name: "Project: No project…" });
+  await expect.element(project).toHaveAttribute("data-disabled");
+  await expect.element(missionTrigger()).toHaveAttribute("data-disabled");
+  await expect.element(page.getByRole("button", { name: "Preparing No project…" })).toBeDisabled();
+  await finish();
+  await expect.element(project).not.toBeInTheDocument();
+  await expect.element(missionTrigger()).not.toHaveAttribute("data-disabled");
+  expect(document.body.textContent).not.toContain("Preparing No project…");
+});
+
+it("opening another thread before No project is ready leaves the user there", async () => {
+  const { finish } = holdScratch([ENVIRONMENT_ID]);
+  using _environment = installFakeEnvironment([], {
+    extraProjects: [{ id: alphaProject.id, title: "alpha" }],
+  });
+  await using app = await openDraft("draft-scratch-then-leave", { kind: "new" });
+  const marked = missionDraftOf(app.draftId);
+  await pickNoProject();
+  const other = DraftId.make("draft-opened-instead");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, alphaProject.id), other);
+  await act(() => app.router.navigate({ href: `/draft/${other}` }));
+  await finish();
+  await act(async () => {});
+  expect(app.router.state.location.pathname).toBe(`/draft/${other}`);
+  expect(missionDraftOf(app.draftId)).toBe(marked);
+  expect(missionDraftOf(other)).toBeUndefined();
+});
+
+it("drops No project with a note when the mission's link loses full access first", async () => {
+  const { finish } = holdScratch([ENVIRONMENT_ID]);
+  using _environment = installFakeEnvironment([], {
+    extraProjects: [{ id: alphaProject.id, title: "alpha" }],
+  });
+  const laptop = EnvironmentId.make("laptop");
+  const linked = (fullAccess: boolean) => [
+    hostWith(laptop, [{ environmentId: ENVIRONMENT_ID, label: "Desk", fullAccess }]),
+  ];
+  listMissions(linked(true));
+  await using app = await openDraft("draft-scratch-link-lost", {
+    kind: "member",
+    host: laptop,
+    missionId: shipV2.missionId,
+    name: "Ship v2",
+  });
+  await pickNoProject();
+  await act(() => {
+    missionHosts.listed = linked(false);
+    for (const listener of missionHosts.listeners) listener();
+  });
+  await finish();
+  await expect
+    .element(page.getByText("This draft's mission no longer allows that machine."))
+    .toBeVisible();
+  expect(app.router.state.location.pathname).toBe(`/draft/${app.draftId}`);
+  expect(useComposerDraftStore.getState().getDraftSession(app.draftId)?.projectId).toBe(PROJECT_ID);
 });

@@ -12845,5 +12845,8 @@
   "7798814fecf728c1": "Este hilo dirige su misión, así que no puede unirse a otra. Envíalo como hilo normal para deshacerlo.",
   "7003a748a9d9671a": "Al enviar, empieza una nueva misión dirigida por este hilo",
   "79ca5bab2b8e2539": "Proyecto: {project}",
-  "ef62558587d79f58": "Misión: {mission}"
+  "ef62558587d79f58": "Misión: {mission}",
+  "5b091f252c924026": "Preparando «Sin proyecto»…",
+  "df569eba6576b4b9": "La misión de este borrador ya no permite esa máquina.",
+  "6c4a013bdfde968d": "Sin proyecto…"
 }
