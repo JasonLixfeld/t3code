@@ -1,8 +1,14 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/reactivity";
-import { describe, expect, it } from "vite-plus/test";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { createScratchProjectActions } from "./useScratchProject";
+
+vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => ({
+  ...(await original()),
+  runAtomCommand: vi.fn(async () => ({ _tag: "Success", value: null }) as never),
+}));
 
 const local = "local" as EnvironmentId;
 const remote = "remote" as EnvironmentId;
@@ -45,5 +51,18 @@ describe("scratchEnvironmentId", () => {
     expect(actions(null, null).scratchEnvironmentId(remote)).toBe(remote);
     expect(actions(null, null, null).scratchEnvironmentId(remote)).toBe(other);
     expect(actions(local, null).scratchEnvironmentId(null)).toBeNull();
+  });
+});
+
+describe("openScratchProject", () => {
+  it("hands its caller's abort signal to the command, so an abort frees the machine's queue", async () => {
+    const controller = new AbortController();
+    await actions(local, "/local/scratch").openScratchProject(local, undefined, controller.signal);
+    expect(runAtomCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      { environmentId: local, input: {} },
+      expect.objectContaining({ signal: controller.signal }),
+    );
   });
 });

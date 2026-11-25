@@ -13,6 +13,7 @@ import {
   buildMissionMenuItems,
   groupSidebarMissions,
   missionAddSummary,
+  missionDraftMachines,
   type MissionHost,
   parseMissionTarget,
 } from "./missions.logic";
@@ -444,5 +445,20 @@ describe("groupSidebarMissions", () => {
       threadKeys: new Set(),
       leads: [],
     });
+  });
+});
+
+describe("missionDraftMachines", () => {
+  const joins = { host: DESK, missionId: mission.missionId, name: mission.name };
+
+  it("keeps a new lead on its mission's machine, even when that machine links to others", () => {
+    const lead = { kind: "lead", ...joins, expectedLead: ThreadId.make("gone") } as const;
+    expect(missionDraftMachines(lead, hosts)).toEqual(new Set([DESK]));
+  });
+
+  it("lets a member use machines its mission's machine links to with full access", () => {
+    expect(missionDraftMachines({ kind: "member", ...joins }, hosts)).toEqual(
+      new Set([DESK, LAPTOP]),
+    );
   });
 });

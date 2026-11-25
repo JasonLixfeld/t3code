@@ -613,7 +613,8 @@ it.each([
     await expect.element(trigger).toMatchTextContent(new RegExp(`${shown}$`));
     await expect.element(trigger).toHaveAttribute("aria-disabled", "true");
     await expect.element(page.getByText(notice)).toBeVisible();
-    await userEvent.hover(trigger);
+    // The pointer lands on the tooltip's wrapper, as it does with the app's styles.
+    await userEvent.hover(page.elementLocator(trigger.element().parentElement!));
     await expect
       .element(
         page.getByText(
@@ -622,7 +623,7 @@ it.each([
       )
       .toBeVisible();
     // The user picks the lead's project on the mission's machine.
-    await userEvent.unhover(trigger);
+    await userEvent.unhover(page.elementLocator(trigger.element().parentElement!));
     expect(await projectOptions()).toContainEqual(expect.stringMatching(/render$/));
   },
 );
@@ -972,8 +973,13 @@ it("applies No project from a machine that is still allowed after the usual home
   await act(() => useComposerDraftStore.getState().setPrompt(app.draftId, "Plan the launch"));
   await pickNoProject();
   expect(opened).toHaveBeenCalledWith(secondary, undefined, expect.any(AbortSignal));
-  // The primary reconnects, so it is the usual home again.
-  scratch.usual = ENVIRONMENT_ID;
+  // The primary reconnects, so it is the usual home again, and the picker renders with it.
+  await act(() => {
+    scratch.usual = ENVIRONMENT_ID;
+    missionHosts.listed = [...missionHosts.listed];
+    for (const listener of missionHosts.listeners) listener();
+  });
+  await expect.element(page.getByRole("combobox", { name: "Project: No project…" })).toBeVisible();
   await finish();
   await vi.waitFor(() =>
     expect(useComposerDraftStore.getState().getDraftSession(app.draftId)?.projectId).toBe(
