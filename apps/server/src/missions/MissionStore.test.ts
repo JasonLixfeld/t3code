@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -188,17 +188,38 @@ it.effect("upgrades a database an earlier build left, keeping a given-up add's m
             VALUES ('env-laptop', ${member}, 'm1', 'i1',
               'This add waited more than 7 days for the thread''s machine.', 'link', '2026-01-01')
           `;
+          // A claim last seen on the desk, and a release the box never answered.
+          yield* sql`
+            INSERT INTO known_claims
+              (environment_id, thread_id, mission_id, mission_name, generation)
+            VALUES ('env-desk', 'desk-thread', 'm1', 'M1', 'g-desk')
+          `;
+          yield* sql`
+            INSERT INTO pending_releases (environment_id, thread_id, generation, mission_id)
+            VALUES ('env-box', 'box-thread', 'g-box', 'm1')
+          `;
         }),
         NodeSqliteClient.layer({ filename }),
       );
       yield* usingStore(filename, (store) =>
         Effect.gen(function* () {
           assert.equal((yield* store.pendingAdds)[0]?.refusal?.startsWith("This add waited"), true);
+          // Both are forgotten, so only the upgrade's record still names those machines.
+          for (const [environmentId, threadId] of [
+            ["env-desk", "desk-thread"],
+            ["env-box", "box-thread"],
+          ] as const) {
+            yield* store.forgetThread({
+              environmentId: EnvironmentId.make(environmentId),
+              threadId: ThreadId.make(threadId),
+              missionId: "m1",
+            });
+          }
           yield* store.deleteMission({ missionId: "m1", lead, machines: [] });
           // The deleted Mission still asks the laptop, which its old add may have reached.
           assert.deepEqual(
-            (yield* store.tombstoneChecks).map((check) => check.environmentId),
-            ["env-laptop"],
+            (yield* store.tombstoneChecks).map((check) => check.environmentId).toSorted(),
+            ["env-box", "env-desk", "env-laptop"],
           );
           assert.isTrue((yield* store.deletedMissionIds).has("m1"));
           const again = yield* store.createMission(claimFor(lead, "m1", "g2")).pipe(Effect.flip);

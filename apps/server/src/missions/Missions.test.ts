@@ -952,6 +952,47 @@ it("schedules a deleted mission's checks: a capped backoff, then 5 min, 1 h, 6 h
   ]);
 });
 
+it.effect(
+  "a deleted mission's claim is released by a list asked for another mission's sake",
+  () => {
+    const otherLead = ref(HERE, "other-lead");
+    const otherMember = ref(LAPTOP, "laptop-other");
+    const world = makeWorld([lead, otherLead, laptopMember, otherMember]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const store = yield* MissionStore.MissionStore;
+        const mission = yield* createOne;
+        const other = yield* missions.create({
+          missionId: "bbbbbbbbbbbb",
+          leadThreadId: otherLead.threadId,
+        });
+        yield* missions.addMember({ missionId: other.missionId, member: otherMember });
+        yield* missions.deleteMission({ missionId: mission.missionId });
+        yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+        yield* world.untilAnswered("list");
+        // Its checks run out, as 14 days after that answer, so no check asks the laptop again.
+        yield* store.setTombstoneCheck(LAPTOP, null);
+        assert.deepEqual(yield* store.tombstoneChecks, []);
+        // A join still on its way lands on the laptop after all that.
+        yield* world.laptop.claims!.join(LEAD_ON_LAPTOP, {
+          threadId: laptopMember.threadId,
+          missionId: mission.missionId,
+          name: "One",
+        });
+        // A client opens the sidebar, which lists the laptop for the other mission's member.
+        yield* openSidebar;
+        yield* world.untilAnswered("release");
+        assert.deepEqual(
+          (yield* laptopClaims(world)).map((claim) => claim.missionId),
+          [other.missionId],
+        );
+      }),
+    );
+  },
+);
+
 it.effect("a release forgotten before delete is sent once its machine is back", () => {
   const world = makeWorld([lead, laptopMember]);
   return withMissions(

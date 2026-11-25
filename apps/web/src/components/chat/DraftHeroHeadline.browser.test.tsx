@@ -401,3 +401,54 @@ it.each([
   });
   await expect.element(page.getByRole("button", { name: "Mission" })).toHaveTextContent(shown);
 });
+
+it("the Mission choice tells apart two machines' missions that share an id", async () => {
+  using _environment = installFakeEnvironment([]);
+  const laptop = EnvironmentId.make("laptop");
+  const missionOn = (environmentId: EnvironmentId, name: string) => ({
+    environmentId,
+    snapshot: {
+      missions: [
+        { missionId: "ba9876543210", name, createdAt: "2026-11-23T00:00:00.000Z", members: [] },
+      ],
+      links: [],
+      claims: [],
+    },
+  });
+  missionHosts.listed = [missionOn(ENVIRONMENT_ID, "Local work"), missionOn(laptop, "Laptop work")];
+  onTestFinished(() => {
+    missionHosts.listed = [];
+  });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-same-mission-id");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId);
+  const threadId = useComposerDraftStore.getState().getDraftSession(draftId)!.threadId;
+  // New thread in this mission marked it to join the laptop's mission.
+  markMissionDraft(draftId, {
+    intent: { kind: "member", host: laptop, missionId: "ba9876543210", name: "Laptop work" },
+    thread: { environmentId: ENVIRONMENT_ID, threadId },
+  });
+  onTestFinished(() => clearMissionDraft(draftId));
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const trigger = page.getByRole("button", { name: "Mission" });
+  await expect.element(trigger).toHaveTextContent("Laptop work");
+  await userEvent.click(trigger);
+  await page.getByRole("menuitemradio", { name: "Local work" }).click();
+  expect(missionDraftOf(draftId)?.intent).toEqual({
+    kind: "member",
+    host: ENVIRONMENT_ID,
+    missionId: "ba9876543210",
+    name: "Local work",
+  });
+  await expect.element(trigger).toHaveTextContent("Local work");
+});
