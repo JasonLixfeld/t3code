@@ -3042,3 +3042,45 @@ it.effect("a long fork chain is followed only so far, a thread row at a time", (
     }),
   );
 });
+
+it.effect("a lead's subagent child gets no mission context", () => {
+  const child = ref(HERE, "subagent-child");
+  const world = makeWorld([lead, child]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      yield* createOne;
+      world.shell(child, {
+        lineage: {
+          parentThreadId: lead.threadId,
+          relationshipToParent: "subagent",
+          rootThreadId: lead.threadId,
+        },
+      });
+      assert.isUndefined(yield* turnContextOf(child));
+    }),
+  );
+});
+
+it.effect("a fork cycle is read once round, not walked to the cap", () => {
+  const cycle = [ref(HERE, "cycle-a"), ref(HERE, "cycle-b"), ref(HERE, "cycle-c")];
+  const world = makeWorld([lead, ...cycle]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      yield* createOne;
+      cycle.forEach((thread, index) =>
+        world.shell(thread, {
+          lineage: {
+            parentThreadId: cycle[(index + 1) % cycle.length]!.threadId,
+            relationshipToParent: "fork",
+            rootThreadId: cycle[0]!.threadId,
+          },
+        }),
+      );
+      world.lineageReads = 0;
+      assert.isUndefined(yield* turnContextOf(cycle[0]!));
+      assert.equal(world.lineageReads, cycle.length);
+    }),
+  );
+});

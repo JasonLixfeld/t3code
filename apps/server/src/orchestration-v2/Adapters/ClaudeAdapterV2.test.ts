@@ -7741,6 +7741,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.include(yield* turn(3, "Status: B."), "Status: B.");
         assert.equal(yield* end(3, true), "failed");
         assert.include(yield* turn(4, "Status: A."), "Status: A.");
+        assert.equal(yield* end(4), "completed");
+        // A failed turn that offered B leaves B to be sent again, even while B is still current.
+        assert.include(yield* turn(5, "Status: B."), "Status: B.");
+        assert.equal(yield* end(5, true), "failed");
+        assert.include(yield* turn(6, "Status: B."), "Status: B.");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -7765,6 +7770,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             Effect.as(true),
           ),
       });
+      // Delivered with the first turn, and carried again, unsent, by the steer.
+      const delivered = { key: "mcp_app_item-0", text: "Created PROJ-41" };
       const leadTurn = (ordinal: number, text: string) =>
         Effect.map(DateTime.now, (now) => ({
           ...makeClaudeTestTurnInput({
@@ -7781,6 +7788,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             prompt: "You lead a mission (id 0123456789ab).",
             status: "Status: 1 member.",
           },
+          appContext: [delivered],
         }));
       const offered = () => JSON.stringify(harness.offeredMessages.at(-1)?.message.content);
       const finish = Effect.fnUntraced(function* (ordinal: number) {
@@ -7827,7 +7835,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             text: "And the app?",
             attachments: [],
           },
-          appContext: [{ key: "mcp_app_item-1", text: "Created PROJ-42" }],
+          appContext: [delivered, { key: "mcp_app_item-1", text: "Created PROJ-42" }],
         }),
       );
       yield* Deferred.await(backgrounding);
@@ -7847,6 +7855,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* harness.runtime.startTurn(yield* leadTurn(2, "Next"));
       assert.include(offered(), "<t3_code_mission>");
       assert.include(offered(), "Status: 1 member.");
+      // The compaction summarized the note away too, and the steer did not send it.
+      assert.include(offered(), "PROJ-41");
     }).pipe(
       Effect.scoped,
       Effect.provide(
