@@ -222,6 +222,7 @@ export const MIGRATIONS = {
   "8_MissionJoinBriefs": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`ALTER TABLE mission_updates ADD COLUMN brief TEXT`;
+    yield* sql`ALTER TABLE pending_adds ADD COLUMN no_brief INTEGER NOT NULL DEFAULT 0`;
     yield* sql`
       CREATE TABLE brief_asks (
         mission_id TEXT NOT NULL,
@@ -332,6 +333,7 @@ export interface PendingAdd {
   readonly refusal: string | null;
   /** The lead thread whose agent asked for it. Absent: the user. */
   readonly actor?: ThreadId | undefined;
+  readonly noBrief?: true | undefined;
 }
 
 type AddKey = Pick<PendingAdd, "environmentId" | "threadId" | "missionId">;
@@ -1057,8 +1059,10 @@ const make = Effect.gen(function* () {
     readonly added_at: string;
     readonly refusal: string | null;
     readonly actor: string | null;
+    readonly no_brief: number;
   }>`
-    SELECT environment_id, thread_id, mission_id, intent_id, link_id, added_at, refusal, actor
+    SELECT environment_id, thread_id, mission_id, intent_id, link_id, added_at, refusal, actor,
+      no_brief
     FROM pending_adds ORDER BY rowid
   `.pipe(
     Effect.map((rows) =>
@@ -1071,6 +1075,7 @@ const make = Effect.gen(function* () {
         addedAt: row.added_at,
         refusal: row.refusal,
         ...actorOf(row),
+        ...(row.no_brief === 1 ? { noBrief: true as const } : {}),
       })),
     ),
     Effect.orDie,
@@ -1079,9 +1084,11 @@ const make = Effect.gen(function* () {
   const setPendingAdd = (add: PendingAdd) =>
     sql`
       INSERT OR REPLACE INTO pending_adds
-        (environment_id, thread_id, mission_id, intent_id, link_id, added_at, refusal, actor)
+        (environment_id, thread_id, mission_id, intent_id, link_id, added_at, refusal, actor,
+          no_brief)
       VALUES (${add.environmentId}, ${add.threadId}, ${add.missionId}, ${add.intentId},
-        ${add.linkId}, ${add.addedAt}, ${add.refusal}, ${add.actor ?? null})
+        ${add.linkId}, ${add.addedAt}, ${add.refusal}, ${add.actor ?? null},
+        ${add.noBrief === true ? 1 : 0})
     `.pipe(
       Effect.andThen(touches(add.missionId, add.environmentId)),
       Effect.andThen(changed),

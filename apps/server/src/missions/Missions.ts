@@ -775,7 +775,7 @@ const make = Effect.gen(function* () {
               (reach) =>
                 sendJoin(mission, add, reach).pipe(
                   Effect.tap((joined) =>
-                    joined
+                    joined && add.noBrief !== true
                       ? askBrief(mission.missionId, add).pipe(
                           Effect.catchCause((cause) =>
                             Effect.logWarning("A joined member was not asked for a brief", cause),
@@ -1153,7 +1153,11 @@ const make = Effect.gen(function* () {
 
   /** `intentId`: the add a replayed start made, so a machine that spent it refuses it. */
   const addWithIntent = Effect.fn("Missions.addWithIntent")(function* (
-    input: { readonly missionId: string; readonly member: ScopedThreadRef },
+    input: {
+      readonly missionId: string;
+      readonly member: ScopedThreadRef;
+      readonly noBrief?: true | undefined;
+    },
     asLead: ThreadId | undefined,
     intentId: string,
   ) {
@@ -1209,6 +1213,7 @@ const make = Effect.gen(function* () {
                 addedAt: DateTime.formatIso(yield* DateTime.now),
                 refusal: null,
                 ...(asLead === undefined ? {} : { actor: asLead }),
+                ...(input.noBrief === true ? { noBrief: true as const } : {}),
               };
               return yield* Effect.gen(function* () {
                 // Written before anything is sent. If this call is cut off, or the server stops,

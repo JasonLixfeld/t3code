@@ -173,6 +173,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     limits: [] as Array<unknown>,
     /** The same calls, to wait on: each is offered as it starts, under the mode set by then. */
     started: undefined as Queue.Queue<ClaimKind> | undefined,
+    briefsStarted: undefined as Queue.Queue<string> | undefined,
     /** The calls the laptop answered, each offered once its answer is ready. */
     answered: undefined as Queue.Queue<ClaimKind> | undefined,
     /** The calls the laptop carried out, whether or not its reply got through. */
@@ -344,6 +345,9 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
             threadId: asked.value.threadId,
             missionId: asked.value.missionId,
           });
+          if (laptop.briefsStarted !== undefined) {
+            yield* Queue.offer(laptop.briefsStarted, asked.value.threadId);
+          }
           if (laptop.predatesBriefs || mode !== "up") {
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
@@ -461,6 +465,11 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     laptop,
     /** The next calls this lead starts on the laptop, waiting for each. */
     nextCalls: (count: number) => Queue.takeN(laptop.started!, count),
+    nextBriefCall: Effect.suspend(() =>
+      laptop.briefsStarted === undefined
+        ? Effect.die("No missions session is running.")
+        : Queue.take(laptop.briefsStarted),
+    ),
     /** Waits until the laptop has answered a call of this kind. */
     untilAnswered: (kind: ClaimKind): Effect.Effect<void> =>
       Effect.flatMap(Queue.take(laptop.answered!), (answered) =>
@@ -605,6 +614,7 @@ const withMissions = <A, E>(
         ),
       );
     world.laptop.started = yield* Queue.unbounded<ClaimKind>();
+    world.laptop.briefsStarted = yield* Queue.unbounded<string>();
     world.laptop.answered = yield* Queue.unbounded<ClaimKind>();
     world.laptop.acted = yield* Queue.unbounded<ClaimKind>();
     world.laptop.letGo = yield* Deferred.make<void>();
@@ -3865,6 +3875,35 @@ it.effect(
         );
         assert.notInclude(JSON.stringify(yield* missions.roster(mission.missionId)), brief);
         assert.notInclude(JSON.stringify(yield* turnContextOf(lead)), brief);
+      }),
+    );
+  },
+);
+
+it.effect(
+  "a member draft whose add waits on its machine is not asked for a brief when it lands",
+  () => {
+    const draft = ref(LAPTOP, "draft");
+    const world = makeWorld([lead, draft, laptopMember]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const { missionId } = yield* createOne;
+        world.laptop.mode = "offline";
+        assert.equal(
+          yield* missions.addMember({ missionId, member: draft, noBrief: true }),
+          "pending",
+        );
+        assert.equal(yield* missions.addMember({ missionId, member: laptopMember }), "pending");
+        world.laptop.mode = "up";
+        yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+        yield* world.untilAnswered("list");
+        assert.equal(yield* world.nextBriefCall, laptopMember.threadId);
+        assert.deepEqual(
+          world.laptop.briefCalls.map((call) => call.threadId),
+          [laptopMember.threadId],
+        );
       }),
     );
   },
