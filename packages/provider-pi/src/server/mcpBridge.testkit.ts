@@ -46,6 +46,11 @@ type AgentStartHook = (
   },
 ) => Promise<{ systemPrompt: string } | undefined> | { systemPrompt: string } | undefined;
 
+interface Deadline {
+  readonly ms: number;
+  readonly expire: () => void;
+}
+
 interface McpFixtureTool {
   readonly name: string;
   readonly description: string;
@@ -84,6 +89,9 @@ export async function loadMcpBridge(
   const tools: RegisteredTool[] = [];
   let registrations = 0;
   let listingFails = false;
+  // AbortSignal.timeout deadlines, which a test expires instead of waiting for them.
+  const deadlines = new Map<AbortSignal, Deadline>();
+  let reportHungListing: ((deadline: Deadline | undefined) => void) | undefined;
   let onListing: (() => void) | undefined;
   const userTools = new Set<RegisteredTool>();
   const requests: Array<{ readonly method: string; readonly params?: unknown }> = [];
@@ -129,7 +137,14 @@ export async function loadMcpBridge(
         T3_PI_RUNTIME_MODE: options.runtimeMode,
       },
     },
-    AbortSignal,
+    AbortSignal: {
+      timeout: (ms: number) => {
+        const controller = new AbortController();
+        const timedOut = new DOMException("The operation timed out.", "TimeoutError");
+        deadlines.set(controller.signal, { ms, expire: () => controller.abort(timedOut) });
+        return controller.signal;
+      },
+    },
     NodeCrypto,
     NodePath,
     PiCodingAgent: { VERSION: "version" in options ? options.version : "1.6.1" },
@@ -151,6 +166,13 @@ export async function loadMcpBridge(
       };
       requests.push(request);
       if (request.method === "tools/list") onListing?.();
+      if (request.method === "tools/list" && reportHungListing !== undefined) {
+        reportHungListing(transport.signal && deadlines.get(transport.signal));
+        reportHungListing = undefined;
+        return new Promise<Response>((_resolve, reject) =>
+          transport.signal?.addEventListener("abort", () => reject(transport.signal?.reason)),
+        );
+      }
       if (request.method === "tools/list" && listingFails) {
         return new Response("unavailable", { status: 503 });
       }
@@ -245,18 +267,22 @@ export async function loadMcpBridge(
     );
     return active.map((tool) => tool.name).filter((name) => !hidden.has(name));
   };
+  // Pi executes the tool calls of the message its message_end handlers return.
+  const calledToolName = (requestedName: string) => {
+    const message = { role: "assistant", content: [{ type: "toolCall", name: requestedName }] };
+    const messageEnd = handlers.get("message_end") as unknown as
+      | ((event: { message: typeof message }) => { message?: typeof message } | undefined)
+      | undefined;
+    return messageEnd?.({ message })?.message?.content[0]?.name ?? requestedName;
+  };
   return {
     handlers,
     tools,
     declaredTools,
     callableTools: () => callableTools().map((tool) => tool.name),
+    calledToolName,
     callModelTool: async (requestedName: string, args: Record<string, unknown>) => {
-      // Pi executes the tool calls of the message its message_end handlers return.
-      const message = { role: "assistant", content: [{ type: "toolCall", name: requestedName }] };
-      const messageEnd = handlers.get("message_end") as unknown as
-        | ((event: { message: typeof message }) => { message?: typeof message } | undefined)
-        | undefined;
-      const name = messageEnd?.({ message })?.message?.content[0]?.name ?? message.content[0]!.name;
+      const name = calledToolName(requestedName);
       const tool = modelTools().find((candidate) => candidate.name === name);
       if (tool === undefined) {
         return { content: [{ type: "text", text: `Tool ${name} not found` }], isError: true };
@@ -270,10 +296,15 @@ export async function loadMcpBridge(
     failListing: (fails: boolean) => {
       listingFails = fails;
     },
+    // Resolves with the deadline of the next tools/list, which hangs until it expires.
+    hangNextListing: () =>
+      new Promise<Deadline | undefined>((resolve) => {
+        reportHungListing = resolve;
+      }),
     duringListing: (action: () => void) => {
       onListing = action;
     },
-    registerUserTool: (name: string) => {
+    registerUserTool: (name: string, { active = true } = {}) => {
       const tool: RegisteredTool = {
         name,
         description: "A user extension's tool.",
@@ -282,7 +313,7 @@ export async function loadMcpBridge(
       };
       userTools.add(tool);
       tools.push(tool);
-      activeTools = [...activeTools, name];
+      if (active) activeTools = [...activeTools, name];
       return tool;
     },
     registrations: () => registrations,
