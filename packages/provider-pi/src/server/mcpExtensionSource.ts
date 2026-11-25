@@ -14,7 +14,7 @@ export const PI_T3_SERVICE_TIER_COMMAND = "t3-service-tier";
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
 export const PI_T3_MCP_EXTENSION_SOURCE = `\
-import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { stripFrontmatter, VERSION, type BeforeAgentStartEvent, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -396,6 +396,12 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // Tool exposure arrived with registerMcpServer in Pi 0.99. Keep the HTTP
   // bridge as the credential owner: mcp.json overrides native registrations.
   const supportsExposure = "registerMcpServer" in pi && typeof pi.registerMcpServer === "function";
+  // T3 lists the tools again before each run only on Pi 1.2 and later. Earlier Pi marks itself
+  // busy after before_agent_start, so a steer sent during the listing starts a second run and is
+  // dropped. Pi before 0.99 also cannot hide a tool: --tools re-activates it on every registration.
+  // On that Pi the catalog stays as the session first listed it.
+  const [major = 0, minor = 0] = VERSION.split(".").map(Number);
+  const refreshesCatalog = supportsExposure && (major > 1 || (major === 1 && minor >= 2));
   const directTools = new Set(["orchestrator_capabilities", "delegate_task", "task_status"]);
   const ALIAS_PREFIX = "mcp__t3_code__";
   let deferOptionalTools = supportsExposure;
@@ -421,7 +427,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     // model-only keeps it out of codemode; it hides its own declaration.
     const prefixes = supportsExposure ? ["mcp__t3-code__", ALIAS_PREFIX] : ["mcp__t3-code__"];
     // Pi cannot unregister a tool, so one T3 stopped listing is registered again as hidden,
-    // as Pi's own MCP extension does. Legacy Pi ignores exposure: the stub refuses the call.
+    // as Pi's own MCP extension does.
     const listed = new Set(catalog.map((tool) => tool.name));
     const withdrawn = new Set(
       registeredNames.filter((name) => !listed.has(name)).flatMap((name) => prefixes.map((prefix) => prefix + name)),
@@ -433,7 +439,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
         label: toolName,
         description: toolName + " is no longer available.",
         parameters: jsonSchemaToTypebox({ type: "object" }),
-        ...(supportsExposure ? { exposure: "hidden" } : {}),
+        exposure: "hidden",
         async execute() {
           return { content: [{ type: "text", text: \`Tool \${toolName} not found\` }], details: {}, isError: true };
         },
@@ -511,7 +517,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   const refreshCatalog = async () => {
     if (started === undefined) return;
     const next = await started
-      .then(() => client.listTools(AbortSignal.timeout(10_000)))
+      .then(() => client.listTools(AbortSignal.timeout(2_000)))
       .catch(() => catalog);
     if (JSON.stringify(next) === JSON.stringify(catalog)) return;
     catalog = next;
@@ -581,8 +587,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   });
 
   // Keep guidance in the system prompt so leading slash commands still expand.
-  pi.on("before_agent_start", async (event, ctx) => {
-    await refreshCatalog();
+  const startAgent = (event: BeforeAgentStartEvent, ctx: ExtensionContext) => {
     reconcileDiscovery(ctx);
     const instructions = ORCHESTRATION_INSTRUCTIONS + "\\n\\n" + PULL_REQUEST_LINKING_INSTRUCTIONS;
     const sections = event.systemPromptOptions?.sections;
@@ -592,6 +597,9 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       return undefined;
     }
     return { systemPrompt: event.systemPrompt + "\\n\\n" + instructions };
-  });
+  };
+  pi.on("before_agent_start", (event, ctx) =>
+    refreshesCatalog ? refreshCatalog().then(() => startAgent(event, ctx)) : startAgent(event, ctx),
+  );
 }
 `;

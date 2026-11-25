@@ -44,7 +44,15 @@ type AgentStartHook = (
     model?: { api: string };
     ui: { notify: (message: string, severity: string) => void };
   },
-) => Promise<{ systemPrompt: string } | undefined>;
+) => Promise<{ systemPrompt: string } | undefined> | { systemPrompt: string } | undefined;
+
+interface McpFixtureTool {
+  readonly name: string;
+  readonly description: string;
+  readonly annotations?: { readonly readOnlyHint: boolean };
+  readonly inputSchema: Record<string, unknown>;
+  readonly outputSchema: Record<string, unknown>;
+}
 
 function activatesOnRegistration(tool: RegisteredTool) {
   return (
@@ -63,6 +71,10 @@ export async function loadMcpBridge(
     readonly allowsTool?: (name: string) => boolean;
     readonly runtimeMode?: string;
     readonly inputSchema?: Record<string, unknown>;
+    readonly version?: string;
+    readonly extraTools?: ReadonlyArray<McpFixtureTool>;
+    // Pi 0.84.3 re-activates every registered name `--tools` selects, or else only new names.
+    readonly legacyRegistry?: { readonly tools?: ReadonlyArray<string> };
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
@@ -78,7 +90,7 @@ export async function loadMcpBridge(
     readonly signal: AbortSignal | undefined;
   }> = [];
   const servers: Array<{ readonly name: string; readonly config: Record<string, unknown> }> = [];
-  const catalog = [
+  const catalog: McpFixtureTool[] = [
     {
       name: "orchestrator_capabilities",
       description: "Discover available providers and models.",
@@ -96,6 +108,7 @@ export async function loadMcpBridge(
     inputSchema: options.inputSchema ?? { type: "object", properties: {} },
     outputSchema: { type: "object", properties: { count: { type: "number" } } },
   }));
+  catalog.push(...(options.extraTools ?? []));
   const source = NodeModule.stripTypeScriptTypes(
     PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
       "export default async function",
@@ -114,6 +127,7 @@ export async function loadMcpBridge(
     AbortSignal,
     NodeCrypto,
     NodePath,
+    VERSION: options.version ?? "1.6.1",
     Type: { Unsafe: (schema: unknown) => schema },
     fetch: async (
       url: string,
@@ -161,6 +175,16 @@ export async function loadMcpBridge(
           !activeTools.includes(tool.name)
         ) {
           activeTools = [...activeTools, tool.name];
+        }
+        if (options.legacyRegistry !== undefined) {
+          const selected = options.legacyRegistry.tools;
+          const reactivated =
+            selected === undefined
+              ? previous === undefined
+                ? [tool.name]
+                : []
+              : tools.map(({ name }) => name).filter((name) => selected.includes(name));
+          activeTools = [...new Set([...activeTools, ...reactivated])];
         }
       },
       getActiveTools: () => activeTools,

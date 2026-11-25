@@ -310,6 +310,66 @@ describe("Pi MCP tool exposure", () => {
     assert.include(bridge.declaredTools(), roster);
   });
 
+  it("does not list tools before the agent starts on Pi that is not busy yet, so a steer joins the run", async () => {
+    const bridge = await loadMcpBridge({ modern: true, version: "1.1.0" });
+    await bridge.handlers.get("session_start")?.({ systemPrompt: "" }, discoveryContext);
+    const requests = bridge.requests.length;
+    bridge.catalog.push(rosterTool);
+    const result = bridge.handlers.get("before_agent_start")?.(
+      { systemPrompt: "" },
+      discoveryContext,
+    );
+    assert.isFalse(typeof (result as { then?: unknown } | undefined)?.then === "function");
+    assert.equal(bridge.requests.length, requests);
+  });
+
+  const legacyNames = [
+    "orchestrator_capabilities",
+    "delegate_task",
+    "task_status",
+    "preview_snapshot",
+    "t3_mission_roster",
+  ].map((name) => "mcp__t3-code__" + name);
+
+  it.each([
+    {
+      name: "with --tools selecting a withdrawn tool",
+      legacyRegistry: { tools: legacyNames },
+      leadAtStart: true,
+      steps: ["demote", "promote", "demote"],
+    },
+    {
+      name: "after promote, demote and promote without --tools",
+      legacyRegistry: {},
+      leadAtStart: false,
+      steps: ["promote", "demote", "promote"],
+    },
+  ])("keeps the session's first catalog on Pi without exposure $name", async (input) => {
+    const bridge = await loadMcpBridge({
+      version: "0.84.3",
+      legacyRegistry: input.legacyRegistry,
+      extraTools: input.leadAtStart ? [rosterTool] : [],
+    });
+    const listings = () => bridge.requests.filter(({ method }) => method === "tools/list").length;
+    const agentStart = bridge.handlers.get("before_agent_start");
+    assert.isDefined(agentStart);
+    await agentStart({ systemPrompt: "" }, discoveryContext);
+    const declared = bridge.declaredTools();
+    const listed = listings();
+    for (const step of input.steps) {
+      if (step === "promote") bridge.catalog.push(rosterTool);
+      else bridge.catalog.pop();
+      await agentStart({ systemPrompt: "" }, discoveryContext);
+      assert.deepEqual(bridge.declaredTools(), declared, step);
+    }
+    for (const name of declared.filter((name) => name.startsWith("mcp__t3-code__"))) {
+      const calls = bridge.requests.length;
+      assert.isUndefined((await bridge.callModelTool(name, {})).isError, name);
+      assert.equal(bridge.requests.length, calls + 1, name);
+    }
+    assert.equal(listings(), listed);
+  });
+
   it("restores gateway declarations after model switches and older tree loadouts without excluded tools", async () => {
     const bridge = await loadMcpBridge({
       modern: true,
