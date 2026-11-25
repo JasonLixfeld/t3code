@@ -809,3 +809,32 @@ it.effect("a member here found at a start waiting on an approval wakes the lead 
     }),
   );
 });
+
+it.effect(
+  "a wake cut off by a stop goes to a new lead under its own command, with nothing new",
+  () => {
+    const world = makeWorld();
+    return withWakes(
+      world,
+      Effect.gen(function* () {
+        world.hooks.afterDispatch = () => {
+          world.hooks.afterDispatch = () => Effect.void;
+          world.set(lead, busy);
+          return Effect.die("the server stopped");
+        };
+        yield* world.run(first, "f1", "completed");
+        assert.equal((yield* Queue.take(world.woke)).threadId, lead);
+      }),
+      Effect.gen(function* () {
+        yield* world.leadRead;
+        yield* world.setLead(second, lead);
+        const wake = yield* Queue.take(world.woke);
+        assert.deepEqual(
+          [wake.threadId, wake.text],
+          [second, told(["member 1 on this machine finished its turn and is idle."])],
+        );
+        assert.notEqual(wake.commandId, world.sent[0]!.commandId);
+      }),
+    );
+  },
+);

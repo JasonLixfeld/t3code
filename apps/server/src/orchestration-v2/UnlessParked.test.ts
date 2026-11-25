@@ -26,11 +26,18 @@ import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { missionWakeCommand } from "../missions/MissionWakes.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
+/** What UnlessParked read as, each time the orchestrator asked this provider something. */
+const seen: Array<boolean> = [];
+const sees = <A>(answer: A) =>
+  Effect.map(Orchestrator.UnlessParked, (unlessParked) => {
+    seen.push(unlessParked);
+    return answer;
+  });
 const adapter = {
   instanceId,
   driver: ProviderDriverKind.make("codex"),
-  getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
-  planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+  getCapabilities: () => sees(CodexProviderCapabilitiesV2),
+  planSelectionTransition: () => sees({ type: "apply_on_next_turn" as const }),
   openSession: () => Effect.die("No provider process needed for a wake that is not sent"),
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 const layerDatabase = SqlitePersistence.layerMemory;
@@ -259,5 +266,26 @@ it.effect("a mission wake keeps the lead's snooze, as a delegated result does", 
       lead.messages.map((candidate) => candidate.text),
       ["Mission update: member 1 on this machine failed."],
     );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("what a wake's dispatch runs in turn never reads it as unless parked", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    yield* settledLead;
+    yield* orchestrator.dispatch({
+      type: "thread.unsettle",
+      commandId: CommandId.make("unsettle"),
+      threadId,
+      reason: "user",
+    });
+    seen.length = 0;
+    yield* orchestrator
+      .dispatch(wakeCommand("open"))
+      .pipe(Effect.provideService(Orchestrator.UnlessParked, true));
+    assert.lengthOf((yield* projections.getThreadProjection(threadId)).messages, 1);
+    assert.isNotEmpty(seen);
+    assert.notInclude(seen, true);
   }).pipe(Effect.provide(layerTest)),
 );

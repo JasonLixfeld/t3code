@@ -68,7 +68,9 @@ import * as Missions from "./Missions.ts";
 const HERE = EnvironmentId.make("env-here");
 const LAPTOP = EnvironmentId.make("env-laptop");
 const FENCED = EnvironmentId.make("env-fenced");
-const LINKS: ReadonlyArray<{ id: EnvironmentId; label: string; access: AuthMcpClientAccess }> = [
+const DESK = EnvironmentId.make("env-desk");
+/** A test may link one more machine, for itself only, before it makes its world. */
+const LINKS: Array<{ id: EnvironmentId; label: string; access: AuthMcpClientAccess }> = [
   { id: LAPTOP, label: "Laptop", access: "full-access" },
   { id: FENCED, label: "Fenced box", access: "auto" },
 ];
@@ -106,7 +108,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
      * `offline`: refuses to connect. `hanging`: never answers. `lostReply`: acts, then drops the
      * reply. `actsThenHangs`: acts, then never replies. `revoked`: answers HTTP 401 to the link.
      * `denies`: its tool refuses the call. `heldThenOffline`: answers this call once `letGo` is
-     * done, and is offline for every call after it.
+     * done, then is offline. `watchedOnly`: up only for calls made under `Watched`.
      */
     mode: "up" as
       | "up"
@@ -116,7 +118,8 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       | "actsThenHangs"
       | "revoked"
       | "denies"
-      | "heldThenOffline",
+      | "heldThenOffline"
+      | "watchedOnly",
     /** Answers `rename` as a build from before renames does: a refusal of the kind. */
     predatesRename: false,
     letGo: undefined as Deferred.Deferred<void> | undefined,
@@ -239,7 +242,8 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       readonly limits: DispatchModes;
     }) =>
       Effect.gen(function* () {
-        const mode = laptop.mode;
+        const mode =
+          laptop.mode === "watchedOnly" ? ((yield* Watched) ? "up" : "offline") : laptop.mode;
         laptop.calls.push(input.arguments.kind);
         if (input.arguments.kind === "join" || input.arguments.kind === "release") {
           laptop.limits.push(input.limits);
@@ -369,6 +373,8 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     beforeReleasesRead: Effect.void as Effect.Effect<void>,
     /** How many times a turn gave members numbers, which writes when one has none. */
     numberings: 0,
+    /** Runs before a mission's new lead is written, under the lock the write takes. */
+    beforeLeadWrite: Effect.void as Effect.Effect<void>,
     /** Runs after the lead renames a mission, before its claims follow. */
     afterMissionRenamed: Effect.void as Effect.Effect<void>,
     threadsOn,
@@ -390,6 +396,8 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
 
 /** Set around a turn's read of its context, so the store can tell its calls from others. */
 const InTurn = Context.Reference<boolean>("test/InTurn", { defaultValue: () => false });
+/** Set around the calls a test watches, so its hooks skip the reads the service makes alone. */
+const Watched = Context.Reference<boolean>("test/Watched", { defaultValue: () => false });
 
 /** Runs each session on a freshly started lead, over the same files and the same laptop. */
 const withMissions = <A, E>(
@@ -434,6 +442,10 @@ const withMissions = <A, E>(
                     if (inTurn) world.numberings += 1;
                     return real.numbersOf(...args);
                   }),
+                setLead: (input) =>
+                  Effect.suspend(() => world.beforeLeadWrite).pipe(
+                    Effect.andThen(real.setLead(input)),
+                  ),
                 renameMission: (input) =>
                   real
                     .renameMission(input)
@@ -2630,7 +2642,7 @@ it.effect(
         world.laptop.mode = "up";
         world.laptop.deniedKinds = ["join"];
         yield* sweepLaptop(world);
-        assert.isNotNull((yield* owed).adds[0]?.refusal);
+        assert.isString((yield* owed).adds[0]?.refusal);
 
         leadRuns(world);
         const elsewhere = yield* leadTool(world, "t3_mission_release", {
@@ -2646,7 +2658,7 @@ it.effect(
         leadRuns(world, { linkOrigin: desk });
         const fenced = yield* leadTool(world, "t3_mission_release", { threadRef: laptopMember });
         assert.include(fenced, "use this environment's links");
-        assert.isNotNull((yield* owed).adds[0]?.refusal);
+        assert.isString((yield* owed).adds[0]?.refusal);
       }),
     );
   },
@@ -2759,6 +2771,166 @@ it.effect("a turn reads its members' numbers and writes none", () => {
         ].join("\n"),
       });
       assert.equal(world.numberings, 0);
+    }),
+  );
+});
+
+it.effect(
+  "two adds that cross, each finishing a release of the other's mission, both finish",
+  () => {
+    LINKS.push({ id: DESK, label: "Desk", access: "full-access" });
+    const otherLead = ref(HERE, "other-lead");
+    const onLaptop = laptopMember;
+    const onDesk = ref(DESK, "desk-thread");
+    // The world's one peer answers for both machines, so the desk's thread is kept with it.
+    const world = makeWorld([lead, otherLead, onLaptop, ref(LAPTOP, onDesk.threadId)]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const { missionId: first } = yield* createOne;
+        const second = "bbbbbbbbbbbb";
+        yield* missions.create({ missionId: second, leadThreadId: otherLead.threadId });
+        // Each thread is in one mission, and its release from it waits for its machine.
+        yield* missions.addMember({ missionId: second, member: onLaptop });
+        yield* missions.addMember({ missionId: first, member: onDesk });
+        world.laptop.mode = "offline";
+        assert.equal(
+          yield* missions.releaseMember({ missionId: second, member: onLaptop }),
+          "pending",
+        );
+        assert.equal(
+          yield* missions.releaseMember({ missionId: first, member: onDesk }),
+          "pending",
+        );
+        // Up for the two adds only, so no sweep sends the releases before they do.
+        world.laptop.mode = "watchedOnly";
+        // Both adds read the releases they must finish before either sends one.
+        let arrived = 0;
+        const both = yield* Deferred.make<void>();
+        world.beforeReleasesRead = Effect.flatMap(Watched, (watched) => {
+          if (!watched) return Effect.void;
+          arrived += 1;
+          return arrived === 2 ? Deferred.succeed(both, undefined) : Deferred.await(both);
+        });
+        const adding = yield* Effect.forkChild(
+          Effect.all(
+            [
+              missions.addMember({ missionId: first, member: onLaptop }),
+              missions.addMember({ missionId: second, member: onDesk }),
+            ],
+            { concurrency: 2 },
+          ).pipe(Effect.provideService(Watched, true)),
+        );
+        assert.deepEqual(yield* Fiber.join(adding), ["joined", "joined"]);
+        assert.deepEqual(
+          (yield* laptopClaims(world)).map((claim) => [claim.threadId, claim.missionId]),
+          [
+            [onLaptop.threadId, first],
+            [onDesk.threadId, second],
+          ],
+        );
+      }),
+    ).pipe(Effect.ensuring(Effect.sync(() => LINKS.pop())));
+  },
+);
+
+it.effect("an archived lead's add waiting on the laptop is refused when it is sent again", () => {
+  const world = makeWorld([lead, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      yield* createOne;
+      leadRuns(world);
+      world.laptop.mode = "offline";
+      assert.include(
+        yield* leadTool(world, "t3_mission_add", { threadRef: laptopMember }),
+        '"pending"',
+      );
+      world.archive(lead);
+      world.laptop.mode = "up";
+      world.laptop.calls.length = 0;
+      yield* sweepLaptop(world);
+      assert.deepEqual(world.laptop.calls, ["list"]);
+      assert.include((yield* owed).adds[0]?.refusal, "lead thread is gone");
+      assert.equal(stateOf(yield* listed, laptopMember), "add-refused");
+    }),
+  );
+});
+
+it.effect("a wake waits for a lead change, which holds the mission's lock while it writes", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: localMember });
+      const writing = yield* Deferred.make<void>();
+      const hold = yield* Deferred.make<void>();
+      world.beforeLeadWrite = Effect.suspend(() => {
+        world.beforeLeadWrite = Effect.void;
+        return Deferred.succeed(writing, undefined).pipe(Effect.andThen(Deferred.await(hold)));
+      });
+      const changing = yield* Effect.forkChild(
+        missions.setLead({ missionId, lead: localMember, expectedLead: lead.threadId }),
+      );
+      yield* Deferred.await(writing);
+      // The wake starts while the new lead is being written: it may not read the mission yet.
+      const reading = yield* Deferred.make<void>();
+      world.beforeMissionsRead = Effect.flatMap(Watched, (watched) =>
+        watched ? Deferred.succeed(reading, undefined).pipe(Effect.asVoid) : Effect.void,
+      );
+      const waking = yield* Effect.forkChild(
+        missions
+          .withLead(missionId, (mission) => Effect.succeed(mission.leadThreadId))
+          .pipe(Effect.provideService(Watched, true)),
+        { startImmediately: true },
+      );
+      assert.isFalse(yield* Deferred.isDone(reading));
+      yield* Deferred.succeed(hold, undefined);
+      yield* Fiber.join(changing);
+      assert.equal(yield* Fiber.join(waking), localMember.threadId);
+    }),
+  );
+});
+
+it.effect("a lead handed on and back leaves each of them known as a former lead", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: localMember });
+      yield* missions.setLead({ missionId, lead: localMember, expectedLead: lead.threadId });
+      yield* missions.setLead({ missionId, lead, expectedLead: localMember.threadId });
+      // The thread that led only after the change is told it no longer leads.
+      assert.deepEqual(yield* turnContextOf(localMember), { role: "former-lead" });
+    }),
+  );
+});
+
+it.effect("a started thread released before its join landed is not joined by a replay", () => {
+  const world = makeWorld([lead, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      const started = { missionId, member: laptopMember };
+      world.laptop.mode = "offline";
+      assert.equal(yield* missions.joinStarted(started, lead.threadId), "pending");
+      world.laptop.mode = "up";
+      world.laptop.deniedKinds = ["join"];
+      yield* sweepLaptop(world);
+      assert.equal(stateOf(yield* listed, laptopMember), "add-refused");
+      // The user puts the refusal away, which releases the thread, and the laptop would now
+      // take the add, whose intent it never spent.
+      assert.equal(yield* missions.releaseMember(started), "released");
+      world.laptop.deniedKinds = [];
+      assert.isUndefined(yield* missions.joinStarted(started, lead.threadId));
+      assert.deepEqual(yield* laptopClaims(world), []);
     }),
   );
 });

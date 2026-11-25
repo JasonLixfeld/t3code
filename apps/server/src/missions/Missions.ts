@@ -667,20 +667,16 @@ const make = Effect.gen(function* () {
 
   /**
    * One pending write, with the reach of whoever asked for it, read now under its Mission's
-   * lock. `heldMission`: the caller holds that Mission's lock already. A refusal marks only it.
+   * lock. A refusal marks only it. Never call it holding a Mission's lock: no code holds two.
    */
   const sendPending = <A>(
     row: { readonly missionId: string; readonly actor?: ThreadId | undefined } & ScopedThreadRef,
     send: (reach: Reach) => Effect.Effect<A, MissionError | Unreachable>,
     refuse: (refusal: string) => Effect.Effect<void>,
-    heldMission?: string,
-  ) => {
-    const sent = Effect.flatMap(reachOf(row.missionId, row.actor, row), send);
-    return (row.missionId === heldMission ? sent : missionLocks.withLock(row.missionId, sent)).pipe(
-      Effect.asVoid,
-      Effect.catchTags({ MissionError: (error) => refuse(error.message) }),
-    );
-  };
+  ) =>
+    missionLocks
+      .withLock(row.missionId, Effect.flatMap(reachOf(row.missionId, row.actor, row), send))
+      .pipe(Effect.asVoid, Effect.catchTags({ MissionError: (error) => refuse(error.message) }));
 
   const refreshMachine = (environmentId: EnvironmentId) =>
     machineLocks.withLock(
@@ -1006,59 +1002,73 @@ const make = Effect.gen(function* () {
         return next;
       });
     yield* setSending(true);
+    // A release of this thread that still waits is finished first, under its own Mission's lock
+    // and with the reach of whoever asked for it, before this add takes its Mission's lock: no
+    // code holds two Mission locks, so two adds that cross cannot wait on each other. The join
+    // then makes a new claim, which that release cannot match if an earlier copy arrives.
+    const releaseWaiting = Effect.gen(function* () {
+      let answered = true;
+      for (const release of yield* store.pendingReleases) {
+        if (memberKey(release) !== memberKey(input.member) || release.refusal !== undefined) {
+          continue;
+        }
+        yield* sendPending(
+          release,
+          (reach) => sendRelease(release, reach),
+          (refusal) => store.refusePendingRelease(release, refusal),
+        ).pipe(
+          Effect.catchTags({
+            MissionMemberUnreachable: () => Effect.sync(() => (answered = false)),
+          }),
+        );
+      }
+      return answered;
+    });
     return yield* machineLocks
       .withLock(
         environmentId,
-        missionLocks.withLock(
-          mission.missionId,
-          Effect.gen(function* () {
-            // Read under the Mission's lock, right before anything is written or sent.
-            const reach = yield* reachOf(mission.missionId, asLead, input.member);
-            yield* checkHere(input.member, reach);
-            // A link this machine cannot use refuses the add here, before anything is written.
-            const linkId = environmentId === here ? "" : (yield* linkTo(environmentId)).linkId;
-            const add = {
-              ...input.member,
-              missionId: mission.missionId,
-              intentId,
-              linkId,
-              addedAt: DateTime.formatIso(yield* DateTime.now),
-              refusal: null,
-              ...(asLead === undefined ? {} : { actor: asLead }),
-            };
-            return yield* Effect.gen(function* () {
-              // Written before anything is sent. If this call is cut off, or the server stops,
-              // the add is still there to send again. This machine's own threads need none.
-              if (environmentId !== here) yield* store.setPendingAdd(add);
-              // A release of this thread that still waits is finished first, with the reach of
-              // whoever asked for it. The join then makes a new claim, which that release
-              // cannot match if an earlier copy arrives.
-              for (const release of yield* store.pendingReleases) {
-                if (
-                  memberKey(release) === memberKey(input.member) &&
-                  release.refusal === undefined
-                ) {
-                  yield* sendPending(
-                    release,
-                    (releaseReach) => sendRelease(release, releaseReach),
-                    (refusal) => store.refusePendingRelease(release, refusal),
-                    mission.missionId,
-                  );
+        Effect.flatMap(releaseWaiting, (released) =>
+          missionLocks.withLock(
+            mission.missionId,
+            Effect.gen(function* () {
+              // Read under the Mission's lock, right before anything is written or sent.
+              const reach = yield* reachOf(mission.missionId, asLead, input.member);
+              yield* checkHere(input.member, reach);
+              // A link this machine cannot use refuses the add here, before anything is written.
+              const linkId = environmentId === here ? "" : (yield* linkTo(environmentId)).linkId;
+              const add = {
+                ...input.member,
+                missionId: mission.missionId,
+                intentId,
+                linkId,
+                addedAt: DateTime.formatIso(yield* DateTime.now),
+                refusal: null,
+                ...(asLead === undefined ? {} : { actor: asLead }),
+              };
+              return yield* Effect.gen(function* () {
+                // Written before anything is sent. If this call is cut off, or the server stops,
+                // the add is still there to send again. This machine's own threads need none.
+                if (environmentId !== here) yield* store.setPendingAdd(add);
+                // A release its machine did not answer may yet land: the join waits with it.
+                if (!released) {
+                  return yield* new Unreachable({
+                    message: "The thread's machine did not answer.",
+                  });
                 }
-              }
-              return (yield* sendJoin(mission, add, reach))
-                ? ("joined" as const)
-                : ("spent" as const);
-            }).pipe(
-              Effect.catchTags({
-                // Nobody knows whether the join landed. The add stays, and is sent again, until
-                // the thread's machine says what became of it.
-                MissionMemberUnreachable: () => Effect.as(refresh, "pending" as const),
-                MissionError: (error) =>
-                  store.clearPendingAdd(add).pipe(Effect.andThen(Effect.fail(error))),
-              }),
-            );
-          }),
+                return (yield* sendJoin(mission, add, reach))
+                  ? ("joined" as const)
+                  : ("spent" as const);
+              }).pipe(
+                Effect.catchTags({
+                  // Nobody knows whether the join landed. The add stays, and is sent again, until
+                  // the thread's machine says what became of it.
+                  MissionMemberUnreachable: () => Effect.as(refresh, "pending" as const),
+                  MissionError: (error) =>
+                    store.clearPendingAdd(add).pipe(Effect.andThen(Effect.fail(error))),
+                }),
+              );
+            }),
+          ),
         ),
       )
       .pipe(Effect.ensuring(setSending(false).pipe(Effect.andThen(storeChanged))));

@@ -490,3 +490,19 @@ it.effect(
       assert.lengthOf(missions.calls, 1);
     }),
 );
+
+it.effect("a thread offered the lead tools that no longer leads is refused, not failed", () =>
+  Effect.gen(function* () {
+    const missions = makeMissions();
+    const handedOn = threadScope("member", true);
+    for (const [tool, args] of [
+      ["t3_mission_roster", {}],
+      ["t3_mission_add", { threadRef: { threadId: "x" } }],
+    ] as const) {
+      const answer = yield* callLeadTool(missions, handedOn, tool, args);
+      assert.include(answer.text, "This thread leads no mission.");
+      assert.include(answer.text, "invalid_request");
+    }
+    assert.deepEqual(missions.calls, []);
+  }),
+);
