@@ -731,8 +731,14 @@ function OpenCommandPaletteDialog(props: {
           addProjectCloneFlow.repository?.nameWithOwner ?? addProjectCloneFlow.remoteUrl,
         )
       : "";
+  // Add to mission searches only its missions, whose names may look like paths.
+  const inMissionAddView =
+    currentView?.groups[0]?.value.startsWith(MISSION_ADD_GROUP_PREFIX) === true;
   const canBrowsePaths =
-    browseEnvironmentId !== null && !isRemoteProjectRepositoryStep && newProjectFlow === null;
+    browseEnvironmentId !== null &&
+    !isRemoteProjectRepositoryStep &&
+    newProjectFlow === null &&
+    !inMissionAddView;
   const browsePath = getFilesystemBrowsePath(query, browseEnvironmentPlatform, canBrowsePaths);
   const isBrowsing = browsePath.isBrowsing;
   const browseDirectoryPath = browsePath.directoryPath;
@@ -1959,9 +1965,10 @@ function OpenCommandPaletteDialog(props: {
     addProjectEnvironmentId === null ? null : `sources:${addProjectEnvironmentId}`;
   // Undefined outside Add to mission; null once its thread no longer offers it.
   const openGroup = currentView?.groups[0];
-  const liveMissionAdd = openGroup?.value.startsWith(MISSION_ADD_GROUP_PREFIX)
-    ? liveMissionAddGroups(openGroup, currentThreadRef, currentThreadActionItems)
-    : undefined;
+  const liveMissionAdd =
+    inMissionAddView && openGroup
+      ? liveMissionAddGroups(openGroup, currentThreadRef, currentThreadActionItems)
+      : undefined;
   const missionAddGone = liveMissionAdd === null;
   const popViewStable = useStableCallback(popView);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- leaves Add to mission once its thread no longer offers it, so stale missions are never shown

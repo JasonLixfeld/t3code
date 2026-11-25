@@ -11,6 +11,9 @@ import { LAST_USED_PROJECT_STORAGE_KEY } from "../hooks/useHandleNewThread";
 import { removeLocalStorageItem } from "../hooks/useLocalStorage";
 import { makeThreadFixture } from "../test-fixtures";
 import type { Project, Thread } from "../types";
+import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
+import * as Option from "effect/Option";
+import { type EnvironmentPresentation, useEnvironments } from "../state/environments";
 import { CommandPalette } from "./CommandPalette";
 import { missionAddGroupValue } from "./CommandPaletteThreadActions";
 import { markMissionDraft } from "./sidebar/missionDraftStore";
@@ -55,6 +58,7 @@ vi.mock("../hooks/useHandleNewThread", async (original) => {
   };
 });
 vi.mock("./sidebar/missionDraftStore", { spy: true });
+vi.mock("../state/environments", { spy: true });
 vi.mock("./sidebar/MissionsSection", { spy: true });
 vi.mock("../hooks/useScratchProject", { spy: true });
 vi.mock("../state/entities", async (original) => {
@@ -800,5 +804,67 @@ describe("CommandPalette mission thread actions", () => {
     entities.activeThread = threadB;
     await relistMissions([...hosts]);
     await expect.element(page.getByText("Backspace", { exact: true })).not.toBeInTheDocument();
+  });
+
+  /** A connected machine, where a path-shaped query would otherwise browse its folders. */
+  const connectMachine = async () => {
+    const actual =
+      await vi.importActual<typeof import("../state/environments")>("../state/environments");
+    const machine: EnvironmentPresentation = {
+      environmentId: LOCAL,
+      label: "This machine",
+      displayUrl: null,
+      relayManaged: false,
+      entry: {
+        target: new PrimaryConnectionTarget({
+          environmentId: LOCAL,
+          label: "This machine",
+          httpBaseUrl: "http://localhost:3000",
+          wsBaseUrl: "ws://localhost:3000",
+        }),
+        profile: Option.none(),
+        enabled: true,
+      },
+      connection: { phase: "connected", error: null, traceId: null },
+      refusedRouteIds: [],
+      serverConfig: null,
+    };
+    vi.mocked(useEnvironments).mockImplementation(() => ({
+      ...actual.useEnvironments(),
+      environments: [machine],
+    }));
+    onTestFinished(() => vi.mocked(useEnvironments).mockRestore());
+  };
+  const searchAddToMission = async (query: string) => {
+    openCommandPalette();
+    await page.getByRole("option", { name: /Add to mission/ }).click();
+    await userEvent.fill(page.getByRole("combobox"), query);
+  };
+
+  it("finds a mission named like a path in Add to mission, and Enter adds it", async () => {
+    await connectMachine();
+    listMissions([hostWith(["~/work/cleanup", "Ship v2"])]);
+    const thread = openThread(true);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await searchAddToMission("~/work/");
+    await expect.element(page.getByRole("option", { name: /~\/work\/cleanup/ })).toBeVisible();
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(missionRun).toHaveBeenCalledWith("mission-add:local:ba9876543210", [
+        { environmentId: LOCAL, threadId: thread.id },
+      ]),
+    );
+  });
+
+  it("keeps Add to mission's reason row under a path-shaped query", async () => {
+    await connectMachine();
+    listMissions([hostWith(["~/work/cleanup"])]);
+    openThread(true);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await searchAddToMission("~/work/");
+    await expect.element(page.getByRole("option", { name: /~\/work\/cleanup/ })).toBeVisible();
+    await relistMissions([hostWith([])]);
+    await expect.element(page.getByText("No missions yet")).toBeVisible();
+    await expect.element(page.getByText("Backspace", { exact: true })).toBeVisible();
   });
 });
