@@ -48,6 +48,7 @@ import {
   memberDetail,
   memberStatusOf,
   missionBriefCommand,
+  sanitizeAndCapMemberBrief,
   missionPromptText,
   missionStatusText,
   type RosterMember,
@@ -123,20 +124,22 @@ export class Missions extends Context.Service<
       },
       asLead?: ThreadId,
     ) => Effect.Effect<"joined" | "pending", MissionError>;
-    readonly requestBriefHere: (input: {
+    readonly requestBriefHere: <E = never>(input: {
       readonly missionId: string;
       readonly threadId: ThreadId;
-      readonly askedAt: number;
-      readonly claimGeneration?: string | undefined;
-    }) => Effect.Effect<BriefRequestOutcome>;
+      readonly claimGeneration: string;
+      readonly mayChange?: ThreadAccess<E> | undefined;
+    }) => Effect.Effect<BriefRequestOutcome, E>;
     readonly briefAnswer: (
       threadId: ThreadId,
       generation: string,
     ) => Effect.Effect<{ readonly text: string | null } | undefined>;
-    readonly briefChanges: Stream.Stream<{
-      readonly ask: BriefAsk;
-      readonly state: "asked" | "told";
-    }>;
+    readonly briefRequestOpen: (threadId: ThreadId) => Effect.Effect<boolean>;
+    /** The brief a member here sends its lead, once, for the request made under its claim. */
+    readonly submitBrief: (threadId: ThreadId, text: string) => Effect.Effect<void, MissionError>;
+    readonly briefChanges: Stream.Stream<BriefChange>;
+    /** Sends each request a stop cut off between its join and its send. */
+    readonly sendUnsentBriefAsks: Effect.Effect<void>;
     /** Leaves the release pending when the member's machine cannot be reached. */
     readonly releaseMember: (
       input: { readonly missionId: string; readonly member: ScopedThreadRef },
@@ -175,6 +178,7 @@ export class Missions extends Context.Service<
       readonly missionId: string;
       readonly ref: ScopedThreadRef;
       readonly detail: MemberDetail;
+      readonly generation: string;
     }>;
     /**
      * A thread its lead started joins the lead's Mission, once: a replayed start that returns it
@@ -209,6 +213,9 @@ interface Reach {
 const denied = (message: string) => new MissionError({ message, reason: "denied" });
 
 export type BriefRequestOutcome = "asked" | "empty" | "parked";
+type BriefChange =
+  | { readonly state: "asked"; readonly ask: BriefAsk }
+  | { readonly state: "told"; readonly missionId: string };
 
 /** The user's own reach, which the lead machine's bookkeeping calls go out with. */
 const USER_REACH: Reach = { limits: { runtimeMode: "full-access", interactionMode: "default" } };
@@ -227,6 +234,7 @@ type ClaimCall =
       readonly missionId: string;
       readonly name: string;
       readonly intentId: string;
+      readonly briefAsk?: { readonly actor?: ThreadId | undefined };
     }
   | {
       readonly kind: "release";
@@ -314,12 +322,10 @@ const make = Effect.gen(function* () {
     readonly missionId: string;
     readonly ref: ScopedThreadRef;
     readonly detail: MemberDetail;
+    readonly generation: string;
   }>();
   const leadChanged = yield* PubSub.unbounded<string>();
-  const briefChanged = yield* PubSub.unbounded<{
-    readonly ask: BriefAsk;
-    readonly state: "asked" | "told";
-  }>();
+  const briefChanged = yield* PubSub.unbounded<BriefChange>();
   // Held across a lead change, a delete, and the wake that names a Mission's lead.
   const missionLocks = yield* KeyedLock.make<string>();
 
@@ -654,6 +660,9 @@ const make = Effect.gen(function* () {
         missionId: mission.missionId,
         name,
         intentId: add.intentId,
+        ...(add.environmentId === here && add.noBrief !== true
+          ? { briefAsk: { actor: add.actor } }
+          : {}),
       },
       reach,
     );
@@ -772,19 +781,7 @@ const make = Effect.gen(function* () {
             }
             yield* sendPending(
               add,
-              (reach) =>
-                sendJoin(mission, add, reach).pipe(
-                  Effect.tap((joined) =>
-                    joined && add.noBrief !== true
-                      ? askBrief(mission.missionId, add).pipe(
-                          Effect.catchCause((cause) =>
-                            Effect.logWarning("A joined member was not asked for a brief", cause),
-                          ),
-                          Effect.forkIn(background),
-                        )
-                      : Effect.void,
-                  ),
-                ),
+              (reach) => sendJoin(mission, add, reach),
               (refusal) => store.setPendingAdd({ ...add, refusal }),
             );
           }
@@ -906,6 +903,7 @@ const make = Effect.gen(function* () {
         missionId: claim.missionId,
         ref: { environmentId, threadId: claim.threadId },
         detail: claim.detail!,
+        generation: claim.generation,
       });
     }
   });
@@ -1036,6 +1034,7 @@ const make = Effect.gen(function* () {
       concurrency: "unbounded",
       discard: true,
     });
+    yield* sendBriefAsks(() => true).pipe(Effect.forkIn(background));
     // Links, reachability and lead threads change outside the store.
     yield* publish;
   }).pipe(
@@ -1244,11 +1243,11 @@ const make = Effect.gen(function* () {
       .pipe(Effect.ensuring(setSending(false).pipe(Effect.andThen(storeChanged))));
   });
 
-  const requestBriefHere = Effect.fn("Missions.requestBriefHere")(function* (input: {
+  const requestBriefHere = Effect.fn("Missions.requestBriefHere")(function* <E>(input: {
     readonly missionId: string;
     readonly threadId: ThreadId;
-    readonly askedAt: number;
-    readonly claimGeneration?: string | undefined;
+    readonly claimGeneration: string;
+    readonly mayChange?: ThreadAccess<E> | undefined;
   }) {
     const shell = yield* threads
       .getThreadShell(input.threadId)
@@ -1263,54 +1262,100 @@ const make = Effect.gen(function* () {
     ) {
       return "parked" as const;
     }
-    if (input.claimGeneration !== undefined) {
-      yield* store.briefRequested(input.threadId, input.missionId, input.claimGeneration);
-    }
-    return yield* threads.dispatch(missionBriefCommand(input)).pipe(
+    if (input.mayChange !== undefined) yield* input.mayChange(shell);
+    yield* store.briefRequested(input.threadId, input.missionId, input.claimGeneration);
+    const requestId = yield* random.uuidV4().pipe(Effect.orDie);
+    const sent = yield* threads.dispatch(missionBriefCommand({ ...input, requestId })).pipe(
       Effect.provideService(Orchestrator.UnlessParked, true),
-      Effect.as("asked" as const),
+      Effect.map((result) => result.storedEvents.length > 0),
       Effect.catch((error) =>
-        Effect.logWarning("A mission brief request was not sent", error).pipe(
-          Effect.as("parked" as const),
-        ),
+        Effect.logWarning("A mission brief request was not sent", error).pipe(Effect.as(false)),
       ),
     );
+    if (sent) return "asked" as const;
+    yield* store.withdrawBriefRequest(input.threadId, input.claimGeneration);
+    return "parked" as const;
   });
 
-  const askBrief = Effect.fn("Missions.askBrief")(function* (
-    missionId: string,
-    member: ScopedThreadRef,
+  const briefOnMember = Effect.fn("Missions.briefOnMember")(function* (
+    ask: BriefAsk,
+    reach: Reach,
   ) {
-    const ask: BriefAsk = { missionId, ...member, askedAt: yield* Clock.currentTimeMillis };
-    if (!(yield* store.recordBriefAskIfNew(ask))) return;
-    const outcome: BriefRequestOutcome | "unanswered" =
-      member.environmentId === here
-        ? yield* requestBriefHere({ missionId, threadId: member.threadId, askedAt: ask.askedAt })
-        : yield* peers
-            .call({
-              environmentId: member.environmentId,
-              tool: "t3_mission_tag",
-              arguments: {
-                kind: "brief",
-                threadId: member.threadId,
-                missionId,
-                askedAt: ask.askedAt,
-              },
-              limits: USER_REACH.limits,
-              success: MissionClaimResult,
-            })
-            .pipe(
-              Effect.timeoutOption(MEMBER_CALL_DEADLINE),
-              Effect.map((answered) =>
-                Option.isSome(answered) ? (answered.value.brief ?? "unanswered") : "unanswered",
-              ),
-              Effect.orElseSucceed(() => "unanswered" as const),
-            );
-    if (outcome === "empty") return yield* store.dropBrief(ask);
-    if (outcome === "asked")
-      return yield* PubSub.publish(briefChanged, { ask, state: "asked" as const });
-    if (yield* store.recordJoinedUpdateForOpenAsk(ask, null)) {
-      yield* PubSub.publish(briefChanged, { ask, state: "told" as const });
+    if (ask.environmentId === here) {
+      return yield* requestBriefHere({
+        missionId: ask.missionId,
+        threadId: ask.threadId,
+        claimGeneration: ask.generation,
+        mayChange: reach.mayChange,
+      });
+    }
+    const answered = yield* peers
+      .call({
+        environmentId: ask.environmentId,
+        tool: "t3_mission_tag",
+        arguments: { kind: "brief", threadId: ask.threadId, missionId: ask.missionId },
+        limits: reach.limits,
+        success: MissionClaimResult,
+      })
+      .pipe(Effect.timeoutOption(MEMBER_CALL_DEADLINE), Effect.result);
+    // A machine that did not answer may have sent it: its list can still bring the brief.
+    if (Result.isFailure(answered)) {
+      return answered.failure.code === "orchestration_error" ||
+        answered.failure.message === PeerMcpClient.LINK_NOT_ACCEPTED
+        ? ("unanswered" as const)
+        : ("parked" as const);
+    }
+    return Option.isNone(answered.success)
+      ? ("unanswered" as const)
+      : (answered.success.value.brief ?? ("parked" as const));
+  });
+
+  /** Sends the request of an ask its join wrote, once, with the reach of whoever added it. */
+  const sendBriefAsk = Effect.fn("Missions.sendBriefAsk")(function* (ask: BriefAsk) {
+    const sent = { ...ask, askedAt: yield* Clock.currentTimeMillis };
+    const outcome = yield* missionLocks
+      .withLock(
+        ask.missionId,
+        Effect.gen(function* () {
+          const reach = yield* reachOf(ask.missionId, ask.actor, ask);
+          if (!(yield* store.markBriefAskSent(ask, sent.askedAt))) return undefined;
+          return yield* briefOnMember(sent, reach);
+        }),
+      )
+      .pipe(Effect.catchTags({ MissionError: () => Effect.succeed("parked" as const) }));
+    if (outcome === undefined) return;
+    if (outcome === "empty") return yield* store.dropBrief(sent);
+    if (outcome !== "parked") {
+      return yield* PubSub.publish(briefChanged, { state: "asked", ask: sent });
+    }
+    if (yield* store.recordJoinedUpdateForOpenAsk(sent, null)) {
+      yield* PubSub.publish(briefChanged, { state: "told", missionId: ask.missionId });
+    }
+  });
+
+  const sendBriefAsks = (matches: (ask: BriefAsk) => boolean) =>
+    Effect.flatMap(store.briefAsks, (asks) =>
+      Effect.forEach(
+        asks.filter((ask) => ask.askedAt === null && matches(ask)),
+        sendBriefAsk,
+        { discard: true },
+      ),
+    ).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("A joined member was not asked for a brief", cause),
+      ),
+    );
+
+  const submitBrief = Effect.fn("Missions.submitBrief")(function* (
+    threadId: ThreadId,
+    text: string,
+  ) {
+    const submitted = yield* store.submitBrief(threadId, sanitizeAndCapMemberBrief(text));
+    if (submitted === undefined) {
+      return yield* fail("This thread has no brief to send: none was asked of it, or it sent it.");
+    }
+    if (submitted.told) {
+      yield* PubSub.publish(briefChanged, { state: "told", missionId: submitted.missionId });
     }
   });
 
@@ -1325,11 +1370,9 @@ const make = Effect.gen(function* () {
     const added = yield* addWithIntent(input, asLead, yield* random.uuidV4().pipe(Effect.orDie));
     // A new intent was never spent, so only a replayed start meets that answer.
     if (added === "spent") return yield* fail("That thread left this mission.");
-    if (added === "joined" && input.noBrief !== true) {
-      yield* askBrief(input.missionId, input.member).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("A joined member was not asked for a brief", cause),
-        ),
+    if (added === "joined") {
+      yield* sendBriefAsks(
+        (ask) => ask.missionId === input.missionId && memberKey(ask) === memberKey(input.member),
       );
     }
     return added;
@@ -1669,7 +1712,7 @@ const make = Effect.gen(function* () {
       if (held === true || asked) return undefined;
     }
     // The same add as the first time: a machine that spent it, as the member left since, says so.
-    const added = yield* addWithIntent(input, asLead, started.intentId);
+    const added = yield* addWithIntent({ ...input, noBrief: true }, asLead, started.intentId);
     return added === "spent" ? undefined : added;
   });
 
@@ -1691,6 +1734,9 @@ const make = Effect.gen(function* () {
     leadChanges: Stream.fromPubSub(leadChanged),
     briefChanges: Stream.fromPubSub(briefChanged),
     briefAnswer: store.briefAnswer,
+    briefRequestOpen: store.briefRequestOpen,
+    sendUnsentBriefAsks: sendBriefAsks(() => true),
+    submitBrief,
     requestBriefHere,
     ledBy,
     roster,

@@ -390,6 +390,10 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       limited.thread !== undefined &&
       Option.isSome(missions) &&
       (yield* missions.value.ledBy(limited.thread.threadId)) !== undefined;
+    const missionBriefAsked =
+      limited.thread !== undefined &&
+      Option.isSome(missions) &&
+      (yield* missions.value.briefRequestOpen(limited.thread.threadId));
     return {
       ...limited,
       linkedEnvironments,
@@ -397,6 +401,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       workflows,
       origin,
       missionLead,
+      missionBriefAsked,
       ...(forge === undefined ? {} : { forge }),
     };
   });

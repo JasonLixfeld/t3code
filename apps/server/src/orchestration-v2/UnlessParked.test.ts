@@ -24,11 +24,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { missionWakeCommand } from "../missions/MissionWakes.ts";
-import {
-  briefMessageId,
-  briefRequestText,
-  missionBriefCommand,
-} from "../missions/missionStatus.ts";
+import { briefRequestText, missionBriefCommand } from "../missions/missionStatus.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 /** What UnlessParked read as, each time the orchestrator asked this provider something. */
@@ -295,7 +291,7 @@ it.effect("what a wake's dispatch runs in turn never reads it as unless parked",
   }).pipe(Effect.provide(layerTest)),
 );
 
-const briefRequest = missionBriefCommand({ missionId: "0123456789ab", threadId, askedAt: 1_000 });
+const briefRequest = missionBriefCommand({ missionId: "0123456789ab", threadId, requestId: "r1" });
 
 it.effect("a member's brief request keeps its snooze, as a mission wake does", () =>
   Effect.gen(function* () {
@@ -351,11 +347,33 @@ it.effect("a busy member's brief request waits for the run under way", () =>
     const member = yield* projections.getThreadProjection(threadId);
     assert.deepEqual(
       member.runs.map((run) => run.userMessageId),
-      [MessageId.make("busy"), MessageId.make(briefMessageId("0123456789ab", 1_000))],
+      [MessageId.make("busy"), briefRequest.messageId],
     );
     assert.deepEqual(
       member.runs.map((run) => run.status),
       ["starting", "queued"],
     );
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "a brief request to a parked member stores nothing, which its sender reads as parked",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* settledLead;
+      const parked = yield* orchestrator
+        .dispatch(briefRequest)
+        .pipe(Effect.provideService(Orchestrator.UnlessParked, true));
+      assert.deepEqual(parked.storedEvents, []);
+      yield* orchestrator.dispatch({
+        type: "thread.unsettle",
+        commandId: CommandId.make("unsettle"),
+        threadId,
+        reason: "user",
+      });
+      const sent = yield* orchestrator
+        .dispatch(missionBriefCommand({ missionId: "0123456789ab", threadId, requestId: "r2" }))
+        .pipe(Effect.provideService(Orchestrator.UnlessParked, true));
+      assert.isAbove(sent.storedEvents.length, 0);
+    }).pipe(Effect.provide(layerTest)),
 );

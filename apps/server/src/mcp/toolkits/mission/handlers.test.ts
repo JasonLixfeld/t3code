@@ -3,7 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
   EnvironmentId,
-  type MissionError,
+  MissionError,
   type OrchestrationProjectShell,
   ProviderInstanceId,
   ThreadId,
@@ -258,9 +258,17 @@ it.effect("a link's lead asks its own member here for a brief, and reads the ans
     const asked: Array<unknown> = [];
     let generation = "";
     const missions = {
-      requestBriefHere: (input: unknown) =>
+      requestBriefHere: (input: {
+        readonly missionId: string;
+        readonly threadId: ThreadId;
+        readonly claimGeneration: string;
+      }) =>
         Effect.sync(() => {
-          asked.push(input);
+          asked.push({
+            missionId: input.missionId,
+            threadId: input.threadId,
+            claimGeneration: input.claimGeneration,
+          });
           return "asked" as const;
         }),
       briefAnswer: (_threadId: ThreadId, under: string) =>
@@ -280,14 +288,14 @@ it.effect("a link's lead asks its own member here for a brief, and reads the ans
             }),
           ),
         );
-    const ask = { kind: "brief", threadId: userThread, missionId: SHIP, askedAt: 7 };
+    const ask = { kind: "brief", threadId: userThread, missionId: SHIP };
     const { answer } = yield* callOnce(linkedClient("full-access"), ask, {
       before: joinFirst,
       missions,
     });
     assert.deepEqual(decodeTagAnswer(JSON.parse(answer)), { claims: [], brief: "asked" });
     assert.deepEqual(asked, [
-      { missionId: SHIP, threadId: userThread, askedAt: 7, claimGeneration: generation },
+      { missionId: SHIP, threadId: userThread, claimGeneration: generation },
     ]);
     const refused = yield* callOnce(linkedClient("full-access"), ask, { missions });
     assert.include(refused.answer, "That thread is not in this mission.");
@@ -467,10 +475,12 @@ const leadHere = {
 };
 
 it.effect(
-  "over /mcp, only a linked environment's session lists t3_mission_tag, and only a lead the lead tools",
+  "over /mcp, only a linked environment's session lists t3_mission_tag, only a lead the lead tools, and only an asked member t3_mission_brief",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
+        let briefAsked = false;
+        const briefsSent: Array<[ThreadId, string]> = [];
         const settingsContext = yield* Layer.build(ServerSettings.layerTest());
         // On, as on any machine that links: the tool must still stay away from agents.
         yield* Context.get(settingsContext, ServerSettings.ServerSettingsService).updateSettings({
@@ -497,6 +507,16 @@ it.effect(
                       ? ({ missionId: SHIP } as never)
                       : undefined,
                   ),
+                briefRequestOpen: (threadId) =>
+                  Effect.sync(() => briefAsked && threadId === agentHere.thread.threadId),
+                submitBrief: (threadId, text) =>
+                  briefAsked
+                    ? Effect.sync(() => {
+                        briefsSent.push([threadId, text]);
+                      })
+                    : Effect.fail(
+                        new MissionError({ message: "This thread has no brief to send." }),
+                      ),
               }),
             ),
           ),
@@ -596,6 +616,22 @@ it.effect(
           arguments: {},
         });
         assert.include(JSON.stringify(refused), "Tool 't3_mission_roster' not found");
+
+        assert.notInclude(yield* listed("agentToken"), "t3_mission_brief");
+        briefAsked = true;
+        assert.include(yield* listed("agentToken"), "t3_mission_brief");
+        for (const token of ["leadToken", "linkToken", "cliToken"]) {
+          assert.notInclude(yield* listed(token), "t3_mission_brief");
+        }
+        const brief = { name: "t3_mission_brief", arguments: { text: "Goal: ship." } };
+        assert.include(JSON.stringify(yield* rpc("agentToken", "tools/call", brief)), "sent");
+        assert.deepEqual(briefsSent, [[agentHere.thread.threadId, "Goal: ship."]]);
+        briefAsked = false;
+        assert.notInclude(yield* listed("agentToken"), "t3_mission_brief");
+        assert.include(
+          JSON.stringify(yield* rpc("agentToken", "tools/call", brief)),
+          "Tool 't3_mission_brief' not found",
+        );
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

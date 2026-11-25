@@ -474,6 +474,7 @@ const THREAD_ONLY = new Set<unknown>([
   McpInvocationContext.hiddenFromOutsideClients,
   McpInvocationContext.hiddenWithoutBackgroundWait,
   McpInvocationContext.hiddenUnlessMissionLead,
+  McpInvocationContext.hiddenUnlessBriefAsked,
 ]);
 
 /**

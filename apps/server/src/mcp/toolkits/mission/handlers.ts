@@ -181,7 +181,6 @@ export const layer = McpToolAccess.toLayer(
             if (input.kind === "brief") {
               const threadId = yield* needs(input.threadId, "threadId");
               const missionId = yield* needs(input.missionId, "missionId");
-              const askedAt = yield* needs(input.askedAt, "askedAt");
               const held = (yield* claims.list(owner)).find(
                 (claim) => claim.threadId === threadId && claim.missionId === missionId,
               );
@@ -193,8 +192,8 @@ export const layer = McpToolAccess.toLayer(
                 brief: yield* missions.value.requestBriefHere({
                   missionId,
                   threadId,
-                  askedAt,
                   claimGeneration: held.generation,
+                  mayChange,
                 }),
               };
             }
@@ -278,6 +277,17 @@ export const layer = McpToolAccess.toLayer(
           return {
             state: yield* missions.addMember({ missionId: mission.missionId, member }, lead),
           };
+        }).pipe(Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) })),
+      ),
+      t3_mission_brief: McpToolAccess.actsAsCaller((input) =>
+        Effect.gen(function* () {
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const caller = yield* McpInvocationContext.requireThreadScope(scope, "This mission tool");
+          if (Option.isNone(missions)) {
+            return yield* new MissionError({ message: "This thread has no brief to send." });
+          }
+          yield* missions.value.submitBrief(caller.thread.threadId, input.text);
+          return { sent: true as const };
         }).pipe(Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) })),
       ),
       t3_mission_release: McpToolAccess.actsAsCaller((input) =>

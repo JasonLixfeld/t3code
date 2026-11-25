@@ -170,6 +170,8 @@ export interface McpInvocationScope {
   readonly forge?: boolean;
   /** The calling thread leads a mission here; `/mcp` reads it per request. */
   readonly missionLead?: boolean;
+  /** The calling thread was asked for a brief it has not sent; `/mcp` reads it per request. */
+  readonly missionBriefAsked?: boolean;
 }
 
 /**
@@ -257,6 +259,12 @@ export const hiddenUnlessMissionLead = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.thread !== undefined && scope.missionLead === true;
+};
+
+export const hiddenUnlessBriefAsked = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.thread !== undefined && scope.missionBriefAsked === true;
 };
 
 /** `McpSchema.EnabledWhen` for tools that act on the thread's forge, hidden where it has none. */

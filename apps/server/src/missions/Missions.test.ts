@@ -6,6 +6,7 @@ import {
   type AuthMcpClientAccess,
   CommandId,
   EnvironmentId,
+  EventId,
   type Mission,
   type OrchestrationV2Command,
   type OrchestrationV2ThreadShell,
@@ -52,6 +53,7 @@ import { MissionToolkit } from "../mcp/toolkits/mission/tools.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
@@ -71,7 +73,6 @@ import {
   briefRequestText,
   type MemberDetail,
   memberStatusOf,
-  missionBriefCommand,
   missionPromptText,
   withinWorkspaceRoom,
 } from "./missionStatus.ts";
@@ -128,6 +129,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   const activity = new Map<string, Record<string, unknown>>();
   const dispatched: Array<string> = [];
   const sent: Array<Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>> = [];
+  const parkAtDispatch = new Set<string>();
   const workspaces = new Map<string, MemberWorkspace | "pending">();
   const workspacesLayer = Layer.mock(MemberWorkspaces)({
     cached: (shell) =>
@@ -166,8 +168,13 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     linkedAt: "2026-01-01T00:00:00.000Z",
     /** Every call this lead made to the laptop, in order. */
     calls: [] as Array<ClaimKind>,
-    briefCalls: [] as Array<{ readonly threadId: string; readonly missionId: string }>,
+    briefCalls: [] as Array<{
+      readonly threadId: string;
+      readonly missionId: string;
+      readonly limits: DispatchModes;
+    }>,
     predatesBriefs: false,
+    briefHangs: false,
     briefs: new Map<string, string>(),
     /** The modes each join and release to the laptop was sent with, in order. */
     limits: [] as Array<unknown>,
@@ -240,11 +247,29 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
           ),
         ),
       dispatch: (command) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           dispatched.push(command.type);
           if (command.type === "message.dispatch") {
+            if ((yield* Orchestrator.UnlessParked) && parkAtDispatch.has(command.threadId)) {
+              return { sequence: sent.length, storedEvents: [] };
+            }
             sent.push(command);
-            return { sequence: sent.length, storedEvents: [] };
+            return {
+              sequence: sent.length,
+              storedEvents: [
+                {
+                  sequence: sent.length,
+                  commandId: command.commandId,
+                  event: {
+                    id: EventId.make(`event:${command.commandId}`),
+                    type: "thread.visit-recorded" as const,
+                    threadId: command.threadId,
+                    occurredAt: DateTime.makeUnsafe(0),
+                    payload: { lastVisitedAt: null },
+                  },
+                },
+              ],
+            };
           }
           if (command.type !== "thread.tag.set") throw new Error(`unexpected ${command.type}`);
           const current = tags.get(keyOf(ref(environmentId, command.threadId)))!;
@@ -344,10 +369,12 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
           laptop.briefCalls.push({
             threadId: asked.value.threadId,
             missionId: asked.value.missionId,
+            limits: input.limits,
           });
           if (laptop.briefsStarted !== undefined) {
             yield* Queue.offer(laptop.briefsStarted, asked.value.threadId);
           }
+          if (laptop.briefHangs) return yield* Effect.never;
           if (laptop.predatesBriefs || mode !== "up") {
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
@@ -507,6 +534,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     numberings: 0,
     dispatched,
     sent,
+    parkAtDispatch,
     workspaces,
     workspacesLayer,
     /** Runs before a mission's new lead is written, under the lock the write takes. */
@@ -2834,6 +2862,7 @@ it.effect(
         // The lead is handed on, so its releases are refused when the laptop is back.
         yield* missions.setLead({ missionId, lead: localMember, expectedLead: lead.threadId });
         world.laptop.mode = "up";
+        yield* openSidebar;
         yield* sweepLaptop(world);
         const shown = (yield* listed).missions[0]?.members.filter(
           (member) => member.state === "release-refused",
@@ -3761,8 +3790,11 @@ const briefTold = Effect.flatMap(MissionStore.MissionStore, (store) =>
   ),
 );
 
+const briefRequestIds = (world: ReturnType<typeof makeWorld>) =>
+  world.sent.map((command) => command.messageId);
+
 it.effect(
-  "a thread with work of its own is asked to brief once it joins, by its user or the lead, once",
+  "a thread with work of its own is asked once it joins, by its user or the lead, with a request of its own",
   () => {
     const other = ref(HERE, "other");
     const draft = ref(HERE, "draft");
@@ -3776,26 +3808,37 @@ it.effect(
         const missions = yield* Missions.Missions;
         const store = yield* MissionStore.MissionStore;
         const missionId = (yield* createOne).missionId;
-        const askedAt = yield* Clock.currentTimeMillis;
         yield* missions.addMember({ missionId, member: localMember });
-        assert.deepEqual(world.sent, [
-          missionBriefCommand({ missionId, threadId: localMember.threadId, askedAt }),
-        ]);
-        assert.equal(world.sent[0]?.text, briefRequestText(missionId));
         yield* missions.addMember({ missionId, member: other }, lead.threadId);
+        const [first, second] = world.sent;
+        assert.equal(first?.text, briefRequestText(missionId));
+        assert.include(first?.text, "Call t3_mission_brief");
+        assert.deepEqual(first?.notification?.source, { kind: "system" });
+        assert.deepEqual(first?.dispatchMode, { type: "queue_after_active" });
         assert.deepEqual(
           world.sent.map((command) => command.threadId),
           [localMember.threadId, other.threadId],
         );
+        assert.include(String(first?.messageId), localMember.threadId);
+        assert.notEqual(first?.messageId, second?.messageId);
+        assert.equal(new Set(briefRequestIds(world)).size, 2);
         yield* missions.releaseMember({ missionId, member: localMember });
         yield* missions.addMember({ missionId, member: localMember });
         yield* missions.addMember({ missionId, member: draft, noBrief: true });
         yield* missions.joinStarted({ missionId, member: started }, lead.threadId);
         yield* missions.addMember({ missionId, member: fresh });
-        assert.lengthOf(world.sent, 2);
+        yield* missions.addMember({ missionId, member: lead });
         assert.deepEqual(
-          (yield* store.briefAsks).map((ask) => ask.threadId),
-          [localMember.threadId, other.threadId],
+          world.sent.map((command) => command.threadId),
+          [localMember.threadId, other.threadId, localMember.threadId],
+        );
+        assert.equal(new Set(briefRequestIds(world)).size, 3);
+        assert.deepEqual(
+          (yield* store.briefAsks).map((ask) => [ask.threadId, ask.actor ?? "user"]),
+          [
+            [other.threadId, lead.threadId],
+            [localMember.threadId, "user"],
+          ],
         );
       }),
     );
@@ -3803,45 +3846,89 @@ it.effect(
 );
 
 it.effect(
-  "a settled or archived member is not asked, and the lead hears at once it sent no brief",
+  "a member parked before its request lands, or settled already, gives the lead its fallback at once",
   () => {
-    const world = makeWorld([lead, localMember]);
-    world.shell(localMember, { settledAt: "2026-01-02T00:00:00.000Z" });
-    return withMissions(
-      world,
-      Effect.gen(function* () {
-        const missions = yield* Missions.Missions;
-        yield* createOne;
-        yield* missions.addMember({ missionId: "0123456789ab", member: localMember });
-        assert.deepEqual(world.sent, []);
-        assert.deepEqual(yield* briefTold, [[localMember.threadId, "joined", undefined]]);
-      }),
-    );
-  },
-);
-
-it.effect(
-  "a member on another machine is asked by its own machine, and one too old to know how is not",
-  () => {
-    const second = ref(LAPTOP, "second");
-    const world = makeWorld([lead, laptopMember, second]);
+    const settled = ref(HERE, "settled");
+    const world = makeWorld([lead, localMember, settled]);
+    world.shell(settled, { settledAt: "2026-01-02T00:00:00.000Z" });
+    world.parkAtDispatch.add(localMember.threadId);
     return withMissions(
       world,
       Effect.gen(function* () {
         const missions = yield* Missions.Missions;
         const store = yield* MissionStore.MissionStore;
         yield* createOne;
-        yield* missions.addMember({ missionId: "0123456789ab", member: laptopMember });
+        yield* missions.addMember({ missionId: "0123456789ab", member: localMember });
+        yield* missions.addMember({ missionId: "0123456789ab", member: settled });
+        assert.deepEqual(world.sent, []);
+        assert.isFalse(yield* store.briefRequestOpen(localMember.threadId));
+        assert.deepEqual(yield* briefTold, [
+          [localMember.threadId, "joined", undefined],
+          [settled.threadId, "joined", undefined],
+        ]);
+      }),
+    );
+  },
+);
+
+it.effect(
+  "a member on another machine is asked there with the lead's reach, and one too old to know how is not",
+  () => {
+    const second = ref(LAPTOP, "second");
+    const world = makeWorld([lead, laptopMember, second]);
+    world.shell(lead, { runtimeMode: "auto" });
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const store = yield* MissionStore.MissionStore;
+        yield* createOne;
+        yield* missions.addMember(
+          { missionId: "0123456789ab", member: laptopMember },
+          lead.threadId,
+        );
         assert.deepEqual(world.laptop.briefCalls, [
-          { threadId: laptopMember.threadId, missionId: "0123456789ab" },
+          {
+            threadId: laptopMember.threadId,
+            missionId: "0123456789ab",
+            limits: { runtimeMode: "auto", interactionMode: "default" },
+          },
         ]);
         assert.deepEqual(world.sent, []);
         assert.lengthOf(yield* store.briefAsks, 1);
         assert.deepEqual(yield* briefTold, []);
         world.laptop.predatesBriefs = true;
         yield* missions.addMember({ missionId: "0123456789ab", member: second });
-        assert.lengthOf(world.laptop.briefCalls, 2);
+        assert.deepEqual(world.laptop.briefCalls[1]?.limits, {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        });
         assert.deepEqual(yield* briefTold, [[second.threadId, "joined", undefined]]);
+      }),
+    );
+  },
+);
+
+it.effect(
+  "a member whose machine does not answer the request stays asked, for its list to bring",
+  () => {
+    const world = makeWorld([lead, laptopMember]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const store = yield* MissionStore.MissionStore;
+        yield* createOne;
+        world.laptop.briefHangs = true;
+        const adding = yield* Effect.forkChild(
+          missions.addMember({ missionId: "0123456789ab", member: laptopMember }),
+        );
+        yield* world.nextBriefCall;
+        yield* TestClock.adjust(Missions.MEMBER_CALL_DEADLINE);
+        assert.equal(yield* Fiber.join(adding), "joined");
+        const [ask] = yield* store.briefAsks;
+        assert.isNumber(ask?.askedAt);
+        assert.deepEqual(yield* briefTold, []);
       }),
     );
   },
@@ -3881,10 +3968,11 @@ it.effect(
 );
 
 it.effect(
-  "a member draft whose add waits on its machine is not asked for a brief when it lands",
+  "a member draft or a started thread whose add waits on its machine is not asked when it lands",
   () => {
     const draft = ref(LAPTOP, "draft");
-    const world = makeWorld([lead, draft, laptopMember]);
+    const started = ref(LAPTOP, "started");
+    const world = makeWorld([lead, draft, started, laptopMember]);
     return withMissions(
       world,
       Effect.gen(function* () {
@@ -3893,6 +3981,10 @@ it.effect(
         world.laptop.mode = "offline";
         assert.equal(
           yield* missions.addMember({ missionId, member: draft, noBrief: true }),
+          "pending",
+        );
+        assert.equal(
+          yield* missions.joinStarted({ missionId, member: started }, lead.threadId),
           "pending",
         );
         assert.equal(yield* missions.addMember({ missionId, member: laptopMember }), "pending");

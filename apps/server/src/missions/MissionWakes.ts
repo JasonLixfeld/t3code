@@ -3,7 +3,6 @@ import {
   MessageId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
-  type RunId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -22,11 +21,10 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import { type BriefAsk, MissionStore, type MissionRecord, numberKey } from "./MissionStore.ts";
 import { Missions } from "./Missions.ts";
 import {
-  briefMissionOf,
   type MemberDetail,
   markOf,
   missionUpdateText,
-  sanitizeAndCapMemberBrief,
+  wakeBatch,
   remoteUpdates,
   shellDetail,
   type SourcedUpdate,
@@ -35,7 +33,8 @@ import {
 
 export const BRIEF_WAIT = Duration.minutes(10);
 
-const sameAsk = (ask: Omit<BriefAsk, "askedAt">, other: Omit<BriefAsk, "askedAt">) =>
+type AskKey = Pick<BriefAsk, "missionId" | "environmentId" | "threadId">;
+const sameAsk = (ask: AskKey, other: AskKey) =>
   ask.missionId === other.missionId &&
   ask.environmentId === other.environmentId &&
   ask.threadId === other.threadId;
@@ -127,92 +126,38 @@ export const layer = Layer.effectDiscard(
       missionId: string,
       ref: ScopedThreadRef,
       detail: MemberDetail,
+      generation: string,
     ) {
       const before = yield* store.memberMark(ref);
-      const ask = (yield* store.briefAsks).find((open) => sameAsk(open, { missionId, ...ref }));
-      if (ask !== undefined && detail.brief !== undefined) {
-        yield* tell(ask, detail.brief.text);
-      }
-      const updates = remoteUpdates(before, detail, yield* Clock.currentTimeMillis);
-      yield* record(
-        missionId,
-        ref,
-        ask === undefined
-          ? updates
-          : updates.filter(
-              (update) => !update.source.startsWith("run:") && !update.source.startsWith("status:"),
-            ),
+      const ask = (yield* store.briefAsks).find(
+        (open) => sameAsk(open, { missionId, ...ref }) && open.generation === generation,
       );
+      if (ask !== undefined && detail.brief !== undefined) yield* tell(ask, detail.brief.text);
+      yield* record(missionId, ref, remoteUpdates(before, detail, yield* Clock.currentTimeMillis));
       yield* store.setMemberMark(ref, markOf(detail));
     });
 
     const tell = Effect.fn("MissionWakes.tell")(function* (ask: BriefAsk, brief: string | null) {
-      if (yield* store.recordJoinedUpdateForOpenAsk(ask, brief))
+      if (yield* store.recordJoinedUpdateForOpenAsk(ask, brief)) {
         yield* Queue.offer(due, ask.missionId);
-    });
-
-    const recordBriefRunAnswer = Effect.fn("MissionWakes.recordBriefRunAnswer")(function* (
-      threadId: ThreadId,
-      missionId: string,
-      run: { readonly id: RunId; readonly status: string },
-    ) {
-      const text =
-        run.status !== "completed"
-          ? null
-          : yield* threads
-              .getThreadRecords(threadId, ["messages"], {
-                messageRunIds: [run.id],
-                messageRoles: ["assistant"],
-              })
-              .pipe(
-                Effect.map(
-                  ({ messages }) =>
-                    messages
-                      .map((message) => message.text)
-                      .join("\n\n")
-                      .trim() || null,
-                ),
-                Effect.orElseSucceed(() => null),
-              );
-      const ask = (yield* store.briefAsks).find((open) =>
-        sameAsk(open, { missionId, environmentId: here, threadId }),
-      );
-      if (ask !== undefined) return yield* tell(ask, text);
-      yield* store.briefAnswered(
-        threadId,
-        missionId,
-        text === null ? null : sanitizeAndCapMemberBrief(text),
-      );
+      }
     });
 
     const recordMissingBriefAfterTimeout = Effect.fn("MissionWakes.recordMissingBriefAfterTimeout")(
-      function* (ask: BriefAsk) {
-        const waited =
-          Duration.toMillis(BRIEF_WAIT) - ((yield* Clock.currentTimeMillis) - ask.askedAt);
+      function* (ask: BriefAsk, askedAt: number) {
+        const waited = Duration.toMillis(BRIEF_WAIT) - ((yield* Clock.currentTimeMillis) - askedAt);
         if (waited > 0) yield* Effect.sleep(Duration.millis(waited));
-        const open = (yield* store.briefAsks).find((other) => sameAsk(other, ask));
-        if (open?.askedAt === ask.askedAt) yield* tell(ask, null);
+        yield* tell(ask, null);
       },
     );
     const waitForBrief = (ask: BriefAsk) =>
-      recordMissingBriefAfterTimeout(ask).pipe(
-        logged("A joined member's missing brief was not told"),
-        Effect.forkIn(scope),
-        Effect.asVoid,
-      );
-
-    const dropLeftAsks = Effect.gen(function* () {
-      const asks = yield* store.briefAsks;
-      if (asks.length === 0) return;
-      const heldHere = yield* store.claimsOf(here);
-      const known = yield* store.knownClaims;
-      for (const ask of asks) {
-        const held = (
-          ask.environmentId === here ? heldHere : (known.get(ask.environmentId) ?? [])
-        ).some((claim) => claim.threadId === ask.threadId && claim.missionId === ask.missionId);
-        if (!held) yield* store.dropBrief(ask);
-      }
-    });
+      ask.askedAt === null
+        ? Effect.void
+        : recordMissingBriefAfterTimeout(ask, ask.askedAt).pipe(
+            logged("A joined member's missing brief was not told"),
+            Effect.forkIn(scope),
+            Effect.asVoid,
+          );
 
     /**
      * A member here the lead has no mark for, as when it just joined or before marks were kept, is
@@ -227,7 +172,7 @@ export const layer = Layer.effectDiscard(
         if ((yield* store.memberMark(ref)) !== undefined) continue;
         const shell = yield* shellOf(claim.threadId);
         if (shell === null || shell.deletedAt !== null) continue;
-        yield* observe(claim.missionId, ref, shellDetail(shell));
+        yield* observe(claim.missionId, ref, shellDetail(shell), claim.generation);
       }
     });
 
@@ -250,14 +195,6 @@ export const layer = Layer.effectDiscard(
         event.type !== "turn-item.updated"
       ) {
         return;
-      }
-      if (event.type === "run.updated") {
-        const briefFor = briefMissionOf(event.payload.userMessageId);
-        if (briefFor !== undefined) {
-          return ThreadManagement.isTerminalRunStatus(event.payload.status)
-            ? yield* recordBriefRunAnswer(event.threadId, briefFor, event.payload)
-            : undefined;
-        }
       }
       // Read first: most turn items are text, and they cost no lookup.
       const update = updateFromEvent(event);
@@ -331,7 +268,9 @@ export const layer = Layer.effectDiscard(
         return yield* sent.failure;
       }
       lastWake.set(leadThreadId, now);
-      yield* store.clearMissionUpdates(missionId, key);
+      const { held } = wakeBatch(updates);
+      yield* store.clearMissionUpdates(missionId, key, held);
+      if (held.length > 0) yield* Queue.offer(due, missionId);
     });
 
     for (const missionId of yield* store.missionsWithUpdates) yield* Queue.offer(due, missionId);
@@ -345,10 +284,7 @@ export const layer = Layer.effectDiscard(
       Effect.forever,
       Effect.forkIn(scope),
     );
-    const lookHere = seeLocalMembers.pipe(
-      Effect.andThen(dropLeftAsks),
-      logged("A member that joined here was not looked at"),
-    );
+    const lookHere = seeLocalMembers.pipe(logged("A member that joined here was not looked at"));
     yield* lookHere.pipe(
       Effect.andThen(Stream.fromSubscription(storeChanges).pipe(Stream.runForEach(() => lookHere))),
       Effect.forkIn(scope),
@@ -362,7 +298,7 @@ export const layer = Layer.effectDiscard(
     );
     yield* missions.remoteChanges.pipe(
       Stream.runForEach((change) =>
-        observe(change.missionId, change.ref, change.detail).pipe(
+        observe(change.missionId, change.ref, change.detail, change.generation).pipe(
           logged("A remote member's change was not read"),
         ),
       ),
@@ -372,14 +308,16 @@ export const layer = Layer.effectDiscard(
       Stream.runForEach((missionId) => Queue.offer(due, missionId)),
       Effect.forkIn(scope),
     );
-    for (const ask of yield* store.briefAsks) yield* waitForBrief(ask);
+    // Followed before the asks are read, so one sent in between is still timed.
     yield* missions.briefChanges.pipe(
       Stream.runForEach((change) =>
         change.state === "asked"
           ? waitForBrief(change.ask)
-          : Queue.offer(due, change.ask.missionId).pipe(Effect.asVoid),
+          : Queue.offer(due, change.missionId).pipe(Effect.asVoid),
       ),
-      Effect.forkIn(scope),
+      Effect.forkIn(scope, { startImmediately: true }),
     );
+    for (const ask of yield* store.briefAsks) yield* waitForBrief(ask);
+    yield* missions.sendUnsentBriefAsks.pipe(Effect.forkIn(scope));
   }),
 );

@@ -38,7 +38,6 @@ const shownOnlyToLinks = (): boolean => {
  */
 const MissionTagInput = Schema.Struct({
   kind: Schema.Union([MissionClaimKind, Schema.Literal("brief")]),
-  askedAt: Schema.optional(Schema.Number),
   threadId: Schema.optional(ThreadId),
   missionId: Schema.optional(MissionId),
   name: Schema.optional(MissionName),
@@ -159,6 +158,20 @@ export const MissionToolkit = Toolkit.make(
   })
     .annotate(Tool.Destructive, false)
     .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenUnlessMissionLead),
+  Tool.make("t3_mission_brief", {
+    description:
+      "Send the lead of the mission this thread joined the brief it asked for. Once only.",
+    parameters: Schema.Struct({ text: Schema.String.check(Schema.isMaxLength(20_000)) }),
+    success: Schema.Struct({ sent: Schema.Literal(true) }),
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies: [
+      McpInvocationContext.McpInvocationContext,
+      ThreadManagementService.ThreadManagementService,
+    ],
+  })
+    .annotate(Tool.Destructive, false)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenUnlessBriefAsked),
   Tool.make("t3_mission_release", {
     description:
       "Release a thread from the mission you lead. It stays a thread. `pending`: its machine has not answered yet.",
