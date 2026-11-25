@@ -144,7 +144,6 @@ const callOnce = (
     readonly duringFirstWorkspaceRead?: (
       claims: MissionClaims.MissionClaims["Service"],
     ) => Effect.Effect<void, MissionError>;
-    /** This machine's Missions, which sends its threads the brief requests. */
     readonly missions?: Partial<Missions.Missions["Service"]>;
   } = {},
 ) =>
@@ -264,7 +263,6 @@ it.effect("a link's lead asks its own member here for a brief, and reads the ans
           asked.push(input);
           return "asked" as const;
         }),
-      // Only the answer asked under the claim listed now, never one from an earlier claim.
       briefAnswer: (_threadId: ThreadId, under: string) =>
         Effect.succeed(under === generation ? { text: "Goal: ship." } : { text: "Stale." }),
     };
@@ -287,9 +285,10 @@ it.effect("a link's lead asks its own member here for a brief, and reads the ans
       before: joinFirst,
       missions,
     });
-    assert.deepEqual(JSON.parse(answer), { claims: [], brief: "asked" });
-    assert.deepEqual(asked, [{ missionId: SHIP, threadId: userThread, askedAt: 7, generation }]);
-    // Not this link's member here: it is not asked.
+    assert.deepEqual(decodeTagAnswer(JSON.parse(answer)), { claims: [], brief: "asked" });
+    assert.deepEqual(asked, [
+      { missionId: SHIP, threadId: userThread, askedAt: 7, claimGeneration: generation },
+    ]);
     const refused = yield* callOnce(linkedClient("full-access"), ask, { missions });
     assert.include(refused.answer, "That thread is not in this mission.");
     assert.lengthOf(asked, 1);
@@ -301,7 +300,9 @@ it.effect("a link's lead asks its own member here for a brief, and reads the ans
         missions,
       },
     );
-    assert.deepEqual(JSON.parse(listed.answer).claims[0].detail.brief, { text: "Goal: ship." });
+    assert.deepEqual(decodeTagAnswer(JSON.parse(listed.answer)).claims[0]?.detail?.brief, {
+      text: "Goal: ship.",
+    });
   }),
 );
 

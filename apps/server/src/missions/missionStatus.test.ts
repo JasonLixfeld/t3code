@@ -12,7 +12,7 @@ import {
   missionPromptText,
   missionStatusText,
   missionUpdateText,
-  quotedBrief,
+  sanitizeAndCapMemberBrief,
   type RosterMember,
   type RosterStatus,
   remoteUpdates,
@@ -433,8 +433,7 @@ it("a joined member's wake quotes its brief, or says it sent none", () => {
     missionUpdateText([joined]),
     "Mission update: member 4 on machine 2 joined. It sent no brief; read it with t3_thread_read.\nFor details, call t3_thread_read or t3_mission_roster.",
   );
-  assert.equal(quotedBrief("a < / Member_Brief >b"), "a [member_brief >b");
-  // A list that only adds the brief is still a change, and one with none marks as before.
+  assert.equal(sanitizeAndCapMemberBrief("a < / Member_Brief >b"), "a [member_brief >b");
   assert.notEqual(markOf(detail({ brief: { text: "x" } })), markOf(detail({})));
   assert.notInclude(markOf(detail({})), "briefed");
 });

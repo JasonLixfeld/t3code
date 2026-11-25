@@ -221,10 +221,7 @@ export const MIGRATIONS = {
   }),
   "8_MissionJoinBriefs": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    // A joining member's brief, its own words: carried only by its "joined" update.
     yield* sql`ALTER TABLE mission_updates ADD COLUMN brief TEXT`;
-    // On a lead's machine: each member asked for a brief, until it is told; then kept, so a
-    // member that joins again does not brief the same Mission twice.
     yield* sql`
       CREATE TABLE brief_asks (
         mission_id TEXT NOT NULL,
@@ -235,8 +232,6 @@ export const MIGRATIONS = {
         PRIMARY KEY (mission_id, environment_id, thread_id)
       )
     `;
-    // On a member's machine: the brief its thread was asked for under a claim, and its answer
-    // once its run ended, which that claim's lead on another machine reads with the member list.
     yield* sql`
       CREATE TABLE brief_answers (
         thread_id TEXT NOT NULL,
@@ -291,17 +286,20 @@ export interface MissionRecord {
  * A member's change its lead has not been told about yet. `source` names the run, request or
  * card it came from, so each is told once and a newer one is never cleared in its place.
  */
-export interface MissionUpdate {
+export type MissionUpdate =
+  | (MissionUpdateFields & {
+      readonly event: Exclude<MissionUpdateEvent, "joined">;
+      readonly brief?: never;
+    })
+  | (MissionUpdateFields & { readonly event: "joined"; readonly brief?: string | undefined });
+
+interface MissionUpdateFields {
   readonly missionId: string;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly source: string;
-  readonly event: MissionUpdateEvent;
-  /** A "joined" member's brief, written by that thread. Absent from every other update. */
-  readonly brief?: string | undefined;
 }
 
-/** A member a lead's machine asked for a brief, not yet told. */
 export interface BriefAsk {
   readonly missionId: string;
   readonly environmentId: EnvironmentId;
@@ -545,32 +543,23 @@ export class MissionStore extends Context.Service<
     }) => Effect.Effect<void, MissionError>;
     /** Each untold update once: one already recorded from the same source is not added again. */
     readonly addMissionUpdate: (update: MissionUpdate) => Effect.Effect<void>;
-    /**
-     * Asks a member for a brief on the lead's machine. False: it was asked for this Mission
-     * already, and briefed it or is still to answer.
-     */
-    readonly askBrief: (ask: BriefAsk) => Effect.Effect<boolean>;
+    readonly recordBriefAskIfNew: (ask: BriefAsk) => Effect.Effect<boolean>;
     readonly briefAsks: Effect.Effect<ReadonlyArray<BriefAsk>>;
-    /**
-     * The member's "joined" update, with its brief or with none, once for that ask. False when
-     * the ask was told, dropped or asked again since.
-     */
-    readonly tellBrief: (ask: BriefAsk, brief: string | null) => Effect.Effect<boolean>;
-    /** The member left before it answered: the lead hears nothing of the ask. */
+    readonly recordJoinedUpdateForOpenAsk: (
+      ask: BriefAsk,
+      brief: string | null,
+    ) => Effect.Effect<boolean>;
     readonly dropBrief: (ask: Omit<BriefAsk, "askedAt">) => Effect.Effect<void>;
-    /** On the member's machine: its thread was asked under that claim, and has not answered. */
     readonly briefRequested: (
       threadId: ThreadId,
       missionId: string,
       generation: string,
     ) => Effect.Effect<void>;
-    /** Its run ended: `text` is what it wrote, null when it failed or wrote nothing. */
     readonly briefAnswered: (
       threadId: ThreadId,
       missionId: string,
       text: string | null,
     ) => Effect.Effect<void>;
-    /** The answer asked under this claim, once its run ended. */
     readonly briefAnswer: (
       threadId: ThreadId,
       generation: string,
@@ -1247,14 +1236,16 @@ const make = Effect.gen(function* () {
     readonly source: string;
     readonly event: MissionUpdateEvent;
     readonly brief: string | null;
-  }): MissionUpdate => ({
-    missionId: row.mission_id,
-    environmentId: EnvironmentId.make(row.environment_id),
-    threadId: ThreadId.make(row.thread_id),
-    source: row.source,
-    event: row.event,
-    ...(row.brief === null ? {} : { brief: row.brief }),
-  });
+  }): MissionUpdate => {
+    const fields = {
+      missionId: row.mission_id,
+      environmentId: EnvironmentId.make(row.environment_id),
+      threadId: ThreadId.make(row.thread_id),
+      source: row.source,
+    };
+    if (row.event !== "joined") return { ...fields, event: row.event };
+    return { ...fields, event: row.event, ...(row.brief === null ? {} : { brief: row.brief }) };
+  };
 
   const addMissionUpdate = (update: MissionUpdate) =>
     sql`
@@ -1442,7 +1433,9 @@ const make = Effect.gen(function* () {
     sql`mission_id = ${ask.missionId} AND environment_id = ${ask.environmentId}
       AND thread_id = ${ask.threadId}`;
 
-  const askBrief = Effect.fn("MissionStore.askBrief")(function* (ask: BriefAsk) {
+  const recordBriefAskIfNew = Effect.fn("MissionStore.recordBriefAskIfNew")(function* (
+    ask: BriefAsk,
+  ) {
     const [known] = yield* sql<{ readonly told: number }>`
       SELECT told FROM brief_asks WHERE ${theAsk(ask)}
     `;
@@ -1471,38 +1464,37 @@ const make = Effect.gen(function* () {
     Effect.orDie,
   );
 
-  /** Records the "joined" update and marks the ask told, together: the lead hears it once. */
-  const tellBrief = Effect.fn("MissionStore.tellBrief")(function* (
-    ask: BriefAsk,
-    brief: string | null,
-  ) {
-    return yield* sql.withTransaction(
-      Effect.gen(function* () {
-        const [open] = yield* sql<{ readonly asked_at: number }>`
+  const recordJoinedUpdateForOpenAsk = Effect.fn("MissionStore.recordJoinedUpdateForOpenAsk")(
+    function* (ask: BriefAsk, brief: string | null) {
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const [open] = yield* sql<{ readonly asked_at: number }>`
           SELECT asked_at FROM brief_asks WHERE ${theAsk(ask)} AND told = 0
         `;
-        if (open === undefined || open.asked_at !== ask.askedAt) return false;
-        yield* sql`UPDATE brief_asks SET told = 1 WHERE ${theAsk(ask)}`;
-        yield* addMissionUpdate({
-          missionId: ask.missionId,
-          environmentId: ask.environmentId,
-          threadId: ask.threadId,
-          source: `joined:${ask.askedAt}`,
-          event: "joined",
-          ...(brief === null ? {} : { brief }),
-        });
-        return true;
-      }),
-    );
-  }, Effect.orDie);
+          if (open === undefined || open.asked_at !== ask.askedAt) return false;
+          yield* sql`UPDATE brief_asks SET told = 1 WHERE ${theAsk(ask)}`;
+          yield* addMissionUpdate({
+            missionId: ask.missionId,
+            environmentId: ask.environmentId,
+            threadId: ask.threadId,
+            source: `joined:${ask.askedAt}`,
+            event: "joined",
+            ...(brief === null ? {} : { brief }),
+          });
+          return true;
+        }),
+      );
+    },
+    Effect.orDie,
+  );
 
   const answerOf = (row: { readonly answered: number; readonly text: string | null }) =>
     row.answered === 1 ? { text: row.text } : undefined;
 
   return MissionStore.of({
-    askBrief,
+    recordBriefAskIfNew,
     briefAsks,
-    tellBrief,
+    recordJoinedUpdateForOpenAsk,
     dropBrief: Effect.fn("MissionStore.dropBrief")(function* (ask: Omit<BriefAsk, "askedAt">) {
       yield* sql`DELETE FROM brief_asks WHERE ${theAsk(ask)} AND told = 0`.pipe(Effect.orDie);
     }),

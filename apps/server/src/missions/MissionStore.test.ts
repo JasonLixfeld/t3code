@@ -118,7 +118,6 @@ it.effect("a member's brief is listed only with the claim it was asked under", (
         yield* store.briefAnswered(member, "m1", "Goal: ship.");
         assert.deepEqual(yield* store.briefAnswer(member, "g1"), { text: "Goal: ship." });
         assert.isUndefined(yield* store.briefAnswer(member, "g2"));
-        // Asked again under a new claim: the earlier answer goes with the earlier claim.
         yield* store.briefRequested(member, "m1", "g2");
         assert.isUndefined(yield* store.briefAnswer(member, "g1"));
         assert.isUndefined(yield* store.briefAnswer(member, "g2"));

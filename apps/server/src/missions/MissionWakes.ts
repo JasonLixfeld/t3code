@@ -26,14 +26,13 @@ import {
   type MemberDetail,
   markOf,
   missionUpdateText,
-  quotedBrief,
+  sanitizeAndCapMemberBrief,
   remoteUpdates,
   shellDetail,
   type SourcedUpdate,
   updateFromEvent,
 } from "./missionStatus.ts";
 
-/** How long a joined member has to brief its lead before the lead hears it sent none. */
 export const BRIEF_WAIT = Duration.minutes(10);
 
 const sameAsk = (ask: Omit<BriefAsk, "askedAt">, other: Omit<BriefAsk, "askedAt">) =>
@@ -135,7 +134,6 @@ export const layer = Layer.effectDiscard(
         yield* tell(ask, detail.brief.text);
       }
       const updates = remoteUpdates(before, detail, yield* Clock.currentTimeMillis);
-      // While a member is asked to brief, the run that answers is told only as its brief.
       yield* record(
         missionId,
         ref,
@@ -149,14 +147,11 @@ export const layer = Layer.effectDiscard(
     });
 
     const tell = Effect.fn("MissionWakes.tell")(function* (ask: BriefAsk, brief: string | null) {
-      if (yield* store.tellBrief(ask, brief)) yield* Queue.offer(due, ask.missionId);
+      if (yield* store.recordJoinedUpdateForOpenAsk(ask, brief))
+        yield* Queue.offer(due, ask.missionId);
     });
 
-    /**
-     * The run that answered a brief request, on the member's own machine: the brief is its text.
-     * A lead here hears it at once; one on another machine reads it with its next list.
-     */
-    const answered = Effect.fn("MissionWakes.answered")(function* (
+    const recordBriefRunAnswer = Effect.fn("MissionWakes.recordBriefRunAnswer")(function* (
       threadId: ThreadId,
       missionId: string,
       run: { readonly id: RunId; readonly status: string },
@@ -183,26 +178,29 @@ export const layer = Layer.effectDiscard(
         sameAsk(open, { missionId, environmentId: here, threadId }),
       );
       if (ask !== undefined) return yield* tell(ask, text);
-      // Kept quoted and capped here, so a long reply does not ride in every list.
-      yield* store.briefAnswered(threadId, missionId, text === null ? null : quotedBrief(text));
+      yield* store.briefAnswered(
+        threadId,
+        missionId,
+        text === null ? null : sanitizeAndCapMemberBrief(text),
+      );
     });
 
-    /** Tells the lead its member sent no brief, if it has not answered by then. */
-    const awaitBrief = Effect.fn("MissionWakes.awaitBrief")(function* (ask: BriefAsk) {
-      const waited =
-        Duration.toMillis(BRIEF_WAIT) - ((yield* Clock.currentTimeMillis) - ask.askedAt);
-      if (waited > 0) yield* Effect.sleep(Duration.millis(waited));
-      const open = (yield* store.briefAsks).find((other) => sameAsk(other, ask));
-      if (open?.askedAt === ask.askedAt) yield* tell(ask, null);
-    });
+    const recordMissingBriefAfterTimeout = Effect.fn("MissionWakes.recordMissingBriefAfterTimeout")(
+      function* (ask: BriefAsk) {
+        const waited =
+          Duration.toMillis(BRIEF_WAIT) - ((yield* Clock.currentTimeMillis) - ask.askedAt);
+        if (waited > 0) yield* Effect.sleep(Duration.millis(waited));
+        const open = (yield* store.briefAsks).find((other) => sameAsk(other, ask));
+        if (open?.askedAt === ask.askedAt) yield* tell(ask, null);
+      },
+    );
     const waitForBrief = (ask: BriefAsk) =>
-      awaitBrief(ask).pipe(
+      recordMissingBriefAfterTimeout(ask).pipe(
         logged("A joined member's missing brief was not told"),
         Effect.forkIn(scope),
         Effect.asVoid,
       );
 
-    /** A member released or deleted before it answered: its ask goes, and the lead hears nothing. */
     const dropLeftAsks = Effect.gen(function* () {
       const asks = yield* store.briefAsks;
       if (asks.length === 0) return;
@@ -255,10 +253,9 @@ export const layer = Layer.effectDiscard(
       }
       if (event.type === "run.updated") {
         const briefFor = briefMissionOf(event.payload.userMessageId);
-        // The run that answers a brief request is told as the brief, never as a turn it ended.
         if (briefFor !== undefined) {
           return ThreadManagement.isTerminalRunStatus(event.payload.status)
-            ? yield* answered(event.threadId, briefFor, event.payload)
+            ? yield* recordBriefRunAnswer(event.threadId, briefFor, event.payload)
             : undefined;
         }
       }
@@ -312,7 +309,10 @@ export const layer = Layer.effectDiscard(
             lead: leadThreadId,
             text: missionUpdateText(
               updates.map((update) => ({
-                ...names.get(numberKey(update))!,
+                ...(names.get(numberKey(update)) ?? {
+                  member: "a member",
+                  place: "another machine",
+                }),
                 event: update.event,
                 brief: update.brief,
               })),

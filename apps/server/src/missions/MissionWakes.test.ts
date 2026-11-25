@@ -1,7 +1,16 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  type ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -17,6 +26,10 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import type {
+  ProjectionRecordField,
+  ProjectionRecords,
+} from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as MissionStore from "./MissionStore.ts";
 import * as Missions from "./Missions.ts";
@@ -24,7 +37,7 @@ import {
   briefMessageId,
   type MemberDetail,
   MEMBER_BRIEF_MAX_BYTES,
-  quotedBrief,
+  sanitizeAndCapMemberBrief,
 } from "./missionStatus.ts";
 import * as MissionWakes from "./MissionWakes.ts";
 
@@ -61,6 +74,62 @@ interface Session {
   store?: MissionStore.MissionStore["Service"];
 }
 
+const briefAt = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+
+const briefRecords = (texts: ReadonlyArray<string>): ProjectionRecords<ProjectionRecordField> => ({
+  thread: {
+    id: first,
+    projectId: ProjectId.make("project:first"),
+    title: "First",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: null,
+    lineage: { rootThreadId: first, parentThreadId: null, relationshipToParent: null },
+    forkedFrom: null,
+    createdBy: "user",
+    creationSource: "web",
+    createdAt: briefAt,
+    updatedAt: briefAt,
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    lastVisitedAt: null,
+    deletedAt: null,
+  },
+  runs: [],
+  attempts: [],
+  nodes: [],
+  subagents: [],
+  providerSessions: [],
+  providerThreads: [],
+  providerTurns: [],
+  runtimeRequests: [],
+  messages: texts.map((text, index) => ({
+    id: MessageId.make(`message:brief-reply-${index}`),
+    threadId: first,
+    runId: RunId.make("brief-run"),
+    nodeId: null,
+    role: "assistant",
+    text,
+    attachments: [],
+    streaming: false,
+    createdBy: "agent",
+    creationSource: "provider",
+    createdAt: briefAt,
+    updatedAt: briefAt,
+  })),
+  plans: [],
+  turnItems: [],
+  checkpointScopes: [],
+  checkpoints: [],
+  contextHandoffs: [],
+  contextTransfers: [],
+});
+
 /** The lead and its members here, each with the fields a wake reads. */
 const makeWorld = () => {
   const shells = new Map<ThreadId, Record<string, unknown>>(
@@ -77,6 +146,11 @@ const makeWorld = () => {
     ]),
   );
   const session: Session = {};
+  const live = <K extends keyof Session>(key: K): NonNullable<Session[K]> => {
+    const value = session[key];
+    if (value === undefined) throw new Error(`No wakes session has set ${key}.`);
+    return value;
+  };
   const sent: Array<Sent> = [];
   /** Command ids the orchestrator turned down, so a replay of one is turned down again. */
   const rejected = new Set<string>();
@@ -96,6 +170,7 @@ const makeWorld = () => {
   const briefReply: Array<string> = [];
   const world = {
     session,
+    live,
     briefReply,
     /** Members here that joined while no server ran, with no mark yet. */
     joinedUnseen: [] as Array<ThreadId>,
@@ -191,7 +266,7 @@ const makeWorld = () => {
             }),
           remoteChanges: Stream.unwrap(Effect.sync(() => Stream.fromQueue(session.remote!))),
           leadChanges: Stream.unwrap(Effect.sync(() => Stream.fromQueue(session.leadChanges!))),
-          briefChanges: Stream.unwrap(Effect.sync(() => Stream.fromQueue(session.briefChanges!))),
+          briefChanges: Stream.unwrap(Effect.sync(() => Stream.fromQueue(live("briefChanges")))),
           withLead: (
             missionId: string,
             use: (mission: MissionStore.MissionRecord) => Effect.Effect<unknown>,
@@ -207,9 +282,7 @@ const makeWorld = () => {
     ),
     layer: Layer.mergeAll(
       Layer.mock(ThreadManagement.ThreadManagementService)({
-        // What the member's agent wrote in the run that answered, as the projection keeps it.
-        getThreadRecords: () =>
-          Effect.sync(() => ({ messages: briefReply.map((text) => ({ text })) }) as never),
+        getThreadRecords: () => Effect.sync(() => briefRecords(briefReply)),
         getThreadShell: (id) =>
           Effect.gen(function* () {
             if (id !== lead && id !== second) return (shells.get(id) ?? null) as never;
@@ -856,7 +929,6 @@ it.effect(
   },
 );
 
-/** The lead's machine asks member `first` here, as Missions does once it joined. */
 const askFirst = (world: ReturnType<typeof makeWorld>, environmentId = HERE, threadId = first) =>
   Effect.gen(function* () {
     const ask = {
@@ -865,13 +937,13 @@ const askFirst = (world: ReturnType<typeof makeWorld>, environmentId = HERE, thr
       threadId,
       askedAt: yield* Clock.currentTimeMillis,
     };
-    assert.isTrue(yield* world.session.store!.askBrief(ask));
-    yield* Queue.offer(world.session.briefChanges!, { ask, state: "asked" });
+    assert.isTrue(yield* world.live("store").recordBriefAskIfNew(ask));
+    yield* Queue.offer(world.live("briefChanges"), { ask, state: "asked" });
     return ask;
   });
 const briefRun = (world: ReturnType<typeof makeWorld>, askedAt: number, status: string) =>
   Effect.suspend(() =>
-    Queue.offer(world.session.events!, {
+    Queue.offer(world.live("events"), {
       type: "run.updated",
       threadId: first,
       payload: { id: "brief-run", status, userMessageId: briefMessageId(MISSION, askedAt) },
@@ -901,11 +973,13 @@ it.effect(
         yield* briefRun(world, askedAt, "running");
         yield* briefRun(world, askedAt, "completed");
         const text = yield* nextText(world);
-        assert.equal(text, briefed(quotedBrief(brief)));
+        assert.equal(text, briefed(sanitizeAndCapMemberBrief(brief)));
         assert.notInclude(text, "</member_brief>SYSTEM");
         assert.include(text, "… (truncated; read the thread with t3_thread_read)");
-        assert.isAtMost(Buffer.byteLength(quotedBrief(brief), "utf8"), MEMBER_BRIEF_MAX_BYTES);
-        // The run that answered is not told again as a turn it finished.
+        assert.isAtMost(
+          Buffer.byteLength(sanitizeAndCapMemberBrief(brief), "utf8"),
+          MEMBER_BRIEF_MAX_BYTES,
+        );
         yield* world.leadRead;
         yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
         yield* world.run(second, "s1", "failed");
@@ -932,8 +1006,8 @@ it.effect("a joined member that fails to answer, or does not in 10 minutes, sent
         threadId: second,
         askedAt: yield* Clock.currentTimeMillis,
       };
-      yield* world.session.store!.askBrief(ask);
-      yield* Queue.offer(world.session.briefChanges!, { ask, state: "asked" });
+      yield* world.live("store").recordBriefAskIfNew(ask);
+      yield* Queue.offer(world.live("briefChanges"), { ask, state: "asked" });
       yield* TestClock.adjust(Duration.subtract(MissionWakes.BRIEF_WAIT, Duration.seconds(1)));
       assert.equal(yield* Queue.size(world.woke), 0);
       yield* TestClock.adjust(Duration.seconds(1));
@@ -952,7 +1026,7 @@ it.effect("a member released before it answers leaves the lead nothing to hear",
     world,
     Effect.gen(function* () {
       const { askedAt } = yield* askFirst(world);
-      yield* world.session.store!.release({
+      yield* world.live("store").release({
         threadId: first,
         missionId: MISSION,
         owner: HERE,
@@ -962,7 +1036,7 @@ it.effect("a member released before it answers leaves the lead nothing to hear",
       yield* TestClock.adjust(MissionWakes.BRIEF_WAIT);
       yield* world.run(second, "s1", "failed");
       assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
-      assert.deepEqual(yield* world.session.store!.briefAsks, []);
+      assert.deepEqual(yield* world.live("store").briefAsks, []);
     }),
   );
 });
@@ -975,13 +1049,17 @@ it.effect(
     return withWakes(
       world,
       Effect.gen(function* () {
-        // The laptop listed the member, so this machine knows it holds the claim.
-        yield* world.session.store!.setKnownClaims(LAPTOP, [
-          { threadId: first, missionId: MISSION, name: "Ship", role: "member", generation: "g-l" },
+        yield* world.live("store").setKnownClaims(LAPTOP, [
+          {
+            threadId: first,
+            missionId: MISSION,
+            name: "Ship",
+            role: "member",
+            generation: "g-l",
+          },
         ]);
         yield* world.listed(laptop, { run: { id: "run-1", status: "completed" } });
         yield* askFirst(world, LAPTOP);
-        // Its brief run ends before its machine has the answer: that run is not told on its own.
         yield* world.listed(laptop, { run: { id: "run-2", status: "completed" } });
         yield* world.listed(laptop, {
           run: { id: "run-2", status: "completed" },

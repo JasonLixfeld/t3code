@@ -37,7 +37,6 @@ const shownOnlyToLinks = (): boolean => {
  * answers with no claim when that add's claim was dropped.
  */
 const MissionTagInput = Schema.Struct({
-  /** `brief`: the lead asks a member here to brief it, the app's request, sent once. */
   kind: Schema.Union([MissionClaimKind, Schema.Literal("brief")]),
   askedAt: Schema.optional(Schema.Number),
   threadId: Schema.optional(ThreadId),

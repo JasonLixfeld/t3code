@@ -119,29 +119,20 @@ export class Missions extends Context.Service<
       input: {
         readonly missionId: string;
         readonly member: ScopedThreadRef;
-        /** A thread its first send just started in the mission: it has no work to brief. */
         readonly noBrief?: true | undefined;
       },
       asLead?: ThreadId,
     ) => Effect.Effect<"joined" | "pending", MissionError>;
-    /**
-     * On a member's own machine: sends its thread the app's brief request, as a background
-     * notification queued after its run. `empty`: it has no conversation to brief. `parked`:
-     * settled, archived or gone, and kept so, so it is not asked.
-     */
     readonly requestBriefHere: (input: {
       readonly missionId: string;
       readonly threadId: ThreadId;
       readonly askedAt: number;
-      /** The claim a lead on another machine asked under: its answer is listed with that claim. */
-      readonly generation?: string | undefined;
+      readonly claimGeneration?: string | undefined;
     }) => Effect.Effect<BriefRequestOutcome>;
-    /** On a member's own machine: what its thread answered the request made under this claim. */
     readonly briefAnswer: (
       threadId: ThreadId,
       generation: string,
     ) => Effect.Effect<{ readonly text: string | null } | undefined>;
-    /** Each member asked for a brief, which waits now; or one told, whose wake waits. */
     readonly briefChanges: Stream.Stream<{
       readonly ask: BriefAsk;
       readonly state: "asked" | "told";
@@ -783,8 +774,6 @@ const make = Effect.gen(function* () {
               add,
               (reach) =>
                 sendJoin(mission, add, reach).pipe(
-                  // A join that lands later is asked as one that landed at once, apart from the
-                  // locks this sweep holds.
                   Effect.tap((joined) =>
                     joined
                       ? askBrief(mission.missionId, add).pipe(
@@ -1254,7 +1243,7 @@ const make = Effect.gen(function* () {
     readonly missionId: string;
     readonly threadId: ThreadId;
     readonly askedAt: number;
-    readonly generation?: string | undefined;
+    readonly claimGeneration?: string | undefined;
   }) {
     const shell = yield* threads
       .getThreadShell(input.threadId)
@@ -1269,11 +1258,10 @@ const make = Effect.gen(function* () {
     ) {
       return "parked" as const;
     }
-    if (input.generation !== undefined) {
-      yield* store.briefRequested(input.threadId, input.missionId, input.generation);
+    if (input.claimGeneration !== undefined) {
+      yield* store.briefRequested(input.threadId, input.missionId, input.claimGeneration);
     }
     return yield* threads.dispatch(missionBriefCommand(input)).pipe(
-      // Settled since the read above: it stays settled, and its ask goes unanswered.
       Effect.provideService(Orchestrator.UnlessParked, true),
       Effect.as("asked" as const),
       Effect.catch((error) =>
@@ -1284,18 +1272,12 @@ const make = Effect.gen(function* () {
     );
   });
 
-  /**
-   * A thread with work of its own that joined is asked to brief its lead, once per Mission: one
-   * that briefed it, or has yet to answer, is not asked again when added again. Its own machine
-   * sends the request. One too old to know it, or that does not answer, leaves the lead a
-   * "joined, no brief" update at once.
-   */
   const askBrief = Effect.fn("Missions.askBrief")(function* (
     missionId: string,
     member: ScopedThreadRef,
   ) {
     const ask: BriefAsk = { missionId, ...member, askedAt: yield* Clock.currentTimeMillis };
-    if (!(yield* store.askBrief(ask))) return;
+    if (!(yield* store.recordBriefAskIfNew(ask))) return;
     const outcome: BriefRequestOutcome | "unanswered" =
       member.environmentId === here
         ? yield* requestBriefHere({ missionId, threadId: member.threadId, askedAt: ask.askedAt })
@@ -1322,7 +1304,7 @@ const make = Effect.gen(function* () {
     if (outcome === "empty") return yield* store.dropBrief(ask);
     if (outcome === "asked")
       return yield* PubSub.publish(briefChanged, { ask, state: "asked" as const });
-    if (yield* store.tellBrief(ask, null)) {
+    if (yield* store.recordJoinedUpdateForOpenAsk(ask, null)) {
       yield* PubSub.publish(briefChanged, { ask, state: "told" as const });
     }
   });

@@ -182,7 +182,6 @@ export const layer = McpToolAccess.toLayer(
               const threadId = yield* needs(input.threadId, "threadId");
               const missionId = yield* needs(input.missionId, "missionId");
               const askedAt = yield* needs(input.askedAt, "askedAt");
-              // Only the lead whose Mission holds this thread here may ask it, under that claim.
               const held = (yield* claims.list(owner)).find(
                 (claim) => claim.threadId === threadId && claim.missionId === missionId,
               );
@@ -195,7 +194,7 @@ export const layer = McpToolAccess.toLayer(
                   missionId,
                   threadId,
                   askedAt,
-                  generation: held.generation,
+                  claimGeneration: held.generation,
                 }),
               };
             }

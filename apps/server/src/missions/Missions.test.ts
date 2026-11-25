@@ -109,6 +109,15 @@ type Claims = MissionClaims.MissionClaims["Service"];
 type ClaimKind = "join" | "release" | "list" | "rename" | "workspaces";
 
 /** Every machine's threads and tags, and how the laptop answers this lead. */
+const decodeBriefCall = Schema.decodeUnknownOption(
+  Schema.Struct({
+    kind: Schema.Literal("brief"),
+    threadId: Schema.String,
+    missionId: Schema.String,
+  }),
+);
+const briefListed = (text: string | undefined) => (text === undefined ? {} : { brief: { text } });
+
 const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   const tags = new Map(threads.map((thread) => [keyOf(thread), [] as Array<string>]));
   /** Every thread is titled "One" and has messages, unless a test says otherwise. */
@@ -118,7 +127,6 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   /** Each thread's run state, idle unless a test says otherwise. */
   const activity = new Map<string, Record<string, unknown>>();
   const dispatched: Array<string> = [];
-  /** The messages threads were sent, as the app's brief requests are. */
   const sent: Array<Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>> = [];
   const workspaces = new Map<string, MemberWorkspace | "pending">();
   const workspacesLayer = Layer.mock(MemberWorkspaces)({
@@ -158,11 +166,8 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     linkedAt: "2026-01-01T00:00:00.000Z",
     /** Every call this lead made to the laptop, in order. */
     calls: [] as Array<ClaimKind>,
-    /** The brief requests this lead sent the laptop, apart from its claim calls. */
     briefCalls: [] as Array<{ readonly threadId: string; readonly missionId: string }>,
-    /** Its build predates brief requests, so its tool refuses the kind. */
     predatesBriefs: false,
-    /** What each of its threads answered a brief request with, as its list says. */
     briefs: new Map<string, string>(),
     /** The modes each join and release to the laptop was sent with, in order. */
     limits: [] as Array<unknown>,
@@ -238,7 +243,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
           dispatched.push(command.type);
           if (command.type === "message.dispatch") {
             sent.push(command);
-            return {} as never;
+            return { sequence: sent.length, storedEvents: [] };
           }
           if (command.type !== "thread.tag.set") throw new Error(`unexpected ${command.type}`);
           const current = tags.get(keyOf(ref(environmentId, command.threadId)))!;
@@ -288,9 +293,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
                   ? "omitted"
                   : workspace,
             }),
-        ...(listing && laptop.briefs.has(threadId)
-          ? { brief: { text: laptop.briefs.get(threadId)! } }
-          : {}),
+        ...(listing ? briefListed(laptop.briefs.get(threadId)) : {}),
       };
     };
     switch (args.kind) {
@@ -335,9 +338,12 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       Effect.gen(function* () {
         const mode =
           laptop.mode === "watchedOnly" ? ((yield* Watched) ? "up" : "offline") : laptop.mode;
-        if ((input.arguments.kind as string) === "brief") {
-          const asked = input.arguments as unknown as { threadId: string; missionId: string };
-          laptop.briefCalls.push({ threadId: asked.threadId, missionId: asked.missionId });
+        const asked = decodeBriefCall(input.arguments);
+        if (Option.isSome(asked)) {
+          laptop.briefCalls.push({
+            threadId: asked.value.threadId,
+            missionId: asked.value.missionId,
+          });
           if (laptop.predatesBriefs || mode !== "up") {
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
@@ -3761,22 +3767,18 @@ it.effect(
         const store = yield* MissionStore.MissionStore;
         const missionId = (yield* createOne).missionId;
         const askedAt = yield* Clock.currentTimeMillis;
-        // As the sidebar's drag and menu add it, by the user.
         yield* missions.addMember({ missionId, member: localMember });
         assert.deepEqual(world.sent, [
           missionBriefCommand({ missionId, threadId: localMember.threadId, askedAt }),
         ]);
-        assert.equal(world.sent[0]!.text, briefRequestText(missionId));
-        // As t3_mission_add adds it, by the lead.
+        assert.equal(world.sent[0]?.text, briefRequestText(missionId));
         yield* missions.addMember({ missionId, member: other }, lead.threadId);
         assert.deepEqual(
           world.sent.map((command) => command.threadId),
           [localMember.threadId, other.threadId],
         );
-        // Released and added again, it was asked by this mission already.
         yield* missions.releaseMember({ missionId, member: localMember });
         yield* missions.addMember({ missionId, member: localMember });
-        // A draft's first send, a thread the lead started, one with no messages: nothing to brief.
         yield* missions.addMember({ missionId, member: draft, noBrief: true });
         yield* missions.joinStarted({ missionId, member: started }, lead.threadId);
         yield* missions.addMember({ missionId, member: fresh });
