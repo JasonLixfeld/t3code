@@ -1,5 +1,12 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
+import { draftSendState } from "~/components/chat/chatViewSend";
+import { SCRATCH_REPLY_TIMEOUT_MS } from "~/components/chat/pendingScratchStore";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
@@ -69,7 +76,9 @@ vi.mock(import("~/components/sidebar/MissionsSection"), async (original) => {
 const scratch = vi.hoisted(() => ({
   homes: null as ReadonlyArray<string> | null,
   usual: "",
-  open: null as ((environmentId: string) => Promise<unknown>) | null,
+  open: null as
+    | ((environmentId: string, failureTitle?: string, signal?: AbortSignal) => Promise<unknown>)
+    | null,
 }));
 vi.mock(import("~/hooks/useScratchProject"), async (original) => {
   const actual = await original();
@@ -89,6 +98,17 @@ vi.mock(import("~/hooks/useScratchProject"), async (original) => {
     },
   };
 });
+
+// The browser preview's annotation send, as the right panel hands it out.
+const annotation = vi.hoisted(() => ({
+  send: null as ((annotation: unknown, image: null) => void) | null,
+}));
+vi.mock(import("~/components/chat/RightPanelSurfaceContent"), () => ({
+  RightPanelSurfaceContent: ((props: { onSendAnnotation: typeof annotation.send }) => {
+    annotation.send = props.onSendAnnotation;
+    return null;
+  }) as never,
+}));
 
 vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   ...(await original()),
@@ -722,7 +742,7 @@ it("opens No project on an allowed machine when the usual one is not the mission
   using _environment = installFakeEnvironment([]);
   await using _app = await openDraft("draft-scratch-fallback", { kind: "new" });
   await pickNoProject();
-  expect(opened).toHaveBeenCalledWith(ENVIRONMENT_ID);
+  expect(opened).toHaveBeenCalledWith(ENVIRONMENT_ID, undefined, expect.any(AbortSignal));
 });
 
 it.each([
@@ -842,4 +862,123 @@ it("drops No project with a note when the mission's link loses full access first
     .toBeVisible();
   expect(app.router.state.location.pathname).toBe(`/draft/${app.draftId}`);
   expect(useComposerDraftStore.getState().getDraftSession(app.draftId)?.projectId).toBe(PROJECT_ID);
+});
+
+it("a No project request that never answers unlocks the draft after the timeout", async () => {
+  const { opened } = holdScratch([ENVIRONMENT_ID]);
+  // Only the picker's 15 second wait is shortened.
+  const setTimeoutBefore = window.setTimeout;
+  vi.spyOn(window, "setTimeout").mockImplementation(((
+    handler: TimerHandler,
+    ms?: number,
+    ...args: unknown[]
+  ) =>
+    setTimeoutBefore(
+      handler,
+      ms === SCRATCH_REPLY_TIMEOUT_MS ? 1_500 : ms,
+      ...args,
+    )) as typeof window.setTimeout);
+  onTestFinished(() => vi.mocked(window.setTimeout).mockRestore());
+  using _environment = installFakeEnvironment([]);
+  listMissions([hostWith(ENVIRONMENT_ID)]);
+  await using app = await openDraft("draft-scratch-stalled");
+  await act(() => useComposerDraftStore.getState().setPrompt(app.draftId, "Plan the launch"));
+  await pickNoProject();
+  await expect.element(page.getByRole("button", { name: "Preparing No project…" })).toBeDisabled();
+  await expect.element(page.getByText("The machine did not answer in time.")).toBeVisible();
+  await expect.element(page.getByRole("combobox", { name: "Project: render" })).toBeEnabled();
+  await expect.element(missionTrigger()).not.toHaveAttribute("data-disabled");
+  await expect.element(page.getByRole("button", { name: "Submit message" })).toBeEnabled();
+  // The request itself was aborted, which frees the machine's project queue.
+  expect(vi.mocked(opened).mock.calls[0]?.[2]).toMatchObject({ aborted: true });
+});
+
+it("a browser annotation cannot send while No project is preparing", async () => {
+  holdScratch([ENVIRONMENT_ID]);
+  using _environment = installFakeEnvironment([]);
+  await using app = await openDraft("draft-scratch-annotation");
+  const session = useComposerDraftStore.getState().getDraftSession(app.draftId)!;
+  const panelsBefore = useRightPanelStore.getState();
+  onTestFinished(() => {
+    useRightPanelStore.setState(panelsBefore, true);
+  });
+  await pickNoProject();
+  await act(() =>
+    useRightPanelStore
+      .getState()
+      .openBrowser(scopeThreadRef(session.environmentId, session.threadId), null),
+  );
+  await vi.waitFor(() => expect(annotation.send).not.toBeNull());
+  await act(() =>
+    annotation.send!(
+      {
+        id: "annotation",
+        pageUrl: "http://localhost:3000/",
+        pageTitle: null,
+        comment: "Make this button blue",
+        elements: [],
+        regions: [],
+        strokes: [],
+        styleChanges: [],
+        screenshot: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+      null,
+    ),
+  );
+  await expect.element(page.getByText("Preparing No project…", { exact: true })).toBeVisible();
+  expect(useComposerDraftStore.getState().getDraftSession(app.draftId)?.promotedTo).toBeFalsy();
+});
+
+it("refuses No project while the draft's send is in flight", async () => {
+  const { opened } = holdScratch([ENVIRONMENT_ID]);
+  using _environment = installFakeEnvironment([]);
+  await using app = await openDraft("draft-scratch-while-sending");
+  const session = useComposerDraftStore.getState().getDraftSession(app.draftId)!;
+  const sending = draftSendState(
+    scopedThreadKey(scopeThreadRef(session.environmentId, session.threadId)),
+  ).sendInFlight;
+  sending.current = true;
+  onTestFinished(() => {
+    sending.current = false;
+  });
+  await pickNoProject();
+  expect(opened).not.toHaveBeenCalled();
+  await expect.element(page.getByRole("combobox", { name: "Project: render" })).toBeEnabled();
+});
+
+it("opening Settings before No project is ready keeps the user in Settings", async () => {
+  const { opened, finish } = holdScratch([ENVIRONMENT_ID]);
+  using _environment = installFakeEnvironment([], {
+    extraProjects: [{ id: alphaProject.id, title: "alpha" }],
+  });
+  await using app = await openDraft("draft-scratch-then-settings");
+  await pickNoProject();
+  await act(() => app.router.navigate({ href: "/settings/general" }));
+  await finish();
+  await act(async () => {});
+  expect(app.router.state.location.pathname).toBe("/settings/general");
+  expect(useComposerDraftStore.getState().getDraftSession(app.draftId)?.projectId).toBe(PROJECT_ID);
+  expect(vi.mocked(opened).mock.calls[0]?.[2]).toMatchObject({ aborted: true });
+});
+
+it("applies No project from a machine that is still allowed after the usual home changes", async () => {
+  const secondary = EnvironmentId.make("secondary");
+  const { opened, finish } = holdScratch([ENVIRONMENT_ID, secondary], secondary);
+  using _environment = installFakeEnvironment([], {
+    extraProjects: [{ id: alphaProject.id, title: "alpha" }],
+  });
+  await using app = await openDraft("draft-scratch-primary-back");
+  await act(() => useComposerDraftStore.getState().setPrompt(app.draftId, "Plan the launch"));
+  await pickNoProject();
+  expect(opened).toHaveBeenCalledWith(secondary, undefined, expect.any(AbortSignal));
+  // The primary reconnects, so it is the usual home again.
+  scratch.usual = ENVIRONMENT_ID;
+  await finish();
+  await vi.waitFor(() =>
+    expect(useComposerDraftStore.getState().getDraftSession(app.draftId)?.projectId).toBe(
+      alphaProject.id,
+    ),
+  );
+  expect(document.body.textContent).not.toContain("no longer allows that machine");
 });

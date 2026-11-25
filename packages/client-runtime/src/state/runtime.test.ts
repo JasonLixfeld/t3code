@@ -69,7 +69,9 @@ import {
   createRuntimeCommand,
   environmentSessionGenerationAtom,
   executeAtomQuery,
+  isAtomCommandInterrupted,
   type QueryAnswerHandler,
+  runAtomCommand,
 } from "./runtime.ts";
 
 const QUERY_ENVIRONMENT = new PrimaryConnectionTarget({
@@ -1738,6 +1740,37 @@ describe("runtime command runner", () => {
       registry.dispose();
     }),
   );
+
+  it("frees a serial lane when its caller aborts the command running in it", async () => {
+    let started = () => {};
+    const running = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const runtime = Atom.runtime(Layer.empty);
+    const scheduler = createAtomCommandScheduler();
+    const concurrency = { mode: "serial" as const, key: () => "machine" };
+    const stalled = createRuntimeCommand(runtime, {
+      label: "test.stalled",
+      scheduler,
+      concurrency,
+      execute: () => Effect.sync(() => started()).pipe(Effect.andThen(Effect.never)),
+    });
+    const later = createRuntimeCommand(runtime, {
+      label: "test.later",
+      scheduler,
+      concurrency,
+      execute: () => Effect.succeed("ran"),
+    });
+    const registry = AtomRegistry.make();
+    const controller = new AbortController();
+    const first = runAtomCommand(registry, stalled, undefined, { signal: controller.signal });
+    await running;
+    controller.abort();
+    expect(isAtomCommandInterrupted(await first)).toBe(true);
+    const second = await runAtomCommand(registry, later, undefined);
+    expect(second._tag === "Success" && second.value).toBe("ran");
+    registry.dispose();
+  });
 
   it.effect("releases a shared scheduler lane before the outer command finishes", () =>
     Effect.gen(function* () {

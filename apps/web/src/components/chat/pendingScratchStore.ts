@@ -10,6 +10,13 @@ const usePendingScratch = create<{ readonly drafts: ReadonlySet<DraftId> }>(() =
   drafts: new Set(),
 }));
 
+/** How long the picker waits for the no-project home before it gives up and unlocks the draft. */
+export const SCRATCH_REPLY_TIMEOUT_MS = 15_000;
+
+export function isScratchPending(draftId: DraftId): boolean {
+  return usePendingScratch.getState().drafts.has(draftId);
+}
+
 export function setScratchPending(draftId: DraftId, pending: boolean) {
   usePendingScratch.setState(({ drafts }) => {
     const next = new Set(drafts);

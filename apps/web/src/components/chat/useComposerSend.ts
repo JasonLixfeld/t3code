@@ -66,6 +66,7 @@ import { type ChatMessage, DEFAULT_INTERACTION_MODE } from "../../types";
 import { recordPromptSent } from "../GitHubStarPrompt";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { isMissionDraft, missionDraftOf } from "../sidebar/missionDraftStore";
+import { isScratchPending } from "./pendingScratchStore";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { readPendingWorkspaceDefault, useNewThreadHandler } from "../../hooks/useHandleNewThread";
@@ -430,6 +431,13 @@ export function useComposerSend(input: ComposerSendInput) {
     },
   ) => {
     e?.preventDefault();
+    // Every send path stops here while the draft's "No project" home is still opening.
+    if (draftId !== null && isScratchPending(draftId)) {
+      toastManager.add(
+        stackedThreadToast({ type: "warning", title: m(msg("Preparing No project…")) }),
+      );
+      return;
+    }
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
     let promptAtSend = detachedOverride ? detachedOverride.prompt : promptRef.current;

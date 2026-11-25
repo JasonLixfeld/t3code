@@ -65,13 +65,15 @@ export function createScratchProjectActions(input: {
   const openScratchProject = async (
     environmentId: EnvironmentId,
     failureTitle = m(msg("Could not start without a project")),
+    // Aborting interrupts the command, which frees the machine's project queue for later ones.
+    signal?: AbortSignal,
   ): Promise<EnvironmentProject | null> => {
     const command = projectEnvironment.openScratch;
     const result = await runAtomCommand(
       input.registry,
       command,
       { environmentId, input: {} },
-      { label: command.label, reportFailure: false, reportDefect: true },
+      { label: command.label, reportFailure: false, reportDefect: true, signal },
     );
     if (result._tag === "Success") return result.value;
     if (!isAtomCommandInterrupted(result)) {

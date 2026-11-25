@@ -3,6 +3,7 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDr
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import {
   scopedProjectKey,
+  scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
@@ -10,7 +11,7 @@ import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { T, useGT } from "gt-react";
 import { FolderPlusIcon, MessageSquareDashedIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useRef, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { shortcutLabelForCommand } from "~/keybindings";
@@ -56,7 +57,13 @@ import { missionDraftOf, moveMissionDraft } from "../sidebar/missionDraftStore";
 import { missionScratchHome } from "../sidebar/missions.logic";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
-import { setScratchPending, useScratchPending } from "./pendingScratchStore";
+import {
+  SCRATCH_REPLY_TIMEOUT_MS,
+  setScratchPending,
+  useScratchPending,
+} from "./pendingScratchStore";
+import { BackgroundThreadContext } from "./backgroundThread";
+import { draftSendState } from "./chatViewSend";
 import { useStableCallback } from "~/hooks/useStableCallback";
 
 const ADD_PROJECT_VALUE = "add-project";
@@ -178,21 +185,34 @@ export function DraftHeroHeadline({
   const selectedValue = isScratchDraft ? NO_PROJECT_VALUE : activeProjectKey;
   const selectedPickerItem = pickerItems.find((item) => item.value === selectedValue) ?? null;
 
-  // The request for the no-project home belongs to this mounted picker and its draft. While it
-  // is pending the draft cannot send or change project or mission; leaving the draft or
-  // unmounting the picker cancels it, so its reply never applies.
-  const pendingScratchRef = useRef<symbol | null>(null);
+  // The request for the no-project home belongs to this picker while its draft is in front.
+  // While it is pending the draft cannot send or change project or mission. Leaving the draft,
+  // Settings or Usage opening over it, or unmounting the picker aborts it, so its reply never
+  // applies.
+  const pendingScratchRef = useRef<AbortController | null>(null);
   const preparingScratch = useScratchPending(draftId);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels this draft's pending no-project request when the picker leaves the draft or unmounts
-  useEffect(
-    () => () => {
-      if (pendingScratchRef.current === null || draftId === null) return;
+  const inBackground = use(BackgroundThreadContext);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts this draft's pending no-project request when the draft leaves the foreground or the picker unmounts
+  useEffect(() => {
+    const cancel = () => {
+      const pending = pendingScratchRef.current;
+      if (pending === null || draftId === null) return;
       pendingScratchRef.current = null;
       setScratchPending(draftId, false);
-    },
-    [draftId],
-  );
-  const readScratchHome = useStableCallback(() => scratchHome);
+      pending.abort();
+    };
+    if (inBackground) cancel();
+    return cancel;
+  }, [draftId, inBackground]);
+  const readProjectMachines = useStableCallback(() => missionMachines);
+  const sendInFlight = () => {
+    const session = draftId ? useComposerDraftStore.getState().getDraftSession(draftId) : null;
+    return (
+      session !== null &&
+      draftSendState(scopedThreadKey(scopeThreadRef(session.environmentId, session.threadId)))
+        .sendInFlight.current
+    );
+  };
   // Null once the draft is sending, so a request from before the send never applies.
   const draftTargetKey = () => {
     const session = draftId ? useComposerDraftStore.getState().getDraftSession(draftId) : null;
@@ -231,25 +251,44 @@ export function DraftHeroHeadline({
     const requestedTarget = draftTargetKey();
     const home = scratchHome;
     if (!draftId || home === null || isScratchDraft || requestedTarget === null) return;
-    if (pendingScratchRef.current !== null) return;
-    const request = Symbol("scratch");
+    if (inBackground || pendingScratchRef.current !== null || sendInFlight()) return;
+    const request = new AbortController();
     pendingScratchRef.current = request;
     setScratchPending(draftId, true);
     const requestedMark = missionDraftOf(draftId);
-    const project = await openScratchProject(home).catch(() => null);
+    const timeout = window.setTimeout(() => request.abort(), SCRATCH_REPLY_TIMEOUT_MS);
+    // An abort detaches at once, even from a reply that never comes.
+    const aborted = new Promise<null>((resolve) => {
+      request.signal.addEventListener("abort", () => resolve(null), { once: true });
+    });
+    const project = await Promise.race([
+      openScratchProject(home, undefined, request.signal).catch(() => null),
+      aborted,
+    ]);
+    window.clearTimeout(timeout);
     if (pendingScratchRef.current !== request) return;
     pendingScratchRef.current = null;
     setScratchPending(draftId, false);
+    if (request.signal.aborted) {
+      toastManager.add({
+        type: "error",
+        title: gt("Could not start without a project"),
+        description: gt("The machine did not answer in time."),
+      });
+      return;
+    }
     // Defence in depth: the draft cannot change while pending, but a stale reply never applies.
     if (
       !project ||
+      sendInFlight() ||
       draftTargetKey() !== requestedTarget ||
       missionDraftOf(draftId) !== requestedMark
     ) {
       return;
     }
     // The draft's mission may no longer allow that machine, for example after a link lost access.
-    if (readScratchHome() !== home) {
+    const machines = readProjectMachines();
+    if (machines !== null && !machines.has(home)) {
       toastManager.add({
         type: "warning",
         title: gt("Could not start without a project"),
