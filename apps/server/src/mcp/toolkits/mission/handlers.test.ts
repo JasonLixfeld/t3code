@@ -707,6 +707,25 @@ it.effect(
     }),
 );
 
+it.effect("a workspaces follow-up carries no brief, which only the list carries", () =>
+  Effect.gen(function* () {
+    const missions = { briefAnswer: () => Effect.succeed({ text: "Goal: ship." }) };
+    const { answer } = yield* callOnce(
+      linkedClient("full-access"),
+      (held) => ({
+        kind: "workspaces",
+        members: [
+          { threadId: userThread, generation: typeof held === "object" ? held.generation : "" },
+        ],
+      }),
+      { before: joinedBy(LINK_OWNER), missions },
+    );
+    const [followed] = decodeTagAnswer(JSON.parse(answer)).claims;
+    assert.isDefined(followed?.detail);
+    assert.isUndefined(followed?.detail?.brief);
+  }),
+);
+
 it.effect("a workspaces call answers only the caller's own claims, under their generations", () =>
   Effect.gen(function* () {
     const { answer } = yield* callOnce(
