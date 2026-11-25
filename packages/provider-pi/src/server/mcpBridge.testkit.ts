@@ -68,6 +68,7 @@ export async function loadMcpBridge(
   const handlers = new Map<string, AgentStartHook>();
   const tools: RegisteredTool[] = [];
   let registrations = 0;
+  let listingFails = false;
   const requests: Array<{ readonly method: string; readonly params?: unknown }> = [];
   let activeTools = ["read"];
   let bridgeSourcePath = "/fixture/pi-t3-extension.ts";
@@ -130,6 +131,9 @@ export async function loadMcpBridge(
         params?: unknown;
       };
       requests.push(request);
+      if (request.method === "tools/list" && listingFails) {
+        return new Response("unavailable", { status: 503 });
+      }
       const result =
         request.method === "tools/list"
           ? { tools: catalog }
@@ -226,8 +230,10 @@ export async function loadMcpBridge(
     setBridgeSourcePath: (path: string) => {
       bridgeSourcePath = path;
     },
-    // T3 computes the listed tools per request, so tests change it between turns.
     catalog,
+    failListing: (fails: boolean) => {
+      listingFails = fails;
+    },
     registrations: () => registrations,
     requests,
     servers,

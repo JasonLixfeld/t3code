@@ -508,19 +508,14 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // mcp.json configures it; retry a failed connection at session_start.
   await ensureStarted().catch(() => undefined);
 
-  // T3 decides per request which tools a thread may list, and sends no list change when
-  // that answer changes, as when setLead promotes a mission lead. So list again each turn.
   const refreshCatalog = async () => {
     if (started === undefined) return;
-    try {
-      await started;
-      const next = await client.listTools(AbortSignal.timeout(10_000));
-      if (JSON.stringify(next) === JSON.stringify(catalog)) return;
-      catalog = next;
-      registerTools();
-    } catch {
-      // Keep the last catalog and try again next turn.
-    }
+    const next = await started
+      .then(() => client.listTools(AbortSignal.timeout(10_000)))
+      .catch(() => catalog);
+    if (JSON.stringify(next) === JSON.stringify(catalog)) return;
+    catalog = next;
+    registerTools();
   };
 
   const reconcileDiscovery = (ctx: Pick<ExtensionContext, "model">) => {

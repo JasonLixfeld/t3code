@@ -237,33 +237,44 @@ describe("Pi MCP tool exposure", () => {
     assert.equal(bridge.requests.at(-1)?.method, "tools/call");
   });
 
-  it("registers tools T3 starts listing mid-session and hides tools it stops listing", async () => {
+  const rosterTool = {
+    name: "t3_mission_roster",
+    description: "List the mission you lead.",
+    annotations: { readOnlyHint: true },
+    inputSchema: { type: "object", properties: {} },
+    outputSchema: { type: "object", properties: { count: { type: "number" } } },
+  };
+  const roster = "mcp__t3-code__t3_mission_roster";
+  const rosterAlias = "mcp__t3_code__t3_mission_roster";
+
+  async function startGatewaySession() {
     const bridge = await loadMcpBridge({
       modern: true,
       toolSearchAvailable: true,
       activatesOnRegistration: true,
     });
     const gatewayContext = { model: { api: "openai-completions" }, ui: { notify: assert.fail } };
-    const turn = () =>
-      bridge.handlers.get("before_agent_start")!({ systemPrompt: "" }, gatewayContext);
-    const roster = "mcp__t3-code__t3_mission_roster";
-    const rosterAlias = "mcp__t3_code__t3_mission_roster";
-    await bridge.handlers.get("session_start")!({ systemPrompt: "" }, gatewayContext);
-    await turn();
+    const sessionStart = bridge.handlers.get("session_start");
+    const agentStart = bridge.handlers.get("before_agent_start");
+    assert.isDefined(sessionStart);
+    assert.isDefined(agentStart);
+    await sessionStart({ systemPrompt: "" }, gatewayContext);
+    const nextAgentStart = () => agentStart({ systemPrompt: "" }, gatewayContext);
+    await nextAgentStart();
     assert.notInclude(bridge.declaredTools(), roster);
+    return { bridge, nextAgentStart };
+  }
 
-    // setLead promotes the thread; T3 lists the lead tools on its next request.
-    bridge.catalog.push({
-      ...bridge.catalog[0]!,
-      name: "t3_mission_roster",
-      description: "List the mission you lead.",
-    });
+  it("picks up a catalog change T3 sends no notification for at the next agent start", async () => {
+    const { bridge, nextAgentStart: turn } = await startGatewaySession();
+
+    bridge.catalog.push(rosterTool);
     await turn();
     assert.include(bridge.declaredTools(), roster);
     assert.equal(bridge.tools.find((tool) => tool.name === roster)?.exposure, "deferred");
     const result = await bridge.callModelTool(roster, {});
     assert.equal(result.content[0]?.text, "browser snapshot");
-    assert.deepEqual(JSON.parse(JSON.stringify(bridge.requests.at(-1))).params, {
+    assert.deepEqual(bridge.requests.at(-1)?.params, {
       name: "t3_mission_roster",
       arguments: {},
     });
@@ -280,6 +291,23 @@ describe("Pi MCP tool exposure", () => {
     }
     assert.isTrue((await bridge.callModelTool(rosterAlias, {})).isError);
     assert.include(bridge.declaredTools(), "mcp__t3-code__delegate_task");
+  });
+
+  it("keeps the old catalog when tools/list fails at agent start", async () => {
+    const { bridge, nextAgentStart } = await startGatewaySession();
+    const declared = bridge.declaredTools();
+    const registrations = bridge.registrations();
+
+    bridge.catalog.push(rosterTool);
+    bridge.failListing(true);
+    await nextAgentStart();
+    assert.equal(bridge.requests.at(-1)?.method, "tools/list");
+    assert.equal(bridge.registrations(), registrations);
+    assert.deepEqual(bridge.declaredTools(), declared);
+
+    bridge.failListing(false);
+    await nextAgentStart();
+    assert.include(bridge.declaredTools(), roster);
   });
 
   it("restores gateway declarations after model switches and older tree loadouts without excluded tools", async () => {
