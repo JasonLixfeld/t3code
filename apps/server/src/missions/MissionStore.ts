@@ -12,6 +12,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type * as SqlError from "effect/sql/SqlError";
 
 import * as ServerConfig from "../config.ts";
+import { newTombstoneCheck, type TombstoneCheck } from "./tombstoneChecks.ts";
 
 /**
  * Missions keep their own database and migration history. The main database's migrator skips
@@ -140,9 +141,19 @@ export const MIGRATIONS = {
       UNION SELECT mission_id, environment_id FROM pending_releases
       UNION SELECT mission_id, environment_id FROM known_claims
     `;
-    // A deleted Mission's id is never taken again, so a late add cannot bring it back.
+    // A deleted Mission's id is never taken again, so a late add cannot bring it back, and a
+    // claim on it is released whenever its machine lists one.
     yield* sql`
       CREATE TABLE deleted_missions (mission_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL)
+    `;
+    // The machines asked again for a deleted Mission's claims, and when.
+    yield* sql`
+      CREATE TABLE tombstone_checks (
+        environment_id TEXT PRIMARY KEY,
+        answered_at INTEGER,
+        retry_ms INTEGER NOT NULL,
+        next_at INTEGER NOT NULL
+      )
     `;
   }),
 };
@@ -287,6 +298,8 @@ export class MissionStore extends Context.Service<
     readonly deleteMission: (input: {
       readonly missionId: string;
       readonly lead: ThreadId;
+      /** Machines to ask for its claims besides those it sent adds or releases to. */
+      readonly machines: ReadonlyArray<EnvironmentId>;
     }) => Effect.Effect<void, MissionError>;
     /**
      * The claim this owner already holds for this Mission, or a new one. Refuses any other claim.
@@ -332,10 +345,15 @@ export class MissionStore extends Context.Service<
     readonly pendingAdds: Effect.Effect<ReadonlyArray<PendingAdd>>;
     /** Records the add, or what became of it. One row per thread and Mission. */
     readonly setPendingAdd: (add: PendingAdd) => Effect.Effect<void>;
-    /** The machines each Mission deleted here sent adds or releases to, until `forgetBefore`. */
-    readonly tombstones: Effect.Effect<ReadonlyMap<string, ReadonlyArray<EnvironmentId>>>;
-    /** Stops asking the machines of Missions deleted before `before`. Their ids stay refused. */
-    readonly forgetTombstonesBefore: (before: string) => Effect.Effect<void>;
+    /** Every Mission deleted here. Kept for good: a claim on one is released wherever seen. */
+    readonly deletedMissionIds: Effect.Effect<ReadonlySet<string>>;
+    /** The machines still asked for deleted Missions' claims. */
+    readonly tombstoneChecks: Effect.Effect<ReadonlyArray<TombstoneCheck>>;
+    /** Records when to ask a machine next; null stops asking it. */
+    readonly setTombstoneCheck: (
+      environmentId: EnvironmentId,
+      check: TombstoneCheck | null,
+    ) => Effect.Effect<void>;
     readonly clearPendingAdd: (add: AddKey) => Effect.Effect<void>;
     /** Replaces a pending add with the claim its join made, both or neither. */
     readonly settleAdd: (add: AddKey, claim: MissionClaim) => Effect.Effect<void>;
@@ -390,6 +408,11 @@ const make = Effect.gen(function* () {
       VALUES (${held.mission_id}, ${held.owner}, ${held.intent_id}, ${DateTime.formatIso(spentAt)})
     `;
   });
+
+  const writeTombstoneCheck = (check: TombstoneCheck) => sql`
+    INSERT OR REPLACE INTO tombstone_checks (environment_id, answered_at, retry_ms, next_at)
+    VALUES (${check.environmentId}, ${check.answeredAt}, ${check.retryMs}, ${check.nextAt})
+  `;
 
   const markUnsynced = (threadId: ThreadId) =>
     sql`INSERT OR IGNORE INTO unsynced_tags (thread_id) VALUES (${threadId})`;
@@ -456,7 +479,9 @@ const make = Effect.gen(function* () {
   const deleteMission = Effect.fn("MissionStore.deleteMission")(function* (input: {
     readonly missionId: string;
     readonly lead: ThreadId;
+    readonly machines: ReadonlyArray<EnvironmentId>;
   }) {
+    const asked = DateTime.toEpochMillis(yield* DateTime.now);
     return yield* change(
       Effect.gen(function* () {
         const [mission] = yield* sql<MissionRow>`
@@ -490,6 +515,17 @@ const make = Effect.gen(function* () {
           INSERT INTO deleted_missions (mission_id, deleted_at)
           VALUES (${input.missionId}, ${yield* now})
         `;
+        const sentTo = yield* sql<{ readonly environment_id: string }>`
+          SELECT environment_id FROM mission_machines WHERE mission_id = ${input.missionId}
+        `;
+        const machines = new Set([
+          ...input.machines,
+          ...sentTo.map((row) => EnvironmentId.make(row.environment_id)),
+        ]);
+        // Each is asked from now on, until it answers, as if no delete had come before.
+        for (const environmentId of machines) {
+          yield* writeTombstoneCheck(newTombstoneCheck(environmentId, asked));
+        }
         yield* markUnsynced(input.lead);
       }),
     );
@@ -769,28 +805,35 @@ const make = Effect.gen(function* () {
       Effect.orDie,
     );
 
-  const tombstones = sql<{ readonly mission_id: string; readonly environment_id: string }>`
-    SELECT d.mission_id, m.environment_id FROM deleted_missions d
-    JOIN mission_machines m ON m.mission_id = d.mission_id
+  const deletedMissionIds = sql<{ readonly mission_id: string }>`
+    SELECT mission_id FROM deleted_missions
   `.pipe(
-    Effect.map((rows) => {
-      const byMission = new Map<string, Array<EnvironmentId>>();
-      for (const row of rows) {
-        byMission.set(row.mission_id, [
-          ...(byMission.get(row.mission_id) ?? []),
-          EnvironmentId.make(row.environment_id),
-        ]);
-      }
-      return byMission as ReadonlyMap<string, ReadonlyArray<EnvironmentId>>;
-    }),
+    Effect.map((rows) => new Set(rows.map((row) => row.mission_id)) as ReadonlySet<string>),
     Effect.orDie,
   );
 
-  const forgetTombstonesBefore = (before: string) =>
-    sql`
-      DELETE FROM mission_machines WHERE mission_id IN
-        (SELECT mission_id FROM deleted_missions WHERE deleted_at < ${before})
-    `.pipe(Effect.asVoid, Effect.orDie);
+  const tombstoneChecks = sql<{
+    readonly environment_id: string;
+    readonly answered_at: number | null;
+    readonly retry_ms: number;
+    readonly next_at: number;
+  }>`SELECT environment_id, answered_at, retry_ms, next_at FROM tombstone_checks`.pipe(
+    Effect.map((rows) =>
+      rows.map((row): TombstoneCheck => ({
+        environmentId: EnvironmentId.make(row.environment_id),
+        answeredAt: row.answered_at,
+        retryMs: row.retry_ms,
+        nextAt: row.next_at,
+      })),
+    ),
+    Effect.orDie,
+  );
+
+  const setTombstoneCheck = (environmentId: EnvironmentId, check: TombstoneCheck | null) =>
+    (check === null
+      ? sql`DELETE FROM tombstone_checks WHERE environment_id = ${environmentId}`
+      : writeTombstoneCheck(check)
+    ).pipe(Effect.asVoid, Effect.orDie);
 
   const deletePendingAdd = (add: AddKey) =>
     sql`
@@ -878,8 +921,9 @@ const make = Effect.gen(function* () {
     setLead,
     deleteMission,
     join,
-    tombstones,
-    forgetTombstonesBefore,
+    deletedMissionIds,
+    tombstoneChecks,
+    setTombstoneCheck,
     release,
     leave,
     renameMission,

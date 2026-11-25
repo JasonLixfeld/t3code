@@ -20,6 +20,10 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
+import * as Migrator from "effect/sql/Migrator";
+import * as SqlClient from "effect/sql/SqlClient";
+import type * as SqlError from "effect/sql/SqlError";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -40,6 +44,7 @@ import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
 import * as MissionClaims from "./MissionClaims.ts";
 import { releaseDeletedThreads } from "./MissionThreadDeletions.ts";
+import { afterAnswer, afterMiss, newTombstoneCheck } from "./tombstoneChecks.ts";
 import * as MissionStore from "./MissionStore.ts";
 import * as Missions from "./Missions.ts";
 
@@ -262,6 +267,12 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     afterKnownClaimsRead: Effect.void as Effect.Effect<void>,
     /** Runs once, after the lead has stopped and before it starts again. */
     whileStopped: Effect.void as Effect.Effect<void>,
+    /** Writes the lead's database before it first starts, as an earlier build left it. */
+    leadDatabase: Effect.void as Effect.Effect<
+      void,
+      Migrator.MigrationError | SqlError.SqlError,
+      SqlClient.SqlClient
+    >,
     /** Runs before each read of a thread, on any machine. */
     beforeShellRead: (_threadId: ThreadId): Effect.Effect<void> => Effect.void,
     /** Runs before the lead's next read of its missions; a test holds a snapshot open with it. */
@@ -296,6 +307,10 @@ const withMissions = <A, E>(
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-missions-" });
+    yield* Effect.provide(
+      world.leadDatabase,
+      NodeSqliteClient.layer({ filename: path.join(directory, `${HERE}.sqlite`) }),
+    ).pipe(Effect.orDie);
     const claimsOn = (environmentId: EnvironmentId) =>
       MissionClaims.layer.pipe(
         Layer.provideMerge(
@@ -816,6 +831,125 @@ it.effect("a join that landed unanswered is released once its deleted mission's 
       );
     }),
   );
+});
+
+it.effect("a machine that never answered is still asked after the lead was down for weeks", () => {
+  const world = makeWorld([lead, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const mission = yield* createOne;
+      const member = { missionId: mission.missionId, member: laptopMember };
+      world.laptop.mode = "lostReply";
+      yield* missions.addMember(member);
+      yield* missions.forgetMember(member);
+      world.laptop.mode = "offline";
+      yield* missions.deleteMission({ missionId: mission.missionId });
+      world.whileStopped = TestClock.adjust(Duration.days(16));
+    }),
+    Effect.gen(function* () {
+      world.laptop.mode = "up";
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* world.untilAnswered("release");
+      assert.deepEqual(yield* laptopClaims(world), []);
+    }),
+  );
+});
+
+it.effect("an add an earlier build forgot is found through the full-access link on delete", () => {
+  const world = makeWorld([lead, laptopMember]);
+  // The database as the build before tombstones left it: the add to the laptop was forgotten,
+  // so nothing here says the laptop was ever sent anything.
+  world.leadDatabase = Effect.gen(function* () {
+    const earlier = Object.fromEntries(
+      Object.entries(MissionStore.MIGRATIONS).filter(([id]) => Number(id.split("_")[0]) <= 5),
+    );
+    yield* Migrator.make({})({ loader: Migrator.fromRecord(earlier) });
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO missions (mission_id, name, lead_thread_id, created_at)
+      VALUES ('0123456789ab', 'One', ${lead.threadId}, '2026-01-01T00:00:00.000Z')
+    `;
+    yield* sql`
+      INSERT INTO claims (thread_id, mission_id, mission_name, role, owner, generation, claimed_at)
+      VALUES (${lead.threadId}, '0123456789ab', 'One', 'lead', ${HERE}, 'g1', '2026-01-01')
+    `;
+  });
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      // The forgotten add did land on the laptop.
+      yield* world.laptop.claims!.join(LEAD_ON_LAPTOP, {
+        threadId: laptopMember.threadId,
+        missionId: "0123456789ab",
+        name: "One",
+      });
+      yield* missions.deleteMission({ missionId: "0123456789ab" });
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* world.untilAnswered("release");
+      assert.deepEqual(yield* laptopClaims(world), []);
+    }),
+  );
+});
+
+it.effect(
+  "asks a deleted mission's machine on a backoff until it answers, then on a schedule",
+  () => {
+    const world = makeWorld([lead, laptopMember]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const mission = yield* createOne;
+        world.laptop.mode = "offline";
+        yield* missions.deleteMission({ missionId: mission.missionId });
+        // Which of the sweeps, every 15 seconds, asked the laptop.
+        const askedAt = (seconds: number) =>
+          Effect.gen(function* () {
+            const asked: Array<number> = [];
+            for (let at = 15; at <= seconds; at += 15) {
+              const before = world.laptop.calls.length;
+              yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+              if (world.laptop.calls.length > before) asked.push(at);
+            }
+            return asked;
+          });
+        // Before any answer: 15 seconds, then each wait doubles, up to 10 minutes.
+        assert.deepEqual(yield* askedAt(1560), [15, 30, 60, 120, 240, 480, 960, 1560]);
+        // It answers when next asked, 10 minutes on, and then 5 minutes after that.
+        world.laptop.mode = "up";
+        assert.deepEqual(yield* askedAt(600), [600]);
+        assert.deepEqual(yield* askedAt(360), [300]);
+      }),
+    );
+  },
+);
+
+it("schedules a deleted mission's checks: a capped backoff, then 5 min, 1 h, 6 h and daily", () => {
+  const SECOND = 1000;
+  const HOUR = 3600 * SECOND;
+  let check = newTombstoneCheck(LAPTOP, 0);
+  const misses: Array<number> = [];
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    check = afterMiss(check, check.nextAt)!;
+    misses.push(check.nextAt / SECOND);
+  }
+  assert.deepEqual(misses, [15, 45, 105, 225, 465, 945, 1545, 2145]);
+  const checks: Array<number> = [];
+  let answered: typeof check | null = afterAnswer(check, check.nextAt);
+  const start = check.nextAt;
+  while (answered !== null) {
+    checks.push((answered.nextAt - start) / HOUR);
+    answered = afterAnswer(answered, answered.nextAt);
+  }
+  assert.deepEqual(checks, [
+    5 / 60,
+    1,
+    6,
+    ...Array.from({ length: 14 }, (_, day) => (day + 1) * 24),
+  ]);
 });
 
 it.effect("a release forgotten before delete is sent once its machine is back", () => {

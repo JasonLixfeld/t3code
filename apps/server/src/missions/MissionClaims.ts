@@ -1,4 +1,5 @@
 import {
+  type EnvironmentId,
   CommandId,
   MissionError,
   missionTag,
@@ -113,6 +114,7 @@ export class MissionClaims extends Context.Service<
     readonly deleteMission: (input: {
       readonly missionId: string;
       readonly lead: ThreadId;
+      readonly machines: ReadonlyArray<EnvironmentId>;
     }) => Effect.Effect<void, MissionError>;
     /**
      * Joining again into the same Mission for the same owner returns the claim it already has.
@@ -274,7 +276,11 @@ const make = Effect.gen(function* () {
   });
 
   const deleteMission = Effect.fn("MissionClaims.deleteMission")(
-    function* (input: { readonly missionId: string; readonly lead: ThreadId }) {
+    function* (input: {
+      readonly missionId: string;
+      readonly lead: ThreadId;
+      readonly machines: ReadonlyArray<EnvironmentId>;
+    }) {
       yield* threadCommands.withLock(input.lead, store.deleteMission(input));
       yield* syncTags(input.lead);
     },

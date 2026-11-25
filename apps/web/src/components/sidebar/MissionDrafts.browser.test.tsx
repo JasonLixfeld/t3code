@@ -274,4 +274,9 @@ it("holds a member's join while its mission's machine no longer lists the missio
   await screen.stream("sent");
   await vi.waitFor(() => expect(missionDraftOf(draftId)?.step).toBe("held"));
   expect(commandFor("mission add member")).not.toHaveBeenCalled();
+  // The notice no longer says the thread is added.
+  await expect
+    .element(screen.getByText("This thread will not join a mission unless you pick one."))
+    .toBeInTheDocument();
+  expect(screen.container.textContent).not.toContain("Sending adds");
 });

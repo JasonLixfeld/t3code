@@ -41,6 +41,7 @@ import {
   type PendingAdd,
   type PendingRelease,
 } from "./MissionStore.ts";
+import { afterAnswer, afterMiss } from "./tombstoneChecks.ts";
 
 /** How long a lead waits on a member's machine before it treats the outcome as unknown. */
 export const MEMBER_CALL_DEADLINE = Duration.seconds(10);
@@ -51,8 +52,6 @@ export const REFRESH_INTERVAL = Duration.seconds(15);
  * a member's machine remembers a spent add, so a lead restored from a backup cannot replay one.
  */
 export const PENDING_ADD_DAYS = 7;
-/** How long a deleted Mission's machines are still asked for claims made after the delete. */
-const TOMBSTONE_DAYS = 14;
 
 export class Missions extends Context.Service<
   Missions,
@@ -493,24 +492,35 @@ const make = Effect.gen(function* () {
             );
           }
         }
-        const tombstones = yield* store.tombstones;
-        const cleansUp = [...tombstones.values()].some((machines) =>
-          machines.includes(environmentId),
+        const check = (yield* store.tombstoneChecks).find(
+          (candidate) => candidate.environmentId === environmentId,
         );
-        if (!discover && !cleansUp) return;
-        let held = yield* onMember(environmentId, { kind: "list" });
+        const askedAt = DateTime.toEpochMillis(yield* DateTime.now);
+        if (!discover && (check === undefined || check.nextAt > askedAt)) return;
+        let held = yield* onMember(environmentId, { kind: "list" }).pipe(
+          Effect.tapError(() =>
+            check === undefined
+              ? Effect.void
+              : store.setTombstoneCheck(environmentId, afterMiss(check, askedAt)),
+          ),
+        );
         // A claim on a Mission deleted here may have landed after the delete, from an add whose
-        // answer never came. Each is released as any member is. A claim made under an old link
-        // owner, before a re-pair, is not listed here; Leave mission on that machine frees it.
+        // answer never came. Any list, for whatever reason it was asked, releases each as any
+        // member is released. A claim made under an old link owner, before a re-pair, is not
+        // listed here; Leave mission on that machine frees it.
+        const deleted = yield* store.deletedMissionIds;
         for (const claim of held) {
-          if (!tombstones.has(claim.missionId)) continue;
+          if (!deleted.has(claim.missionId)) continue;
           yield* sendRelease({ environmentId, ...claim }).pipe(
             Effect.catchTags({
               MissionError: (error) => Effect.logInfo("A deleted mission's claim stayed", error),
             }),
           );
         }
-        held = held.filter((claim) => !tombstones.has(claim.missionId));
+        held = held.filter((claim) => !deleted.has(claim.missionId));
+        if (check !== undefined) {
+          yield* store.setTombstoneCheck(environmentId, afterAnswer(check, askedAt));
+        }
         // A member's claim, and so its tag, carries the Mission's name. A lead renamed since is
         // sent to the member's machine here, as often as it still answers with the old name.
         for (const mission of missions) {
@@ -536,13 +546,15 @@ const make = Effect.gen(function* () {
 
   /** The machines that owe an answer to an add or a release. They stay in every sweep. */
   const owingAnAnswer = Effect.map(
-    Effect.all([waiting, store.tombstones]),
-    ([{ releases, adds }, tombstones]) => [
+    Effect.all([waiting, store.tombstoneChecks, DateTime.now]),
+    ([{ releases, adds }, checks, now]) => [
       ...[...releases, ...adds.filter((add) => add.refusal === null)].map(
         (owed) => owed.environmentId,
       ),
-      // A deleted Mission's machines, for as long as its tombstone keeps them.
-      ...[...tombstones.values()].flat(),
+      // A deleted Mission's machines that are due to be asked again.
+      ...checks
+        .filter((check) => check.nextAt <= DateTime.toEpochMillis(now))
+        .map((check) => check.environmentId),
     ],
   );
   // Set by whoever wants the machines' claims read again; a sweep without it only sends again
@@ -576,10 +588,6 @@ const make = Effect.gen(function* () {
 
   const sweep = Effect.gen(function* () {
     yield* letGoOfGoneMembers;
-    const now = yield* DateTime.now;
-    yield* store.forgetTombstonesBefore(
-      DateTime.formatIso(DateTime.subtract(now, { days: TOMBSTONE_DAYS })),
-    );
     yield* followLeadTitles;
     const discover = yield* Ref.getAndSet(discoverNext, false);
     const asked = new Set([
@@ -649,7 +657,16 @@ const make = Effect.gen(function* () {
     // A member whose thread is gone holds nothing back. Claims elsewhere that the lead cannot
     // see, from adds never answered, are released by the sweeps the tombstone keeps asking.
     yield* letGoOfGoneMembers;
-    yield* claims.deleteMission({ missionId: mission.missionId, lead: mission.leadThreadId });
+    // Every machine this one can add from is asked too: an older build kept no list of the
+    // machines a Mission sent to, and an add forgotten there left nothing behind.
+    const machines = (yield* missionLinks)
+      .filter((link) => link.fullAccess)
+      .map((link) => link.environmentId);
+    yield* claims.deleteMission({
+      missionId: mission.missionId,
+      lead: mission.leadThreadId,
+      machines,
+    });
   });
 
   const setLead = Effect.fn("Missions.setLead")(function* (input: {

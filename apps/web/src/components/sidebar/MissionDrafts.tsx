@@ -35,15 +35,17 @@ export function useMissionDraftBanner(
       title:
         draft.intent.kind === "new"
           ? resolve(msg("Sending starts a mission led by this thread"))
-          : draft.intent.kind === "member"
-            ? resolve(
-                msg('Sending adds this thread to "{mission}"', { mission: draft.intent.name }),
-              )
-            : resolve(
-                msg('Sending makes this thread the lead of "{mission}"', {
-                  mission: draft.intent.name,
-                }),
-              ),
+          : draft.step === "held"
+            ? resolve(msg("This thread will not join a mission unless you pick one."))
+            : draft.intent.kind === "member"
+              ? resolve(
+                  msg('Sending adds this thread to "{mission}"', { mission: draft.intent.name }),
+                )
+              : resolve(
+                  msg('Sending makes this thread the lead of "{mission}"', {
+                    mission: draft.intent.name,
+                  }),
+                ),
       description: resolve(msg("It stays on this machine and sends to one model.")),
       dismissLabel: resolve(msg("Send as a plain thread")),
       onDismiss: () => clearMissionDraft(draftId),

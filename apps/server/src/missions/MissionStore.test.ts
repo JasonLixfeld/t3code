@@ -194,9 +194,13 @@ it.effect("upgrades a database an earlier build left, keeping a given-up add's m
       yield* usingStore(filename, (store) =>
         Effect.gen(function* () {
           assert.equal((yield* store.pendingAdds)[0]?.refusal?.startsWith("This add waited"), true);
-          yield* store.deleteMission({ missionId: "m1", lead });
+          yield* store.deleteMission({ missionId: "m1", lead, machines: [] });
           // The deleted Mission still asks the laptop, which its old add may have reached.
-          assert.deepEqual([...(yield* store.tombstones)], [["m1", ["env-laptop"]]]);
+          assert.deepEqual(
+            (yield* store.tombstoneChecks).map((check) => check.environmentId),
+            ["env-laptop"],
+          );
+          assert.isTrue((yield* store.deletedMissionIds).has("m1"));
           const again = yield* store.createMission(claimFor(lead, "m1", "g2")).pipe(Effect.flip);
           assert.include(again.message, "was deleted");
         }),
