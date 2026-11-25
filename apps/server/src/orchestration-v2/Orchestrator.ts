@@ -568,7 +568,8 @@ export interface OrchestratorV2Shape {
 
 /**
  * A server wake: a settled, archived or deleted thread is left as it is, and sent nothing. Only
- * server code sets it, around its own dispatch, so no client command can carry it.
+ * server code sets it, around its own dispatch, so no client command can carry it. Dispatch
+ * reads it once and removes it, so nothing that command dispatches in turn sees it.
  */
 export const UnlessParked = Context.Reference<boolean>("t3/orchestration-v2/UnlessParked", {
   defaultValue: () => false,
@@ -7222,26 +7223,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }
         : undefined,
     );
-    // Checked here, in the thread's own command order, so no settle can land between the check
-    // and the message that would otherwise reopen the thread.
-    if (
-      (yield* UnlessParked) &&
-      (projection.thread.settledOverride === "settled" ||
-        projection.thread.settledAt !== null ||
-        projection.thread.archivedAt !== null ||
-        projection.thread.deletedAt !== null)
-    ) {
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "thread.metadata-updated",
-        threadId: command.threadId,
-        occurredAt: yield* DateTime.now,
-        payload: projection.thread,
-      });
-      return;
-    }
     if (command.steerFollowUpOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.steerFollowUpOfRunId);
       if (
@@ -16380,6 +16361,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: OrchestrationV2ServerCommand,
     sideChatIds: ReadonlyArray<ThreadId> = [],
     cancelledTask?: OrchestrationV2Subagent,
+    unlessParked = false,
   ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorV2Error> {
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.command_id": command.commandId,
@@ -16413,11 +16395,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (shell !== null) yield* refuseAboveDispatchModeLimit(command, threadId, shell);
     }
 
+    // A wake for a parked thread is checked under its lock, before any queue upkeep, and does
+    // nothing at all; its receipt makes a replay do nothing too.
+    const parked =
+      unlessParked &&
+      command.type === "message.dispatch" &&
+      (yield* projectionStore.getThreadShell(command.threadId).pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+        Effect.map(
+          (shell) =>
+            shell === null ||
+            shell.settledOverride === "settled" ||
+            shell.settledAt !== null ||
+            shell.archivedAt !== null ||
+            shell.deletedAt !== null,
+        ),
+      ));
+
     // The run-end release can lag behind a new send; start the queue first so the send waits behind it.
     // A restart continuation resumes the ended run, so it must not be overtaken by the queue.
     // A steer follow-up takes its place first and starts the queue after it commits. A send that
     // beats the run-end reaction places the ended run's unread steers before it starts anything.
     if (
+      !parked &&
       command.type === "message.dispatch" &&
       command.restartContinuationOfRunId === undefined &&
       command.steerFollowUpOfRunId === undefined &&
@@ -16432,11 +16434,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
     }
 
-    const plan = yield* dispatchOnce(command, sideChatIds).pipe(
+    const plan = yield* (
+      parked
+        ? Effect.succeed<Effect.Success<ReturnType<typeof dispatchOnce>>>({
+            events: [],
+            effects: [],
+          })
+        : dispatchOnce(command, sideChatIds)
+    ).pipe(
       Effect.tap((planned) => refuseAboveRuntimeModeCeiling(command, planned.events)),
       Effect.filterOrFail(
         (planned) =>
           planned.events.length > 0 ||
+          parked ||
           isUnobservedAcknowledgement(command) ||
           command.type === "thread.background-work.settle" ||
           // A stale visit changes no read state.
@@ -16668,10 +16678,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
 
   // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
-  const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
+  const dispatchWithReceipt = Effect.fnUntraced(function* (
+    command: OrchestrationV2ServerCommand,
+    unlessParked = false,
+  ) {
     const dispatch = threadDispatch.withLock(
       commandThreadId(command),
-      dispatchWithReceiptEffect(command),
+      dispatchWithReceiptEffect(command, [], undefined, unlessParked),
     );
     // A fork holds its source's lock, so a source deletion and its fork never interleave. A
     // parent's lock comes before its side chats' locks. A side chat fork from a side chat or a
@@ -17260,7 +17273,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     awaitRestartContinuation: Effect.fn("OrchestratorV2.awaitRestartContinuation")(function (run) {
       return effectOutbox.awaitSettled(`effect:restart-continuation:${run.id}`).pipe(Effect.ignore);
     }),
-    dispatch: dispatchWithReceipt,
+    // Only the wake's own command reads UnlessParked: it is removed before anything runs.
+    dispatch: Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
+      const unlessParked = yield* UnlessParked;
+      return yield* dispatchWithReceipt(command, unlessParked).pipe(
+        Effect.provideService(UnlessParked, false),
+      );
+    }),
     autoArmLimitRecovery: Effect.fn("OrchestratorV2.autoArmLimitRecovery")(function (input) {
       return threadDispatch.withLock(
         input.threadId,

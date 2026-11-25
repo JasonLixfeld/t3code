@@ -12872,5 +12872,6 @@
   "9d0b1d2cead70261": "mission lead orchestrate instructions default prompt every turn",
   "e2cdfebe2d8a1d14": "Could not save the mission prompt",
   "4cf08bfc2adf8c67": "The lead of \"{mission}\" follows this on every turn. Leave it empty to use the default from Settings.",
-  "32bb9fa25796a9eb": "Edit mission prompt…"
+  "32bb9fa25796a9eb": "Edit mission prompt…",
+  "3694361695d7e981": "Release refused: {reason}"
 }

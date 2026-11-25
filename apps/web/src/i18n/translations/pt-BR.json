@@ -12863,5 +12863,6 @@
   "9d0b1d2cead70261": "missão líder orquestrar instruções prompt padrão cada turno",
   "e2cdfebe2d8a1d14": "Não foi possível salvar o prompt da missão",
   "4cf08bfc2adf8c67": "A líder de \"{mission}\" segue isto a cada turno. Deixe vazio para usar o padrão das Configurações.",
-  "32bb9fa25796a9eb": "Editar prompt da missão…"
+  "32bb9fa25796a9eb": "Editar prompt da missão…",
+  "3694361695d7e981": "Liberação recusada: {reason}"
 }

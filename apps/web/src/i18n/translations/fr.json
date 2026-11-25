@@ -12863,5 +12863,6 @@
   "9d0b1d2cead70261": "mission principal orchestrer instructions prompt par défaut chaque tour",
   "e2cdfebe2d8a1d14": "Impossible d'enregistrer le prompt de mission",
   "4cf08bfc2adf8c67": "Le fil principal de « {mission} » suit ceci à chaque tour. Laissez vide pour utiliser la valeur par défaut des Réglages.",
-  "32bb9fa25796a9eb": "Modifier le prompt de mission…"
+  "32bb9fa25796a9eb": "Modifier le prompt de mission…",
+  "3694361695d7e981": "Retrait refusé : {reason}"
 }

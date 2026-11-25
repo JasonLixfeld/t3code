@@ -198,6 +198,23 @@ export const remoteUpdates = (
   return updates;
 };
 
+/** What a thread's shell says it is doing, as a lead compares it between looks. */
+export const shellDetail = (
+  shell: Pick<
+    OrchestrationV2ThreadShell,
+    "status" | "pendingRuntimeRequest" | "hasActionableProposedPlan" | "latestRunId"
+  >,
+): MemberDetail => {
+  const request = waitedOn(shell);
+  return {
+    status: memberStatusOf(shell),
+    title: "",
+    project: "",
+    ...(shell.latestRunId === null ? {} : { run: { id: shell.latestRunId, status: shell.status } }),
+    requests: request === null ? [] : [{ id: request.id, kind: request.kind }],
+  };
+};
+
 /** A thread here, as its lead sees it. Undefined when it is gone or cannot be read. */
 export const memberDetail = Effect.fn("missionStatus.memberDetail")(function* (threadId: ThreadId) {
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -208,14 +225,7 @@ export const memberDetail = Effect.fn("missionStatus.memberDetail")(function* (t
     Effect.map(Option.match({ onNone: () => "", onSome: (found) => found.title })),
     Effect.orElseSucceed(() => ""),
   );
-  const request = waitedOn(shell);
-  return {
-    status: memberStatusOf(shell),
-    title: shell.title,
-    project,
-    ...(shell.latestRunId === null ? {} : { run: { id: shell.latestRunId, status: shell.status } }),
-    requests: request === null ? [] : [{ id: request.id, kind: request.kind }],
-  } satisfies MemberDetail;
+  return { ...shellDetail(shell), title: shell.title, project } satisfies MemberDetail;
 });
 
 /** Codex cuts each context entry past about 1,000 tokens, counted as 4 bytes each. */

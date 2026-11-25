@@ -1,4 +1,5 @@
 import {
+  MissionJoinOutcome,
   OrchestratorMcpEnvironmentTarget,
   ScheduledTaskId,
   ScheduledTask,
@@ -177,7 +178,12 @@ const ThreadTransferTool = Tool.make("t3_thread_transfer", {
     title: Schema.optional(TrimmedNonEmptyString),
   }),
   success: Schema.Union([
-    Schema.Struct({ sequence: NonNegativeInt, targetThreadId: ThreadId }),
+    Schema.Struct({
+      sequence: NonNegativeInt,
+      targetThreadId: ThreadId,
+      /** A lead's fork joins its mission. */
+      mission: Schema.optional(MissionJoinOutcome),
+    }),
     Schema.Struct({
       transfers: Schema.Array(
         Schema.Struct({

@@ -379,28 +379,56 @@ it.effect("members and machines keep the numbers they were first given", () =>
 );
 
 it.effect(
-  "a started thread asks to join once, stays out once released, and is forgotten in 30 days",
+  "a started thread asks to join once with one intent, stays out once released from its own mission, and is forgotten in 30 days",
   () =>
     withDatabase((filename) =>
       Effect.gen(function* () {
-        const started = { environmentId: EnvironmentId.make("env-a"), threadId: member };
-        const other = { environmentId: EnvironmentId.make("env-a"), threadId: lead };
+        const a = EnvironmentId.make("env-a");
+        const started = { environmentId: a, threadId: member, missionId: "m1" };
+        const other = { environmentId: a, threadId: lead, missionId: "m1" };
         yield* usingStore(filename, (store) =>
           Effect.gen(function* () {
-            assert.equal(yield* store.startJoin(started), "first");
-            assert.equal(yield* store.startJoin(started), "requested");
+            assert.deepEqual(yield* store.startJoin(started, "i1"), {
+              state: "first",
+              intentId: "i1",
+            });
+            // A replay gets the first intent back, whatever it was given.
+            assert.deepEqual(yield* store.startJoin(started, "i2"), {
+              state: "requested",
+              intentId: "i1",
+            });
             yield* store.setMemberMark(started, "mark-1");
-            assert.equal(yield* store.startJoin(other), "first");
+            yield* store.startJoin(other, "i3");
+            yield* store.startJoin({ ...other, missionId: "m2" }, "i4");
+            // A release from one mission leaves the other's request as it was.
             yield* store.startedReleased(other);
           }),
         );
         yield* usingStore(filename, (store) =>
           Effect.gen(function* () {
-            assert.equal(yield* store.startJoin(started), "requested");
-            assert.equal(yield* store.startJoin(other), "released");
+            assert.equal((yield* store.startJoin(started, "i5")).state, "requested");
+            assert.equal((yield* store.startJoin(other, "i5")).state, "released");
+            assert.equal(
+              (yield* store.startJoin({ ...other, missionId: "m2" }, "i5")).state,
+              "requested",
+            );
             assert.equal(yield* store.memberMark(started), "mark-1");
+            // Deleted on one machine: the same id on another keeps its request.
+            yield* store.startJoin(
+              { ...started, environmentId: EnvironmentId.make("env-b") },
+              "i6",
+            );
+            yield* store.forgetStartedJoin({ environmentId: a, threadId: member });
+            assert.equal((yield* store.startJoin(started, "i7")).state, "first");
+            assert.equal(
+              (yield* store.startJoin(
+                { ...started, environmentId: EnvironmentId.make("env-b") },
+                "i8",
+              )).state,
+              "requested",
+            );
             yield* TestClock.adjust(Duration.days(31));
-            assert.equal(yield* store.startJoin(started), "first");
+            assert.equal((yield* store.startJoin(other, "i9")).state, "first");
           }),
         );
       }),

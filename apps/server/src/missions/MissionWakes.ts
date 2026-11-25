@@ -10,6 +10,7 @@ import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
@@ -24,12 +25,40 @@ import {
   markOf,
   missionUpdateText,
   remoteUpdates,
+  shellDetail,
   type SourcedUpdate,
   updateFromEvent,
 } from "./missionStatus.ts";
 
 /** A lead is woken at most this often. What happens in between goes in its next wake. */
 export const WAKE_INTERVAL = Duration.seconds(30);
+
+/**
+ * The message a wake sends: a background notification, as a delegated result is, so it keeps
+ * the lead's snooze. The same wake is the same command.
+ */
+export const missionWakeCommand = (input: {
+  readonly missionId: string;
+  readonly key: string;
+  readonly lead: ThreadId;
+  readonly text: string;
+}) => ({
+  type: "message.dispatch" as const,
+  commandId: CommandId.make(`server:mission-update:${input.missionId}:${input.key}`),
+  threadId: input.lead,
+  messageId: MessageId.make(`message:mission-update:${input.missionId}:${input.key}`),
+  text: input.text,
+  notification: {
+    source: { kind: "system" as const },
+    outcome: "updated" as const,
+    summary: "Mission update",
+    detail: input.text,
+  },
+  attachments: [],
+  dispatchMode: { type: "queue_after_active" as const },
+  createdBy: "agent" as const,
+  creationSource: "server" as const,
+});
 
 /** Sources already recorded, since a run's ending may be written again after it was told. */
 const TOLD_KEPT = 1_000;
@@ -80,8 +109,8 @@ export const layer = Layer.effectDiscard(
       if (fresh.length > 0) yield* Queue.offer(due, missionId);
     });
 
-    /** Compared with what the member last said, kept on disk, so a restart misses nothing. */
-    const observeRemote = Effect.fn("MissionWakes.observeRemote")(function* (
+    /** Compared with what the member last showed, kept on disk, so a restart misses nothing. */
+    const observe = Effect.fn("MissionWakes.observe")(function* (
       missionId: string,
       ref: ScopedThreadRef,
       detail: MemberDetail,
@@ -89,6 +118,23 @@ export const layer = Layer.effectDiscard(
       const before = yield* store.memberMark(ref);
       yield* record(missionId, ref, remoteUpdates(before, detail, yield* Clock.currentTimeMillis));
       yield* store.setMemberMark(ref, markOf(detail));
+    });
+
+    /**
+     * A member here the lead has no mark for, as when it just joined or before marks were kept, is
+     * looked at once, as a remote member's first list is: what waits on the user wakes the lead.
+     * The mark stays, so a restart looks no more. What changes later comes as its own events.
+     */
+    const seeLocalMembers = Effect.gen(function* () {
+      const led = new Set((yield* store.missions).map((mission) => mission.missionId));
+      for (const claim of yield* store.claimsOf(here)) {
+        if (claim.role !== "member" || !led.has(claim.missionId)) continue;
+        const ref = { environmentId: here, threadId: claim.threadId };
+        if ((yield* store.memberMark(ref)) !== undefined) continue;
+        const shell = yield* shellOf(claim.threadId);
+        if (shell === null || shell.deletedAt !== null) continue;
+        yield* observe(claim.missionId, ref, shellDetail(shell));
+      }
     });
 
     /** The Mission led here that a thread here belongs to, and how. */
@@ -154,19 +200,16 @@ export const layer = Layer.effectDiscard(
       if (updates.length === 0) return;
       const names = yield* missions.numbers(missionId, updates);
       const sent = yield* threads
-        .dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make(`server:mission-update:${missionId}:${key}`),
-          threadId: leadThreadId,
-          messageId: MessageId.make(`message:mission-update:${missionId}:${key}`),
-          text: missionUpdateText(
-            updates.map((update) => ({ ...names.get(numberKey(update))!, event: update.event })),
-          ),
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          creationSource: "server",
-        })
+        .dispatch(
+          missionWakeCommand({
+            missionId,
+            key,
+            lead: leadThreadId,
+            text: missionUpdateText(
+              updates.map((update) => ({ ...names.get(numberKey(update))!, event: update.event })),
+            ),
+          }),
+        )
         .pipe(
           // A lead settled since the read above stays settled; its updates go with this one.
           Effect.provideService(Orchestrator.UnlessParked, true),
@@ -183,6 +226,8 @@ export const layer = Layer.effectDiscard(
     });
 
     for (const missionId of yield* store.missionsWithUpdates) yield* Queue.offer(due, missionId);
+    // Subscribed before the first look, so a join in between is not missed.
+    const storeChanges = yield* PubSub.subscribe(store.changes);
 
     const logged = (message: string) =>
       Effect.catchCause((cause) => Effect.logWarning(message, cause));
@@ -191,6 +236,11 @@ export const layer = Layer.effectDiscard(
         missions.withLead(missionId, deliverTo).pipe(logged("A mission update was not delivered")),
       ),
       Effect.forever,
+      Effect.forkIn(scope),
+    );
+    const lookHere = seeLocalMembers.pipe(logged("A member that joined here was not looked at"));
+    yield* lookHere.pipe(
+      Effect.andThen(Stream.fromSubscription(storeChanges).pipe(Stream.runForEach(() => lookHere))),
       Effect.forkIn(scope),
     );
     yield* engine.streamDomainEvents.pipe(
@@ -202,7 +252,7 @@ export const layer = Layer.effectDiscard(
     );
     yield* missions.remoteChanges.pipe(
       Stream.runForEach((change) =>
-        observeRemote(change.missionId, change.ref, change.detail).pipe(
+        observe(change.missionId, change.ref, change.detail).pipe(
           logged("A remote member's change was not read"),
         ),
       ),

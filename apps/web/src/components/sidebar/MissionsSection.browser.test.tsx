@@ -320,6 +320,47 @@ describe("missions in the sidebar", () => {
     expect(screen.getByRole("button", { name: "Dismiss" }).elements()).toHaveLength(1);
   });
 
+  it("shows a refused release with why, and offers Dismiss and Retry", async () => {
+    listedMissions[0] = {
+      ...ship,
+      members: [
+        ...ship.members,
+        {
+          ref: ref(LOCAL, "plain"),
+          role: "member",
+          state: "release-refused",
+          detail: "The laptop refused it.",
+        },
+      ],
+    };
+    onTestFinished(() => {
+      listedMissions[0] = ship;
+    });
+    await using screen = await renderSidebar();
+    await expect
+      .element(screen.getByText("Release refused: The laptop refused it."))
+      .toBeInTheDocument();
+    // Still a member: its thread shows under the mission, with the refusal under its row.
+    const members = screen.container.querySelector("[data-testid=sidebar-mission-members]")!;
+    expect(members.textContent).toContain("Unrelated bug");
+    const command = {
+      environmentId: LOCAL,
+      input: { missionId: "0123456789ab", member: ref(LOCAL, "plain") },
+    };
+    const refusal = screen.getByText("Release refused: The laptop refused it.").element();
+    const button = (name: string) =>
+      refusal.parentElement!.querySelector<HTMLElement>(`button[aria-label="${name}"]`)!;
+    button("Retry").click();
+    await vi.waitFor(() =>
+      expect(commandFor("mission release member")).toHaveBeenCalledExactlyOnceWith(command),
+    );
+    await vi.waitFor(() => expect(button("Dismiss").hasAttribute("disabled")).toBe(false));
+    button("Dismiss").click();
+    await vi.waitFor(() =>
+      expect(commandFor("mission forget member")).toHaveBeenCalledExactlyOnceWith(command),
+    );
+  });
+
   it("reads in a lead the shell left out, and names its row for the mission meanwhile", async () => {
     using mount = vi.spyOn(threadFamilies, "mount");
     await using screen = await renderSidebar();

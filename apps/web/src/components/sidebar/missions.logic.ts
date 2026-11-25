@@ -362,12 +362,15 @@ const HOLD: Record<MissionMember["state"], number> = {
   active: 2,
   offline: 1,
   "release-pending": 1,
+  // The release was refused, so the thread is still held.
+  "release-refused": 2,
   "add-pending": 0,
   "add-refused": -1,
   deleted: -1,
 };
 
-const isJoined = (member: MissionMember) => member.state === "active" || member.state === "offline";
+const isJoined = (member: MissionMember) =>
+  member.state === "active" || member.state === "offline" || member.state === "release-refused";
 
 /** Where each thread shows: the Mission it leads, else the one that holds it surest, else the first. */
 function missionHolders(hosts: ReadonlyArray<MissionHost>) {

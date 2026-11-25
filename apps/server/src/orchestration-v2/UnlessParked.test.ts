@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EventId,
   MessageId,
   OrchestrationV2Command,
   ProjectId,
@@ -8,6 +9,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -16,10 +18,12 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import { missionWakeCommand } from "../missions/MissionWakes.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const adapter = {
@@ -119,5 +123,141 @@ it.effect("a client's command cannot ask to be sent unless parked", () =>
     assert.notProperty(sent, "unlessParked");
     yield* orchestrator.dispatch(sent);
     assert.lengthOf((yield* projections.getThreadProjection(threadId)).messages, 1);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a wake to a lead settled with an unread steer leaves the steer for its reopening", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    yield* settledLead;
+    yield* orchestrator.dispatch({
+      type: "thread.unsettle",
+      commandId: CommandId.make("unsettle-first"),
+      threadId,
+      reason: "user",
+    });
+    const send = (id: string, type: "start_immediately" | "queue_after_active") =>
+      orchestrator.dispatch({
+        ...wakeCommand(id),
+        commandId: CommandId.make(id),
+        messageId: MessageId.make(id),
+        text: id,
+        dispatchMode: { type },
+        createdBy: "user",
+        creationSource: "web",
+      });
+    yield* send("first", "start_immediately");
+    const before = yield* projections.getThreadProjection(threadId);
+    const run = before.runs[0]!;
+    const now = yield* DateTime.now;
+    // The run ends, then a steer it never read is found pending, and the user settles the lead.
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("event:run-ended"),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: { ...run, status: "completed", completedAt: now },
+        },
+      ],
+    });
+    const message = before.messages.find((candidate) => candidate.id === "first")!;
+    const item = before.turnItems.find((candidate) => candidate.type === "user_message")!;
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("event:steer-message"),
+          type: "message.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: { ...message, id: MessageId.make("steer"), text: "Steer" },
+        },
+        {
+          id: EventId.make("event:steer-item"),
+          type: "turn-item.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: {
+            ...item,
+            id: "turn-item:steer",
+            messageId: MessageId.make("steer"),
+            status: "pending",
+            inputIntent: "steer",
+          } as never,
+        },
+        {
+          id: EventId.make("event:settled"),
+          type: "thread.metadata-updated",
+          threadId,
+          occurredAt: now,
+          payload: { ...before.thread, settledOverride: "settled", settledAt: now },
+        },
+      ],
+    });
+    yield* orchestrator
+      .dispatch(wakeCommand("steer"))
+      .pipe(Effect.provideService(Orchestrator.UnlessParked, true));
+    const parked = yield* projections.getThreadProjection(threadId);
+    assert.equal(parked.thread.settledOverride, "settled");
+    assert.deepEqual(
+      parked.runs.map((candidate) => candidate.userMessageId),
+      [MessageId.make("first")],
+    );
+    // Reopened, its next message places the steer first, as for any thread.
+    yield* orchestrator.dispatch({
+      type: "thread.unsettle",
+      commandId: CommandId.make("unsettle-again"),
+      threadId,
+      reason: "user",
+    });
+    yield* send("next", "queue_after_active");
+    assert.deepEqual(
+      (yield* projections.getThreadProjection(threadId)).runs.map(
+        (candidate) => candidate.userMessageId,
+      ),
+      [MessageId.make("first"), MessageId.make("steer"), MessageId.make("next")],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a mission wake keeps the lead's snooze, as a delegated result does", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    yield* settledLead;
+    yield* orchestrator.dispatch({
+      type: "thread.unsettle",
+      commandId: CommandId.make("unsettle"),
+      threadId,
+      reason: "user",
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.snooze",
+      commandId: CommandId.make("snooze"),
+      threadId,
+      snoozedUntil: "2999-01-01T00:00:00.000Z",
+    });
+    yield* orchestrator
+      .dispatch(
+        missionWakeCommand({
+          missionId: "0123456789ab",
+          key: "k1",
+          lead: threadId,
+          text: "Mission update: member 1 on this machine failed.",
+        }),
+      )
+      .pipe(Effect.provideService(Orchestrator.UnlessParked, true));
+    const lead = yield* projections.getThreadProjection(threadId);
+    assert.isNotNull(lead.thread.snoozedUntil);
+    assert.deepEqual(
+      lead.messages.map((candidate) => candidate.text),
+      ["Mission update: member 1 on this machine failed."],
+    );
   }).pipe(Effect.provide(layerTest)),
 );

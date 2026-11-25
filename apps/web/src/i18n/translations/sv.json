@@ -12870,5 +12870,6 @@
   "9d0b1d2cead70261": "uppdrag ledare orkestrera instruktioner standard prompt varje tur",
   "e2cdfebe2d8a1d14": "Det gick inte att spara uppdragsprompten",
   "4cf08bfc2adf8c67": "Ledaren för ”{mission}” följer detta vid varje tur. Lämna tomt för att använda standarden från Inställningar.",
-  "32bb9fa25796a9eb": "Redigera uppdragsprompt…"
+  "32bb9fa25796a9eb": "Redigera uppdragsprompt…",
+  "3694361695d7e981": "Släpp nekades: {reason}"
 }

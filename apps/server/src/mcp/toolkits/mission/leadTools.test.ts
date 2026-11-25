@@ -20,6 +20,7 @@ import * as MissionClaims from "../../../missions/MissionClaims.ts";
 import * as Missions from "../../../missions/Missions.ts";
 import type { RosterMember } from "../../../missions/missionStatus.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as DocumentText from "../../../provider/DocumentText.ts";
@@ -32,7 +33,11 @@ import * as PeerLinks from "../../../peer/PeerLinks.ts";
 import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { liveThreadsLayer } from "../../McpToolAccess.testkit.ts";
+import {
+  idleThreadProjection,
+  liveThreadShell,
+  liveThreadsLayer,
+} from "../../McpToolAccess.testkit.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
@@ -40,6 +45,8 @@ import * as OrchestratorHandlers from "../orchestrator/handlers.ts";
 import { OrchestratorToolkit } from "../orchestrator/tools.ts";
 import * as ProjectHandlers from "../project/handlers.ts";
 import { ProjectToolkit } from "../project/tools.ts";
+import * as ThreadHandlers from "../thread/handlers.ts";
+import { ThreadToolkit } from "../thread/tools.ts";
 import * as MissionHandlers from "./handlers.ts";
 import { MissionToolkit } from "./tools.ts";
 
@@ -435,5 +442,51 @@ it.effect(
           { environmentId: FENCED, threadId: `launched-${FENCED}` },
         ],
       );
+    }),
+);
+
+it.effect(
+  "a thread a lead forks joins its mission once; a merge back and another caller's fork join none",
+  () =>
+    Effect.gen(function* () {
+      const missions = makeMissions();
+      const transfer = (scope: McpInvocationContext.McpInvocationScope, input: object) =>
+        Effect.gen(function* () {
+          const dependencies = Layer.mergeAll(
+            missions.layer,
+            Layer.succeed(McpInvocationContext.McpInvocationContext, scope),
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              getThreadShell: (id) => Effect.succeed(liveThreadShell(id)),
+              getProjectThreadRecords: (input) =>
+                Effect.succeed(idleThreadProjection(liveThreadShell(input.threadId)) as never),
+              dispatch: () => Effect.succeed({ sequence: 7, storedEvents: [] }),
+            }),
+            NodeCrypto.layer,
+          );
+          const toolkit = yield* ThreadToolkit.pipe(
+            Effect.provide(
+              McpToolAccess.HandlersLayer.layer(ThreadHandlers.layer).pipe(
+                Layer.provide(dependencies),
+              ),
+            ),
+          );
+          const results = yield* toolkit
+            .handle("t3_thread_transfer", input as never)
+            .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+          return results.at(-1)?.result as Record<string, unknown>;
+        });
+      const forked = yield* transfer(lead, { action: "fork" });
+      assert.deepEqual(forked.mission, { state: "joined" });
+      assert.deepEqual(
+        missions.calls.map((call) => [call.kind, call.member.environmentId, call.asLead]),
+        [["add", HERE, lead.thread.threadId]],
+      );
+      assert.equal(missions.calls[0]?.member.threadId, forked.targetThreadId);
+      assert.notProperty(
+        yield* transfer(lead, { action: "merge_back", targetThreadId: "other" }),
+        "mission",
+      );
+      assert.notProperty(yield* transfer(notLead, { action: "fork" }), "mission");
+      assert.lengthOf(missions.calls, 1);
     }),
 );

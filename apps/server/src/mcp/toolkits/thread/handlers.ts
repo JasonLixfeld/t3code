@@ -25,6 +25,8 @@ import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageInt
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
+import * as Missions from "../../../missions/Missions.ts";
+import { joinCallersMission } from "../mission/handlers.ts";
 import { ThreadToolkit } from "./tools.ts";
 
 function queueEntry(
@@ -107,7 +109,7 @@ const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A,
   handle: (params: P) => Effect.Effect<A, E, R>,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
 
-export const layer = McpToolAccess.toLayer(ThreadToolkit, {
+const handlers = {
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;
@@ -442,4 +444,25 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       return { sequence: result.sequence };
     }),
   ),
-});
+} satisfies McpToolAccess.Handlers<typeof ThreadToolkit.tools>;
+
+export const layer = McpToolAccess.toLayer(
+  ThreadToolkit,
+  Effect.map(Effect.serviceOption(Missions.Missions), (missions) => ({
+    ...handlers,
+    // A fork is a new top-level thread, so a lead's fork joins its Mission as a launch does.
+    t3_thread_transfer: McpToolAccess.followedBy(
+      handlers.t3_thread_transfer,
+      (input, result, environmentId) =>
+        Effect.gen(function* () {
+          if (input.action !== "fork" || !("targetThreadId" in result)) return result;
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const mission = yield* joinCallersMission(missions, {
+            environmentId: environmentId ?? scope.environmentId,
+            threadId: result.targetThreadId,
+          });
+          return mission === undefined ? result : { ...result, mission };
+        }),
+    ),
+  })),
+);

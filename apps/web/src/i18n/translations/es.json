@@ -12858,5 +12858,6 @@
   "9d0b1d2cead70261": "misión principal orquestar instrucciones prompt predeterminado cada turno",
   "e2cdfebe2d8a1d14": "No se pudo guardar el prompt de la misión",
   "4cf08bfc2adf8c67": "El hilo principal de \"{mission}\" sigue esto en cada turno. Déjalo vacío para usar el predeterminado de Ajustes.",
-  "32bb9fa25796a9eb": "Editar prompt de la misión…"
+  "32bb9fa25796a9eb": "Editar prompt de la misión…",
+  "3694361695d7e981": "Liberación rechazada: {reason}"
 }

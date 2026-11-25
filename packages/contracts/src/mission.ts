@@ -10,12 +10,14 @@ export const MissionMember = Schema.Struct({
   /**
    * `offline`: its machine does not answer, so this is what it last said. `deleted`: the lead
    * thread is gone. `release-pending`, `add-pending`: that machine has not answered the release
-   * or the add yet. `add-refused`: it turned the add down, and `detail` says why.
+   * or the add yet. `add-refused`, `release-refused`: the add or the release was turned down,
+   * and `detail` says why. A thread whose release was refused is still a member.
    */
   state: Schema.Literals([
     "active",
     "offline",
     "release-pending",
+    "release-refused",
     "deleted",
     "add-pending",
     "add-refused",

@@ -12863,5 +12863,6 @@
   "9d0b1d2cead70261": "mission lead leiten orchestrieren anweisungen standard prompt jeder zug",
   "e2cdfebe2d8a1d14": "Missions-Prompt konnte nicht gespeichert werden",
   "4cf08bfc2adf8c67": "Der Lead von „{mission}“ befolgt dies in jedem Zug. Lass es leer, um den Standard aus den Einstellungen zu verwenden.",
-  "32bb9fa25796a9eb": "Missions-Prompt bearbeiten…"
+  "32bb9fa25796a9eb": "Missions-Prompt bearbeiten…",
+  "3694361695d7e981": "Freigabe abgelehnt: {reason}"
 }

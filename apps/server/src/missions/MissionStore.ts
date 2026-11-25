@@ -205,14 +205,17 @@ export const MIGRATIONS = {
     yield* sql`CREATE TABLE former_leads (thread_id TEXT PRIMARY KEY)`;
     yield* sql`INSERT OR IGNORE INTO former_leads SELECT lead_thread_id FROM missions`;
     // Each thread a lead started asks to join its Mission: a replayed start finds the request
-    // here, and `released` when the thread was released since, which a replay must not undo.
+    // here, with the add's intent, which the member's machine refuses once that add is spent,
+    // and `released` when the thread was released since, which a replay must not undo.
     yield* sql`
       CREATE TABLE started_joins (
         environment_id TEXT NOT NULL,
         thread_id TEXT NOT NULL,
+        mission_id TEXT NOT NULL,
+        intent_id TEXT NOT NULL,
         started_at TEXT NOT NULL,
         released INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY (environment_id, thread_id)
+        PRIMARY KEY (environment_id, thread_id, mission_id)
       )
     `;
   }),
@@ -300,6 +303,19 @@ type AddKey = Pick<PendingAdd, "environmentId" | "threadId" | "missionId">;
 const SPENT_INTENT_DAYS = 30;
 /** How long a lead remembers it asked for a started thread to join. */
 const STARTED_JOIN_DAYS = 30;
+
+/** A thread a lead started, and the Mission it asked to join. */
+export interface StartedThread {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly missionId: string;
+}
+
+export interface Numbers {
+  /** By `numberKey`. */
+  readonly member: ReadonlyMap<string, number>;
+  readonly machine: ReadonlyMap<EnvironmentId, number>;
+}
 
 /** The key `numbersOf` gives each member's number under. */
 export const numberKey = (ref: { readonly environmentId: string; readonly threadId: string }) =>
@@ -515,23 +531,28 @@ export class MissionStore extends Context.Service<
     /** Whether the thread ever led a Mission here. */
     readonly ledBefore: (threadId: ThreadId) => Effect.Effect<boolean>;
     /**
-     * Records that a thread a lead started asks to join. `requested`: a start of it asked before,
-     * `released`: and it was released since. Requests older than 30 days are forgotten.
+     * Records that a thread a lead started asks to join its Mission with the add `intentId`.
+     * `requested`: a start of it asked before, with the intent it gives back. `released`: and it
+     * was released since. Requests older than 30 days are forgotten.
      */
-    readonly startJoin: (thread: {
-      readonly environmentId: EnvironmentId;
-      readonly threadId: ThreadId;
-    }) => Effect.Effect<"first" | "requested" | "released">;
+    readonly startJoin: (
+      thread: StartedThread,
+      intentId: string,
+    ) => Effect.Effect<{
+      readonly state: "first" | "requested" | "released";
+      readonly intentId: string;
+    }>;
     /** A started thread was deleted: nothing can replay its start. */
-    readonly forgetStartedJoin: (threadId: ThreadId) => Effect.Effect<void>;
-    /** A started thread was released, so a replayed start may not bring it back. */
-    readonly startedReleased: (thread: {
+    readonly forgetStartedJoin: (thread: {
       readonly environmentId: EnvironmentId;
       readonly threadId: ThreadId;
     }) => Effect.Effect<void>;
+    /** A started thread was released from its Mission, so a replayed start may not bring it back. */
+    readonly startedReleased: (thread: StartedThread) => Effect.Effect<void>;
     /**
-     * The numbers a lead's status and wakes name each member and machine by, given when each is
-     * first named and kept. This machine has none; others count from 2.
+     * Gives each member and its machine the number a lead's status and wakes name it by, the
+     * first time it is seen, and keeps it. This machine has none; others count from 2. Writes
+     * only when one of them has none yet.
      */
     readonly numbersOf: (
       missionId: string,
@@ -540,10 +561,9 @@ export class MissionStore extends Context.Service<
         readonly threadId: ThreadId;
       }>,
       here: EnvironmentId,
-    ) => Effect.Effect<{
-      readonly member: ReadonlyMap<string, number>;
-      readonly machine: ReadonlyMap<EnvironmentId, number>;
-    }>;
+    ) => Effect.Effect<Numbers>;
+    /** The numbers given so far, read only. */
+    readonly numbersKnown: (missionId: string) => Effect.Effect<Numbers>;
     /** Keeps a release that may no longer be sent, with why, until the user forgets it. */
     readonly refusePendingRelease: (
       release: PendingRelease,
@@ -681,13 +701,17 @@ const make = Effect.gen(function* () {
           UNION ALL SELECT 1 FROM known_claims WHERE mission_id = ${input.missionId}
           UNION ALL SELECT 1 FROM pending_adds
             WHERE mission_id = ${input.missionId} AND refusal IS NULL
-          UNION ALL SELECT 1 FROM pending_releases WHERE mission_id = ${input.missionId}
+          UNION ALL SELECT 1 FROM pending_releases
+            WHERE mission_id = ${input.missionId} AND refusal IS NULL
           LIMIT 1
         `;
         if (held !== undefined) {
           return refuse("Release this mission's threads before deleting it.");
         }
+        // A refused release whose claim is still listed held the delete back above; one whose
+        // claim is gone holds nothing, and goes with the Mission.
         yield* sql`DELETE FROM pending_adds WHERE mission_id = ${input.missionId}`;
+        yield* sql`DELETE FROM pending_releases WHERE mission_id = ${input.missionId}`;
         yield* sql`DELETE FROM mission_updates WHERE mission_id = ${input.missionId}`;
         yield* sql`
           DELETE FROM claims WHERE thread_id = ${input.lead} AND mission_id = ${input.missionId}
@@ -1238,73 +1262,102 @@ const make = Effect.gen(function* () {
       Effect.orDie,
     );
 
-  const startJoin = Effect.fn("MissionStore.startJoin")(function* (thread: {
-    readonly environmentId: EnvironmentId;
-    readonly threadId: ThreadId;
-  }) {
+  const startJoin = Effect.fn("MissionStore.startJoin")(function* (
+    thread: StartedThread,
+    intentId: string,
+  ) {
     const startedAt = yield* DateTime.now;
     const oldest = DateTime.formatIso(DateTime.subtract(startedAt, { days: STARTED_JOIN_DAYS }));
     return yield* sql.withTransaction(
       Effect.gen(function* () {
         yield* sql`DELETE FROM started_joins WHERE started_at < ${oldest}`;
-        const [known] = yield* sql<{ readonly released: number }>`
-          SELECT released FROM started_joins
+        const [known] = yield* sql<{ readonly released: number; readonly intent_id: string }>`
+          SELECT released, intent_id FROM started_joins
           WHERE environment_id = ${thread.environmentId} AND thread_id = ${thread.threadId}
+            AND mission_id = ${thread.missionId}
         `;
-        if (known !== undefined) return known.released === 1 ? "released" : "requested";
+        if (known !== undefined) {
+          return {
+            state: known.released === 1 ? ("released" as const) : ("requested" as const),
+            intentId: known.intent_id,
+          };
+        }
         yield* sql`
-          INSERT INTO started_joins (environment_id, thread_id, started_at)
-          VALUES (${thread.environmentId}, ${thread.threadId}, ${DateTime.formatIso(startedAt)})
+          INSERT INTO started_joins (environment_id, thread_id, mission_id, intent_id, started_at)
+          VALUES (${thread.environmentId}, ${thread.threadId}, ${thread.missionId}, ${intentId},
+            ${DateTime.formatIso(startedAt)})
         `;
-        return "first";
+        return { state: "first" as const, intentId };
       }),
     );
   }, Effect.orDie);
 
-  const startedReleased = (thread: {
-    readonly environmentId: EnvironmentId;
-    readonly threadId: ThreadId;
-  }) =>
-    sql`
+  const startedReleased = Effect.fn("MissionStore.startedReleased")(function* (
+    thread: StartedThread,
+  ) {
+    yield* sql`
       UPDATE started_joins SET released = 1
       WHERE environment_id = ${thread.environmentId} AND thread_id = ${thread.threadId}
-    `.pipe(Effect.asVoid, Effect.orDie);
+        AND mission_id = ${thread.missionId}
+    `.pipe(Effect.orDie);
+  });
+
+  const numbersKnown = Effect.fn("MissionStore.numbersKnown")(function* (missionId: string) {
+    const members = yield* sql<{
+      readonly environment_id: string;
+      readonly thread_id: string;
+      readonly number: number;
+    }>`SELECT environment_id, thread_id, number FROM member_numbers WHERE mission_id = ${missionId}`;
+    const machines = yield* sql<{ readonly environment_id: string; readonly number: number }>`
+      SELECT environment_id, number FROM machine_numbers
+    `;
+    return {
+      member: new Map(
+        members.map((row) => [
+          numberKey({ environmentId: row.environment_id, threadId: row.thread_id }),
+          row.number,
+        ]),
+      ),
+      machine: new Map(
+        machines.map((row) => [EnvironmentId.make(row.environment_id), row.number] as const),
+      ),
+    } satisfies Numbers;
+  }, Effect.orDie);
 
   const numbersOf = Effect.fn("MissionStore.numbersOf")(function* (
     missionId: string,
     members: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly threadId: ThreadId }>,
     here: EnvironmentId,
   ) {
-    return yield* sql.withTransaction(
-      Effect.gen(function* () {
-        const member = new Map<string, number>();
-        const machine = new Map<EnvironmentId, number>();
-        for (const ref of members) {
-          yield* sql`
-            INSERT OR IGNORE INTO member_numbers (mission_id, environment_id, thread_id, number)
-            SELECT ${missionId}, ${ref.environmentId}, ${ref.threadId}, COALESCE(MAX(number), 0) + 1
-            FROM member_numbers WHERE mission_id = ${missionId}
-          `;
-          const [row] = yield* sql<{ readonly number: number }>`
-            SELECT number FROM member_numbers
-            WHERE mission_id = ${missionId} AND environment_id = ${ref.environmentId}
-              AND thread_id = ${ref.threadId}
-          `;
-          member.set(numberKey(ref), row!.number);
-          if (ref.environmentId === here || machine.has(ref.environmentId)) continue;
-          // This machine is the first, so others count from 2.
-          yield* sql`
-            INSERT OR IGNORE INTO machine_numbers (environment_id, number)
-            SELECT ${ref.environmentId}, COALESCE(MAX(number), 1) + 1 FROM machine_numbers
-          `;
-          const [place] = yield* sql<{ readonly number: number }>`
-            SELECT number FROM machine_numbers WHERE environment_id = ${ref.environmentId}
-          `;
-          machine.set(ref.environmentId, place!.number);
-        }
-        return { member, machine };
-      }),
+    const known = yield* numbersKnown(missionId);
+    const unnumbered = members.filter(
+      (ref) =>
+        !known.member.has(numberKey(ref)) ||
+        (ref.environmentId !== here && !known.machine.has(ref.environmentId)),
     );
+    if (unnumbered.length === 0) return known;
+    yield* sql.withTransaction(
+      Effect.forEach(
+        unnumbered,
+        (ref) =>
+          Effect.gen(function* () {
+            yield* sql`
+              INSERT OR IGNORE INTO member_numbers (mission_id, environment_id, thread_id, number)
+              SELECT ${missionId}, ${ref.environmentId}, ${ref.threadId},
+                COALESCE(MAX(number), 0) + 1
+              FROM member_numbers WHERE mission_id = ${missionId}
+            `;
+            if (ref.environmentId === here) return;
+            // This machine is the first, so others count from 2.
+            yield* sql`
+              INSERT OR IGNORE INTO machine_numbers (environment_id, number)
+              SELECT ${ref.environmentId}, COALESCE(MAX(number), 1) + 1 FROM machine_numbers
+            `;
+          }),
+        { discard: true },
+      ),
+    );
+    return yield* numbersKnown(missionId);
   }, Effect.orDie);
 
   return MissionStore.of({
@@ -1318,10 +1371,17 @@ const make = Effect.gen(function* () {
     ledBefore,
     startJoin,
     startedReleased,
-    forgetStartedJoin: Effect.fn("MissionStore.forgetStartedJoin")(function* (threadId: ThreadId) {
-      yield* sql`DELETE FROM started_joins WHERE thread_id = ${threadId}`.pipe(Effect.orDie);
+    forgetStartedJoin: Effect.fn("MissionStore.forgetStartedJoin")(function* (thread: {
+      readonly environmentId: EnvironmentId;
+      readonly threadId: ThreadId;
+    }) {
+      yield* sql`
+        DELETE FROM started_joins
+        WHERE environment_id = ${thread.environmentId} AND thread_id = ${thread.threadId}
+      `.pipe(Effect.orDie);
     }),
     numbersOf,
+    numbersKnown,
     rekeyMissionUpdates,
     refusePendingRelease: Effect.fn("MissionStore.refusePendingRelease")(function* (
       release: PendingRelease,

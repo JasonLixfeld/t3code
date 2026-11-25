@@ -88,6 +88,8 @@ const makeWorld = () => {
   };
   const world = {
     session,
+    /** Members here that joined while no server ran, with no mark yet. */
+    joinedUnseen: [] as Array<ThreadId>,
     get woke() {
       return session.woke!;
     },
@@ -278,6 +280,19 @@ const withWakes = (
           owner: HERE,
           generation: `g-${member}`,
         });
+      }
+      for (const member of world.joinedUnseen) {
+        yield* missions.join({
+          threadId: member,
+          missionId: MISSION,
+          name: "Ship",
+          owner: HERE,
+          generation: `g-${member}`,
+        });
+      }
+      // Seen before, so a start does not look at them again.
+      for (const member of [first, second]) {
+        yield* missions.setMemberMark({ environmentId: HERE, threadId: member }, "seen");
       }
       // Numbered as they joined: first is member 1, second member 2, the laptop's member 3.
       yield* missions.numbersOf(
@@ -734,3 +749,63 @@ it.effect(
     );
   },
 );
+
+const third = ThreadId.make("third");
+/** A thread here whose run waits on the user. */
+const waiting = (kind: string) => ({
+  id: third,
+  deletedAt: null,
+  status: "waiting",
+  latestRunId: null,
+  hasActionableProposedPlan: false,
+  pendingRuntimeRequest: { id: `request-${kind}`, kind, createdAt: "2026-01-01" },
+});
+
+it.effect(
+  "a thread here that joins waiting on the user wakes the lead once, also across a restart",
+  () => {
+    const world = makeWorld();
+    world.set(third, waiting("user_input"));
+    return withWakes(
+      world,
+      Effect.gen(function* () {
+        yield* world.session
+          .store!.join({
+            threadId: third,
+            missionId: MISSION,
+            name: "Ship",
+            owner: HERE,
+            generation: "g-third",
+          })
+          .pipe(Effect.orDie);
+        assert.equal(yield* nextText(world), told(["member 4 on this machine is awaiting input."]));
+      }),
+      Effect.gen(function* () {
+        // Started again, it has its mark: only what is new wakes the lead.
+        yield* world.run(first, "f1", "failed");
+        assert.equal(yield* nextText(world), told(["member 1 on this machine failed."]));
+        assert.equal(world.sent.length, 2);
+      }),
+    );
+  },
+);
+
+it.effect("a member here found at a start waiting on an approval wakes the lead once", () => {
+  const world = makeWorld();
+  world.joinedUnseen.push(third);
+  world.set(third, waiting("command"));
+  return withWakes(
+    world,
+    Effect.gen(function* () {
+      assert.equal(
+        yield* nextText(world),
+        told(["member 4 on this machine has a pending approval."]),
+      );
+    }),
+    Effect.gen(function* () {
+      yield* world.run(first, "f1", "failed");
+      assert.equal(yield* nextText(world), told(["member 1 on this machine failed."]));
+      assert.equal(world.sent.length, 2);
+    }),
+  );
+});

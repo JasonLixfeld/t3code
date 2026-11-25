@@ -14,7 +14,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { ChevronDownIcon, PlusIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, PlusIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
@@ -392,6 +392,9 @@ function MemberRow(props: {
   const active = props.member.state === "active";
   // Its machine has not answered, and may never: the lead can stop waiting without asking it.
   const forgets = props.member.state === "add-pending" || props.member.state === "release-pending";
+  // A refused release leaves the thread in the mission. Dismiss puts the refusal away; Retry
+  // sends the release again, as the user.
+  const releaseRefused = props.member.state === "release-refused";
   const command = {
     environmentId: props.host,
     input: { missionId: props.missionId, member: props.member.ref },
@@ -406,8 +409,14 @@ function MemberRow(props: {
       if (confirmed !== true) return;
     }
     setReleasing(true);
-    if (forgets) reportFailure(gt("Could not forget the thread"), await forget(command));
-    else reportFailure(gt("Could not release the thread"), await release(command));
+    if (forgets || releaseRefused) {
+      reportFailure(gt("Could not forget the thread"), await forget(command));
+    } else reportFailure(gt("Could not release the thread"), await release(command));
+    setReleasing(false);
+  };
+  const onRetry = async () => {
+    setReleasing(true);
+    reportFailure(gt("Could not release the thread"), await release(command));
     setReleasing(false);
   };
   const { toggle } = props;
@@ -418,35 +427,64 @@ function MemberRow(props: {
         ? gt("Add pending (machine offline)")
         : props.member.state === "add-refused"
           ? props.member.detail
-          : props.member.state === "offline"
-            ? gt("Last known (machine offline)")
-            : where;
+          : releaseRefused
+            ? gt("Release refused: {reason}", { reason: props.member.detail ?? "" })
+            : props.member.state === "offline"
+              ? gt("Last known (machine offline)")
+              : where;
+  const dismissLabel = forgets
+    ? gt("Forget")
+    : dismisses || releaseRefused
+      ? gt("Dismiss")
+      : gt("Release from mission");
+  const retry = releaseRefused ? (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={gt("Retry")}
+            disabled={!canRelease || releasing}
+            onClick={(event) => {
+              event.stopPropagation();
+              void onRetry();
+            }}
+            className="inline-flex shrink-0 cursor-pointer items-center rounded-md px-1 text-muted-foreground opacity-0 transition-opacity group-hover/mission-row:opacity-100 hover:text-foreground focus-visible:opacity-100 disabled:cursor-default"
+          >
+            <RotateCcwIcon className="size-3" />
+          </button>
+        }
+      />
+      <TooltipPopup side="top">{gt("Retry")}</TooltipPopup>
+    </Tooltip>
+  ) : null;
   const action =
     props.member.role === "member" ? (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              aria-label={
-                forgets ? gt("Forget") : dismisses ? gt("Dismiss") : gt("Release from mission")
-              }
-              disabled={!canRelease || releasing}
-              onClick={(event) => {
-                // Inside a thread's row, the row would open the thread as well.
-                event.stopPropagation();
-                void onRelease();
-              }}
-              className="inline-flex shrink-0 cursor-pointer items-center rounded-md px-1 text-muted-foreground opacity-0 transition-opacity group-hover/mission-row:opacity-100 hover:text-foreground focus-visible:opacity-100 disabled:cursor-default"
-            >
-              <XIcon className="size-3" />
-            </button>
-          }
-        />
-        <TooltipPopup side="top">
-          {forgets ? gt("Forget") : dismisses ? gt("Dismiss") : <T>Release from mission</T>}
-        </TooltipPopup>
-      </Tooltip>
+      <>
+        {retry}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label={dismissLabel}
+                disabled={!canRelease || releasing}
+                onClick={(event) => {
+                  // Inside a thread's row, the row would open the thread as well.
+                  event.stopPropagation();
+                  void onRelease();
+                }}
+                className="inline-flex shrink-0 cursor-pointer items-center rounded-md px-1 text-muted-foreground opacity-0 transition-opacity group-hover/mission-row:opacity-100 hover:text-foreground focus-visible:opacity-100 disabled:cursor-default"
+              >
+                <XIcon className="size-3" />
+              </button>
+            }
+          />
+          <TooltipPopup side="top">
+            {forgets || dismisses || releaseRefused ? dismissLabel : <T>Release from mission</T>}
+          </TooltipPopup>
+        </Tooltip>
+      </>
     ) : null;
   // The last line of the thread's own row, styled as its other lines.
   if (props.inRow === true) {
@@ -726,7 +764,9 @@ export function SidebarMissions(props: {
         {props.renderThreadRow(
           entry.thread,
           toggle,
-          entry.member.state === "add-pending" || entry.member.state === "release-pending"
+          entry.member.state === "add-pending" ||
+            entry.member.state === "release-pending" ||
+            entry.member.state === "release-refused"
             ? (inRow) => (
                 <MemberRow
                   host={mission.host}
