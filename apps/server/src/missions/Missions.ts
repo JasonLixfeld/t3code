@@ -149,6 +149,10 @@ export class Missions extends Context.Service<
     readonly roster: (
       missionId: string,
     ) => Effect.Effect<ReadonlyArray<RosterMember>, MissionError>;
+    /** The members and what each is doing, as a turn reads them: no names, and no new asks. */
+    readonly memberStatuses: (
+      missionId: string,
+    ) => Effect.Effect<ReadonlyArray<RosterMember>, MissionError>;
     /** The members' numbers and places, for a wake to name them by. */
     readonly numbers: (
       missionId: string,
@@ -1493,6 +1497,7 @@ const make = Effect.gen(function* () {
   });
 
   const roster = (missionId: string) => members(missionId, true);
+  const memberStatuses = (missionId: string) => members(missionId, false);
 
   /**
    * A fork starts from its source's history, so a fork of a thread that leads or led a Mission
@@ -1607,6 +1612,7 @@ const make = Effect.gen(function* () {
     hasPriorWork,
     ledBy,
     roster,
+    memberStatuses,
     setPrompt,
     remoteChanges: Stream.fromPubSub(remoteChanged),
     watch,

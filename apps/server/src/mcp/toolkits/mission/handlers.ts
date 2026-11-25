@@ -245,8 +245,14 @@ export const layer = McpToolAccess.toLayer(
             environmentId: input.threadRef.environmentId ?? environmentId,
             threadId: input.threadRef.threadId,
           };
+          // A thread already in keeps its claim: nothing joined, so there is no brief to get.
+          const already = (yield* missions.memberStatuses(mission.missionId)).some(
+            (row) =>
+              row.ref.environmentId === member.environmentId &&
+              row.ref.threadId === member.threadId,
+          );
           const state = yield* missions.addMember({ missionId: mission.missionId, member }, lead);
-          return state === "joined" && (yield* missions.hasPriorWork(mission, member))
+          return state === "joined" && !already && (yield* missions.hasPriorWork(mission, member))
             ? { state, next: PRIOR_WORK_NEXT }
             : { state };
         }).pipe(Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) })),

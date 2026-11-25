@@ -198,7 +198,7 @@ const makeWorld = () => {
               session.joined === undefined ? Stream.empty : Stream.fromQueue(session.joined),
             ),
           ),
-          roster: () =>
+          memberStatuses: () =>
             Effect.succeed(
               [
                 { environmentId: HERE, threadId: first },
@@ -1033,3 +1033,25 @@ it.effect("a member that joins while its lead is settled is told once the lead i
     }),
   );
 });
+
+it.effect(
+  "a member that joins while its lead is archived is told once the lead is unarchived",
+  () => {
+    const world = makeWorld();
+    return withWakes(
+      world,
+      Effect.gen(function* () {
+        world.set(lead, { archivedAt: "2026-01-02T00:00:00.000Z" });
+        yield* joinedWithPriorWork(world, HERE, first, "joined:g1");
+        yield* world.leadRead;
+        assert.equal(world.sent.length, 0);
+        world.set(lead, { archivedAt: null });
+        yield* Queue.offer(world.live("events"), { type: "thread.unarchived", threadId: lead });
+        assert.equal(
+          yield* nextText(world),
+          joinedText("member 1 on this machine joined with prior work (status: idle)."),
+        );
+      }),
+    );
+  },
+);

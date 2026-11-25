@@ -196,7 +196,7 @@ export const layer = Layer.effectDiscard(
     ) {
       const statuses = new Map<string, string>();
       if (!updates.some((update) => update.event === "joined")) return statuses;
-      for (const row of yield* missions.roster(missionId)) {
+      for (const row of yield* missions.memberStatuses(missionId)) {
         if (row.ref.environmentId !== here) {
           // Its machine has not listed it to this lead yet.
           const listed = (yield* store.memberMark(row.ref)) !== undefined;

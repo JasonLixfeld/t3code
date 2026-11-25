@@ -142,6 +142,7 @@ const makeMissions = () => {
           ? { missionId: MISSION, name: "Ship", leadThreadId: threadId, createdAt: "", prompt: "" }
           : undefined,
       ),
+    memberStatuses: () => Effect.succeed([]),
     roster: () =>
       Effect.succeed(
         Array.from({ length: 12 }, (_, index) =>

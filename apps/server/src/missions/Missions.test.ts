@@ -3843,3 +3843,23 @@ it.effect("a join that lands keeps its update through a stop right after it sett
     }),
   );
 });
+
+it.effect("the lead adding itself, or a member already in, is not nudged for a brief", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      yield* createOne;
+      leadRuns(world);
+      const add = (threadId: ThreadId) =>
+        leadTool(world, "t3_mission_add", { threadRef: { threadId } });
+      const itself = yield* add(lead.threadId);
+      assert.include(itself, '"state":"joined"');
+      assert.notInclude(itself, "prior work");
+      assert.include(yield* add(localMember.threadId), "This thread has prior work.");
+      const again = yield* add(localMember.threadId);
+      assert.include(again, '"state":"joined"');
+      assert.notInclude(again, "prior work");
+    }),
+  );
+});

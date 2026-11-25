@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 
 import { MEMBER_REPOSITORIES_MAX } from "./MemberWorkspaces.ts";
 import {
+  GET_THE_BRIEF,
   LISTED_WORKSPACE_MAX_BYTES,
   MISSION_PROMPT_MAX_BYTES,
   MISSION_STATUS_MAX_BYTES,
@@ -418,4 +419,19 @@ it("a workspace bigger than a whole answer is tooLarge, and the next still fits"
     ),
     ["tooLarge", "kept"],
   );
+});
+
+it("a wake tells how to get a brief only for a join among the lines it shows", () => {
+  const failed = { member: "member 1", place: "this machine", event: "failed" as const };
+  const joined = {
+    member: "member 2",
+    place: "machine 2",
+    event: "joined" as const,
+    status: "idle",
+  };
+  const shown = missionUpdateText([joined, ...Array.from({ length: 10 }, () => failed)]);
+  assert.include(shown, GET_THE_BRIEF);
+  const cut = missionUpdateText([...Array.from({ length: 10 }, () => failed), joined]);
+  assert.include(cut, "… and 1 more");
+  assert.notInclude(cut, GET_THE_BRIEF);
 });
