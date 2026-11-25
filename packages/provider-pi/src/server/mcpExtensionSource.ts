@@ -401,10 +401,9 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // busy after before_agent_start, so a steer sent during the listing starts a second run and is
   // dropped. Pi before 0.99 also cannot hide a tool: --tools re-activates it on every registration.
   // On that Pi, and on a Pi whose version is unknown, the catalog stays as the session first listed it.
-  const version = /^(\\d+)\\.(\\d+)\\.(\\d+)(-)?/.exec(String((PiCodingAgent as { VERSION?: unknown }).VERSION));
+  const version = /^(\\d+)\\.(\\d+)\\.(\\d+)(\\+[0-9A-Za-z.-]+)?$/.exec(String((PiCodingAgent as { VERSION?: unknown }).VERSION));
   const [major = 0, minor = 0, patch = 0] = version?.slice(1, 4).map(Number) ?? [];
-  const order = major - 1 || minor - 2 || patch;
-  const refreshesCatalog = supportsExposure && version !== null && (order > 0 || (order === 0 && version[4] === undefined));
+  const refreshesCatalog = supportsExposure && version !== null && (major - 1 || minor - 2 || patch) >= 0;
   const directTools = new Set(["orchestrator_capabilities", "delegate_task", "task_status"]);
   const ALIAS_PREFIX = "mcp__t3_code__";
   let deferOptionalTools = supportsExposure;
@@ -419,23 +418,26 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     registered.has("mcp__t3-code__" + name) &&
     (isDeferred(name) || active.includes("mcp__t3-code__" + name));
   let catalog: ReadonlyArray<McpTool> = [];
-  let registeredNames: ReadonlyArray<string> = [];
+  // Preserve public names for saved loadouts and tool selectors. The alias,
+  // Pi's own MCP name for T3, reserves it against Pi's configured MCP servers.
+  // model-only keeps it out of codemode; it hides its own declaration.
+  const prefixes = supportsExposure ? ["mcp__t3-code__", ALIAS_PREFIX] : ["mcp__t3-code__"];
+  // Pi does not reserve T3's prefixes, so the bridge changes only names it registered itself.
+  const owned = new Set<string>();
+  let bridgeTools = new Set<string>();
+  // T3 tools whose name another extension registered first.
+  const foreign = new Set<string>();
 
   const client = createMcpClient(endpoint, token);
   let started: Promise<void> | undefined;
 
   const registerTools = () => {
-    // Preserve public names for saved loadouts and tool selectors. The alias,
-    // Pi's own MCP name for T3, reserves it against Pi's configured MCP servers.
-    // model-only keeps it out of codemode; it hides its own declaration.
-    const prefixes = supportsExposure ? ["mcp__t3-code__", ALIAS_PREFIX] : ["mcp__t3-code__"];
+    const tools = catalog.filter((tool) => !foreign.has(tool.name));
+    const next = new Set(tools.flatMap((tool) => prefixes.map((prefix) => prefix + tool.name)));
     // Pi cannot unregister a tool, so one T3 stopped listing is registered again as hidden,
     // as Pi's own MCP extension does.
-    const listed = new Set(catalog.map((tool) => tool.name));
-    const withdrawn = new Set(
-      registeredNames.filter((name) => !listed.has(name)).flatMap((name) => prefixes.map((prefix) => prefix + name)),
-    );
-    registeredNames = [...listed];
+    const withdrawn = [...bridgeTools].filter((name) => !next.has(name));
+    bridgeTools = next;
     for (const toolName of withdrawn) {
       pi.registerTool({
         name: toolName,
@@ -449,10 +451,11 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       });
     }
     readOnlyMcpTools.clear();
-    for (const tool of catalog) {
+    for (const tool of tools) {
       const name = tool.name;
       for (const prefix of prefixes) {
         const toolName = \`\${prefix}\${name}\`;
+        owned.add(toolName);
         if (tool.annotations?.readOnlyHint === true) readOnlyMcpTools.add(toolName);
         const isAlias = prefix === ALIAS_PREFIX;
         const exposure = isAlias ? "model-only" : isDeferred(name) ? "deferred" : "direct";
@@ -516,33 +519,34 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // mcp.json configures it; retry a failed connection at session_start.
   await ensureStarted().catch(() => undefined);
 
-  const refreshCatalog = async () => {
+  const refreshCatalog = async (ctx: ExtensionContext) => {
     if (started === undefined) return;
     const next = await started
       .then(() => client.listTools(AbortSignal.timeout(2_000)))
       .catch(() => catalog);
     if (JSON.stringify(next) === JSON.stringify(catalog)) return;
-    const t3Tool = (name: string) => /^mcp__t3[-_]code__(.+)$/.exec(name)?.[1];
-    const known = new Set(catalog.map((tool) => tool.name));
-    const listed = new Set(next.map((tool) => tool.name));
+    const registered = new Set(pi.getAllTools().map((tool) => tool.name));
+    for (const tool of next) {
+      const taken = prefixes.map((prefix) => prefix + tool.name).find((name) => registered.has(name) && !owned.has(name));
+      if (taken === undefined || foreign.has(tool.name)) continue;
+      foreign.add(tool.name);
+      ctx.ui.notify(\`T3 Code did not register its tool \${taken}: another extension already registered that name.\`, "warning");
+    }
     // Each registration re-applies --tools, which turns on tools another extension turned off.
-    // Keep every other tool as it was, drop withdrawn T3 tools, and add the T3 tools Pi turned on.
+    // Keep every other tool as it was, drop withdrawn bridge tools, and add the ones Pi turned on.
     const before = pi.getActiveTools();
+    const previous = bridgeTools;
     catalog = next;
     registerTools();
     pi.setActiveTools([
-      ...before.filter((name) => {
-        const tool = t3Tool(name);
-        return tool === undefined || listed.has(tool);
-      }),
-      ...pi.getActiveTools().filter((name) => {
-        const tool = t3Tool(name);
-        return tool !== undefined && !known.has(tool) && !before.includes(name);
-      }),
+      ...before.filter((name) => !owned.has(name) || bridgeTools.has(name)),
+      ...pi.getActiveTools().filter((name) => bridgeTools.has(name) && !previous.has(name) && !before.includes(name)),
     ]);
+    // Another extension may have turned tool_search off during the wait.
+    reconcileDiscovery(ctx, false);
   };
 
-  const reconcileDiscovery = (ctx: Pick<ExtensionContext, "model">) => {
+  const reconcileDiscovery = (ctx: Pick<ExtensionContext, "model">, activateToolSearch = true) => {
     if (!supportsExposure) return;
     // A disabled or replaced search builtin cannot discover deferred tools.
     const hasToolSearch = hasBuiltinToolSearch();
@@ -554,8 +558,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     // restores, while retaining deferred exposure for Pi's allowlist rules.
     // Pi still applies --tools/--exclude-tools to this active loadout.
     const required = [
-      ...(hasToolSearch ? ["tool_search"] : []),
-      ...(ctx.model?.api === "openai-completions" ? catalog.map((tool) => "mcp__t3-code__" + tool.name) : []),
+      ...(activateToolSearch && hasToolSearch ? ["tool_search"] : []),
+      ...(ctx.model?.api === "openai-completions" ? catalog.map((tool) => "mcp__t3-code__" + tool.name).filter((name) => bridgeTools.has(name)) : []),
     ];
     const current = pi.getActiveTools();
     const missing = required.filter((name) => !current.includes(name));
@@ -566,11 +570,11 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     const registered = new Set(pi.getAllTools().map((tool) => tool.name));
     const loaded = pi.getActiveTools();
     const aliases = catalog
-      .filter((tool) => registered.has(ALIAS_PREFIX + tool.name) &&
+      .filter((tool) => bridgeTools.has(ALIAS_PREFIX + tool.name) &&
         followsPublicTool(tool.name, registered, loaded) &&
         !loaded.includes("mcp__t3-code__" + tool.name))
       .map((tool) => ALIAS_PREFIX + tool.name);
-    const kept = loaded.filter((name) => !name.startsWith(ALIAS_PREFIX) || aliases.includes(name));
+    const kept = loaded.filter((name) => !owned.has(name) || !name.startsWith(ALIAS_PREFIX) || aliases.includes(name));
     const added = aliases.filter((name) => !loaded.includes(name));
     if (added.length > 0 || kept.length !== loaded.length) pi.setActiveTools([...kept, ...added]);
   };
@@ -582,7 +586,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     const active = pi.getActiveTools();
     let renamed = false;
     const content = message.content.map((part) => {
-      if (part.type !== "toolCall" || !part.name.startsWith(ALIAS_PREFIX)) return part;
+      if (part.type !== "toolCall" || !part.name.startsWith(ALIAS_PREFIX) || !owned.has(part.name)) return part;
       const publicName = "mcp__t3-code__" + part.name.slice(ALIAS_PREFIX.length);
       if (!active.includes(publicName)) return part;
       renamed = true;
@@ -605,8 +609,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   });
 
   // Keep guidance in the system prompt so leading slash commands still expand.
-  const startAgent = (event: BeforeAgentStartEvent, ctx: ExtensionContext) => {
-    reconcileDiscovery(ctx);
+  const withInstructions = (event: BeforeAgentStartEvent) => {
     const instructions = ORCHESTRATION_INSTRUCTIONS + "\\n\\n" + PULL_REQUEST_LINKING_INSTRUCTIONS;
     const sections = event.systemPromptOptions?.sections;
     if (sections && typeof sections === "object" && event.systemPromptOptions?.forceSystemPrompt === undefined) {
@@ -616,8 +619,9 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     }
     return { systemPrompt: event.systemPrompt + "\\n\\n" + instructions };
   };
-  pi.on("before_agent_start", (event, ctx) =>
-    refreshesCatalog ? refreshCatalog().then(() => startAgent(event, ctx)) : startAgent(event, ctx),
-  );
+  pi.on("before_agent_start", (event, ctx) => {
+    reconcileDiscovery(ctx);
+    return refreshesCatalog ? refreshCatalog(ctx).then(() => withInstructions(event)) : withInstructions(event);
+  });
 }
 `;

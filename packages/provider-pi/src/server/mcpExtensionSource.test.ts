@@ -247,14 +247,18 @@ describe("Pi MCP tool exposure", () => {
   const roster = "mcp__t3-code__t3_mission_roster";
   const rosterAlias = "mcp__t3_code__t3_mission_roster";
 
-  async function startGatewaySession(options: { selectedBuiltins?: ReadonlyArray<string> } = {}) {
+  async function startGatewaySession(options: { selectedTools?: ReadonlyArray<string> } = {}) {
     const bridge = await loadMcpBridge({
       modern: true,
       toolSearchAvailable: true,
       activatesOnRegistration: true,
       ...options,
     });
-    const gatewayContext = { model: { api: "openai-completions" }, ui: { notify: assert.fail } };
+    const notices: string[] = [];
+    const gatewayContext = {
+      model: { api: "openai-completions" },
+      ui: { notify: (message: string) => void notices.push(message) },
+    };
     const sessionStart = bridge.handlers.get("session_start");
     const agentStart = bridge.handlers.get("before_agent_start");
     assert.isDefined(sessionStart);
@@ -263,7 +267,7 @@ describe("Pi MCP tool exposure", () => {
     const nextAgentStart = () => agentStart({ systemPrompt: "" }, gatewayContext);
     await nextAgentStart();
     assert.notInclude(bridge.declaredTools(), roster);
-    return { bridge, nextAgentStart };
+    return { bridge, nextAgentStart, notices };
   }
 
   it("picks up a catalog change T3 sends no notification for at the next agent start", async () => {
@@ -313,7 +317,7 @@ describe("Pi MCP tool exposure", () => {
 
   it("keeps another extension's tool restriction when T3 shows new tools", async () => {
     const { bridge, nextAgentStart } = await startGatewaySession({
-      selectedBuiltins: ["read", "bash", "edit", "write", "tool_search"],
+      selectedTools: ["read", "bash", "edit", "write", "tool_search"],
     });
     bridge.restoreActiveTools(bridge.getActiveTools().filter((name) => name !== "write"));
 
@@ -323,9 +327,72 @@ describe("Pi MCP tool exposure", () => {
     assert.includeMembers(bridge.getActiveTools(), ["read", "bash", "edit", "tool_search", roster]);
   });
 
+  it("leaves another extension's tool under T3's prefix alone when the thread is promoted", async () => {
+    const { bridge, nextAgentStart, notices } = await startGatewaySession();
+    const audit = "mcp__t3-code__audit";
+    const userTool = bridge.registerUserTool(audit);
+
+    bridge.catalog.push(rosterTool);
+    await nextAgentStart();
+    assert.includeMembers(bridge.getActiveTools(), [audit, roster]);
+
+    bridge.catalog.push({ ...rosterTool, name: "audit" });
+    await nextAgentStart();
+    bridge.catalog.pop();
+    await nextAgentStart();
+    bridge.catalog.push({ ...rosterTool, name: "audit" });
+    await nextAgentStart();
+    assert.strictEqual(
+      bridge.tools.find((tool) => tool.name === audit),
+      userTool,
+      "the bridge took over the user's tool",
+    );
+    assert.includeMembers(bridge.getActiveTools(), [audit, roster]);
+    assert.equal(notices.filter((notice) => notice.includes(audit)).length, 1);
+  });
+
+  it("keeps a --tools-selected tool another extension turned off off after registration", async () => {
+    const audit = "mcp__t3-code__audit";
+    const { bridge, nextAgentStart } = await startGatewaySession({ selectedTools: [audit] });
+    bridge.registerUserTool(audit);
+    bridge.restoreActiveTools(bridge.getActiveTools().filter((name) => name !== audit));
+
+    bridge.catalog.push(rosterTool);
+    await nextAgentStart();
+    assert.notInclude(bridge.getActiveTools(), audit);
+    assert.include(bridge.getActiveTools(), roster);
+  });
+
+  it.each([
+    { name: "the catalog changed", change: true },
+    { name: "the catalog is unchanged", change: false },
+  ])(
+    "keeps tool_search off when an extension turns it off during the listing and $name",
+    async ({ change }) => {
+      const { bridge, nextAgentStart } = await startGatewaySession();
+      assert.include(bridge.getActiveTools(), "tool_search");
+      bridge.duringListing(() =>
+        bridge.restoreActiveTools(bridge.getActiveTools().filter((name) => name !== "tool_search")),
+      );
+
+      if (change) bridge.catalog.push(rosterTool);
+      await nextAgentStart();
+      assert.notInclude(bridge.getActiveTools(), "tool_search");
+      if (change) assert.include(bridge.getActiveTools(), roster);
+    },
+  );
+
+  it("lists tools before the agent starts on a released Pi with a build tag", async () => {
+    const bridge = await loadMcpBridge({ modern: true, version: "1.2.0+build.5" });
+    const requests = bridge.requests.length;
+    await bridge.handlers.get("before_agent_start")?.({ systemPrompt: "" }, discoveryContext);
+    assert.equal(bridge.requests.at(requests)?.method, "tools/list");
+  });
+
   it.each([
     { name: "1.1.0, which is not busy before the hook", version: "1.1.0" },
     { name: "a 1.2.0 prerelease", version: "1.2.0-rc.1" },
+    { name: "an incomplete version", version: "1.2.0garbage" },
     { name: "a build without VERSION", version: undefined },
   ])("does not list tools before the agent starts on Pi $name", async ({ version }) => {
     const bridge = await loadMcpBridge({ modern: true, version });

@@ -76,14 +76,16 @@ export async function loadMcpBridge(
     readonly extraTools?: ReadonlyArray<McpFixtureTool>;
     // Pi 0.84.3 re-activates every registered name `--tools` selects, or else only new names.
     readonly legacyRegistry?: { readonly tools?: ReadonlyArray<string> };
-    // Pi 1.2 re-activates every built-in name `--tools` selects on each registration.
-    readonly selectedBuiltins?: ReadonlyArray<string>;
+    // Pi 1.2 re-activates every name `--tools` selects on each registration.
+    readonly selectedTools?: ReadonlyArray<string>;
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
   const tools: RegisteredTool[] = [];
   let registrations = 0;
   let listingFails = false;
+  let onListing: (() => void) | undefined;
+  const userTools = new Set<RegisteredTool>();
   const requests: Array<{ readonly method: string; readonly params?: unknown }> = [];
   let activeTools = ["read"];
   let bridgeSourcePath = "/fixture/pi-t3-extension.ts";
@@ -148,6 +150,7 @@ export async function loadMcpBridge(
         params?: unknown;
       };
       requests.push(request);
+      if (request.method === "tools/list") onListing?.();
       if (request.method === "tools/list" && listingFails) {
         return new Response("unavailable", { status: 503 });
       }
@@ -189,14 +192,19 @@ export async function loadMcpBridge(
               : tools.map(({ name }) => name).filter((name) => selected.includes(name));
           activeTools = [...new Set([...activeTools, ...reactivated])];
         }
-        activeTools = [...new Set([...activeTools, ...(options.selectedBuiltins ?? [])])];
+        activeTools = [...new Set([...activeTools, ...(options.selectedTools ?? [])])];
       },
       getActiveTools: () => activeTools,
       setActiveTools: (names: string[]) => {
         activeTools = names.filter((name) => options.allowsTool?.(name) ?? true);
       },
       getAllTools: () => [
-        ...tools.map((tool) => ({ name: tool.name, sourceInfo: { path: bridgeSourcePath } })),
+        ...tools.map((tool) => ({
+          name: tool.name,
+          sourceInfo: {
+            path: userTools.has(tool) ? "/user/extensions/audit.ts" : bridgeSourcePath,
+          },
+        })),
         ...(options.toolSearchAvailable &&
         !options.toolSearchDisabled &&
         (options.allowsTool?.("tool_search") ?? true)
@@ -261,6 +269,21 @@ export async function loadMcpBridge(
     catalog,
     failListing: (fails: boolean) => {
       listingFails = fails;
+    },
+    duringListing: (action: () => void) => {
+      onListing = action;
+    },
+    registerUserTool: (name: string) => {
+      const tool: RegisteredTool = {
+        name,
+        description: "A user extension's tool.",
+        parameters: { type: "object", properties: {} },
+        execute: async () => ({ content: [{ type: "text", text: "user tool" }] }),
+      };
+      userTools.add(tool);
+      tools.push(tool);
+      activeTools = [...activeTools, name];
+      return tool;
     },
     registrations: () => registrations,
     requests,
