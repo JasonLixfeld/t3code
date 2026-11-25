@@ -69,7 +69,7 @@ it.effect("keeps its own migration history and reopens without migrating again",
           [5, "AddLinkAndAge"],
           [6, "MissionTombstones"],
           [7, "MissionLeadPrompt"],
-          [8, "PendingAddNoBrief"],
+          [8, "JoinedWithPriorWork"],
         ],
       );
     }),
@@ -449,22 +449,30 @@ it.effect("upgrades a version-7 database: its waiting adds keep, and say no draf
           yield* sql`
             INSERT INTO pending_adds
               (environment_id, thread_id, mission_id, intent_id, link_id, added_at, refusal)
-            VALUES ('env-b', ${member}, 'm1', 'i1', 'l1', '2026-01-01T00:00:00.000Z', NULL)
+            VALUES ('env-b', ${member}, 'm1', 'i1', 'l1', '2026-01-01T00:00:00.000Z', NULL),
+              ('env-b', 'started', 'm1', 'i-start', 'l1', '2026-01-01T00:00:00.000Z', NULL)
+          `;
+          yield* sql`
+            INSERT INTO started_joins (environment_id, thread_id, mission_id, intent_id, started_at)
+            VALUES ('env-b', 'started', 'm1', 'i-start', '2026-01-01T00:00:00.000Z')
           `;
         }),
         NodeSqliteClient.layer({ filename }),
       );
       yield* usingStore(filename, (store) =>
         Effect.gen(function* () {
-          const [add] = yield* store.pendingAdds;
+          const [add, started] = yield* store.pendingAdds;
           if (add === undefined) return assert.fail("The add was not kept.");
           assert.equal(add.intentId, "i1");
           assert.isUndefined(add.noBrief);
+          // A thread its lead started joins without a "joined with prior work".
+          assert.deepEqual([started?.intentId, started?.noBrief], ["i-start", true]);
           yield* store.setPendingAdd({ ...add, threadId: lead, intentId: "i2", noBrief: true });
           assert.deepEqual(
             (yield* store.pendingAdds).map((pending) => [pending.intentId, pending.noBrief]),
             [
               ["i1", undefined],
+              ["i-start", true],
               ["i2", true],
             ],
           );

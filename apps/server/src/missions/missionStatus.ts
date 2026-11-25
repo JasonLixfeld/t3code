@@ -367,8 +367,9 @@ const UPDATE_TEXT: Record<MissionUpdateEvent, string> = {
   joined: "joined with prior work",
 };
 
-const GET_THE_BRIEF =
-  'Get its brief before giving it new work: t3_thread_send with mode "queue", a message asking for it and an outputSchema with a "brief" string, then t3_thread_wait with untilOutput. If the send is refused or the member is settled, read it with t3_thread_read instead.';
+/** How a lead gets a member's brief: the same words in its wake and in t3_mission_add's answer. */
+export const GET_THE_BRIEF =
+  'Get its brief before giving it new work: queue a message asking for it with t3_thread_send (mode "queue", outputSchema a JSON Schema whose required "brief" property is a string), then call t3_thread_wait with the runId it returned and untilOutput: true. If the send is refused or the member is settled, read it with t3_thread_read instead.';
 
 /**
  * Names each member by the lead's own numbers, as the status does. A joined member's `status` is
@@ -385,7 +386,7 @@ export const missionUpdateText = (
   const lines = updates.map(
     (update) =>
       `${update.member} on ${update.place} ${UPDATE_TEXT[update.event]}${
-        update.event === "joined" ? ` (status: ${update.status ?? "offline"})` : ""
+        update.event === "joined" ? ` (status: ${update.status ?? "unknown"})` : ""
       }.`,
   );
   const briefing = updates.slice(0, ATTENTION_LINES).some((update) => update.event === "joined");

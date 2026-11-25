@@ -215,6 +215,7 @@ type ClaimCall =
       readonly missionId: string;
       readonly name: string;
       readonly intentId: string;
+      readonly announce?: boolean;
     }
   | {
       readonly kind: "release";
@@ -643,6 +644,8 @@ const make = Effect.gen(function* () {
   ) {
     // Read again under the machine's lock: a rename since the add began must not be lost.
     const { name } = yield* missionNamed(mission.missionId);
+    // The lead hears of a new claim with the write that makes it: here or when it settles.
+    const announce = add.noBrief !== true && (yield* hasPriorWork(mission, add));
     const [claim] = yield* onMember(
       add.environmentId,
       {
@@ -651,24 +654,17 @@ const make = Effect.gen(function* () {
         missionId: mission.missionId,
         name,
         intentId: add.intentId,
+        ...(add.environmentId === here && announce ? { announce } : {}),
       },
       reach,
     );
     // This machine's own threads have no pending row, and their claims are read, not remembered.
     if (add.environmentId !== here) {
-      yield* claim === undefined ? store.clearPendingAdd(add) : store.settleAdd(add, claim);
+      yield* claim === undefined
+        ? store.clearPendingAdd(add)
+        : store.settleAdd(add, claim, announce);
     }
-    // The lead hears of it here, whether the add landed at once or in a later sweep.
-    if (claim !== undefined && add.noBrief !== true && (yield* hasPriorWork(mission, add))) {
-      yield* store.addMissionUpdate({
-        missionId: mission.missionId,
-        environmentId: add.environmentId,
-        threadId: add.threadId,
-        source: `joined:${add.intentId}`,
-        event: "joined",
-      });
-      yield* PubSub.publish(joined, mission.missionId);
-    }
+    if (claim !== undefined && announce) yield* PubSub.publish(joined, mission.missionId);
     // None: the claim this add made was dropped there since, so the thread stays out.
     return claim !== undefined;
   });

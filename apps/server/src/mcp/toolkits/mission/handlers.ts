@@ -11,6 +11,7 @@ import { linkOwner, MissionClaims } from "../../../missions/MissionClaims.ts";
 import type { MissionClaim } from "../../../missions/MissionStore.ts";
 import * as Missions from "../../../missions/Missions.ts";
 import {
+  GET_THE_BRIEF,
   memberDetail,
   needsAttention,
   type RosterMember,
@@ -28,8 +29,7 @@ const needs = <A>(value: A | undefined, field: string) =>
     ? Effect.fail(new MissionError({ message: `This kind of call needs ${field}.` }))
     : Effect.succeed(value);
 
-const PRIOR_WORK_NEXT =
-  "This thread has prior work: get its brief (t3_thread_send with outputSchema {brief}, then t3_thread_wait untilOutput) or read it with t3_thread_read before giving it new work.";
+const PRIOR_WORK_NEXT = `This thread has prior work. ${GET_THE_BRIEF}`;
 
 const refused = (error: MissionError) =>
   new OrchestratorMcpFailure({

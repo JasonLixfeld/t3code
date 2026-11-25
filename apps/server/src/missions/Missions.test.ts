@@ -466,6 +466,8 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     workspacesLayer,
     /** Runs before a mission's new lead is written, under the lock the write takes. */
     beforeLeadWrite: Effect.void as Effect.Effect<void>,
+    /** Runs after a remote join settles, as a stop right then would. */
+    afterSettle: Effect.void as Effect.Effect<void>,
     /** Runs after the lead renames a mission, before its claims follow. */
     afterMissionRenamed: Effect.void as Effect.Effect<void>,
     threadsOn,
@@ -547,6 +549,8 @@ const withMissions = <A, E>(
                   Effect.suspend(() => world.beforeLeadWrite).pipe(
                     Effect.andThen(real.setLead(input)),
                   ),
+                settleAdd: (...args) =>
+                  real.settleAdd(...args).pipe(Effect.tap(() => world.afterSettle)),
                 renameMission: (input) =>
                   real
                     .renameMission(input)
@@ -3783,3 +3787,59 @@ it.effect(
     );
   },
 );
+
+it.effect(
+  "a member is told once per join: an add again tells nothing, a rejoin after a release tells again",
+  () => {
+    const world = makeWorld([lead, localMember, laptopMember]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const store = yield* MissionStore.MissionStore;
+        const { missionId } = yield* createOne;
+        for (const member of [localMember, laptopMember]) {
+          yield* missions.addMember({ missionId, member }, lead.threadId);
+        }
+        const numbered = yield* store.numbersKnown(missionId);
+        assert.isDefined(numbered.member.get(MissionStore.numberKey(localMember)));
+        assert.isDefined(numbered.member.get(MissionStore.numberKey(laptopMember)));
+        assert.isDefined(numbered.machine.get(LAPTOP));
+        assert.deepEqual(yield* joinedUpdates, [
+          [localMember.threadId, "joined"],
+          [laptopMember.threadId, "joined"],
+        ]);
+        // Its lead heard of both. The add is retried, and each thread keeps its claim.
+        for (const member of [localMember, laptopMember]) {
+          yield* missions.addMember({ missionId, member }, lead.threadId);
+        }
+        assert.deepEqual(yield* joinedUpdates, []);
+        yield* missions.releaseMember({ missionId, member: localMember });
+        yield* missions.addMember({ missionId, member: localMember });
+        yield* missions.addMember({ missionId, member: localMember });
+        assert.deepEqual(yield* joinedUpdates, [[localMember.threadId, "joined"]]);
+      }),
+    );
+  },
+);
+
+it.effect("a join that lands keeps its update through a stop right after it settles", () => {
+  const world = makeWorld([lead, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      world.laptop.mode = "offline";
+      assert.equal(yield* missions.addMember({ missionId, member: laptopMember }), "pending");
+      world.laptop.mode = "up";
+      world.afterSettle = Effect.die("the server stopped");
+      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+      yield* world.untilAnswered("join");
+    }),
+    Effect.gen(function* () {
+      assert.deepEqual((yield* owed).adds, []);
+      assert.deepEqual(yield* joinedUpdates, [[laptopMember.threadId, "joined"]]);
+    }),
+  );
+});

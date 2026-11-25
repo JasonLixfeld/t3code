@@ -151,6 +151,12 @@ export const layer = Layer.effectDiscard(
     const onThreadEvent = Effect.fn("MissionWakes.onThreadEvent")(function* (
       event: OrchestrationV2DomainEvent,
     ) {
+      // A lead no longer settled or archived hears what it missed while it was.
+      if (event.type === "thread.unsettled" || event.type === "thread.unarchived") {
+        const claim = yield* missionOf(event.threadId);
+        if (claim?.role === "lead") yield* Queue.offer(due, claim.missionId);
+        return;
+      }
       if (
         event.type !== "run.updated" &&
         event.type !== "runtime-request.updated" &&
@@ -169,13 +175,19 @@ export const layer = Layer.effectDiscard(
       yield* record(claim.missionId, { environmentId: here, threadId: event.threadId }, [update]);
     });
 
-    /** Puts away every update of a Mission whose lead may not be woken. */
+    /**
+     * Puts away every update of a Mission whose lead may not be woken, but a member's join: the
+     * lead hears that once it may be woken again.
+     */
     const dropUpdates = (missionId: string, lead: ThreadId): Effect.Effect<void> =>
-      Effect.flatMap(store.takeMissionUpdates(missionId, lead), ({ key, updates }) =>
-        updates.length === 0
-          ? Effect.void
-          : Effect.andThen(store.clearMissionUpdates(missionId, key), dropUpdates(missionId, lead)),
-      );
+      Effect.flatMap(store.takeMissionUpdates(missionId, lead), ({ key, updates }) => {
+        if (updates.length === 0) return Effect.void;
+        const joins = updates.filter((update) => update.event === "joined");
+        return Effect.andThen(
+          store.clearMissionUpdates(missionId, key, joins),
+          joins.length === updates.length ? Effect.void : dropUpdates(missionId, lead),
+        );
+      });
 
     /** Each joined member's status as the lead sees it, "settled" for one settled or archived. */
     const joinedStatuses = Effect.fn("MissionWakes.joinedStatuses")(function* (
@@ -185,8 +197,14 @@ export const layer = Layer.effectDiscard(
       const statuses = new Map<string, string>();
       if (!updates.some((update) => update.event === "joined")) return statuses;
       for (const row of yield* missions.roster(missionId)) {
-        const shell = row.ref.environmentId === here ? yield* shellOf(row.ref.threadId) : null;
-        statuses.set(numberKey(row.ref), shell !== null && parked(shell) ? "settled" : row.status);
+        if (row.ref.environmentId !== here) {
+          // Its machine has not listed it to this lead yet.
+          const listed = (yield* store.memberMark(row.ref)) !== undefined;
+          statuses.set(numberKey(row.ref), listed ? row.status : "unknown");
+          continue;
+        }
+        const shell = yield* shellOf(row.ref.threadId);
+        statuses.set(numberKey(row.ref), parked(shell) ? "settled" : row.status);
       }
       return statuses;
     });

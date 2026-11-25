@@ -219,10 +219,19 @@ export const MIGRATIONS = {
       )
     `;
   }),
-  "8_PendingAddNoBrief": Effect.gen(function* () {
+  "8_JoinedWithPriorWork": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    // A member draft's add: when it lands, its lead hears no "joined with prior work".
+    // A member draft's add, or a thread its lead started: when it lands, its lead hears no
+    // "joined with prior work".
     yield* sql`ALTER TABLE pending_adds ADD COLUMN no_brief INTEGER NOT NULL DEFAULT 0`;
+    yield* sql`
+      UPDATE pending_adds SET no_brief = 1 WHERE EXISTS (
+        SELECT 1 FROM started_joins WHERE started_joins.mission_id = pending_adds.mission_id
+          AND started_joins.intent_id = pending_adds.intent_id
+      )
+    `;
+    // The claim a member's lead last heard it join with, so it hears each join once.
+    yield* sql`ALTER TABLE member_numbers ADD COLUMN joined_generation TEXT`;
   }),
 };
 const migrations = Migrator.fromRecord(MIGRATIONS);
@@ -349,6 +358,8 @@ interface ClaimInput {
   readonly intentId?: string | undefined;
   /** The Mission is led here, so it must still be here when the claim is written. */
   readonly ledHere?: boolean | undefined;
+  /** A new claim of a Mission led here tells its lead the member joined with prior work. */
+  readonly announce?: boolean | undefined;
 }
 
 const actorOf = (row: { readonly actor: string | null }) =>
@@ -492,7 +503,12 @@ export class MissionStore extends Context.Service<
     ) => Effect.Effect<void>;
     readonly clearPendingAdd: (add: AddKey) => Effect.Effect<void>;
     /** Replaces a pending add with the claim its join made, both or neither. */
-    readonly settleAdd: (add: AddKey, claim: MissionClaim) => Effect.Effect<void>;
+    /** With `announce`, its lead hears it joined with prior work, once for that claim. */
+    readonly settleAdd: (
+      add: AddKey,
+      claim: MissionClaim,
+      announce: boolean,
+    ) => Effect.Effect<void>;
     /**
      * What each linked machine last said it holds for this lead. A copy to show while a machine
      * is away: only that machine's answer is the truth.
@@ -806,6 +822,32 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /**
+   * Records a numbered member's "joined" update unless its lead already heard of this claim: in
+   * the transaction that writes the claim.
+   */
+  const announceJoin = Effect.fn("MissionStore.announceJoin")(function* (
+    claim: Pick<MissionClaim, "missionId" | "threadId" | "generation"> & {
+      readonly environmentId: EnvironmentId;
+    },
+  ) {
+    const fresh = yield* sql`
+        UPDATE member_numbers SET joined_generation = ${claim.generation}
+        WHERE mission_id = ${claim.missionId} AND environment_id = ${claim.environmentId}
+          AND thread_id = ${claim.threadId}
+          AND (joined_generation IS NULL OR joined_generation != ${claim.generation})
+        RETURNING number
+      `;
+    if (fresh.length === 0) return;
+    yield* addMissionUpdate({
+      missionId: claim.missionId,
+      environmentId: claim.environmentId,
+      threadId: claim.threadId,
+      source: `joined:${claim.generation}`,
+      event: "joined",
+    });
+  });
+
   const join = Effect.fn("MissionStore.join")(function* (input: ClaimInput) {
     const claimedAt = yield* now;
     return yield* change(
@@ -826,7 +868,15 @@ const make = Effect.gen(function* () {
           if (mission === undefined) return refuse("This mission no longer exists.");
         }
         const held = yield* claimRow(input.threadId);
-        if (held === undefined) return yield* insertClaim(input, "member", claimedAt);
+        if (held === undefined) {
+          const claim = yield* insertClaim(input, "member", claimedAt);
+          if (input.ledHere === true) {
+            const member = { ...claim, environmentId: EnvironmentId.make(input.owner) };
+            yield* numberMember(claim.missionId, member, false);
+            if (input.announce === true) yield* announceJoin(member);
+          }
+          return claim;
+        }
         if (held.owner !== input.owner || held.mission_id !== input.missionId) {
           return heldElsewhere(held);
         }
@@ -1102,13 +1152,17 @@ const make = Effect.gen(function* () {
     Effect.orDie,
   );
 
+  // A member is numbered when its claim is first written, so its lead's first wake names it.
   const insertKnownClaim = (environmentId: EnvironmentId, held: MissionClaim) =>
     sql`
       INSERT OR REPLACE INTO known_claims
         (environment_id, thread_id, mission_id, mission_name, generation)
       VALUES (${environmentId}, ${held.threadId}, ${held.missionId}, ${held.name},
         ${held.generation})
-    `.pipe(Effect.andThen(touches(held.missionId, environmentId)));
+    `.pipe(
+      Effect.andThen(touches(held.missionId, environmentId)),
+      Effect.andThen(numberMember(held.missionId, { ...held, environmentId }, true)),
+    );
 
   const setKnownClaims = Effect.fn("MissionStore.setKnownClaims")(function* (
     environmentId: EnvironmentId,
@@ -1126,9 +1180,15 @@ const make = Effect.gen(function* () {
   const settleAdd = Effect.fn("MissionStore.settleAdd")(function* (
     add: AddKey,
     held: MissionClaim,
+    announce: boolean,
   ) {
     yield* sql.withTransaction(
-      deletePendingAdd(add).pipe(Effect.andThen(insertKnownClaim(add.environmentId, held))),
+      deletePendingAdd(add).pipe(
+        Effect.andThen(insertKnownClaim(add.environmentId, held)),
+        Effect.andThen(
+          announce ? announceJoin({ ...held, environmentId: add.environmentId }) : Effect.void,
+        ),
+      ),
     );
     yield* changed;
   }, Effect.orDie);
@@ -1360,6 +1420,24 @@ const make = Effect.gen(function* () {
     } satisfies Numbers;
   }, Effect.orDie);
 
+  const numberMember = Effect.fn("MissionStore.numberMember")(function* (
+    missionId: string,
+    ref: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId },
+    remote: boolean,
+  ) {
+    yield* sql`
+        INSERT OR IGNORE INTO member_numbers (mission_id, environment_id, thread_id, number)
+        SELECT ${missionId}, ${ref.environmentId}, ${ref.threadId}, COALESCE(MAX(number), 0) + 1
+        FROM member_numbers WHERE mission_id = ${missionId}
+      `;
+    if (!remote) return;
+    // This machine is the first, so others count from 2.
+    yield* sql`
+        INSERT OR IGNORE INTO machine_numbers (environment_id, number)
+        SELECT ${ref.environmentId}, COALESCE(MAX(number), 1) + 1 FROM machine_numbers
+      `;
+  });
+
   const numbersOf = Effect.fn("MissionStore.numbersOf")(function* (
     missionId: string,
     members: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly threadId: ThreadId }>,
@@ -1375,21 +1453,7 @@ const make = Effect.gen(function* () {
     yield* sql.withTransaction(
       Effect.forEach(
         unnumbered,
-        (ref) =>
-          Effect.gen(function* () {
-            yield* sql`
-              INSERT OR IGNORE INTO member_numbers (mission_id, environment_id, thread_id, number)
-              SELECT ${missionId}, ${ref.environmentId}, ${ref.threadId},
-                COALESCE(MAX(number), 0) + 1
-              FROM member_numbers WHERE mission_id = ${missionId}
-            `;
-            if (ref.environmentId === here) return;
-            // This machine is the first, so others count from 2.
-            yield* sql`
-              INSERT OR IGNORE INTO machine_numbers (environment_id, number)
-              SELECT ${ref.environmentId}, COALESCE(MAX(number), 1) + 1 FROM machine_numbers
-            `;
-          }),
+        (ref) => numberMember(missionId, ref, ref.environmentId !== here),
         { discard: true },
       ),
     );

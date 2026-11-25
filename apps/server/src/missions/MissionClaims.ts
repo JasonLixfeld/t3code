@@ -89,6 +89,7 @@ interface JoinInput {
   readonly intentId?: string | undefined;
   /** The Mission is led here: its record must still be here when the claim is written. */
   readonly ledHere?: boolean | undefined;
+  readonly announce?: boolean | undefined;
 }
 
 /**
