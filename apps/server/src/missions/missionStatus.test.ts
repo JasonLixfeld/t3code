@@ -32,15 +32,18 @@ const member = (
 });
 
 const HEADER =
-  'You are the lead of the mission "Ship". You orchestrate its threads. If the user asks for something different in a message, the message wins.';
+  "You lead a mission (id 0123456789ab). You orchestrate its threads. If the user asks for something different in a message, the message wins.";
 
 it("the prompt sits under the header, and without one the header stands alone", () => {
-  assert.equal(missionPromptText("Ship", ""), HEADER);
-  assert.equal(missionPromptText("Ship", "Review every PR."), `${HEADER}\n\nReview every PR.`);
+  assert.equal(missionPromptText("0123456789ab", ""), HEADER);
+  assert.equal(
+    missionPromptText("0123456789ab", "Review every PR."),
+    `${HEADER}\n\nReview every PR.`,
+  );
 });
 
 it("a prompt past 4,000 bytes is cut on a whole character, with a note", () => {
-  const text = missionPromptText("Ship", "é".repeat(5_000));
+  const text = missionPromptText("0123456789ab", "é".repeat(5_000));
   assert.isAtMost(Buffer.byteLength(text, "utf8"), MISSION_PROMPT_MAX_BYTES);
   assert.isTrue(text.endsWith("[The mission prompt was cut here to fit 4,000 bytes.]"));
   assert.notInclude(text, "�");

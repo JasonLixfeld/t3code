@@ -233,9 +233,12 @@ const cutToBytes = (text: string, max: number) => {
   return kept;
 };
 
-/** The header, then the user's prompt, which acts as instructions. */
-export const missionPromptText = (name: string, prompt: string) => {
-  const header = `You are the lead of the mission "${name}". You orchestrate its threads. If the user asks for something different in a message, the message wins.`;
+/**
+ * The header, then the user's prompt, which acts as instructions. The header names the Mission by
+ * its id only: its name is the lead's title, which any agent allowed to rename threads can set.
+ */
+export const missionPromptText = (missionId: string, prompt: string) => {
+  const header = `You lead a mission (id ${missionId}). You orchestrate its threads. If the user asks for something different in a message, the message wins.`;
   const text = prompt === "" ? header : `${header}\n\n${prompt}`;
   if (bytes(text) <= MISSION_PROMPT_MAX_BYTES) return text;
   return `${cutToBytes(text, MISSION_PROMPT_MAX_BYTES - bytes(PROMPT_CUT_NOTE))}${PROMPT_CUT_NOTE}`;

@@ -1049,7 +1049,7 @@ const make = Effect.gen(function* () {
       const { missionDefaultPrompt } = yield* settings.getSettings;
       return {
         role: "lead" as const,
-        prompt: missionPromptText(mission.name, mission.prompt || missionDefaultPrompt),
+        prompt: missionPromptText(mission.missionId, mission.prompt || missionDefaultPrompt),
         status: missionStatusText(yield* roster(mission.missionId)),
       };
     }).pipe(
