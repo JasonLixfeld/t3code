@@ -867,4 +867,21 @@ describe("CommandPalette mission thread actions", () => {
     await expect.element(page.getByText("No missions yet")).toBeVisible();
     await expect.element(page.getByText("Backspace", { exact: true })).toBeVisible();
   });
+
+  it("releases a member thread from its mission, and leaves it, from the palette", async () => {
+    const thread = openThread(true);
+    const ref = { environmentId: LOCAL, threadId: thread.id };
+    const host = hostWith(["Ship v2"], undefined, [{ ref, role: "member", state: "active" }]);
+    const claims = [{ threadId: thread.id, missionId: "ba9876543210", name: "Ship v2" }];
+    listMissions([{ ...host, snapshot: { ...host.snapshot, claims } }]);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    for (const [label, id] of [
+      ["Release from mission", "mission-release:local:ba9876543210"],
+      ["Leave mission", "mission-leave"],
+    ] as const) {
+      openCommandPalette();
+      await page.getByRole("option", { name: new RegExp(`^${label}`) }).click();
+      await vi.waitFor(() => expect(missionRun).toHaveBeenCalledWith(id, [ref]));
+    }
+  });
 });
