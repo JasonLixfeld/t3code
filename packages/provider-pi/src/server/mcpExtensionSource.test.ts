@@ -237,6 +237,51 @@ describe("Pi MCP tool exposure", () => {
     assert.equal(bridge.requests.at(-1)?.method, "tools/call");
   });
 
+  it("registers tools T3 starts listing mid-session and hides tools it stops listing", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      activatesOnRegistration: true,
+    });
+    const gatewayContext = { model: { api: "openai-completions" }, ui: { notify: assert.fail } };
+    const turn = () =>
+      bridge.handlers.get("before_agent_start")!({ systemPrompt: "" }, gatewayContext);
+    const roster = "mcp__t3-code__t3_mission_roster";
+    const rosterAlias = "mcp__t3_code__t3_mission_roster";
+    await bridge.handlers.get("session_start")!({ systemPrompt: "" }, gatewayContext);
+    await turn();
+    assert.notInclude(bridge.declaredTools(), roster);
+
+    // setLead promotes the thread; T3 lists the lead tools on its next request.
+    bridge.catalog.push({
+      ...bridge.catalog[0]!,
+      name: "t3_mission_roster",
+      description: "List the mission you lead.",
+    });
+    await turn();
+    assert.include(bridge.declaredTools(), roster);
+    assert.equal(bridge.tools.find((tool) => tool.name === roster)?.exposure, "deferred");
+    const result = await bridge.callModelTool(roster, {});
+    assert.equal(result.content[0]?.text, "browser snapshot");
+    assert.deepEqual(JSON.parse(JSON.stringify(bridge.requests.at(-1))).params, {
+      name: "t3_mission_roster",
+      arguments: {},
+    });
+
+    const registrations = bridge.registrations();
+    await turn();
+    assert.equal(bridge.registrations(), registrations, "an unchanged catalog registers again");
+
+    bridge.catalog.pop();
+    await turn();
+    for (const name of [roster, rosterAlias]) {
+      assert.equal(bridge.tools.find((tool) => tool.name === name)?.exposure, "hidden");
+      assert.notInclude(bridge.getActiveTools(), name);
+    }
+    assert.isTrue((await bridge.callModelTool(rosterAlias, {})).isError);
+    assert.include(bridge.declaredTools(), "mcp__t3-code__delegate_task");
+  });
+
   it("restores gateway declarations after model switches and older tree loadouts without excluded tools", async () => {
     const bridge = await loadMcpBridge({
       modern: true,

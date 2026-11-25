@@ -410,6 +410,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     registered.has("mcp__t3-code__" + name) &&
     (isDeferred(name) || active.includes("mcp__t3-code__" + name));
   let catalog: ReadonlyArray<McpTool> = [];
+  let registeredNames: ReadonlyArray<string> = [];
 
   const client = createMcpClient(endpoint, token);
   let started: Promise<void> | undefined;
@@ -419,6 +420,26 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     // Pi's own MCP name for T3, reserves it against Pi's configured MCP servers.
     // model-only keeps it out of codemode; it hides its own declaration.
     const prefixes = supportsExposure ? ["mcp__t3-code__", ALIAS_PREFIX] : ["mcp__t3-code__"];
+    // Pi cannot unregister a tool, so one T3 stopped listing is registered again as hidden,
+    // as Pi's own MCP extension does. Legacy Pi ignores exposure: the stub refuses the call.
+    const listed = new Set(catalog.map((tool) => tool.name));
+    const withdrawn = new Set(
+      registeredNames.filter((name) => !listed.has(name)).flatMap((name) => prefixes.map((prefix) => prefix + name)),
+    );
+    registeredNames = [...listed];
+    for (const toolName of withdrawn) {
+      pi.registerTool({
+        name: toolName,
+        label: toolName,
+        description: toolName + " is no longer available.",
+        parameters: jsonSchemaToTypebox({ type: "object" }),
+        ...(supportsExposure ? { exposure: "hidden" } : {}),
+        async execute() {
+          return { content: [{ type: "text", text: \`Tool \${toolName} not found\` }], details: {}, isError: true };
+        },
+      });
+    }
+    if (withdrawn.size > 0) pi.setActiveTools(pi.getActiveTools().filter((name) => !withdrawn.has(name)));
     readOnlyMcpTools.clear();
     for (const tool of catalog) {
       const name = tool.name;
@@ -487,6 +508,21 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // mcp.json configures it; retry a failed connection at session_start.
   await ensureStarted().catch(() => undefined);
 
+  // T3 decides per request which tools a thread may list, and sends no list change when
+  // that answer changes, as when setLead promotes a mission lead. So list again each turn.
+  const refreshCatalog = async () => {
+    if (started === undefined) return;
+    try {
+      await started;
+      const next = await client.listTools(AbortSignal.timeout(10_000));
+      if (JSON.stringify(next) === JSON.stringify(catalog)) return;
+      catalog = next;
+      registerTools();
+    } catch {
+      // Keep the last catalog and try again next turn.
+    }
+  };
+
   const reconcileDiscovery = (ctx: Pick<ExtensionContext, "model">) => {
     if (!supportsExposure) return;
     // A disabled or replaced search builtin cannot discover deferred tools.
@@ -550,7 +586,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   });
 
   // Keep guidance in the system prompt so leading slash commands still expand.
-  pi.on("before_agent_start", (event, ctx) => {
+  pi.on("before_agent_start", async (event, ctx) => {
+    await refreshCatalog();
     reconcileDiscovery(ctx);
     const instructions = ORCHESTRATION_INSTRUCTIONS + "\\n\\n" + PULL_REQUEST_LINKING_INSTRUCTIONS;
     const sections = event.systemPromptOptions?.sections;
