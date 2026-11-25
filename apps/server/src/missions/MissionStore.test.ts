@@ -69,7 +69,7 @@ it.effect("keeps its own migration history and reopens without migrating again",
           [5, "AddLinkAndAge"],
           [6, "MissionTombstones"],
           [7, "MissionLeadPrompt"],
-          [8, "MissionJoinBriefs"],
+          [8, "PendingAddNoBrief"],
         ],
       );
     }),
@@ -107,216 +107,6 @@ it.effect(
         }),
       ),
     ),
-);
-
-const asked = (
-  store: MissionStore.MissionStore["Service"],
-  threadId: ThreadId,
-  generation: string,
-) =>
-  store
-    .join({ ...claimFor(threadId, "m1", generation), ledHere: true, briefAsk: {} })
-    .pipe(Effect.andThen(store.briefRequested(threadId, "m1", generation)), Effect.orDie);
-const askedOf = (store: MissionStore.MissionStore["Service"]) =>
-  Effect.map(store.briefAsks, (asks) => asks.map((ask) => [ask.threadId, ask.generation]));
-
-it.effect(
-  "a member's brief is taken once, only for the request made under the claim it holds",
-  () =>
-    withDatabase((filename) =>
-      usingStore(filename, (store) =>
-        Effect.gen(function* () {
-          yield* store.createMission(claimFor(lead, "m1", "g1"));
-          yield* asked(store, member, "g2");
-          assert.deepEqual(yield* askedOf(store), [[member, "g2"]]);
-          // A request an earlier claim was asked under is not this claim's.
-          yield* store.briefRequested(member, "m1", "g-old");
-          assert.isFalse(yield* store.briefRequestOpen(member));
-          assert.isUndefined(yield* store.submitBrief(member, "Stale."));
-          yield* store.briefRequested(member, "m1", "g2");
-          assert.isTrue(yield* store.briefRequestOpen(member));
-          assert.deepEqual(yield* store.submitBrief(member, "Goal: ship."), {
-            missionId: "m1",
-            told: true,
-          });
-          assert.isFalse(yield* store.briefRequestOpen(member));
-          assert.isUndefined(yield* store.submitBrief(member, "Again."));
-          assert.deepEqual(yield* askedOf(store), []);
-          assert.deepEqual(yield* store.briefAnswer(member, "g2"), { text: "Goal: ship." });
-          assert.isUndefined(yield* store.briefAnswer(member, "g-old"));
-          const { updates } = yield* store.takeMissionUpdates("m1", lead);
-          assert.deepEqual(
-            updates.map((update) => [update.threadId, update.event, update.brief]),
-            [[member, "joined", "Goal: ship."]],
-          );
-          assert.isUndefined(yield* store.submitBrief(lead, "A lead has no brief to send."));
-        }),
-      ),
-    ),
-);
-
-it.effect("a release, a leave, a lead change and a delete close a member's ask at once", () =>
-  withDatabase((filename) =>
-    Effect.andThen(
-      usingStore(filename, (store) =>
-        Effect.gen(function* () {
-          const timedOut = (generation: string) =>
-            store.recordJoinedUpdateForOpenAsk(
-              {
-                missionId: "m1",
-                environmentId: EnvironmentId.make("env-a"),
-                threadId: member,
-                generation,
-                askedAt: 0,
-              },
-              null,
-            );
-          yield* store.createMission(claimFor(lead, "m1", "g1"));
-          yield* asked(store, member, "g2");
-          assert.isFalse(
-            yield* store.release({
-              threadId: member,
-              missionId: "m1",
-              owner: "env-a",
-              generation: "g0",
-            }),
-          );
-          assert.deepEqual(yield* askedOf(store), [[member, "g2"]]);
-          yield* store.release({
-            threadId: member,
-            missionId: "m1",
-            owner: "env-a",
-            generation: "g2",
-          });
-          assert.deepEqual(yield* askedOf(store), []);
-          assert.isFalse(yield* store.briefRequestOpen(member));
-          assert.isFalse(yield* timedOut("g2"));
-
-          yield* asked(store, member, "g3");
-          yield* store.leave(member);
-          assert.deepEqual(yield* askedOf(store), []);
-          assert.isFalse(yield* timedOut("g3"));
-
-          yield* asked(store, member, "g4");
-          yield* store.setLead({ ...claimFor(member, "m1", "g5"), previous: lead });
-          assert.deepEqual(yield* askedOf(store), []);
-          assert.isFalse(yield* store.briefRequestOpen(member));
-          assert.isFalse(yield* timedOut("g4"));
-
-          // One told before is kept, so it is not asked again, until its Mission is deleted.
-          const other = ThreadId.make("other");
-          yield* asked(store, other, "g6");
-          yield* store.submitBrief(other, "Goal: docs.");
-          yield* store.release({
-            threadId: other,
-            missionId: "m1",
-            owner: "env-a",
-            generation: "g6",
-          });
-          yield* asked(store, other, "g7");
-          assert.deepEqual(yield* askedOf(store), []);
-          yield* store.release({
-            threadId: other,
-            missionId: "m1",
-            owner: "env-a",
-            generation: "g7",
-          });
-          yield* store.deleteMission({ missionId: "m1", lead: member, machines: [] });
-        }),
-      ),
-      Effect.provide(
-        Effect.flatMap(SqlClient.SqlClient, (sql) =>
-          Effect.map(
-            sql`SELECT mission_id FROM brief_asks UNION ALL SELECT mission_id FROM brief_answers`,
-            (rows) => assert.deepEqual(rows, []),
-          ),
-        ),
-        NodeSqliteClient.layer({ filename }),
-      ),
-    ),
-  ),
-);
-
-it.effect("a member's brief answers go when its claim is released or it leaves", () =>
-  withDatabase((filename) =>
-    usingStore(filename, (store) =>
-      Effect.gen(function* () {
-        yield* store.createMission(claimFor(lead, "m1", "g1"));
-        for (const leaves of [false, true]) {
-          yield* store.join(claimFor(member, "m1", "g2"));
-          yield* store.briefRequested(member, "m1", "g2");
-          yield* store.submitBrief(member, "Goal: ship.");
-          assert.isFalse(
-            yield* store.release({
-              threadId: member,
-              missionId: "m1",
-              owner: "env-a",
-              generation: "g0",
-            }),
-          );
-          assert.deepEqual(yield* store.briefAnswer(member, "g2"), { text: "Goal: ship." });
-          if (leaves) yield* store.leave(member);
-          else {
-            yield* store.release({
-              threadId: member,
-              missionId: "m1",
-              owner: "env-a",
-              generation: "g2",
-            });
-          }
-          assert.isUndefined(yield* store.briefAnswer(member, "g2"));
-        }
-      }),
-    ),
-  ),
-);
-
-it.effect("upgrades a version-7 database: its adds and updates keep, with no brief asked", () =>
-  withDatabase((filename) =>
-    Effect.gen(function* () {
-      yield* Effect.provide(
-        Effect.gen(function* () {
-          const earlier = Object.fromEntries(
-            Object.entries(MissionStore.MIGRATIONS).filter(([id]) => Number(id.split("_")[0]) <= 7),
-          );
-          yield* Migrator.make({})({ loader: Migrator.fromRecord(earlier) });
-          const sql = yield* SqlClient.SqlClient;
-          yield* sql`
-            INSERT INTO missions (mission_id, name, lead_thread_id, created_at, prompt)
-            VALUES ('m1', 'M1', ${lead}, '2026-01-01T00:00:00.000Z', '')
-          `;
-          yield* sql`
-            INSERT INTO pending_adds
-              (environment_id, thread_id, mission_id, intent_id, link_id, added_at, refusal)
-            VALUES ('env-b', ${member}, 'm1', 'i1', 'l1', '2026-01-01T00:00:00.000Z', NULL)
-          `;
-          yield* sql`
-            INSERT INTO mission_updates (mission_id, environment_id, thread_id, source, event)
-            VALUES ('m1', 'env-b', ${member}, 'run:r1', 'failed')
-          `;
-        }),
-        NodeSqliteClient.layer({ filename }),
-      );
-      yield* usingStore(filename, (store) =>
-        Effect.gen(function* () {
-          const [add] = yield* store.pendingAdds;
-          assert.equal(add?.threadId, member);
-          assert.isUndefined(add?.noBrief);
-          const { updates } = yield* store.takeMissionUpdates("m1", lead);
-          assert.deepEqual(
-            updates.map((update) => [update.source, update.event, update.brief]),
-            [["run:r1", "failed", undefined]],
-          );
-          assert.deepEqual(yield* store.briefAsks, []);
-          yield* store.settleAdd(
-            { environmentId: EnvironmentId.make("env-b"), threadId: member, missionId: "m1" },
-            { threadId: member, missionId: "m1", name: "M1", role: "member", generation: "g9" },
-          );
-          assert.deepEqual(yield* askedOf(store), [[member, "g9"]]);
-        }),
-      );
-    }),
-  ),
 );
 
 it.effect("a release drops only the member claim that its generation, mission and owner name", () =>
@@ -644,4 +434,42 @@ it.effect(
         );
       }),
     ),
+);
+
+it.effect("upgrades a version-7 database: its waiting adds keep, and say no draft", () =>
+  withDatabase((filename) =>
+    Effect.gen(function* () {
+      yield* Effect.provide(
+        Effect.gen(function* () {
+          const earlier = Object.fromEntries(
+            Object.entries(MissionStore.MIGRATIONS).filter(([id]) => Number(id.split("_")[0]) <= 7),
+          );
+          yield* Migrator.make({})({ loader: Migrator.fromRecord(earlier) });
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`
+            INSERT INTO pending_adds
+              (environment_id, thread_id, mission_id, intent_id, link_id, added_at, refusal)
+            VALUES ('env-b', ${member}, 'm1', 'i1', 'l1', '2026-01-01T00:00:00.000Z', NULL)
+          `;
+        }),
+        NodeSqliteClient.layer({ filename }),
+      );
+      yield* usingStore(filename, (store) =>
+        Effect.gen(function* () {
+          const [add] = yield* store.pendingAdds;
+          if (add === undefined) return assert.fail("The add was not kept.");
+          assert.equal(add.intentId, "i1");
+          assert.isUndefined(add.noBrief);
+          yield* store.setPendingAdd({ ...add, threadId: lead, intentId: "i2", noBrief: true });
+          assert.deepEqual(
+            (yield* store.pendingAdds).map((pending) => [pending.intentId, pending.noBrief]),
+            [
+              ["i1", undefined],
+              ["i2", true],
+            ],
+          );
+        }),
+      );
+    }),
+  ),
 );

@@ -37,7 +37,7 @@ const shownOnlyToLinks = (): boolean => {
  * answers with no claim when that add's claim was dropped.
  */
 const MissionTagInput = Schema.Struct({
-  kind: Schema.Union([MissionClaimKind, Schema.Literal("brief")]),
+  kind: MissionClaimKind,
   threadId: Schema.optional(ThreadId),
   missionId: Schema.optional(MissionId),
   name: Schema.optional(MissionName),
@@ -63,8 +63,6 @@ export const MissionClaimResult = Schema.Struct({
       detail: Schema.optional(MemberDetail),
     }),
   ),
-  /** What became of a `brief` request. Absent from machines that predate it. */
-  brief: Schema.optional(Schema.Literals(["asked", "empty", "parked"])),
 });
 
 /** Omit `environmentId` for a thread on this machine. */
@@ -151,27 +149,16 @@ export const MissionToolkit = Toolkit.make(
     description:
       "Add a thread to the mission you lead. A thread on a linked machine needs a full-access link. `pending`: its machine has not answered yet.",
     parameters: Schema.Struct({ threadRef: MissionThreadRef }),
-    success: Schema.Struct({ state: Schema.Literals(["joined", "pending"]) }),
+    success: Schema.Struct({
+      state: Schema.Literals(["joined", "pending"]),
+      next: Schema.optional(Schema.String),
+    }),
     failure: OrchestratorMcpFailure,
     failureMode: "return",
     dependencies: leadOnly,
   })
     .annotate(Tool.Destructive, false)
     .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenUnlessMissionLead),
-  Tool.make("t3_mission_brief", {
-    description:
-      "Send the lead of the mission this thread joined the brief it asked for. Once only.",
-    parameters: Schema.Struct({ text: Schema.String.check(Schema.isMaxLength(20_000)) }),
-    success: Schema.Struct({ sent: Schema.Literal(true) }),
-    failure: OrchestratorMcpFailure,
-    failureMode: "return",
-    dependencies: [
-      McpInvocationContext.McpInvocationContext,
-      ThreadManagementService.ThreadManagementService,
-    ],
-  })
-    .annotate(Tool.Destructive, false)
-    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenUnlessBriefAsked),
   Tool.make("t3_mission_release", {
     description:
       "Release a thread from the mission you lead. It stays a thread. `pending`: its machine has not answered yet.",

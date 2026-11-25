@@ -35,7 +35,6 @@ import { MissionClaimResult } from "../mcp/toolkits/mission/tools.ts";
 import { assertTargetWithinLimits } from "../mcp/threadAccess.ts";
 import type { DispatchModes } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
-import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
@@ -47,8 +46,6 @@ import {
   markOf,
   memberDetail,
   memberStatusOf,
-  missionBriefCommand,
-  sanitizeAndCapMemberBrief,
   missionPromptText,
   missionStatusText,
   type RosterMember,
@@ -62,7 +59,6 @@ import {
   type MissionRecord,
   MissionStore,
   numberKey,
-  type BriefAsk,
   type PendingAdd,
   type PendingRelease,
 } from "./MissionStore.ts";
@@ -124,22 +120,11 @@ export class Missions extends Context.Service<
       },
       asLead?: ThreadId,
     ) => Effect.Effect<"joined" | "pending", MissionError>;
-    readonly requestBriefHere: <E = never>(input: {
-      readonly missionId: string;
-      readonly threadId: ThreadId;
-      readonly claimGeneration: string;
-      readonly mayChange?: ThreadAccess<E> | undefined;
-    }) => Effect.Effect<BriefRequestOutcome, E>;
-    readonly briefAnswer: (
-      threadId: ThreadId,
-      generation: string,
-    ) => Effect.Effect<{ readonly text: string | null } | undefined>;
-    readonly briefRequestOpen: (threadId: ThreadId) => Effect.Effect<boolean>;
-    /** The brief a member here sends its lead, once, for the request made under its claim. */
-    readonly submitBrief: (threadId: ThreadId, text: string) => Effect.Effect<void, MissionError>;
-    readonly briefChanges: Stream.Stream<BriefChange>;
-    /** Sends each request a stop cut off between its join and its send. */
-    readonly sendUnsentBriefAsks: Effect.Effect<void>;
+    /** A thread on another machine counts as having some: its lead cannot see its messages. */
+    readonly hasPriorWork: (
+      mission: Pick<MissionRecord, "leadThreadId">,
+      member: ScopedThreadRef,
+    ) => Effect.Effect<boolean>;
     /** Leaves the release pending when the member's machine cannot be reached. */
     readonly releaseMember: (
       input: { readonly missionId: string; readonly member: ScopedThreadRef },
@@ -178,7 +163,6 @@ export class Missions extends Context.Service<
       readonly missionId: string;
       readonly ref: ScopedThreadRef;
       readonly detail: MemberDetail;
-      readonly generation: string;
     }>;
     /**
      * A thread its lead started joins the lead's Mission, once: a replayed start that returns it
@@ -190,6 +174,8 @@ export class Missions extends Context.Service<
     ) => Effect.Effect<"joined" | "pending" | undefined, MissionError>;
     /** Each Mission whose lead was replaced. */
     readonly leadChanges: Stream.Stream<string>;
+    /** Missions a member just joined with prior work, whose lead has an update to hear. */
+    readonly joinedWithPriorWork: Stream.Stream<string>;
     /**
      * Runs `use` with the Mission as it is now, under the lock its lead changes take, so the lead
      * it is given stays the lead until it is done. Undefined when the Mission is gone.
@@ -212,11 +198,6 @@ interface Reach {
 
 const denied = (message: string) => new MissionError({ message, reason: "denied" });
 
-export type BriefRequestOutcome = "asked" | "empty" | "parked";
-type BriefChange =
-  | { readonly state: "asked"; readonly ask: BriefAsk }
-  | { readonly state: "told"; readonly missionId: string };
-
 /** The user's own reach, which the lead machine's bookkeeping calls go out with. */
 const USER_REACH: Reach = { limits: { runtimeMode: "full-access", interactionMode: "default" } };
 
@@ -234,7 +215,6 @@ type ClaimCall =
       readonly missionId: string;
       readonly name: string;
       readonly intentId: string;
-      readonly briefAsk?: { readonly actor?: ThreadId | undefined };
     }
   | {
       readonly kind: "release";
@@ -322,10 +302,9 @@ const make = Effect.gen(function* () {
     readonly missionId: string;
     readonly ref: ScopedThreadRef;
     readonly detail: MemberDetail;
-    readonly generation: string;
   }>();
   const leadChanged = yield* PubSub.unbounded<string>();
-  const briefChanged = yield* PubSub.unbounded<BriefChange>();
+  const joined = yield* PubSub.unbounded<string>();
   // Held across a lead change, a delete, and the wake that names a Mission's lead.
   const missionLocks = yield* KeyedLock.make<string>();
 
@@ -640,6 +619,18 @@ const make = Effect.gen(function* () {
     yield* store.forgetClaim(release);
   });
 
+  const hasPriorWork = Effect.fn("Missions.hasPriorWork")(function* (
+    mission: Pick<MissionRecord, "leadThreadId">,
+    member: ScopedThreadRef,
+  ) {
+    if (member.environmentId !== here) return true;
+    if (member.threadId === mission.leadThreadId) return false;
+    const shell = yield* threads
+      .getThreadShell(member.threadId)
+      .pipe(Effect.orElseSucceed(() => null));
+    return shell !== null && shell.deletedAt === null && shell.latestUserMessageAt !== null;
+  });
+
   /**
    * Call only under the machine's lock. Any answer settles the add: the claim it made, or no
    * claim when the thread has left since, which spends the add there. A join is safe to send
@@ -660,15 +651,23 @@ const make = Effect.gen(function* () {
         missionId: mission.missionId,
         name,
         intentId: add.intentId,
-        ...(add.environmentId === here && add.noBrief !== true
-          ? { briefAsk: { actor: add.actor } }
-          : {}),
       },
       reach,
     );
     // This machine's own threads have no pending row, and their claims are read, not remembered.
     if (add.environmentId !== here) {
       yield* claim === undefined ? store.clearPendingAdd(add) : store.settleAdd(add, claim);
+    }
+    // The lead hears of it here, whether the add landed at once or in a later sweep.
+    if (claim !== undefined && add.noBrief !== true && (yield* hasPriorWork(mission, add))) {
+      yield* store.addMissionUpdate({
+        missionId: mission.missionId,
+        environmentId: add.environmentId,
+        threadId: add.threadId,
+        source: `joined:${add.intentId}`,
+        event: "joined",
+      });
+      yield* PubSub.publish(joined, mission.missionId);
     }
     // None: the claim this add made was dropped there since, so the thread stays out.
     return claim !== undefined;
@@ -903,7 +902,6 @@ const make = Effect.gen(function* () {
         missionId: claim.missionId,
         ref: { environmentId, threadId: claim.threadId },
         detail: claim.detail!,
-        generation: claim.generation,
       });
     }
   });
@@ -1034,7 +1032,6 @@ const make = Effect.gen(function* () {
       concurrency: "unbounded",
       discard: true,
     });
-    yield* sendBriefAsks(() => true).pipe(Effect.forkIn(background));
     // Links, reachability and lead threads change outside the store.
     yield* publish;
   }).pipe(
@@ -1243,122 +1240,6 @@ const make = Effect.gen(function* () {
       .pipe(Effect.ensuring(setSending(false).pipe(Effect.andThen(storeChanged))));
   });
 
-  const requestBriefHere = Effect.fn("Missions.requestBriefHere")(function* <E>(input: {
-    readonly missionId: string;
-    readonly threadId: ThreadId;
-    readonly claimGeneration: string;
-    readonly mayChange?: ThreadAccess<E> | undefined;
-  }) {
-    const shell = yield* threads
-      .getThreadShell(input.threadId)
-      .pipe(Effect.orElseSucceed(() => null));
-    if (shell === null || shell.deletedAt !== null || shell.latestUserMessageAt === null) {
-      return "empty" as const;
-    }
-    if (
-      shell.archivedAt !== null ||
-      shell.settledAt !== null ||
-      shell.settledOverride === "settled"
-    ) {
-      return "parked" as const;
-    }
-    if (input.mayChange !== undefined) yield* input.mayChange(shell);
-    yield* store.briefRequested(input.threadId, input.missionId, input.claimGeneration);
-    const requestId = yield* random.uuidV4().pipe(Effect.orDie);
-    const sent = yield* threads.dispatch(missionBriefCommand({ ...input, requestId })).pipe(
-      Effect.provideService(Orchestrator.UnlessParked, true),
-      Effect.map((result) => result.storedEvents.length > 0),
-      Effect.catch((error) =>
-        Effect.logWarning("A mission brief request was not sent", error).pipe(Effect.as(false)),
-      ),
-    );
-    if (sent) return "asked" as const;
-    yield* store.withdrawBriefRequest(input.threadId, input.claimGeneration);
-    return "parked" as const;
-  });
-
-  const briefOnMember = Effect.fn("Missions.briefOnMember")(function* (
-    ask: BriefAsk,
-    reach: Reach,
-  ) {
-    if (ask.environmentId === here) {
-      return yield* requestBriefHere({
-        missionId: ask.missionId,
-        threadId: ask.threadId,
-        claimGeneration: ask.generation,
-        mayChange: reach.mayChange,
-      });
-    }
-    const answered = yield* peers
-      .call({
-        environmentId: ask.environmentId,
-        tool: "t3_mission_tag",
-        arguments: { kind: "brief", threadId: ask.threadId, missionId: ask.missionId },
-        limits: reach.limits,
-        success: MissionClaimResult,
-      })
-      .pipe(Effect.timeoutOption(MEMBER_CALL_DEADLINE), Effect.result);
-    // A machine that did not answer may have sent it: its list can still bring the brief.
-    if (Result.isFailure(answered)) {
-      return answered.failure.code === "orchestration_error" ||
-        answered.failure.message === PeerMcpClient.LINK_NOT_ACCEPTED
-        ? ("unanswered" as const)
-        : ("parked" as const);
-    }
-    return Option.isNone(answered.success)
-      ? ("unanswered" as const)
-      : (answered.success.value.brief ?? ("parked" as const));
-  });
-
-  /** Sends the request of an ask its join wrote, once, with the reach of whoever added it. */
-  const sendBriefAsk = Effect.fn("Missions.sendBriefAsk")(function* (ask: BriefAsk) {
-    const sent = { ...ask, askedAt: yield* Clock.currentTimeMillis };
-    const outcome = yield* missionLocks
-      .withLock(
-        ask.missionId,
-        Effect.gen(function* () {
-          const reach = yield* reachOf(ask.missionId, ask.actor, ask);
-          if (!(yield* store.markBriefAskSent(ask, sent.askedAt))) return undefined;
-          return yield* briefOnMember(sent, reach);
-        }),
-      )
-      .pipe(Effect.catchTags({ MissionError: () => Effect.succeed("parked" as const) }));
-    if (outcome === undefined) return;
-    if (outcome === "empty") return yield* store.dropBrief(sent);
-    if (outcome !== "parked") {
-      return yield* PubSub.publish(briefChanged, { state: "asked", ask: sent });
-    }
-    if (yield* store.recordJoinedUpdateForOpenAsk(sent, null)) {
-      yield* PubSub.publish(briefChanged, { state: "told", missionId: ask.missionId });
-    }
-  });
-
-  const sendBriefAsks = (matches: (ask: BriefAsk) => boolean) =>
-    Effect.flatMap(store.briefAsks, (asks) =>
-      Effect.forEach(
-        asks.filter((ask) => ask.askedAt === null && matches(ask)),
-        sendBriefAsk,
-        { discard: true },
-      ),
-    ).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("A joined member was not asked for a brief", cause),
-      ),
-    );
-
-  const submitBrief = Effect.fn("Missions.submitBrief")(function* (
-    threadId: ThreadId,
-    text: string,
-  ) {
-    const submitted = yield* store.submitBrief(threadId, sanitizeAndCapMemberBrief(text));
-    if (submitted === undefined) {
-      return yield* fail("This thread has no brief to send: none was asked of it, or it sent it.");
-    }
-    if (submitted.told) {
-      yield* PubSub.publish(briefChanged, { state: "told", missionId: submitted.missionId });
-    }
-  });
-
   const addMember = Effect.fn("Missions.addMember")(function* (
     input: {
       readonly missionId: string;
@@ -1369,13 +1250,7 @@ const make = Effect.gen(function* () {
   ) {
     const added = yield* addWithIntent(input, asLead, yield* random.uuidV4().pipe(Effect.orDie));
     // A new intent was never spent, so only a replayed start meets that answer.
-    if (added === "spent") return yield* fail("That thread left this mission.");
-    if (added === "joined") {
-      yield* sendBriefAsks(
-        (ask) => ask.missionId === input.missionId && memberKey(ask) === memberKey(input.member),
-      );
-    }
-    return added;
+    return added === "spent" ? yield* fail("That thread left this mission.") : added;
   });
 
   const releaseMember = Effect.fn("Missions.releaseMember")(function* (
@@ -1732,12 +1607,8 @@ const make = Effect.gen(function* () {
     joinStarted,
     withLead,
     leadChanges: Stream.fromPubSub(leadChanged),
-    briefChanges: Stream.fromPubSub(briefChanged),
-    briefAnswer: store.briefAnswer,
-    briefRequestOpen: store.briefRequestOpen,
-    sendUnsentBriefAsks: sendBriefAsks(() => true),
-    submitBrief,
-    requestBriefHere,
+    joinedWithPriorWork: Stream.fromPubSub(joined),
+    hasPriorWork,
     ledBy,
     roster,
     setPrompt,

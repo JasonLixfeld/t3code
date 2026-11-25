@@ -149,6 +149,8 @@ const makeMissions = () => {
         ),
       ),
     addMember: add,
+    // A fresh thread "here-thread" has none; every other one has messages.
+    hasPriorWork: (_mission, member) => Effect.succeed(member.threadId !== "here-thread"),
     releaseMember: (input, asLead) =>
       Effect.suspend(() => {
         calls.push({ kind: "release", ...input, asLead });
@@ -252,6 +254,10 @@ it.effect("add and release act on the caller's own mission, by the UI's rules", 
     const add = (threadRef: Record<string, unknown>) =>
       callLeadTool(missions, lead, "t3_mission_add", { threadRef });
     assert.deepEqual((yield* add({ threadId: "here-thread" })).structured, { state: "joined" });
+    assert.deepEqual((yield* add({ threadId: "worked" })).structured, {
+      state: "joined",
+      next: "This thread has prior work: get its brief (t3_thread_send with outputSchema {brief}, then t3_thread_wait untilOutput) or read it with t3_thread_read before giving it new work.",
+    });
     assert.deepEqual((yield* add({ threadId: "t1", environmentId: LAPTOP })).structured, {
       state: "pending",
     });
@@ -268,6 +274,7 @@ it.effect("add and release act on the caller's own mission, by the UI's rules", 
     assert.deepEqual(
       missions.calls.map((call) => [call.kind, call.missionId, call.member.environmentId]),
       [
+        ["add", MISSION, HERE],
         ["add", MISSION, HERE],
         ["add", MISSION, LAPTOP],
         ["add", MISSION, FENCED],

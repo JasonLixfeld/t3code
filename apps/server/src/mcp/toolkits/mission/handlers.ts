@@ -28,6 +28,9 @@ const needs = <A>(value: A | undefined, field: string) =>
     ? Effect.fail(new MissionError({ message: `This kind of call needs ${field}.` }))
     : Effect.succeed(value);
 
+const PRIOR_WORK_NEXT =
+  "This thread has prior work: get its brief (t3_thread_send with outputSchema {brief}, then t3_thread_wait untilOutput) or read it with t3_thread_read before giving it new work.";
+
 const refused = (error: MissionError) =>
   new OrchestratorMcpFailure({
     code: error.reason === "denied" ? "capability_denied" : "invalid_request",
@@ -136,21 +139,9 @@ export const layer = McpToolAccess.toLayer(
             // Each claim says what its thread is doing, so the lead can tell when it needs it.
             const withDetail = Effect.fn("MissionHandlers.withDetail")(function* (
               wanted: ReadonlyArray<MissionClaim>,
-              withBriefs: boolean,
             ) {
               const read = yield* Effect.forEach(wanted, (claim) =>
-                Effect.gen(function* () {
-                  const detail = yield* memberDetail(claim.threadId);
-                  const brief =
-                    !withBriefs || Option.isNone(missions)
-                      ? undefined
-                      : yield* missions.value.briefAnswer(claim.threadId, claim.generation);
-                  return {
-                    claim,
-                    detail:
-                      detail === undefined || brief === undefined ? detail : { ...detail, brief },
-                  };
-                }),
+                Effect.map(memberDetail(claim.threadId), (detail) => ({ claim, detail })),
               );
               // A claim may have changed hands while its thread was read.
               const held = yield* claims.list(owner);
@@ -165,7 +156,7 @@ export const layer = McpToolAccess.toLayer(
                 ),
               );
             });
-            if (input.kind === "list") return yield* withDetail(yield* claims.list(owner), true);
+            if (input.kind === "list") return yield* withDetail(yield* claims.list(owner));
             if (input.kind === "workspaces") {
               const members = yield* needs(input.members, "members");
               return yield* withDetail(
@@ -175,27 +166,7 @@ export const layer = McpToolAccess.toLayer(
                       member.threadId === claim.threadId && member.generation === claim.generation,
                   ),
                 ),
-                false,
               );
-            }
-            if (input.kind === "brief") {
-              const threadId = yield* needs(input.threadId, "threadId");
-              const missionId = yield* needs(input.missionId, "missionId");
-              const held = (yield* claims.list(owner)).find(
-                (claim) => claim.threadId === threadId && claim.missionId === missionId,
-              );
-              if (held === undefined || Option.isNone(missions)) {
-                return yield* new MissionError({ message: "That thread is not in this mission." });
-              }
-              return {
-                claims: [],
-                brief: yield* missions.value.requestBriefHere({
-                  missionId,
-                  threadId,
-                  claimGeneration: held.generation,
-                  mayChange,
-                }),
-              };
             }
             // Renames only claims this caller holds, each checked as a join is; a thread the caller
             // may no longer change keeps the old name.
@@ -237,7 +208,7 @@ export const layer = McpToolAccess.toLayer(
                 return [];
             }
           }).pipe(
-            Effect.map((answer) => ("claims" in answer ? answer : { claims: answer })),
+            Effect.map((claims) => ({ claims })),
             Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) }),
           ),
       ),
@@ -274,20 +245,10 @@ export const layer = McpToolAccess.toLayer(
             environmentId: input.threadRef.environmentId ?? environmentId,
             threadId: input.threadRef.threadId,
           };
-          return {
-            state: yield* missions.addMember({ missionId: mission.missionId, member }, lead),
-          };
-        }).pipe(Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) })),
-      ),
-      t3_mission_brief: McpToolAccess.actsAsCaller((input) =>
-        Effect.gen(function* () {
-          const scope = yield* McpInvocationContext.McpInvocationContext;
-          const caller = yield* McpInvocationContext.requireThreadScope(scope, "This mission tool");
-          if (Option.isNone(missions)) {
-            return yield* new MissionError({ message: "This thread has no brief to send." });
-          }
-          yield* missions.value.submitBrief(caller.thread.threadId, input.text);
-          return { sent: true as const };
+          const state = yield* missions.addMember({ missionId: mission.missionId, member }, lead);
+          return state === "joined" && (yield* missions.hasPriorWork(mission, member))
+            ? { state, next: PRIOR_WORK_NEXT }
+            : { state };
         }).pipe(Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) })),
       ),
       t3_mission_release: McpToolAccess.actsAsCaller((input) =>

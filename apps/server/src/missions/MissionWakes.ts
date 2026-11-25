@@ -18,26 +18,18 @@ import * as Stream from "effect/Stream";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import { type BriefAsk, MissionStore, type MissionRecord, numberKey } from "./MissionStore.ts";
+import { MissionStore, type MissionRecord, numberKey } from "./MissionStore.ts";
 import { Missions } from "./Missions.ts";
 import {
   type MemberDetail,
   markOf,
+  ATTENTION_LINES,
   missionUpdateText,
-  wakeBatch,
   remoteUpdates,
   shellDetail,
   type SourcedUpdate,
   updateFromEvent,
 } from "./missionStatus.ts";
-
-export const BRIEF_WAIT = Duration.minutes(10);
-
-type AskKey = Pick<BriefAsk, "missionId" | "environmentId" | "threadId">;
-const sameAsk = (ask: AskKey, other: AskKey) =>
-  ask.missionId === other.missionId &&
-  ask.environmentId === other.environmentId &&
-  ask.threadId === other.threadId;
 
 /** A lead is woken at most this often. What happens in between goes in its next wake. */
 export const WAKE_INTERVAL = Duration.seconds(30);
@@ -99,9 +91,6 @@ export const layer = Layer.effectDiscard(
     const told = new Set<string>();
     const due = yield* Queue.unbounded<string>();
 
-    const logged = (message: string) =>
-      Effect.catchCause((cause) => Effect.logWarning(message, cause));
-
     const shellOf = (threadId: ThreadId) =>
       threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
 
@@ -126,38 +115,11 @@ export const layer = Layer.effectDiscard(
       missionId: string,
       ref: ScopedThreadRef,
       detail: MemberDetail,
-      generation: string,
     ) {
       const before = yield* store.memberMark(ref);
-      const ask = (yield* store.briefAsks).find(
-        (open) => sameAsk(open, { missionId, ...ref }) && open.generation === generation,
-      );
-      if (ask !== undefined && detail.brief !== undefined) yield* tell(ask, detail.brief.text);
       yield* record(missionId, ref, remoteUpdates(before, detail, yield* Clock.currentTimeMillis));
       yield* store.setMemberMark(ref, markOf(detail));
     });
-
-    const tell = Effect.fn("MissionWakes.tell")(function* (ask: BriefAsk, brief: string | null) {
-      if (yield* store.recordJoinedUpdateForOpenAsk(ask, brief)) {
-        yield* Queue.offer(due, ask.missionId);
-      }
-    });
-
-    const recordMissingBriefAfterTimeout = Effect.fn("MissionWakes.recordMissingBriefAfterTimeout")(
-      function* (ask: BriefAsk, askedAt: number) {
-        const waited = Duration.toMillis(BRIEF_WAIT) - ((yield* Clock.currentTimeMillis) - askedAt);
-        if (waited > 0) yield* Effect.sleep(Duration.millis(waited));
-        yield* tell(ask, null);
-      },
-    );
-    const waitForBrief = (ask: BriefAsk) =>
-      ask.askedAt === null
-        ? Effect.void
-        : recordMissingBriefAfterTimeout(ask, ask.askedAt).pipe(
-            logged("A joined member's missing brief was not told"),
-            Effect.forkIn(scope),
-            Effect.asVoid,
-          );
 
     /**
      * A member here the lead has no mark for, as when it just joined or before marks were kept, is
@@ -172,7 +134,7 @@ export const layer = Layer.effectDiscard(
         if ((yield* store.memberMark(ref)) !== undefined) continue;
         const shell = yield* shellOf(claim.threadId);
         if (shell === null || shell.deletedAt !== null) continue;
-        yield* observe(claim.missionId, ref, shellDetail(shell), claim.generation);
+        yield* observe(claim.missionId, ref, shellDetail(shell));
       }
     });
 
@@ -215,6 +177,20 @@ export const layer = Layer.effectDiscard(
           : Effect.andThen(store.clearMissionUpdates(missionId, key), dropUpdates(missionId, lead)),
       );
 
+    /** Each joined member's status as the lead sees it, "settled" for one settled or archived. */
+    const joinedStatuses = Effect.fn("MissionWakes.joinedStatuses")(function* (
+      missionId: string,
+      updates: ReadonlyArray<ScopedThreadRef & { readonly event: string }>,
+    ) {
+      const statuses = new Map<string, string>();
+      if (!updates.some((update) => update.event === "joined")) return statuses;
+      for (const row of yield* missions.roster(missionId)) {
+        const shell = row.ref.environmentId === here ? yield* shellOf(row.ref.threadId) : null;
+        statuses.set(numberKey(row.ref), shell !== null && parked(shell) ? "settled" : row.status);
+      }
+      return statuses;
+    });
+
     /** Runs under the Mission's lock, so the lead it names stays the lead until it is sent. */
     const deliverTo = Effect.fn("MissionWakes.deliverTo")(function* (mission: MissionRecord) {
       const { missionId, leadThreadId } = mission;
@@ -238,6 +214,7 @@ export const layer = Layer.effectDiscard(
       const { key, updates } = yield* store.takeMissionUpdates(missionId, leadThreadId);
       if (updates.length === 0) return;
       const names = yield* missions.numbers(missionId, updates);
+      const statuses = yield* joinedStatuses(missionId, updates);
       const sent = yield* threads
         .dispatch(
           missionWakeCommand({
@@ -246,12 +223,9 @@ export const layer = Layer.effectDiscard(
             lead: leadThreadId,
             text: missionUpdateText(
               updates.map((update) => ({
-                ...(names.get(numberKey(update)) ?? {
-                  member: "a member",
-                  place: "another machine",
-                }),
+                ...names.get(numberKey(update))!,
                 event: update.event,
-                brief: update.brief,
+                status: statuses.get(numberKey(update)),
               })),
             ),
           }),
@@ -268,7 +242,8 @@ export const layer = Layer.effectDiscard(
         return yield* sent.failure;
       }
       lastWake.set(leadThreadId, now);
-      const { held } = wakeBatch(updates);
+      // What the wake left out stays, and goes in the next one.
+      const held = updates.slice(ATTENTION_LINES);
       yield* store.clearMissionUpdates(missionId, key, held);
       if (held.length > 0) yield* Queue.offer(due, missionId);
     });
@@ -277,6 +252,8 @@ export const layer = Layer.effectDiscard(
     // Subscribed before the first look, so a join in between is not missed.
     const storeChanges = yield* PubSub.subscribe(store.changes);
 
+    const logged = (message: string) =>
+      Effect.catchCause((cause) => Effect.logWarning(message, cause));
     yield* Queue.take(due).pipe(
       Effect.flatMap((missionId) =>
         missions.withLead(missionId, deliverTo).pipe(logged("A mission update was not delivered")),
@@ -298,26 +275,16 @@ export const layer = Layer.effectDiscard(
     );
     yield* missions.remoteChanges.pipe(
       Stream.runForEach((change) =>
-        observe(change.missionId, change.ref, change.detail, change.generation).pipe(
+        observe(change.missionId, change.ref, change.detail).pipe(
           logged("A remote member's change was not read"),
         ),
       ),
       Effect.forkIn(scope),
     );
     yield* missions.leadChanges.pipe(
+      Stream.merge(missions.joinedWithPriorWork),
       Stream.runForEach((missionId) => Queue.offer(due, missionId)),
       Effect.forkIn(scope),
     );
-    // Followed before the asks are read, so one sent in between is still timed.
-    yield* missions.briefChanges.pipe(
-      Stream.runForEach((change) =>
-        change.state === "asked"
-          ? waitForBrief(change.ask)
-          : Queue.offer(due, change.missionId).pipe(Effect.asVoid),
-      ),
-      Effect.forkIn(scope, { startImmediately: true }),
-    );
-    for (const ask of yield* store.briefAsks) yield* waitForBrief(ask);
-    yield* missions.sendUnsentBriefAsks.pipe(Effect.forkIn(scope));
   }),
 );

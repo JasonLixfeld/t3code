@@ -3,7 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
   EnvironmentId,
-  MissionError,
+  type MissionError,
   type OrchestrationProjectShell,
   ProviderInstanceId,
   ThreadId,
@@ -144,7 +144,6 @@ const callOnce = (
     readonly duringFirstWorkspaceRead?: (
       claims: MissionClaims.MissionClaims["Service"],
     ) => Effect.Effect<void, MissionError>;
-    readonly missions?: Partial<Missions.Missions["Service"]>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -231,13 +230,7 @@ const callOnce = (
         McpHttpServer.toolkitRegistration(MissionToolkit, MissionHandlers.layer).pipe(
           Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
           Layer.provideMerge(
-            Layer.mergeAll(
-              machine,
-              Layer.succeed(MissionClaims.MissionClaims, claims),
-              options.missions === undefined
-                ? Layer.empty
-                : Layer.mock(Missions.Missions)(options.missions),
-            ),
+            Layer.merge(machine, Layer.succeed(MissionClaims.MissionClaims, claims)),
           ),
         ),
       ),
@@ -252,67 +245,6 @@ const callOnce = (
 
 const SHIP = "0123456789ab";
 const joinShip = { kind: "join", threadId: userThread, missionId: SHIP, name: "Ship" };
-
-it.effect("a link's lead asks its own member here for a brief, and reads the answer listed", () =>
-  Effect.gen(function* () {
-    const asked: Array<unknown> = [];
-    let generation = "";
-    const missions = {
-      requestBriefHere: (input: {
-        readonly missionId: string;
-        readonly threadId: ThreadId;
-        readonly claimGeneration: string;
-      }) =>
-        Effect.sync(() => {
-          asked.push({
-            missionId: input.missionId,
-            threadId: input.threadId,
-            claimGeneration: input.claimGeneration,
-          });
-          return "asked" as const;
-        }),
-      briefAnswer: (_threadId: ThreadId, under: string) =>
-        Effect.succeed(under === generation ? { text: "Goal: ship." } : { text: "Stale." }),
-    };
-    const joinFirst = (claims: MissionClaims.MissionClaims["Service"]) =>
-      claims
-        .join(MissionClaims.linkOwner("link"), {
-          threadId: userThread,
-          missionId: SHIP,
-          name: "Ship",
-        })
-        .pipe(
-          Effect.tap((claim) =>
-            Effect.sync(() => {
-              if (claim !== "intent-spent") generation = claim.generation;
-            }),
-          ),
-        );
-    const ask = { kind: "brief", threadId: userThread, missionId: SHIP };
-    const { answer } = yield* callOnce(linkedClient("full-access"), ask, {
-      before: joinFirst,
-      missions,
-    });
-    assert.deepEqual(decodeTagAnswer(JSON.parse(answer)), { claims: [], brief: "asked" });
-    assert.deepEqual(asked, [
-      { missionId: SHIP, threadId: userThread, claimGeneration: generation },
-    ]);
-    const refused = yield* callOnce(linkedClient("full-access"), ask, { missions });
-    assert.include(refused.answer, "That thread is not in this mission.");
-    assert.lengthOf(asked, 1);
-    const listed = yield* callOnce(
-      linkedClient("full-access"),
-      { kind: "list" },
-      {
-        before: joinFirst,
-        missions,
-      },
-    );
-    assert.deepEqual(decodeTagAnswer(JSON.parse(listed.answer)).claims[0]?.detail?.brief, {
-      text: "Goal: ship.",
-    });
-  }),
-);
 
 it.effect("a full-access link claims and tags a thread it did not start", () =>
   Effect.gen(function* () {
@@ -475,12 +407,10 @@ const leadHere = {
 };
 
 it.effect(
-  "over /mcp, only a linked environment's session lists t3_mission_tag, only a lead the lead tools, and only an asked member t3_mission_brief",
+  "over /mcp, only a linked environment's session lists t3_mission_tag, and only a lead the lead tools",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        let briefAsked = false;
-        const briefsSent: Array<[ThreadId, string]> = [];
         const settingsContext = yield* Layer.build(ServerSettings.layerTest());
         // On, as on any machine that links: the tool must still stay away from agents.
         yield* Context.get(settingsContext, ServerSettings.ServerSettingsService).updateSettings({
@@ -507,16 +437,6 @@ it.effect(
                       ? ({ missionId: SHIP } as never)
                       : undefined,
                   ),
-                briefRequestOpen: (threadId) =>
-                  Effect.sync(() => briefAsked && threadId === agentHere.thread.threadId),
-                submitBrief: (threadId, text) =>
-                  briefAsked
-                    ? Effect.sync(() => {
-                        briefsSent.push([threadId, text]);
-                      })
-                    : Effect.fail(
-                        new MissionError({ message: "This thread has no brief to send." }),
-                      ),
               }),
             ),
           ),
@@ -616,22 +536,6 @@ it.effect(
           arguments: {},
         });
         assert.include(JSON.stringify(refused), "Tool 't3_mission_roster' not found");
-
-        assert.notInclude(yield* listed("agentToken"), "t3_mission_brief");
-        briefAsked = true;
-        assert.include(yield* listed("agentToken"), "t3_mission_brief");
-        for (const token of ["leadToken", "linkToken", "cliToken"]) {
-          assert.notInclude(yield* listed(token), "t3_mission_brief");
-        }
-        const brief = { name: "t3_mission_brief", arguments: { text: "Goal: ship." } };
-        assert.include(JSON.stringify(yield* rpc("agentToken", "tools/call", brief)), "sent");
-        assert.deepEqual(briefsSent, [[agentHere.thread.threadId, "Goal: ship."]]);
-        briefAsked = false;
-        assert.notInclude(yield* listed("agentToken"), "t3_mission_brief");
-        assert.include(
-          JSON.stringify(yield* rpc("agentToken", "tools/call", brief)),
-          "Tool 't3_mission_brief' not found",
-        );
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
@@ -672,7 +576,6 @@ it.effect(
         { kind: "list" },
         {
           before: joinedBy(LINK_OWNER),
-          missions: { briefAnswer: () => Effect.succeed({ text: "Goal: ship." }) },
           duringFirstWorkspaceRead: (claims) =>
             Effect.gen(function* () {
               const [held] = yield* claims.list(LINK_OWNER);
@@ -741,25 +644,6 @@ it.effect(
       );
       assert.deepEqual(workspaceOf(followUp.answer), [[NEWER, "workspace"]]);
     }),
-);
-
-it.effect("a workspaces follow-up carries no brief, which only the list carries", () =>
-  Effect.gen(function* () {
-    const missions = { briefAnswer: () => Effect.succeed({ text: "Goal: ship." }) };
-    const { answer } = yield* callOnce(
-      linkedClient("full-access"),
-      (held) => ({
-        kind: "workspaces",
-        members: [
-          { threadId: userThread, generation: typeof held === "object" ? held.generation : "" },
-        ],
-      }),
-      { before: joinedBy(LINK_OWNER), missions },
-    );
-    const [followed] = decodeTagAnswer(JSON.parse(answer)).claims;
-    assert.isDefined(followed?.detail);
-    assert.isUndefined(followed?.detail?.brief);
-  }),
 );
 
 it.effect("a workspaces call answers only the caller's own claims, under their generations", () =>

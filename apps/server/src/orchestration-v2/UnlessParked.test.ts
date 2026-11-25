@@ -24,7 +24,6 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { missionWakeCommand } from "../missions/MissionWakes.ts";
-import { briefRequestText, missionBriefCommand } from "../missions/missionStatus.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 /** What UnlessParked read as, each time the orchestrator asked this provider something. */
@@ -289,91 +288,4 @@ it.effect("what a wake's dispatch runs in turn never reads it as unless parked",
     assert.isNotEmpty(seen);
     assert.notInclude(seen, true);
   }).pipe(Effect.provide(layerTest)),
-);
-
-const briefRequest = missionBriefCommand({ missionId: "0123456789ab", threadId, requestId: "r1" });
-
-it.effect("a member's brief request keeps its snooze, as a mission wake does", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    yield* settledLead;
-    yield* orchestrator.dispatch({
-      type: "thread.unsettle",
-      commandId: CommandId.make("unsettle"),
-      threadId,
-      reason: "user",
-    });
-    yield* orchestrator.dispatch({
-      type: "thread.snooze",
-      commandId: CommandId.make("snooze"),
-      threadId,
-      snoozedUntil: "2999-01-01T00:00:00.000Z",
-    });
-    yield* orchestrator
-      .dispatch(briefRequest)
-      .pipe(Effect.provideService(Orchestrator.UnlessParked, true));
-    const member = yield* projections.getThreadProjection(threadId);
-    assert.isNotNull(member.thread.snoozedUntil);
-    assert.deepEqual(
-      member.messages.map((candidate) => candidate.text),
-      [briefRequestText("0123456789ab")],
-    );
-  }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect("a busy member's brief request waits for the run under way", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    yield* settledLead;
-    yield* orchestrator.dispatch({
-      type: "thread.unsettle",
-      commandId: CommandId.make("unsettle"),
-      threadId,
-      reason: "user",
-    });
-    yield* orchestrator.dispatch({
-      ...wakeCommand("busy"),
-      messageId: MessageId.make("busy"),
-      text: "Fix the build.",
-      dispatchMode: { type: "start_immediately" },
-      createdBy: "user",
-      creationSource: "web",
-    });
-    yield* orchestrator
-      .dispatch(briefRequest)
-      .pipe(Effect.provideService(Orchestrator.UnlessParked, true));
-    const member = yield* projections.getThreadProjection(threadId);
-    assert.deepEqual(
-      member.runs.map((run) => run.userMessageId),
-      [MessageId.make("busy"), briefRequest.messageId],
-    );
-    assert.deepEqual(
-      member.runs.map((run) => run.status),
-      ["starting", "queued"],
-    );
-  }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect(
-  "a brief request to a parked member stores nothing, which its sender reads as parked",
-  () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* settledLead;
-      const parked = yield* orchestrator
-        .dispatch(briefRequest)
-        .pipe(Effect.provideService(Orchestrator.UnlessParked, true));
-      assert.deepEqual(parked.storedEvents, []);
-      yield* orchestrator.dispatch({
-        type: "thread.unsettle",
-        commandId: CommandId.make("unsettle"),
-        threadId,
-        reason: "user",
-      });
-      const sent = yield* orchestrator
-        .dispatch(missionBriefCommand({ missionId: "0123456789ab", threadId, requestId: "r2" }))
-        .pipe(Effect.provideService(Orchestrator.UnlessParked, true));
-      assert.isAbove(sent.storedEvents.length, 0);
-    }).pipe(Effect.provide(layerTest)),
 );
