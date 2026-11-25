@@ -861,9 +861,6 @@ function codexCyberAccess(
   return descriptor?.type === "select" ? { defaultProgram: descriptor.currentValue } : undefined;
 }
 
-const CODEX_MISSION_ENDED =
-  "This thread no longer leads a mission. Earlier mission instructions and status no longer apply.";
-
 /**
  * The user's mission prompt goes as instructions, the app's status of its members as quoted data.
  * A thread that led one is told on every turn that it no longer does, from the first turn of each
@@ -876,7 +873,12 @@ const codexMissionContext = (
   context === undefined
     ? undefined
     : context.role === "former-lead"
-      ? { t3_code_mission: { kind: "application" as const, value: CODEX_MISSION_ENDED } }
+      ? {
+          t3_code_mission: {
+            kind: "application" as const,
+            value: ProviderAdapter.MISSION_LEAD_ENDED,
+          },
+        }
       : {
           t3_code_mission: { kind: "application" as const, value: context.prompt },
           t3_code_mission_status: { kind: "untrusted" as const, value: context.status },

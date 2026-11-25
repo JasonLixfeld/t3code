@@ -3341,22 +3341,47 @@ const reserveClaudePdfBudget = (
       }).pipe(Effect.andThen(persist)),
   );
 
+/** A keyed block the next user message carries until Claude's history holds that text. */
+interface ClaudeAppContextEntry {
+  readonly key: string;
+  readonly text: string;
+  /** The user's own words, unquoted, as Codex's `application` context. Else quoted data. */
+  readonly instruction?: true;
+}
+
+/**
+ * The lead's prompt is the user's, so it goes unquoted; its members' status goes quoted, as data.
+ * A former lead is told once per session: the old prompt stays in Claude's history, across a
+ * resume too, and the retraction stays after it. A compaction or a new session sends it again.
+ */
+const claudeMissionContext = (
+  context: ProviderAdapter.ProviderAdapterV2TurnInput["missionContext"],
+): ReadonlyArray<ClaudeAppContextEntry> =>
+  context === undefined
+    ? []
+    : context.role === "former-lead"
+      ? [{ key: "t3_code_mission", text: ProviderAdapter.MISSION_LEAD_ENDED, instruction: true }]
+      : [
+          { key: "t3_code_mission", text: context.prompt, instruction: true },
+          { key: "t3_code_mission_status", text: context.status },
+        ];
+
 // MCP app notes are app-written, so they go as quoted user input like Codex's untrusted context.
 // A slash command runs only when it opens a plain-text prompt; its note waits for the next turn.
 // Returns `message` itself when it adds nothing.
 const withClaudeAppContext = (
   message: SDKUserMessage,
-  appContext: NonNullable<ProviderAdapter.ProviderAdapterV2TurnInput["appContext"]>,
+  appContext: ReadonlyArray<ClaudeAppContextEntry>,
   reservation: Effect.Success<ReturnType<typeof reserveClaudePdfBudget>>,
 ): SDKUserMessage => {
   const content = message.message.content;
   if (appContext.length === 0 || (typeof content === "string" && content.startsWith("/"))) {
     return message;
   }
-  const contextBlocks = appContext.map((entry) => ({
-    type: "text" as const,
-    text: `<external_${entry.key}>${entry.text}</external_${entry.key}>`,
-  }));
+  const contextBlocks = appContext.map((entry) => {
+    const tag = entry.instruction === true ? entry.key : `external_${entry.key}`;
+    return { type: "text" as const, text: `<${tag}>${entry.text}</${tag}>` };
+  });
   const bytes = Buffer.byteLength(encodeClaudeJson(contextBlocks));
   reservation.budget.pending.bytes += bytes;
   reservation.bytes += bytes;
@@ -13935,7 +13960,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               turnInput.message.text,
               compileClaudeModelSelection(turnInput.modelSelection, modelCatalog).promptEffort,
             );
-            const appContext = turnInput.appContext ?? [];
+            const appContext = [
+              ...claudeMissionContext(turnInput.missionContext),
+              ...(turnInput.appContext ?? []),
+            ];
             const delivered = deliveredAppContext.get(nativeThreadId);
             let appContextSent = false;
             const userMessage =
@@ -14544,10 +14572,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // `offer` may call this twice; a second call must not restore notes compaction cleared.
             let offerCommitted = false;
             const appContextBefore = currentTurn.appContextOffered;
+            // Added to what the turn already carried, such as its mission context, which a steer
+            // does not send again.
             const appContextOffered =
               userMessage === steerMessage
                 ? undefined
-                : new Map(appContext.map((entry) => [entry.key, entry.text]));
+                : new Map([
+                    ...(seenAppContext ?? []),
+                    ...appContext.map((entry) => [entry.key, entry.text] as const),
+                  ]);
             const commitOffer = () => {
               if (offerCommitted) return;
               offerCommitted = true;

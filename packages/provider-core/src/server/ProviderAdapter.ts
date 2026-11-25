@@ -606,12 +606,16 @@ export interface ProviderAdapterV2TurnInput {
   /**
    * Set on every turn of a mission's lead thread, and of a thread that led one before. `prompt`
    * is the user's mission prompt under its header, to follow as instructions; `status` is
-   * app-written data. Only Codex and OpenCode deliver it so far; Claude, ACP and Pi get none.
+   * app-written data. Codex, OpenCode and Claude deliver it; ACP and Pi get none.
    */
   readonly missionContext?:
     | { readonly role: "lead"; readonly prompt: string; readonly status: string }
     | { readonly role: "former-lead" };
 }
+
+/** What a thread that led a mission is told once it no longer does. */
+export const MISSION_LEAD_ENDED =
+  "This thread no longer leads a mission. Earlier mission instructions and status no longer apply.";
 
 export type ProviderAdapterV2ResumeTurnInput = Omit<
   ProviderAdapterV2TurnInput,
