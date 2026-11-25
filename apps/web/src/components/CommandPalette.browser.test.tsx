@@ -54,16 +54,20 @@ vi.mock("../hooks/useHandleNewThread", async (original) => {
 vi.mock("./sidebar/missionDraftStore", { spy: true });
 vi.mock("./sidebar/MissionsSection", { spy: true });
 vi.mock("../hooks/useScratchProject", { spy: true });
-vi.mock("../state/entities", async (original) => ({
-  ...(await original<typeof import("../state/entities")>()),
-  useProjects: () => entities.projects,
-  useVisibleThreadShells: () => entities.threads,
-  useDelegatedUnderParent: () => entities.delegatedUnderParent,
-  readThreadShell: ((ref: { environmentId: string; threadId: string }) =>
+vi.mock("../state/entities", async (original) => {
+  const actual = await original<typeof import("../state/entities")>();
+  const readThreadShell: typeof actual.readThreadShell = (ref) =>
     entities.threads.find(
       (thread) => thread.environmentId === ref.environmentId && thread.id === ref.threadId,
-    ) ?? null) as never,
-}));
+    ) ?? null;
+  return {
+    ...actual,
+    useProjects: () => entities.projects,
+    useVisibleThreadShells: () => entities.threads,
+    useDelegatedUnderParent: () => entities.delegatedUnderParent,
+    readThreadShell,
+  };
+});
 
 function setup(state: Partial<typeof entities> = {}) {
   // Earlier browser test files share this origin's localStorage; a remembered project
@@ -594,7 +598,6 @@ describe("CommandPalette mission thread actions", () => {
     },
   });
   const missionRun = vi.fn(async () => []);
-  /** The sidebar's own builder over these machines, so the rows are the context menu's. */
   const listMissions = (hosts: ReadonlyArray<MissionHost>) => {
     const items = (threads: Parameters<typeof buildMissionMenuItems>[0]) =>
       buildMissionMenuItems(
@@ -604,9 +607,11 @@ describe("CommandPalette mission thread actions", () => {
         () => true,
       );
     missionRun.mockClear();
-    vi.mocked(useMissionMenu).mockImplementation(
-      () => ({ items, rowItems: () => [], run: missionRun }) as never,
-    );
+    vi.mocked(useMissionMenu).mockImplementation(() => ({
+      items,
+      rowItems: () => [],
+      run: missionRun,
+    }));
     onTestFinished(() => vi.mocked(useMissionMenu).mockRestore());
     return items;
   };
@@ -644,9 +649,8 @@ describe("CommandPalette mission thread actions", () => {
     const thread = openThread(false);
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     openCommandPalette();
-    const expected = items([thread as never]);
+    const expected = items([thread]);
     expect(expected.map((item) => item.detail)).toEqual(["No messages yet", "No missions yet"]);
-    // The palette shows a disabled action as a plain row, not an option, with its reason under it.
     for (const item of expected) {
       const title = page.getByText(item.label, { exact: true });
       await expect.element(title).toBeVisible();

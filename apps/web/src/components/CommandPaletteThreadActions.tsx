@@ -91,10 +91,13 @@ export function useCommandPaletteThreadActions(input: {
       const children = item.children.flatMap(
         (child) => toPaletteItem(item.disabled ? { ...child, disabled: true } : child) ?? [],
       );
-      // A disabled one without choices, like Add to mission before any mission exists, still
-      // shows why, as the context menu does.
       if (children.length === 0) {
-        return item.disabled ? { ...shared, kind: "action", run: async () => {} } : null;
+        const disabledReasonRow: CommandPaletteActionItem = {
+          ...shared,
+          kind: "action",
+          run: async () => {},
+        };
+        return item.disabled ? disabledReasonRow : null;
       }
       return {
         ...shared,

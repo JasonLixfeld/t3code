@@ -73,7 +73,6 @@ export function useThreadActionMenu(input: {
   readonly onStartRename?: (() => void) | undefined;
   readonly onFind?: ((threadRef: ScopedThreadRef) => void) | undefined;
   readonly canShareWithGuest: boolean;
-  /** Adds the thread's Mission entries, as the sidebar's context menu shows them. */
   readonly missionMenu?: Pick<ReturnType<typeof useMissionMenu>, "items" | "run"> | undefined;
 }) {
   const { threadRef, projectCwd, onStartRename, onFind, canShareWithGuest, missionMenu } = input;
