@@ -59,6 +59,8 @@ export function eventCanEndBackgroundWork(event: OrchestrationV2DomainEvent): bo
     case "run.background-work-cancelled":
     case "thread.pull-request-synced":
     case "thread.pull-request-link-updated":
+    case "thread.settled":
+    case "thread.archived":
       return true;
     case "subagent.updated":
       return !isOrchestrationV2WorkActive(event.payload.status);
