@@ -509,3 +509,28 @@ it.effect("upgrades a version-7 database: its waiting adds keep, and say no draf
     }),
   ),
 );
+
+it.effect("deleting a mission removes the updates its lead heard another way", () =>
+  withDatabase((filename) =>
+    Effect.gen(function* () {
+      yield* usingStore(filename, (store) =>
+        Effect.gen(function* () {
+          yield* store.createMission(claimFor(lead, "m1", "g1"));
+          yield* store.markMissionUpdateHeard({
+            missionId: "m1",
+            environmentId: EnvironmentId.make("env-a"),
+            threadId: member,
+            source: "run:r1",
+            event: "completed",
+          });
+          yield* store.deleteMission({ missionId: "m1", lead, machines: [] });
+        }),
+      );
+      const rows = yield* Effect.provide(
+        Effect.flatMap(SqlClient.SqlClient, (sql) => sql`SELECT source FROM mission_updates`),
+        NodeSqliteClient.layer({ filename }),
+      ).pipe(Effect.orDie);
+      assert.deepEqual(rows, []);
+    }),
+  ),
+);

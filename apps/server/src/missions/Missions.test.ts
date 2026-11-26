@@ -4038,9 +4038,14 @@ it.effect("a lead's wait does not wait on the mission lock to mark what it saw",
         )
         .pipe(Effect.forkChild);
       yield* Deferred.await(locked);
-      const marking = yield* missions.heardInWait(lead.threadId, localMember, "r1");
+      const call = yield* missions
+        .heardInWait(lead.threadId, localMember, "r1")
+        .pipe(Effect.timeoutOption("1 second"), Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      const marking = yield* Fiber.join(call);
+      assert.isTrue(Option.isSome(marking), "The wait waited on the mission lock.");
       yield* Deferred.succeed(release, undefined);
-      yield* Fiber.join(marking);
+      yield* Fiber.join(Option.getOrThrow(marking));
       const { updates } = yield* store.takeMissionUpdates(missionId, lead.threadId);
       assert.deepEqual(updates, []);
       // A mark it cannot write is logged, not failed.
