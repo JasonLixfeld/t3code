@@ -1,7 +1,7 @@
 import {
   backgroundWorkHoldsCompletion,
+  eventCanEndBackgroundWork,
   isPullRequestWatchTask,
-  turnItemUpdateCanEndBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveProjectScripts, settleProjectScript } from "@t3tools/shared/projectScripts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -866,18 +866,7 @@ export const make = Effect.gen(function* () {
       case "thread.pull-request-link-updated":
       case "thread.pull-request-synced":
       case "thread.issue-synced":
-      case "provider-session.detached":
-      case "run.background-work-cancelled":
         return enqueueThread(event.threadId);
-      // Sweep only when the work can have ended: progress updates cannot settle anything.
-      case "subagent.updated":
-        return isOrchestrationV2WorkActive(event.payload.status)
-          ? Effect.void
-          : enqueueThread(event.threadId);
-      case "provider-thread.updated":
-        return backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? [])
-          ? Effect.void
-          : enqueueThread(event.threadId);
       case "turn-item.updated": {
         const item = event.payload;
         if (
@@ -889,22 +878,10 @@ export const make = Effect.gen(function* () {
         ) {
           shellClosedThreads.add(event.threadId);
         }
-        return turnItemUpdateCanEndBackgroundWork(item)
-          ? enqueueThread(event.threadId)
-          : Effect.void;
+        return eventCanEndBackgroundWork(event) ? enqueueThread(event.threadId) : Effect.void;
       }
-      case "provider-session.updated":
-        return event.payload.status !== "starting" && event.payload.status !== "running"
-          ? enqueueThread(event.threadId)
-          : Effect.void;
-      case "run.updated":
-        return ["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
-          event.payload.status,
-        )
-          ? enqueueThread(event.threadId)
-          : Effect.void;
       default:
-        return Effect.void;
+        return eventCanEndBackgroundWork(event) ? enqueueThread(event.threadId) : Effect.void;
     }
   };
 

@@ -3416,7 +3416,7 @@ interface ClaudeAppContextEntry {
 /**
  * Claude resumes with prior prompts, so send a retraction to former leads. Compaction can drop it.
  */
-const claudeMissionContext = (
+export const claudeMissionContext = (
   context: ProviderAdapter.ProviderAdapterV2TurnInput["missionContext"],
 ): ReadonlyArray<ClaudeAppContextEntry> =>
   context === undefined
@@ -3427,6 +3427,11 @@ const claudeMissionContext = (
           { key: "t3_code_mission", text: context.prompt, instruction: true },
           { key: "t3_code_mission_status", text: context.status },
         ];
+
+export const claudeAppContextText = (entry: ClaudeAppContextEntry) => {
+  const tag = entry.instruction === true ? entry.key : `external_${entry.key}`;
+  return `<${tag}>${entry.text}</${tag}>`;
+};
 
 // MCP app notes are app-written, so they go as quoted user input like Codex's untrusted context.
 // A slash command runs only when it opens a plain-text prompt; its note waits for the next turn.
@@ -3440,10 +3445,10 @@ const withClaudeAppContext = (
   if (appContext.length === 0 || (typeof content === "string" && isClaudeSlashCommand(content))) {
     return message;
   }
-  const contextBlocks = appContext.map((entry) => {
-    const tag = entry.instruction === true ? entry.key : `external_${entry.key}`;
-    return { type: "text" as const, text: `<${tag}>${entry.text}</${tag}>` };
-  });
+  const contextBlocks = appContext.map((entry) => ({
+    type: "text" as const,
+    text: claudeAppContextText(entry),
+  }));
   const bytes = Buffer.byteLength(encodeClaudeJson(contextBlocks));
   reservation.budget.pending.bytes += bytes;
   reservation.bytes += bytes;

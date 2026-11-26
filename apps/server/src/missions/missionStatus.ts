@@ -9,6 +9,7 @@ import type {
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -60,16 +61,20 @@ const waitedOn = (shell: Pick<OrchestrationV2ThreadShell, "pendingRuntimeRequest
 const eventForRequest = (kind: string) =>
   INPUT_REQUESTS.has(kind) ? ("awaiting-input" as const) : ("pending-approval" as const);
 
-export const memberStatusOf = (
-  shell: Pick<
-    OrchestrationV2ThreadShell,
-    "status" | "pendingRuntimeRequest" | "hasActionableProposedPlan"
-  >,
-): MemberStatus => {
+type StatusFields = Pick<
+  OrchestrationV2ThreadShell,
+  "status" | "pendingRuntimeRequest" | "hasActionableProposedPlan" | "pendingBackgroundTasks"
+>;
+
+export const memberStatusOf = (shell: StatusFields): MemberStatus => {
   const request = waitedOn(shell);
   if (request !== null) return eventForRequest(request.kind);
   if (shell.status === "failed") return "failed";
-  if (WORKING.has(shell.status)) return "working";
+  if (
+    WORKING.has(shell.status) ||
+    backgroundWorkHoldsCompletion(shell.pendingBackgroundTasks ?? [])
+  )
+    return "working";
   return shell.hasActionableProposedPlan ? "awaiting-input" : "idle";
 };
 
@@ -128,6 +133,12 @@ export const markOf = (detail: MemberDetail): string =>
     requests: detail.requests?.map((request) => request.id),
   } satisfies Mark);
 
+/** A completed run whose member still works waits on the member's own background work. */
+export const holdsCompletion = (mark: string) => {
+  const { status, run } = JSON.parse(mark) as Partial<Mark>;
+  return status === "working" && run?.status === "completed";
+};
+
 /** Older peers send status without run or request IDs. Compare their statuses instead. */
 export const remoteUpdates = (
   before: string | undefined,
@@ -147,8 +158,8 @@ export const remoteUpdates = (
   const run = detail.run;
   if (
     run !== undefined &&
-    (run.status === "completed" || run.status === "failed") &&
-    (mark.run?.id !== run.id || mark.run.status !== run.status)
+    (run.status === "failed" || (run.status === "completed" && detail.status !== "working")) &&
+    (mark.run?.id !== run.id || mark.run.status !== run.status || mark.status === "working")
   ) {
     updates.push({
       source: `run:${run.id}`,
@@ -163,10 +174,7 @@ export const remoteUpdates = (
 };
 
 export const shellDetail = (
-  shell: Pick<
-    OrchestrationV2ThreadShell,
-    "status" | "pendingRuntimeRequest" | "hasActionableProposedPlan" | "latestRunId"
-  >,
+  shell: StatusFields & Pick<OrchestrationV2ThreadShell, "latestRunId">,
 ): MemberDetail => {
   const request = waitedOn(shell);
   return {
@@ -245,6 +253,8 @@ const MISSION_LEAD_GUIDANCE = [
   "- Drive each repository to a pull request. Track which repositories need changes, need none, or are blocked; t3_mission_roster lists them by repository.",
   "- Never pull, push, merge or switch branches only because a thread joined or finished.",
   "- When a member joins with prior work, get its brief before giving it new work.",
+  "- If an update needs nothing from the user and changes no milestone, end your turn with no reply text. Milestones are a pull request opened, merged or live, a member blocked or failed, and a question for the user.",
+  "- Make every question to the user stand on its own. Link the member thread. Say in plain words what it is working on, what must be decided and why now, and what each option changes. Recommend one option. Do not rely on earlier messages.",
 ];
 
 export const missionPromptText = (missionId: string, prompt: string) => {
