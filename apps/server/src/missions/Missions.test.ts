@@ -6,13 +6,11 @@ import {
   type AuthMcpClientAccess,
   CommandId,
   EnvironmentId,
-  type MemberDetail,
   type MemberRepository,
   type MemberWorkspace,
   type Mission,
-  type OrchestrationV2ThreadShell,
+  MissionClaimResult,
   ProviderInstanceId,
-  type MissionError,
   MISSION_PROMPT_MAX_LENGTH,
   type MissionsSnapshot,
   OrchestratorMcpFailure,
@@ -67,7 +65,7 @@ import {
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import { MEMBER_REPOSITORIES_MAX, MemberWorkspaces } from "./MemberWorkspaces.ts";
 import * as MissionClaims from "./MissionClaims.ts";
-import { memberStatusOf, missionPromptText, withinWorkspaceRoom } from "./missionStatus.ts";
+import { missionPromptText } from "./missionStatus.ts";
 import * as MissionTurnContexts from "./MissionTurnContexts.ts";
 import { releaseDeletedThreads } from "./MissionThreadDeletions.ts";
 import { afterAnswer, afterMiss, newTombstoneCheck } from "./tombstoneChecks.ts";
@@ -98,6 +96,56 @@ const WAS_TAG = "mission-was:0123456789ab:One";
 
 type Claims = MissionClaims.MissionClaims["Service"];
 type ClaimKind = "join" | "release" | "list" | "rename" | "workspaces";
+
+const mcpClient = McpSchema.McpServerClient.of({
+  clientId: 1,
+  protocolVersion: "2025-06-18",
+  clientCapabilities: {},
+  clientInfo: { name: "mcp-test", version: "1" },
+  initializePayload: {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "mcp-test", version: "1" },
+  },
+  getClient: Effect.die("unused"),
+});
+
+const callMissionTool = <R>(
+  name: string,
+  args: object,
+  scope: McpInvocationContext.McpInvocationScope,
+  services: Layer.Layer<R>,
+) =>
+  McpServer.McpServer.pipe(
+    Effect.flatMap((server) => server.callTool({ name, arguments: { ...args } })),
+    Effect.provideService(McpSchema.McpServerClient, mcpClient),
+    Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+    Effect.provide(
+      McpHttpServer.toolkitRegistration(MissionToolkit, MissionHandlers.layer).pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provideMerge(services),
+      ),
+    ),
+    Effect.map((result) => ({
+      isError: result.isError === true,
+      text: result.content.map((part) => (part.type === "text" ? part.text : "")).join(""),
+    })),
+  );
+
+const linkScope = (sessionId: string): McpInvocationContext.McpInvocationScope => ({
+  environmentId: LAPTOP,
+  requestNamespace: `client:${sessionId}`,
+  thread: undefined,
+  client: { sessionId, label: "T3 Code · Here", access: "full-access", linked: true },
+  capabilities: new Set(["orchestration"]),
+  issuedAt: 0,
+});
+const decodeClaims = Schema.decodeUnknownSync(Schema.fromJsonString(MissionClaimResult));
+const decodeRefusal = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({ code: OrchestratorMcpFailure.fields.code, message: Schema.String }),
+  ),
+);
 
 const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   const tags = new Map(threads.map((thread) => [keyOf(thread), [] as Array<string>]));
@@ -141,6 +189,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     linkExpired: false,
     deniedKinds: [] as Array<ClaimKind>,
     omits: new Set<ThreadId>(),
+    predatesWorkspaces: new Set<ThreadId>(),
     hangingKinds: [] as Array<ClaimKind>,
     listTakes: undefined as Duration.Input | undefined,
     listsRunning: 0,
@@ -175,6 +224,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
                       interactionMode: "default",
                       status: "idle",
                       activeRunId: null,
+                      latestRunId: null,
                       pendingRuntimeRequest: null,
                       hasActionableProposedPlan: false,
                       settledAt: null,
@@ -200,78 +250,36 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
           return {} as never;
         }),
     });
-  const answer = (
-    claims: Claims,
-    call: Record<string, unknown>,
-  ): Effect.Effect<ReadonlyArray<unknown>, MissionError> => {
-    const args = call as {
-      readonly kind: ClaimKind;
-      readonly threadId: ThreadId;
-      readonly missionId: string;
-      readonly name: string;
-      readonly generation: string;
-      readonly intentId: string;
-      readonly members: ReadonlyArray<{ readonly threadId: ThreadId; readonly generation: string }>;
-    };
-    const owner = MissionClaims.linkOwner(laptop.session);
-    const detailOf = (threadId: ThreadId, listing: boolean): MemberDetail => {
-      const shell = {
-        status: "idle",
-        latestRunId: null,
-        pendingRuntimeRequest: null,
-        hasActionableProposedPlan: false,
-        ...activity.get(keyOf(ref(LAPTOP, threadId))),
-      } as never as OrchestrationV2ThreadShell;
-      const request = shell.pendingRuntimeRequest;
-      const workspace = workspaces.get(worktreeOf(threadId));
-      return {
-        status: memberStatusOf(shell),
-        title: "One",
-        project: "api",
-        ...(shell.latestRunId === null
-          ? {}
-          : { run: { id: shell.latestRunId, status: shell.status } }),
-        requests: request === null ? [] : [{ id: request.id, kind: request.kind }],
-        ...(workspace === undefined
-          ? {}
-          : {
-              workspace:
-                (listing || laptop.followUpsOmit) && laptop.omits.has(threadId)
-                  ? "omitted"
-                  : workspace,
-            }),
-      };
-    };
-    switch (args.kind) {
-      case "join":
-        return Effect.map(claims.join(owner, args), (claim) =>
-          claim === "intent-spent" ? [] : [claim],
-        );
-      case "release":
-        return Effect.as(claims.release(owner, args), []);
-      case "list":
-        return Effect.map(claims.list(owner), (held) =>
-          withinWorkspaceRoom(
-            held.map((claim) => ({ ...claim, detail: detailOf(claim.threadId, true) })),
-          ),
-        );
-      case "workspaces":
-        return Effect.map(claims.list(owner), (held) =>
-          withinWorkspaceRoom(
-            held.flatMap((claim) =>
-              args.members.some(
-                (member) =>
-                  member.threadId === claim.threadId && member.generation === claim.generation,
-              )
-                ? [{ ...claim, detail: detailOf(claim.threadId, false) }]
-                : [],
-            ),
-          ),
-        );
-      case "rename":
-        return claims.rename(owner, args);
-    }
-  };
+  const answer = (call: { readonly kind: ClaimKind }) =>
+    callMissionTool(
+      "t3_mission_tag",
+      call,
+      linkScope(laptop.session),
+      Layer.mergeAll(
+        Layer.succeed(MissionClaims.MissionClaims, laptop.claims!),
+        threadsOn(LAPTOP),
+        NodeServices.layer,
+      ),
+    ).pipe(
+      Effect.map(({ isError, text }) => {
+        if (isError) return Result.fail(new OrchestratorMcpFailure(decodeRefusal(text)));
+        const omits = call.kind === "list" || laptop.followUpsOmit;
+        return Result.succeed({
+          claims: decodeClaims(text).claims.map(({ detail, ...claim }) => {
+            if (detail === undefined) return claim;
+            const { workspace, ...rest } = detail;
+            if (laptop.predatesWorkspaces.has(claim.threadId)) return { ...claim, detail: rest };
+            return {
+              ...claim,
+              detail:
+                omits && laptop.omits.has(claim.threadId) && typeof workspace === "object"
+                  ? { ...rest, workspace: "omitted" as const }
+                  : detail,
+            };
+          }),
+        });
+      }),
+    );
   const peers = Layer.mock(PeerMcpClient.PeerMcpClient)({
     ask: ((input: {
       readonly arguments: {
@@ -352,21 +360,13 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
             }),
           );
         }
-        const answered = yield* answer(laptop.claims!, input.arguments).pipe(Effect.result);
-        if (Result.isFailure(answered)) {
-          return Result.fail(
-            new OrchestratorMcpFailure({
-              code: "invalid_request",
-              message: answered.failure.message,
-            }),
-          );
-        }
-        const claims = answered.success;
+        const answered = yield* answer(input.arguments);
+        if (Result.isFailure(answered)) return answered;
         yield* Queue.offer(laptop.acted!, input.arguments.kind);
         if (mode === "lostReply") return yield* stoppedAnswering;
         if (mode === "actsThenHangs") return yield* Effect.never;
         yield* Queue.offer(laptop.answered!, input.arguments.kind);
-        return Result.succeed({ claims });
+        return answered;
       })) as never,
   });
   const links = Layer.mock(PeerLinks.PeerLinks)({
@@ -558,7 +558,8 @@ const withMissions = <A, E>(
             ThreadCommandExecutor.layer,
             world.workspacesLayer,
             Layer.mock(Project.ProjectService)({
-              getShell: () => Effect.succeedSome({ title: "web" } as never),
+              getShell: () =>
+                Effect.succeedSome({ title: environmentId === LAPTOP ? "api" : "web" } as never),
             }),
           ),
         ),
@@ -2338,6 +2339,7 @@ it.effect("with no client watching, a lead still hears its members on another ma
         project: "api",
         status: "pending-approval",
         title: "One",
+        workspace: "pending",
       });
     }),
   );
@@ -2355,19 +2357,6 @@ const leadScope: McpInvocationContext.McpInvocationScope = {
   capabilities: new Set(["orchestration"]),
   issuedAt: 0,
 };
-const mcpClient = McpSchema.McpServerClient.of({
-  clientId: 1,
-  protocolVersion: "2025-06-18",
-  clientCapabilities: {},
-  clientInfo: { name: "mcp-test", version: "1" },
-  initializePayload: {
-    protocolVersion: "2025-06-18",
-    capabilities: {},
-    clientInfo: { name: "mcp-test", version: "1" },
-  },
-  getClient: Effect.die("unused"),
-});
-
 const leadTool = (
   world: ReturnType<typeof makeWorld>,
   name: string,
@@ -2383,18 +2372,7 @@ const leadTool = (
       world.workspacesLayer,
       NodeServices.layer,
     );
-    const result = yield* McpServer.McpServer.pipe(
-      Effect.flatMap((server) => server.callTool({ name, arguments: { ...args } })),
-      Effect.provideService(McpSchema.McpServerClient, mcpClient),
-      Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-      Effect.provide(
-        McpHttpServer.toolkitRegistration(MissionToolkit, MissionHandlers.layer).pipe(
-          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-          Layer.provide(services),
-        ),
-      ),
-    );
-    return result.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+    return (yield* callMissionTool(name, args, scope, services)).text;
   });
 
 const leadRuns = (world: ReturnType<typeof makeWorld>, fields: Record<string, unknown> = {}) =>
@@ -2941,6 +2919,7 @@ it.effect(
         }
         yield* missions.setLead({ missionId, lead: localMember, expectedLead: lead.threadId });
         world.laptop.mode = "up";
+        yield* openSidebar;
         yield* sweepLaptop(world);
         const shown = (yield* listed).missions[0]?.members.filter(
           (member) => member.state === "release-refused",
@@ -3355,6 +3334,7 @@ it.effect(
       worktreeOf(laptopMember.threadId),
       workspaceOf("worktree", [repository("api", "github.com/acme/api", "t3/docs", [13])]),
     );
+    world.laptop.predatesWorkspaces.add(olderLaptopMember.threadId);
     return withMissions(
       world,
       Effect.gen(function* () {
