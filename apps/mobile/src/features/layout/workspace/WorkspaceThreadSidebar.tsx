@@ -88,6 +88,7 @@ export function WorkspaceThreadSidebar() {
         })
       }
       onOpenThreadPullRequests={openThreadPullRequests}
+      onOpenMissionPrompt={(params) => navigation.navigate("MissionPrompt", params)}
       onSearchQueryChange={setPrimarySidebarSearchQuery}
       searchQuery={primarySidebarSearchQuery}
     />

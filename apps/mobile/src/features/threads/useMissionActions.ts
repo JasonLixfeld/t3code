@@ -180,7 +180,9 @@ const shellOf = (ref: ScopedThreadRef) =>
     .find((shell) => shell.environmentId === ref.environmentId && shell.id === ref.threadId) ??
   null;
 
-export function useMissionActions() {
+export type OpenMissionPrompt = (params: ReactNavigation.RootParamList["MissionPrompt"]) => void;
+
+export function useMissionActions(openPrompt?: OpenMissionPrompt) {
   const gt = useGT();
   const resolve = useMessages();
   const liveKey = useMissionsLiveKey();
@@ -403,10 +405,9 @@ export function useMissionActions() {
       }
       case "prompt":
         if (mission !== undefined) {
-          navigation.navigate("MissionPrompt", {
-            environmentId: target.environmentId,
-            missionId: target.missionId,
-          });
+          const params = { environmentId: target.environmentId, missionId: target.missionId };
+          if (openPrompt === undefined) navigation.navigate("MissionPrompt", params);
+          else openPrompt(params);
         }
         return;
     }

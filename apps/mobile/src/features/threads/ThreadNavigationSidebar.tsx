@@ -41,7 +41,11 @@ import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useThreadListV2 } from "./useThreadListV2";
-import { useMissionActions, useMissionListMenus } from "./useMissionActions";
+import {
+  type OpenMissionPrompt,
+  useMissionActions,
+  useMissionListMenus,
+} from "./useMissionActions";
 import { useSidebarRowThreadKey } from "./useSidebarRowThreadKey";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { requestThreadMessageJump } from "./threadMessageJump";
@@ -110,6 +114,7 @@ interface ThreadNavigationSidebarProps {
     pr: ThreadPrPresentation,
   ) => void;
   readonly onRequestVisibility: () => void;
+  readonly onOpenMissionPrompt: OpenMissionPrompt;
   readonly searchQuery: string;
 }
 
@@ -305,7 +310,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     selectedThreadKey,
   });
   const threadListV2Items = useMissionListMenus(threadListV2ItemsWithoutMenus, launchingThreads);
-  const runMissionAction = useMissionActions();
+  const runMissionAction = useMissionActions(props.onOpenMissionPrompt);
   const listItems: readonly SidebarListItem[] =
     settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
       ? [
