@@ -733,19 +733,25 @@ it.effect(
         McpHttpServer.layerLeadToolsListChanged.pipe(
           Layer.provideMerge(MissionStore.layerFromPath(`${directory}/missions.sqlite`)),
           Layer.provide(
-            Layer.succeed(McpServer.McpServer, {
-              notifications: {
-                "notifications/tools/list_changed": () =>
-                  Effect.suspend(() => store!.missions).pipe(
-                    Effect.flatMap((missions) =>
-                      Queue.offer(
-                        announced,
-                        missions.map((mission) => mission.leadThreadId),
+            Layer.effect(
+              McpServer.McpServer,
+              Effect.map(McpServer.McpServer, (server) => ({
+                ...server,
+                notifications: {
+                  ...server.notifications,
+                  "notifications/tools/list_changed": () =>
+                    Effect.suspend(() => store!.missions).pipe(
+                      Effect.flatMap((missions) =>
+                        Queue.offer(
+                          announced,
+                          missions.map((mission) => mission.leadThreadId),
+                        ),
                       ),
+                      Effect.asVoid,
                     ),
-                  ),
-              },
-            } as never),
+                },
+              })),
+            ).pipe(Layer.provide(McpServer.McpServer.layer)),
           ),
         ),
       );

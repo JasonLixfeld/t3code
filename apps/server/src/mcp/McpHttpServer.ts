@@ -1583,10 +1583,7 @@ const layerDeferredListing = McpServer.visibility(
   { global: true },
 );
 
-/**
- * The lead tools are listed only to a thread that leads a Mission, and clients such as OpenCode
- * list tools again only on `tools/list_changed`, so a thread that starts or stops leading is told.
- */
+// Effect's McpServer sends no tools/list_changed when EnabledWhen visibility changes.
 export const layerLeadToolsListChanged = Layer.effectDiscard(
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;

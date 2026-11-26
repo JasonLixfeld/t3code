@@ -3883,11 +3883,12 @@ it.effect("the lead adding itself, or a member already in, is not nudged for a b
 });
 
 it.effect(
-  "a roster answer stays within 30,000 bytes, resumes at the first member it left out, and lists a member too large alone without its workspace",
+  "a roster answer stays within 30,000 bytes, resumes at the first member it left out, and lists a member too large alone without its workspace, or with its title cut",
   () => {
-    const members = Array.from({ length: 10 }, (_, index) => ref(HERE, `big-${index}`));
+    const members = Array.from({ length: 11 }, (_, index) => ref(HERE, `big-${index}`));
     const world = makeWorld([lead, ...members]);
-    for (const [position, member] of members.entries()) {
+    world.retitle(members[10]!, "t".repeat(40_000));
+    for (const [position, member] of members.slice(0, 10).entries()) {
       const branch = position === 9 ? `t3/${"x".repeat(1_000)}` : `t3/${member.threadId}`;
       world.workspaces.set(
         worktreeOf(member.threadId),
@@ -3922,7 +3923,10 @@ it.effect(
         }
         assert.deepEqual(
           seen,
-          members.map((_, index) => `member ${index + 1}: ${index === 9 ? "tooLarge" : "listed"}`),
+          members.map(
+            (_, index) =>
+              `member ${index + 1}: ${index === 10 ? "pending" : index === 9 ? "tooLarge" : "listed"}`,
+          ),
         );
       }),
     );

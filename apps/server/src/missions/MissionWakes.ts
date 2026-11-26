@@ -100,7 +100,7 @@ export const layer = Layer.effectDiscard(
       missionId: string,
       ref: ScopedThreadRef,
       updates: ReadonlyArray<SourcedUpdate>,
-      wake = true,
+      { wake = true }: { readonly wake?: boolean } = {},
     ) {
       const toldKey = (source: string) =>
         `${ref.environmentId}\u0000${ref.threadId}\u0000${source}`;
@@ -176,13 +176,12 @@ export const layer = Layer.effectDiscard(
       if (claim.role === "lead") return yield* Queue.offer(due, claim.missionId);
       if (update === undefined) return;
       const ref = { environmentId: here, threadId: event.threadId };
-      // The lead hears this run end from the t3_thread_wait it is still in: no turn for it.
       if (
         event.type === "run.updated" &&
         update.event === "completed" &&
         (yield* leadAwaits(claim.missionId, ref, event.payload.id))
       ) {
-        return yield* record(claim.missionId, ref, [update], false);
+        return yield* record(claim.missionId, ref, [update], { wake: false });
       }
       yield* record(claim.missionId, ref, [update]);
     });

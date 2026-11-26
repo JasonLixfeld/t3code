@@ -286,7 +286,7 @@ export const withinWorkspaceRoom = <
 };
 
 /** Whole code points only, so a cut never splits a character. */
-const cutToBytes = (text: string, max: number) => {
+export const cutToBytes = (text: string, max: number) => {
   let kept = "";
   let size = 0;
   for (const codePoint of text) {

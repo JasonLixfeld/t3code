@@ -225,7 +225,6 @@ const makeWorld = () => {
     ),
     layer: Layer.mergeAll(
       Layer.mock(ThreadManagement.ThreadManagementService)({
-        // The lead's running run, and the t3_thread_wait it is in, if a test sets one.
         getThreadRecords: (id) =>
           Effect.sync(
             () =>
@@ -1090,7 +1089,6 @@ it.effect("a member's run the lead still waits on in t3_thread_wait wakes no one
     Effect.gen(function* () {
       world.leadWait.current = { threadId: first, runId: "brief", status: "running" };
       yield* world.run(first, "brief", "completed");
-      // A run it does not wait on, and the same run once its wait ended, still wake it.
       yield* world.run(second, "s1", "completed");
       assert.equal(
         yield* nextText(world),
@@ -1105,7 +1103,6 @@ it.effect("a member's run the lead still waits on in t3_thread_wait wakes no one
         told(["member 1 on this machine finished its turn and is idle."]),
       );
       yield* world.leadRead;
-      // Another run of the thread it waits on, and the awaited run failing, still wake it.
       world.leadWait.current = { threadId: first, runId: "next", status: "running" };
       yield* world.run(first, "other", "completed");
       yield* world.run(first, "next", "failed");

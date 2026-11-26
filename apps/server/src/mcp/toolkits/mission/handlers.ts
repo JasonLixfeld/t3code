@@ -11,6 +11,7 @@ import { linkOwner, MissionClaims } from "../../../missions/MissionClaims.ts";
 import type { MissionClaim } from "../../../missions/MissionStore.ts";
 import * as Missions from "../../../missions/Missions.ts";
 import {
+  cutToBytes,
   GET_THE_BRIEF,
   memberDetail,
   needsAttention,
@@ -41,7 +42,6 @@ const refused = (error: MissionError) =>
 const ROSTER_MAX_BYTES = 30_000;
 const jsonBytes = (answer: object) => Buffer.byteLength(JSON.stringify(answer), "utf8");
 
-/** Which members work in each repository. Each member's branch and pull requests are its own. */
 const byRepository = (rows: ReadonlyArray<RosterMember>) => {
   const groups = new Map<string, Array<{ readonly member: string; readonly place: string }>>();
   for (const row of rows) {
@@ -223,11 +223,23 @@ export const layer = McpToolAccess.toLayer(
             total: rows.length,
             nextCursor: end < rows.length ? end : null,
           });
-          // Whole members only, at least one, until the answer would pass its cap.
           const last = Math.min(rows.length, cursor + (input.limit ?? 10));
           let end = Math.min(last, cursor + 1);
           if (end > cursor && jsonBytes(page(end)) > ROSTER_MAX_BYTES) {
-            rows = listed.with(cursor, { ...listed[cursor]!, workspace: "tooLarge" });
+            const alone = listed[cursor]!;
+            rows = listed.with(cursor, {
+              ...alone,
+              workspace: typeof alone.workspace === "object" ? "tooLarge" : alone.workspace,
+            });
+            for (const field of ["title", "project"] as const) {
+              let over = jsonBytes(page(end)) - ROSTER_MAX_BYTES;
+              while (over > 0 && rows[cursor]![field] !== "") {
+                const text = rows[cursor]![field];
+                const kept = Math.max(0, Buffer.byteLength(text, "utf8") - over);
+                rows = rows.with(cursor, { ...rows[cursor]!, [field]: cutToBytes(text, kept) });
+                over = jsonBytes(page(end)) - ROSTER_MAX_BYTES;
+              }
+            }
           }
           while (end < last && jsonBytes(page(end + 1)) <= ROSTER_MAX_BYTES) {
             end += 1;
