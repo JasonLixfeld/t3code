@@ -209,6 +209,7 @@ const callLeadTool = (
             noWorkspace,
             Layer.mock(MissionClaims.MissionClaims)({}),
             NodeServices.layer,
+            NodeCrypto.layer,
           ),
         ),
       ),

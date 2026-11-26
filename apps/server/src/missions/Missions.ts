@@ -120,6 +120,7 @@ export class Missions extends Context.Service<
       missionId?: string,
     ) => Effect.Effect<void, MissionError>;
     readonly ledBy: (threadId: ThreadId) => Effect.Effect<MissionRecord | undefined>;
+    readonly claimOf: (threadId: ThreadId) => Effect.Effect<MissionClaim | undefined>;
     readonly heardInWait: (
       lead: ThreadId,
       member: ScopedThreadRef,
@@ -1505,6 +1506,7 @@ const make = Effect.gen(function* () {
     leadChanges: Stream.fromPubSub(leadChanged),
     joinedWithPriorWork: Stream.fromPubSub(joined),
     ledBy,
+    claimOf: store.claim,
     heardInWait,
     roster,
     memberStatuses,

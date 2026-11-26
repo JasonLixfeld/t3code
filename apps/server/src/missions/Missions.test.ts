@@ -2335,7 +2335,12 @@ const mcpClient = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 
-const leadTool = (world: ReturnType<typeof makeWorld>, name: string, args: object) =>
+const leadTool = (
+  world: ReturnType<typeof makeWorld>,
+  name: string,
+  args: object,
+  scope = leadScope,
+) =>
   Effect.gen(function* () {
     const services = Layer.mergeAll(
       Layer.succeed(Missions.Missions, yield* Missions.Missions),
@@ -2344,11 +2349,12 @@ const leadTool = (world: ReturnType<typeof makeWorld>, name: string, args: objec
       Layer.mock(Project.ProjectService)({}),
       world.workspacesLayer,
       NodeServices.layer,
+      NodeCrypto.layer,
     );
     const result = yield* McpServer.McpServer.pipe(
       Effect.flatMap((server) => server.callTool({ name, arguments: { ...args } })),
       Effect.provideService(McpSchema.McpServerClient, mcpClient),
-      Effect.provideService(McpInvocationContext.McpInvocationContext, leadScope),
+      Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
       Effect.provide(
         McpHttpServer.toolkitRegistration(MissionToolkit, MissionHandlers.layer).pipe(
           Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
@@ -2361,6 +2367,49 @@ const leadTool = (world: ReturnType<typeof makeWorld>, name: string, args: objec
 
 const leadRuns = (world: ReturnType<typeof makeWorld>, fields: Record<string, unknown> = {}) =>
   world.shell(lead, { activeRunId: "run-lead", providerInstanceId: "codex", ...fields });
+
+it.effect(
+  "a member that starts a mission leaves its old one and leads the new one, and a lead is refused",
+  () => {
+    const world = makeWorld([lead, localMember]);
+    const memberScope = {
+      ...leadScope,
+      requestNamespace: "provider:local",
+      thread: {
+        ...leadScope.thread!,
+        threadId: localMember.threadId,
+        providerSessionId: "provider:local",
+      },
+    };
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const first = yield* createOne;
+        yield* (yield* Missions.Missions).addMember({
+          missionId: first.missionId,
+          member: localMember,
+        });
+        leadRuns(world);
+        world.shell(localMember, { activeRunId: "run-local", providerInstanceId: "codex" });
+        const started = JSON.parse(yield* leadTool(world, "t3_mission_start", {}, memberScope)) as {
+          readonly missionId: string;
+          readonly name: string;
+        };
+        assert.match(started.missionId, /^[0-9a-f]{12}$/);
+        assert.equal(started.name, "One");
+        const members = new Map(
+          (yield* listed).missions.map((mission) => [mission.missionId, membersOf(mission)]),
+        );
+        assert.deepEqual(members.get(first.missionId), [[keyOf(lead), "active"]]);
+        assert.deepEqual(members.get(started.missionId), [[keyOf(localMember), "active"]]);
+        for (const scope of [leadScope, memberScope]) {
+          const refused = yield* leadTool(world, "t3_mission_start", {}, scope);
+          assert.include(refused, "This thread already leads a mission.");
+        }
+      }),
+    );
+  },
+);
 
 it.effect("a lead agent adds and releases with its own modes, here and on the laptop", () => {
   const world = makeWorld([lead, localMember, laptopMember]);

@@ -389,7 +389,12 @@ it.effect("an agent on this machine is not offered the tool and cannot call it",
   }),
 );
 
-const LEAD_TOOLS = ["t3_mission_roster", "t3_mission_add", "t3_mission_release"];
+const LEAD_TOOLS = [
+  "t3_mission_roster",
+  "t3_mission_add",
+  "t3_mission_release",
+  "t3_mission_start",
+];
 const leadHere = {
   ...agentHere,
   requestNamespace: "provider:lead",
@@ -440,6 +445,12 @@ it.effect(
                     ? Effect.succeed({ state: "joined" as const, needsBrief: false })
                     : Effect.fail(new MissionError({ message: Missions.LEADS_NO_MISSION })),
                 releaseMember: () => Effect.succeed("released" as const),
+                claimOf: () => Effect.undefined,
+                create: ({ missionId, leadThreadId }) =>
+                  Effect.sync(() => {
+                    leads.add(leadThreadId);
+                    return { missionId, name: "Ship", createdAt: "", members: [] };
+                  }),
               }),
             ),
           ),
@@ -552,7 +563,7 @@ it.effect(
         for (const outside of [link, cli]) {
           const others = yield* outside.listed;
           for (const tool of LEAD_TOOLS) assert.notInclude(others, tool);
-          for (const [name, args] of leadCalls) {
+          for (const [name, args] of [...leadCalls, ["t3_mission_start", {}] as const]) {
             const answer = yield* outside.rpc("tools/call", { name, arguments: args });
             assert.include(JSON.stringify(answer), `Tool '${name}' not found`);
           }
@@ -564,7 +575,9 @@ it.effect(
           arguments: {},
         });
         assert.include(JSON.stringify(refused), "This thread leads no mission.");
-        leads.add(agentHere.thread.threadId);
+        const started = yield* agent.rpc("tools/call", { name: "t3_mission_start", arguments: {} });
+        assert.notEqual(started.result?.isError, true, JSON.stringify(started));
+        assert.isTrue(leads.has(agentHere.thread.threadId));
         for (const [name, args] of leadCalls) {
           const answer = yield* agent.rpc("tools/call", { name, arguments: args });
           assert.isUndefined(answer.error, name);

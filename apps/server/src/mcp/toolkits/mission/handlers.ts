@@ -4,6 +4,7 @@ import {
   OrchestratorMcpFailure,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -221,6 +222,22 @@ export const layer = McpToolAccess.toLayer(
           return {
             state: yield* missions.releaseMember({ missionId: mission.missionId, member }, lead),
           };
+        }).pipe(Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) })),
+      ),
+      t3_mission_start: McpToolAccess.actsAsCaller(() =>
+        Effect.gen(function* () {
+          const { missions, lead } = yield* callerHere;
+          if ((yield* missions.ledBy(lead)) !== undefined) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "This thread already leads a mission.",
+            });
+          }
+          if ((yield* missions.claimOf(lead)) !== undefined) yield* missions.leaveHere(lead);
+          const uuid = yield* (yield* SecureRandom.SecureRandom).uuidV4().pipe(Effect.orDie);
+          const missionId = uuid.replaceAll("-", "").slice(0, 12);
+          const { name } = yield* missions.create({ missionId, leadThreadId: lead });
+          return { missionId, name };
         }).pipe(Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) })),
       ),
     };
