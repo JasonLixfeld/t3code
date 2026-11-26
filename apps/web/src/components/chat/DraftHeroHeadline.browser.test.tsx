@@ -34,7 +34,7 @@ import {
   installFakeEnvironment,
   type FakeDriver,
 } from "../../../test/fakeEnvironment";
-import { act, render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 import { DraftHeroHeadline } from "./DraftHeroHeadline";
 
 // The socket is the only fake layer; see test/appScenarios.renders.tsx.
@@ -605,12 +605,20 @@ async function openDraft(name: string, intent?: MissionDraftIntent, missionsOn =
   onTestFinished(() => clearMissionDraft(draftId));
   const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
   await router.load();
-  const app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
-    router: false,
-  });
+  await using stack = new AsyncDisposableStack();
+  const app = stack.use(
+    await render(<AppRoot router={router} />, {
+      // AppRoot brings its own router.
+      router: false,
+    }),
+  );
   await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
-  return Object.assign(app, { draftId, router });
+  const mounted = stack.move();
+  return Object.assign(app, {
+    [Symbol.asyncDispose]: () => mounted.disposeAsync(),
+    draftId,
+    router,
+  });
 }
 
 it.each([
@@ -1081,25 +1089,14 @@ it("drops No project with a note when the mission's link loses full access first
 
 it("a No project request that never answers unlocks the draft after the timeout", async () => {
   const { opened } = holdScratch([ENVIRONMENT_ID]);
-  // Only the picker's 15 second wait is shortened.
-  const setTimeoutBefore = window.setTimeout;
-  vi.spyOn(window, "setTimeout").mockImplementation(((
-    handler: TimerHandler,
-    ms?: number,
-    ...args: unknown[]
-  ) =>
-    setTimeoutBefore(
-      handler,
-      ms === SCRATCH_REPLY_TIMEOUT_MS ? 1_500 : ms,
-      ...args,
-    )) as typeof window.setTimeout);
-  onTestFinished(() => vi.mocked(window.setTimeout).mockRestore());
   using _environment = installFakeEnvironment([]);
   listMissions([hostWith(ENVIRONMENT_ID)]);
   await using app = await openDraft("draft-scratch-stalled");
   await act(() => useComposerDraftStore.getState().setPrompt(app.draftId, "Plan the launch"));
+  using _timers = fakeTimers();
   await pickNoProject();
   await expect.element(page.getByRole("button", { name: "Preparing No project…" })).toBeDisabled();
+  await act(() => vi.advanceTimersByTime(SCRATCH_REPLY_TIMEOUT_MS));
   await expect.element(page.getByText("The machine did not answer in time.")).toBeVisible();
   await expect.element(page.getByRole("combobox", { name: "Project: render" })).toBeEnabled();
   await expect.element(missionTrigger()).not.toHaveAttribute("data-disabled");
