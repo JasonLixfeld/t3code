@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { eventCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
@@ -102,25 +103,38 @@ export const layer = Layer.effectDiscard(
       if (fresh.length > 0) yield* Queue.offer(due, missionId);
     });
 
-    const observe = Effect.fn("MissionWakes.observe")(function* (
-      missionId: string,
-      ref: ScopedThreadRef,
-      detail: MemberDetail,
-      unseen?: string,
-    ) {
-      const before = (yield* store.memberMark(ref)) ?? unseen;
-      const { updates, mark } = memberUpdates(before, detail, yield* Clock.currentTimeMillis);
-      yield* record(missionId, ref, updates);
-      yield* store.setMemberMark(ref, mark);
-    });
-
-    const observeRunWithoutRequests = Effect.fn("MissionWakes.observeRunWithoutRequests")(
-      function* (missionId: string, ref: ScopedThreadRef) {
-        const shell = yield* shellOf(ref.threadId);
-        if (shell === null || shell.deletedAt !== null) return;
-        yield* observe(missionId, ref, { ...shellDetail(shell), requests: [] }, "{}");
+    // The startup look, the event fiber and settle rechecks run apart; one at a time keeps a
+    // stale read of a member from overwriting a newer mark.
+    const observing = yield* Semaphore.make(1);
+    const observe = Effect.fn("MissionWakes.observe")(
+      function* (
+        missionId: string,
+        ref: ScopedThreadRef,
+        read: Effect.Effect<MemberDetail | undefined>,
+        unseen?: string,
+      ) {
+        const detail = yield* read;
+        if (detail === undefined) return;
+        const before = (yield* store.memberMark(ref)) ?? unseen;
+        const { updates, mark } = memberUpdates(before, detail, yield* Clock.currentTimeMillis);
+        yield* record(missionId, ref, updates);
+        yield* store.setMemberMark(ref, mark);
       },
+      (effect) => observing.withPermits(1)(effect),
     );
+
+    const localDetail = (threadId: ThreadId) =>
+      Effect.map(shellOf(threadId), (shell) =>
+        shell === null || shell.deletedAt !== null ? undefined : shellDetail(shell),
+      );
+
+    const observeRunWithoutRequests = (missionId: string, ref: ScopedThreadRef) =>
+      observe(
+        missionId,
+        ref,
+        Effect.map(localDetail(ref.threadId), (detail) => detail && { ...detail, requests: [] }),
+        "{}",
+      );
 
     // A finished subagent's continuation run is dispatched on another fiber after the subagent
     // ends, so an idle-looking member is looked at again once that run has had time to start.
@@ -148,9 +162,7 @@ export const layer = Layer.effectDiscard(
           if (wasCompletionHeld(mark)) yield* observeRunWithoutRequests(claim.missionId, ref);
           continue;
         }
-        const shell = yield* shellOf(claim.threadId);
-        if (shell === null || shell.deletedAt !== null) continue;
-        yield* observe(claim.missionId, ref, shellDetail(shell));
+        yield* observe(claim.missionId, ref, localDetail(claim.threadId));
       }
     });
 
@@ -295,7 +307,7 @@ export const layer = Layer.effectDiscard(
     );
     yield* missions.remoteChanges.pipe(
       Stream.runForEach((change) =>
-        observe(change.missionId, change.ref, change.detail).pipe(
+        observe(change.missionId, change.ref, Effect.succeed(change.detail)).pipe(
           logged("A remote member's change was not read"),
         ),
       ),
