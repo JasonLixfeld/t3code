@@ -125,57 +125,65 @@ interface Mark {
   readonly run?: { readonly id: string; readonly status: string } | undefined;
   readonly held?: boolean | undefined;
   readonly requests?: ReadonlyArray<string> | undefined;
+  /** A completed run that work held, so the lead has not heard of it yet. */
+  readonly carried?: string | undefined;
 }
 
 // Older peers send no `held`; their status said "working" while work held a finished turn.
 const isHeld = (seen: Partial<Pick<Mark, "status" | "held">>) =>
   seen.held ?? seen.status === "working";
 
-export const markOf = (detail: MemberDetail): string =>
-  JSON.stringify({
-    status: detail.status,
-    run: detail.run,
-    held: detail.held,
-    requests: detail.requests?.map((request) => request.id),
-  } satisfies Mark);
+const markFields = (detail: MemberDetail): Mark => ({
+  status: detail.status,
+  run: detail.run,
+  held: detail.held,
+  requests: detail.requests?.map((request) => request.id),
+});
 
-export const wasCompletionHeld = (mark: string) => {
-  const seen = JSON.parse(mark) as Partial<Mark>;
-  return isHeld(seen) && seen.run?.status === "completed";
-};
+export const markOf = (detail: MemberDetail): string => JSON.stringify(markFields(detail));
+
+export const wasCompletionHeld = (mark: string) =>
+  (JSON.parse(mark) as Partial<Mark>).carried !== undefined;
 
 /** Older peers send status without run or request IDs. Compare their statuses instead. */
-export const remoteUpdates = (
+export const memberUpdates = (
   before: string | undefined,
   detail: MemberDetail,
   listedAt: number,
-): ReadonlyArray<SourcedUpdate> => {
-  if (before === undefined && !needsAttention(detail.status)) return [];
+): { readonly updates: ReadonlyArray<SourcedUpdate>; readonly mark: string } => {
+  const unchanged = (updates: ReadonlyArray<SourcedUpdate>) => ({ updates, mark: markOf(detail) });
+  if (before === undefined && !needsAttention(detail.status)) return unchanged([]);
   const mark: Partial<Mark> = before === undefined ? {} : (JSON.parse(before) as Mark);
   if (detail.run === undefined && detail.requests === undefined) {
     const event =
       before === undefined
         ? (detail.status as MissionUpdateEvent)
         : updateFor(mark.status, detail.status);
-    return event === undefined ? [] : [{ source: `status:${event}:${listedAt}`, event }];
+    return unchanged(event === undefined ? [] : [{ source: `status:${event}:${listedAt}`, event }]);
   }
   const updates: Array<SourcedUpdate> = [];
+  const told = (id: string, event: "completed" | "failed") =>
+    updates.push({ source: `run:${id}`, event });
+  let carried = mark.carried;
   const run = detail.run;
-  if (
-    run !== undefined &&
-    (run.status === "failed" || (run.status === "completed" && !isHeld(detail))) &&
-    (mark.run?.id !== run.id || mark.run.status !== run.status || isHeld(mark))
-  ) {
-    updates.push({
-      source: `run:${run.id}`,
-      event: run.status === "completed" ? "completed" : "failed",
-    });
+  const fresh = run !== undefined && (mark.run?.id !== run.id || mark.run.status !== run.status);
+  if (run?.status === "failed") {
+    if (fresh) told(run.id, "failed");
+    carried = undefined;
+  } else if (run?.status === "completed" && isHeld(detail)) {
+    carried = run.id;
+  } else if (run?.status === "completed") {
+    if (fresh || carried === run.id) told(run.id, "completed");
+    carried = undefined;
+  } else if (carried !== undefined && !isHeld(detail) && !WORKING.has(run?.status ?? "")) {
+    told(carried, "completed");
+    carried = undefined;
   }
   for (const request of detail.requests ?? []) {
     if (mark.requests?.includes(request.id) === true) continue;
     updates.push({ source: `request:${request.id}`, event: eventForRequest(request.kind) });
   }
-  return updates;
+  return { updates, mark: JSON.stringify({ ...markFields(detail), carried } satisfies Mark) };
 };
 
 export const shellDetail = (

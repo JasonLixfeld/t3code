@@ -47,6 +47,7 @@ interface Session {
   joined?: Queue.Queue<string>;
   woke?: Queue.Queue<Sent>;
   leadReads?: Queue.Queue<ThreadId>;
+  memberReads?: Queue.Queue<ThreadId>;
   lock?: Semaphore.Semaphore;
   store?: MissionStore.MissionStore["Service"];
 }
@@ -81,10 +82,12 @@ const makeWorld = () => {
     afterDispatch: () => Effect.Effect<void>;
     onLeadRead: (id: ThreadId) => Effect.Effect<void>;
     afterLeadRead: (id: ThreadId) => Effect.Effect<void>;
+    afterMemberRead: (id: ThreadId) => Effect.Effect<void>;
   } = {
     afterDispatch: () => Effect.void,
     onLeadRead: () => Effect.void,
     afterLeadRead: () => Effect.void,
+    afterMemberRead: () => Effect.void,
   };
   const parkedNow = (id: ThreadId) => {
     const shell = shells.get(id)!;
@@ -114,6 +117,14 @@ const makeWorld = () => {
       }),
     event: (id: ThreadId, type: string, payload: Record<string, unknown>) =>
       Effect.suspend(() => Queue.offer(session.events!, { type, threadId: id, payload })),
+    /** Runs `step`, then waits until wakes reads the member's shell after it. */
+    read: <A>(id: ThreadId, step: Effect.Effect<A>) =>
+      Effect.gen(function* () {
+        yield* Queue.clear(session.memberReads!);
+        const result = yield* step;
+        while ((yield* Queue.take(session.memberReads!)) !== id);
+        return result;
+      }),
     ask: (id: ThreadId, requestId: string, kind: string) =>
       Effect.suspend(() =>
         Queue.offer(session.events!, {
@@ -213,7 +224,10 @@ const makeWorld = () => {
           Effect.gen(function* () {
             const missions = yield* session.store!.missions;
             if (!missions.some((mission) => mission.leadThreadId === id)) {
-              return (shells.get(id) ?? null) as never;
+              const shell = shells.get(id) ?? null;
+              yield* hooks.afterMemberRead(id);
+              yield* Queue.offer(session.memberReads!, id);
+              return shell as never;
             }
             yield* hooks.onLeadRead(id);
             const shell = { ...shells.get(id) };
@@ -325,6 +339,7 @@ const withWakes = (
       world.session.joined = yield* Queue.unbounded<string>();
       world.session.woke = yield* Queue.unbounded<Sent>();
       world.session.leadReads = yield* Queue.unbounded<ThreadId>();
+      world.session.memberReads = yield* Queue.unbounded<ThreadId>();
       yield* Effect.scoped(
         Effect.provide(
           session,
@@ -416,7 +431,7 @@ it.effect(
         yield* settle();
         yield* world.event(first, "subagent.updated", { status: "completed" });
         world.set(first, { pendingBackgroundTasks: [subagent] });
-        yield* world.run(first, "f2", "completed");
+        yield* world.read(first, world.run(first, "f2", "completed"));
         world.set(first, { pendingBackgroundTasks: [] });
         yield* world.run(first, "f3", "running");
         yield* world.run(first, "f3", "completed");
@@ -433,6 +448,32 @@ it.effect(
         yield* world.ask(first, "r1", "user_input");
         assert.equal(yield* nextText(world), told(["member 1 on this machine is awaiting input."]));
         assert.equal(world.sent.length, 5);
+      }),
+    );
+  },
+);
+
+it.effect(
+  "a held completion is told once the member is idle, though a newer run was stopped",
+  () => {
+    const world = makeWorld();
+    return withWakes(
+      world,
+      Effect.gen(function* () {
+        world.set(first, { pendingBackgroundTasks: [subagent] });
+        yield* world.read(first, world.run(first, "f1", "completed"));
+        yield* world.read(first, world.run(first, "f2", "running"));
+        world.set(first, { pendingBackgroundTasks: [] });
+        yield* world.run(first, "f2", "interrupted");
+        assert.equal(
+          yield* nextText(world),
+          told(["member 1 on this machine finished its turn and is idle."]),
+        );
+        yield* world.leadRead;
+        yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+        yield* world.run(second, "s1", "failed");
+        assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
+        assert.equal(world.sent.length, 2);
       }),
     );
   },

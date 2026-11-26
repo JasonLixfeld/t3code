@@ -14,7 +14,7 @@ import {
   missionUpdateText,
   type RosterMember,
   type RosterStatus,
-  remoteUpdates,
+  memberUpdates,
   shellDetail,
   updateFor,
   updateFromEvent,
@@ -204,11 +204,25 @@ it("a member whose turn ended while its own work runs is told once that work end
     ...shell,
     pendingBackgroundTasks: [{ taskId: "agent-1", kind: "subagent" }],
   });
-  assert.deepEqual(remoteUpdates(running, held, 0), []);
-  assert.deepEqual(remoteUpdates(markOf(held), shellDetail(shell), 0), [
+  const heldSeen = memberUpdates(running, held, 0);
+  assert.deepEqual(heldSeen.updates, []);
+  const idle = memberUpdates(heldSeen.mark, shellDetail(shell), 0);
+  assert.deepEqual(idle.updates, [{ source: "run:run-5", event: "completed" }]);
+  assert.deepEqual(updatesOf(idle.mark, shellDetail(shell), 0), []);
+
+  const stopped = { ...shell, status: "interrupted" as const, latestRunId: "run-6" as never };
+  const newer = memberUpdates(
+    heldSeen.mark,
+    shellDetail({ ...shell, status: "running", latestRunId: "run-6" as never }),
+    0,
+  );
+  assert.deepEqual(newer.updates, []);
+  assert.deepEqual(updatesOf(newer.mark, shellDetail(stopped), 0), [
     { source: "run:run-5", event: "completed" },
   ]);
-  assert.deepEqual(remoteUpdates(markOf(shellDetail(shell)), shellDetail(shell), 0), []);
+  assert.deepEqual(updatesOf(newer.mark, shellDetail({ ...stopped, status: "failed" }), 0), [
+    { source: "run:run-6", event: "failed" },
+  ]);
 
   const asking = {
     ...shell,
@@ -218,10 +232,9 @@ it("a member whose turn ended while its own work runs is told once that work end
     ...asking,
     pendingBackgroundTasks: [{ taskId: "agent-1", kind: "subagent" }],
   });
-  assert.deepEqual(remoteUpdates(running, askingHeld, 0), [
-    { source: "request:req-9", event: "awaiting-input" },
-  ]);
-  assert.deepEqual(remoteUpdates(markOf(askingHeld), shellDetail(asking), 0), [
+  const asked = memberUpdates(running, askingHeld, 0);
+  assert.deepEqual(asked.updates, [{ source: "request:req-9", event: "awaiting-input" }]);
+  assert.deepEqual(updatesOf(asked.mark, shellDetail(asking), 0), [
     { source: "run:run-5", event: "completed" },
   ]);
 });
@@ -268,6 +281,8 @@ it("a member's own events say when it needs the lead, once per request or run", 
   );
 });
 
+const updatesOf = (...input: Parameters<typeof memberUpdates>) => memberUpdates(...input).updates;
+
 const detail = (overrides: Partial<MemberDetail>): MemberDetail => ({
   status: "idle",
   title: "",
@@ -279,19 +294,18 @@ const detail = (overrides: Partial<MemberDetail>): MemberDetail => ({
 
 it("a remote member's runs and requests are told by their ids, also between two lists", () => {
   const before = markOf(detail({}));
-  assert.deepEqual(remoteUpdates(before, detail({}), 0), []);
-  assert.deepEqual(
-    remoteUpdates(before, detail({ run: { id: "run-2", status: "completed" } }), 0),
-    [{ source: "run:run-2", event: "completed" }],
-  );
-  assert.deepEqual(remoteUpdates(before, detail({ run: { id: "run-2", status: "failed" } }), 0), [
+  assert.deepEqual(updatesOf(before, detail({}), 0), []);
+  assert.deepEqual(updatesOf(before, detail({ run: { id: "run-2", status: "completed" } }), 0), [
+    { source: "run:run-2", event: "completed" },
+  ]);
+  assert.deepEqual(updatesOf(before, detail({ run: { id: "run-2", status: "failed" } }), 0), [
     { source: "run:run-2", event: "failed" },
   ]);
   const asked = markOf(
     detail({ status: "pending-approval", requests: [{ id: "req-1", kind: "command" }] }),
   );
   assert.deepEqual(
-    remoteUpdates(
+    updatesOf(
       asked,
       detail({ status: "pending-approval", requests: [{ id: "req-2", kind: "command" }] }),
       0,
@@ -299,7 +313,7 @@ it("a remote member's runs and requests are told by their ids, also between two 
     [{ source: "request:req-2", event: "pending-approval" }],
   );
   assert.deepEqual(
-    remoteUpdates(
+    updatesOf(
       asked,
       detail({ status: "pending-approval", requests: [{ id: "req-1", kind: "command" }] }),
       0,
@@ -311,15 +325,13 @@ it("a remote member's runs and requests are told by their ids, also between two 
 it("a remote member's run seen running is told once it completes under the same id", () => {
   const running = markOf(detail({ status: "working", run: { id: "run-3", status: "running" } }));
   const completed = detail({ run: { id: "run-3", status: "completed" } });
-  assert.deepEqual(remoteUpdates(running, completed, 0), [
-    { source: "run:run-3", event: "completed" },
-  ]);
-  assert.deepEqual(remoteUpdates(markOf(completed), completed, 0), []);
+  assert.deepEqual(updatesOf(running, completed, 0), [{ source: "run:run-3", event: "completed" }]);
+  assert.deepEqual(updatesOf(markOf(completed), completed, 0), []);
 });
 
 it("a member first seen tells what needs the lead, and nothing when it is idle or working", () => {
   assert.deepEqual(
-    remoteUpdates(
+    updatesOf(
       undefined,
       detail({ status: "awaiting-input", requests: [{ id: "req-1", kind: "user_input" }] }),
       0,
@@ -330,7 +342,7 @@ it("a member first seen tells what needs the lead, and nothing when it is idle o
     ],
   );
   assert.deepEqual(
-    remoteUpdates(
+    updatesOf(
       undefined,
       detail({ status: "pending-approval", requests: [{ id: "req-2", kind: "command" }] }),
       0,
@@ -341,37 +353,29 @@ it("a member first seen tells what needs the lead, and nothing when it is idle o
     ],
   );
   assert.deepEqual(
-    remoteUpdates(
-      undefined,
-      detail({ status: "failed", run: { id: "run-3", status: "failed" } }),
-      0,
-    ),
+    updatesOf(undefined, detail({ status: "failed", run: { id: "run-3", status: "failed" } }), 0),
     [{ source: "run:run-3", event: "failed" }],
   );
-  assert.deepEqual(remoteUpdates(undefined, detail({}), 0), []);
+  assert.deepEqual(updatesOf(undefined, detail({}), 0), []);
   const { run: _run, ...unrun } = detail({});
-  assert.deepEqual(remoteUpdates(undefined, unrun, 0), []);
+  assert.deepEqual(updatesOf(undefined, unrun, 0), []);
   assert.deepEqual(
-    remoteUpdates(
-      undefined,
-      detail({ status: "working", run: { id: "run-4", status: "running" } }),
-      0,
-    ),
+    updatesOf(undefined, detail({ status: "working", run: { id: "run-4", status: "running" } }), 0),
     [],
   );
   const { run: _older, requests: _requests, ...older } = detail({ status: "failed" });
-  assert.deepEqual(remoteUpdates(undefined, older, 7), [
+  assert.deepEqual(updatesOf(undefined, older, 7), [
     { source: "status:failed:7", event: "failed" },
   ]);
-  assert.deepEqual(remoteUpdates(undefined, { ...older, status: "idle" }, 7), []);
+  assert.deepEqual(updatesOf(undefined, { ...older, status: "idle" }, 7), []);
 });
 
 it("a machine that predates run and request ids is compared by status", () => {
   const { run: _run, requests: _requests, ...older } = detail({ status: "working" });
-  assert.deepEqual(remoteUpdates(markOf(older), { ...older, status: "idle" }, 7), [
+  assert.deepEqual(updatesOf(markOf(older), { ...older, status: "idle" }, 7), [
     { source: "status:completed:7", event: "completed" },
   ]);
-  assert.deepEqual(remoteUpdates(markOf(older), older, 7), []);
+  assert.deepEqual(updatesOf(markOf(older), older, 7), []);
 });
 
 it("a wake names each member by the lead's own numbers", () => {
