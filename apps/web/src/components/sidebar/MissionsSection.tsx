@@ -58,7 +58,7 @@ import { waitForAtomValue } from "../../state/waitForAtomValue";
 import { threadFamilies } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useUiStateStore } from "../../uiStateStore";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import {
   Dialog,
   DialogDescription,
@@ -499,55 +499,28 @@ function MemberRow(props: {
     : dismisses || releaseRefused
       ? gt("Dismiss")
       : gt("Leave mission");
-  const retry = releaseRefused ? (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            aria-label={gt("Retry")}
-            disabled={leaveId === null || releasing}
-            onClick={(event) => {
-              event.stopPropagation();
-              void onRetry();
-            }}
-            className="inline-flex shrink-0 cursor-pointer items-center rounded-md px-1 text-muted-foreground opacity-0 transition-opacity group-hover/mission-row:opacity-100 hover:text-foreground focus-visible:opacity-100 disabled:cursor-default"
-          >
-            <RotateCcwIcon className="size-3" />
-          </button>
-        }
-      />
-      <TooltipPopup side="top">{gt("Retry")}</TooltipPopup>
-    </Tooltip>
-  ) : null;
   const action =
     props.member.role === "member" ? (
-      <>
-        {retry}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                aria-label={dismissLabel}
-                disabled={
-                  releasing ||
-                  (forgets || dismisses || releaseRefused ? !canRelease : leaveId === null)
-                }
-                onClick={(event) => {
-                  // Inside a thread's row, the row would open the thread as well.
-                  event.stopPropagation();
-                  void onRelease();
-                }}
-                className="inline-flex shrink-0 cursor-pointer items-center rounded-md px-1 text-muted-foreground opacity-0 transition-opacity group-hover/mission-row:opacity-100 hover:text-foreground focus-visible:opacity-100 disabled:cursor-default"
-              >
-                <XIcon className="size-3" />
-              </button>
-            }
-          />
-          <TooltipPopup side="top">{dismissLabel}</TooltipPopup>
-        </Tooltip>
-      </>
+      <span className="flex shrink-0 opacity-0 transition-opacity group-hover/mission-row:opacity-100 has-focus-visible:opacity-100">
+        {releaseRefused ? (
+          <MemberRowAction
+            label={gt("Retry")}
+            disabled={leaveId === null || releasing}
+            onClick={() => void onRetry()}
+          >
+            <RotateCcwIcon />
+          </MemberRowAction>
+        ) : null}
+        <MemberRowAction
+          label={dismissLabel}
+          disabled={
+            releasing || (forgets || dismisses || releaseRefused ? !canRelease : leaveId === null)
+          }
+          onClick={() => void onRelease()}
+        >
+          <XIcon />
+        </MemberRowAction>
+      </span>
     ) : null;
   // The last line of the thread's own row, styled as its other lines.
   if (props.inRow === true) {
@@ -613,6 +586,36 @@ function MemberRow(props: {
   );
 }
 
+function MemberRowAction(props: {
+  readonly label: string;
+  readonly disabled: boolean;
+  readonly onClick: () => void;
+  readonly children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon-micro"
+            variant="ghost-muted"
+            aria-label={props.label}
+            disabled={props.disabled}
+            onClick={(event) => {
+              // Inside a thread's row, the row would open the thread as well.
+              event.stopPropagation();
+              props.onClick();
+            }}
+          >
+            {props.children}
+          </Button>
+        }
+      />
+      <TooltipPopup side="top">{props.label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 /** A Mission whose lead is gone takes a new lead: a draft sent on its machine, or a thread there. */
 function useMissingLead(props: {
   readonly host: EnvironmentId;
@@ -670,21 +673,13 @@ type MissingLead = ReturnType<typeof useMissingLead>;
 function MissingLeadActions(props: { readonly actions: MissingLead }) {
   return (
     // Lined up with the title, past the chevron.
-    <div className="flex gap-3 ps-7.5 pb-1 text-2xs font-medium text-sidebar-foreground">
-      <button
-        type="button"
-        className="cursor-pointer hover:underline"
-        onClick={props.actions.newLead}
-      >
+    <div className="flex gap-3 ps-7.5 pb-1 text-2xs">
+      <InlineButton onClick={props.actions.newLead}>
         <T>New lead</T>
-      </button>
-      <button
-        type="button"
-        className="cursor-pointer hover:underline"
-        onClick={(event) => void props.actions.chooseLead(event)}
-      >
+      </InlineButton>
+      <InlineButton onClick={(event) => void props.actions.chooseLead(event)}>
         <T>Choose a thread…</T>
-      </button>
+      </InlineButton>
     </div>
   );
 }
