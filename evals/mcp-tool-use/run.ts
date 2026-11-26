@@ -109,7 +109,6 @@ import {
 } from "./devices.ts";
 import {
   argvForm,
-  askToolTexts,
   gradeSecret,
   scriptsBefore,
   UNKNOWN_SCRIPT,
@@ -2589,6 +2588,25 @@ const withPage = (tool: string, input: unknown, files: ReadonlyMap<string, strin
 };
 
 /** `pasted` is the thread's user text (`pastedText`), for request_secret's `value`. */
+/** AskUserQuestion's questions and headers, and each option as one "label: description" line. */
+const questionToolLines = (calls: SampleRun["calls"]) =>
+  calls.flatMap((call) => {
+    if (call.tool !== "AskUserQuestion" || !isRecord(call.input)) return [];
+    const questions = Array.isArray(call.input.questions) ? call.input.questions : [];
+    return questions.flatMap((question: unknown) => {
+      if (!isRecord(question)) return [];
+      const options = Array.isArray(question.options) ? question.options : [];
+      return [
+        ...[question.question, question.title, question.header].map(valueText),
+        ...options.map((option: unknown) =>
+          isRecord(option)
+            ? `${valueText(option.label)}: ${valueText(option.description)}`
+            : valueText(option),
+        ),
+      ];
+    });
+  });
+
 export const gradeSample = (
   expect: McpToolUseCase["expect"],
   run: SampleRun,
@@ -2696,7 +2714,7 @@ export const gradeSample = (
     );
   for (const p of expect.textMust ?? []) add(`textMust /${p}/`, test(p, run.text));
   for (const p of expect.textMustNot ?? []) add(`textMustNot /${p}/`, !test(p, run.text));
-  const userText = [run.text, ...askToolTexts(run)].join("\n\n");
+  const userText = [run.text, ...questionToolLines(run.calls)].join("\n\n");
   for (const p of expect.userTextMust ?? []) add(`userTextMust /${p}/`, test(p, userText));
   for (const p of expect.finalTextMust ?? [])
     add(`finalTextMust /${p}/`, run.stopReason === "end_turn" && test(p, run.finalText ?? ""));
