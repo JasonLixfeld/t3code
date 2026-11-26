@@ -307,14 +307,15 @@ describe("buildMissionMenuItems", () => {
     ];
     // A stale row under this mission, while the thread's machine now holds it in another.
     const row = { host: DESK, mission: { missionId: mission.missionId } };
-    expect(missionLeaveId(ios, row, movedOn, allowed)).toBe(
+    const meant = mission.missionId;
+    expect(missionLeaveId(ios, row, movedOn, allowed, meant)).toBe(
       "mission-release:env-desk:0123456789ab",
     );
     expect(
-      missionLeaveId(ios, row, movedOn, (environmentId) => environmentId === LAPTOP),
+      missionLeaveId(ios, row, movedOn, (environmentId) => environmentId === LAPTOP, meant),
     ).toBeNull();
-    // The thread's own menu names no mission, so it leaves the one it is in.
-    expect(missionLeaveId(ios, row, movedOn, allowed, true)).toBe(
+    // A thread no mission lists names none, so it leaves the one its machine holds it in.
+    expect(missionLeaveId(ios, undefined, movedOn, allowed, undefined)).toBe(
       "mission-leave:env-laptop:ffffffffffff",
     );
   });

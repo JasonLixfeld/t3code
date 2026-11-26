@@ -139,6 +139,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as Workflows from "./workflows/Workflows.ts";
 import * as Missions from "./missions/Missions.ts";
+import * as MissionStore from "./missions/MissionStore.ts";
 import * as WorkflowRuntime from "./workflows/WorkflowRuntime.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as FeedbackStore from "./feedback/FeedbackStore.ts";
@@ -3189,4 +3190,83 @@ it.effect("a session that can only read sees a workflow run but cannot steer it"
     );
     assert.deepEqual(calls, []);
   }).pipe(Effect.provide(layerWorkflowRpcTest), Effect.scoped),
+);
+
+it.effect("a socket leave meant for one mission keeps a claim that moved to another", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ws-mission-" });
+    // Built into this test's scope, so the database stays open for the whole test.
+    const store = yield* Layer.build(
+      MissionStore.layerFromPath(path.join(directory, MissionStore.MISSIONS_DATABASE_FILE)),
+    ).pipe(Effect.flatMap((context) => Effect.provide(MissionStore.MissionStore, context)));
+    const thread = ThreadId.make("member");
+    const claim = (threadId: ThreadId, missionId: string, generation: string) => ({
+      threadId,
+      missionId,
+      name: missionId,
+      owner: "env-a",
+      generation,
+    });
+    yield* store.createMission(claim(ThreadId.make("lead-1"), "m1", "g1"));
+    yield* store.createMission(claim(ThreadId.make("lead-2"), "m2", "g2"));
+    const moved = yield* store.join(claim(thread, "m2", "g3"));
+    const scopes = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
+    const missionRpcs = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RpcAuthorization.RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.missionsLeave
+        > => tag !== WS_METHODS.missionsLeave,
+      ),
+    );
+    const client = yield* RpcTest.makeClient(missionRpcs).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("mission-test"),
+            subject: "mission-test",
+            method: "browser-session-cookie",
+            scopes,
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          { secretReferences: true },
+        ).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              layerUnusedConfigRpcServices,
+              Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+              Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+              Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+              Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+              Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                namedProjectsRoot: "/unused",
+              }),
+              Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+              Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+              Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+              // The store decides, so the request must reach it with the mission it names.
+              Layer.mock(Missions.Missions)({
+                leaveHere: (threadId, missionId) => store.leave(threadId, missionId),
+              }),
+            ),
+          ),
+          Layer.merge(RpcAuthorization.layer(scopes)),
+        ),
+      ),
+    );
+
+    const refused = yield* client[WS_METHODS.missionsLeave]({
+      threadId: thread,
+      missionId: "m1",
+    }).pipe(Effect.flip);
+    assert.include(refused.message, "now in another mission");
+    assert.deepEqual(yield* store.claim(thread), moved);
+  }).pipe(Effect.provide(Layer.merge(layerWorkflowRpcTest, NodeServices.layer)), Effect.scoped),
 );

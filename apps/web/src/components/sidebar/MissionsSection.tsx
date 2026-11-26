@@ -193,6 +193,7 @@ export function useMissionMenu() {
         heldBy,
         hosts,
         canChangeOn,
+        heldBy?.mission.missionId,
       ),
     /** The threads that got where they were sent; the rest stay selected. */
     run: async (

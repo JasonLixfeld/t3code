@@ -602,6 +602,57 @@ describe("missions in the sidebar", () => {
     );
   });
 
+  /** Right-clicks Update the release notes, a member of the v2 mission, and picks `pick`. */
+  const memberMenu = async (pick: string | null, confirmed = true) => {
+    const show = vi.fn().mockResolvedValue(pick);
+    const confirm = vi.fn().mockResolvedValue(confirmed);
+    vi.mocked(readLocalApi).mockReturnValue({
+      contextMenu: { show },
+      dialogs: { confirm },
+    } as unknown as LocalApi);
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    await userEvent.click(rowOf(screen.container, "Update the release notes"), { button: "right" });
+    await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    return {
+      ids: (show.mock.lastCall![0] as ReadonlyArray<{ readonly id: string }>).map(
+        (item) => item.id,
+      ),
+      confirm,
+    };
+  };
+  const claimDocs = (missionId: string) => {
+    listedClaims.push({ threadId: ThreadId.make("docs"), missionId, name: "Elsewhere" });
+    onTestFinished(() => {
+      listedClaims.length = 0;
+    });
+  };
+
+  it("leaves from a row's menu only the mission the row is under, not another claim", async () => {
+    // Listed under the v2 mission, while this machine reports the thread in another one.
+    claimDocs("ffffffffffff");
+    const { ids } = await memberMenu(null);
+    expect(ids).toContain("mission-release:local:0123456789ab");
+    expect(ids.filter((id) => id.startsWith("mission-leave:"))).toEqual([]);
+  });
+
+  it("sends no leave when the menu's confirmation is cancelled, and the row's mission when not", async () => {
+    claimDocs(ship.missionId);
+    const pick = "mission-leave:local:0123456789ab";
+    const cancelled = await memberMenu(pick, false);
+    expect(cancelled.ids).toContain(pick);
+    expect(cancelled.confirm).toHaveBeenCalledTimes(1);
+    expect(commandFor("mission leave")).not.toHaveBeenCalled();
+    await memberMenu(pick, true);
+    await vi.waitFor(() =>
+      expect(commandFor("mission leave")).toHaveBeenCalledExactlyOnceWith({
+        environmentId: LOCAL,
+        input: { threadId: "docs", missionId: ship.missionId },
+      }),
+    );
+  });
+
   it("gives every mission row T3's menu with the mission's group", async () => {
     const show = vi.fn().mockResolvedValue(null);
     const confirm = vi.fn().mockResolvedValue(true);

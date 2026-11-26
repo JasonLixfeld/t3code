@@ -105,14 +105,17 @@ export function missionLeaveId(
     | undefined,
   hosts: ReadonlyArray<MissionHost>,
   canChangeOn: (environmentId: EnvironmentId) => boolean,
-  /** The thread's own menu names no Mission, so it leaves whichever one its machine holds it in. */
-  anyClaim = false,
+  /**
+   * The Mission the row or gesture is under. Only a thread no Mission lists names none, and then
+   * it leaves whichever one its machine holds it in.
+   */
+  meant: string | undefined,
 ): MissionMenuId | null {
   const claim = claimHere(thread, hosts);
   if (
     claim !== undefined &&
     canChangeOn(thread.environmentId) &&
-    (anyClaim || claim.missionId === heldBy?.mission.missionId)
+    (meant === undefined || claim.missionId === meant)
   ) {
     return `${LEAVE_PREFIX}${thread.environmentId}:${claim.missionId}`;
   }
@@ -279,13 +282,15 @@ export function buildMissionMenuItems(
         ]),
     ...(single === undefined || (heldBy === undefined && claimHere(single, hosts) === undefined)
       ? []
-      : [missionLeaveId(single, heldBy, hosts, canChangeOn, true)].map((id) => ({
-          id: id ?? LEAVE_PREFIX,
-          label: resolve(msg("Leave mission")),
-          icon: "folder-minus",
-          disabled: id === null,
-          ...(id === null ? { detail: blockLabel("not-allowed", "", resolve) } : {}),
-        }))),
+      : [missionLeaveId(single, heldBy, hosts, canChangeOn, holding?.mission.missionId)].map(
+          (id) => ({
+            id: id ?? LEAVE_PREFIX,
+            label: resolve(msg("Leave mission")),
+            icon: "folder-minus",
+            disabled: id === null,
+            ...(id === null ? { detail: blockLabel("not-allowed", "", resolve) } : {}),
+          }),
+        )),
     {
       id: "mission-add",
       label: resolve(msg("Add to mission")),
@@ -596,6 +601,7 @@ export function resolveMissionDrop(input: {
               from,
               input.hosts,
               input.canChangeOn,
+              from.mission.missionId,
             ) === null
               ? blockLabel("not-allowed", "", resolve)
               : null,
