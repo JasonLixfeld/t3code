@@ -123,19 +123,25 @@ export const updateFromEvent = (
 interface Mark {
   readonly status: MemberStatus;
   readonly run?: { readonly id: string; readonly status: string } | undefined;
+  readonly held?: boolean | undefined;
   readonly requests?: ReadonlyArray<string> | undefined;
 }
+
+// Older peers send no `held`; their status said "working" while work held a finished turn.
+const isHeld = (seen: Partial<Pick<Mark, "status" | "held">>) =>
+  seen.held ?? seen.status === "working";
 
 export const markOf = (detail: MemberDetail): string =>
   JSON.stringify({
     status: detail.status,
     run: detail.run,
+    held: detail.held,
     requests: detail.requests?.map((request) => request.id),
   } satisfies Mark);
 
 export const wasCompletionHeld = (mark: string) => {
-  const { status, run } = JSON.parse(mark) as Partial<Mark>;
-  return status === "working" && run?.status === "completed";
+  const seen = JSON.parse(mark) as Partial<Mark>;
+  return isHeld(seen) && seen.run?.status === "completed";
 };
 
 /** Older peers send status without run or request IDs. Compare their statuses instead. */
@@ -157,8 +163,8 @@ export const remoteUpdates = (
   const run = detail.run;
   if (
     run !== undefined &&
-    (run.status === "failed" || (run.status === "completed" && detail.status !== "working")) &&
-    (mark.run?.id !== run.id || mark.run.status !== run.status || mark.status === "working")
+    (run.status === "failed" || (run.status === "completed" && !isHeld(detail))) &&
+    (mark.run?.id !== run.id || mark.run.status !== run.status || isHeld(mark))
   ) {
     updates.push({
       source: `run:${run.id}`,
@@ -181,6 +187,7 @@ export const shellDetail = (
     title: "",
     project: "",
     ...(shell.latestRunId === null ? {} : { run: { id: shell.latestRunId, status: shell.status } }),
+    held: backgroundWorkHoldsCompletion(shell.pendingBackgroundTasks ?? []),
     requests: request === null ? [] : [{ id: request.id, kind: request.kind }],
   };
 };
