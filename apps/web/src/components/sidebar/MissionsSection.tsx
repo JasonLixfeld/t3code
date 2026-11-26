@@ -102,14 +102,16 @@ export function useMissionHosts(): ReadonlyArray<MissionHost> {
     connected.map((environmentId) => ({ environmentId })),
     AuthOrchestrationReadScope,
   );
-  const environmentIds = enabled
-    ? connected.filter(
-        (environmentId) =>
-          readable.has(environmentId) &&
-          configs.get(environmentId)?.environment.capabilities.missions === true,
-      )
+  // A fork server from before the capability serves Missions too, with prompts in the list.
+  const asked = enabled
+    ? connected.flatMap((environmentId) => {
+        const config = configs.get(environmentId);
+        return readable.has(environmentId) && config !== undefined
+          ? [[environmentId, config.environment.capabilities.missions === true] as const]
+          : [];
+      })
     : [];
-  return useAtomValue(serverEnvironment.missionsLiveAcross(JSON.stringify(environmentIds)));
+  return useAtomValue(serverEnvironment.missionsLiveAcross(JSON.stringify(asked)));
 }
 
 const missionCreatePermissionsAtom = environmentAtomList(
@@ -344,13 +346,18 @@ function MissionPromptForm(props: {
 }) {
   const gt = useGT();
   const resolve = useMessages();
-  const saved = useEnvironmentQuery(
-    serverEnvironment.missionPrompt({
-      environmentId: props.host,
-      input: { missionId: props.mission.missionId },
-    }),
+  const listsPrompts =
+    useServerConfigs().get(props.host)?.environment.capabilities.missions !== true;
+  const read = useEnvironmentQuery(
+    listsPrompts
+      ? null
+      : serverEnvironment.missionPrompt({
+          environmentId: props.host,
+          input: { missionId: props.mission.missionId },
+        }),
     resolve,
   );
+  const saved = listsPrompts ? { data: { prompt: props.mission.prompt ?? "" }, error: null } : read;
   const setPrompt = useAtomCommand(serverEnvironment.setMissionPrompt, "mission set prompt");
   return (
     <form

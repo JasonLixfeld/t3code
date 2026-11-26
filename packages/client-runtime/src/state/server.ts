@@ -1503,9 +1503,13 @@ export function createServerEnvironmentAtoms<R, E>(
     tag: WS_METHODS.missionsSubscribe,
   });
   const missionsLiveAcross = Atom.family((environmentIdsKey: string) => {
-    const sources = (JSON.parse(environmentIdsKey) as EnvironmentId[]).map((environmentId) => ({
+    const sources = (
+      JSON.parse(environmentIdsKey) as ReadonlyArray<
+        readonly [environmentId: EnvironmentId, omitPrompts: boolean]
+      >
+    ).map(([environmentId, omitPrompts]) => ({
       environmentId,
-      atom: missionsLive({ environmentId, input: { omitPrompts: true } }),
+      atom: missionsLive({ environmentId, input: omitPrompts ? { omitPrompts: true } : {} }),
     }));
     return Atom.make((get) =>
       sources.flatMap(({ environmentId, atom }) => {

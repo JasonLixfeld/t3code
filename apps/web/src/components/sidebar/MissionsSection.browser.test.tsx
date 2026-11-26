@@ -118,6 +118,8 @@ const hosts: Array<MissionHost> = [
   { environmentId: LOCAL, snapshot: { missions: listedMissions, links: [], claims: listedClaims } },
 ];
 const savedPrompts = new Map<string, string>();
+/** Each machine the sidebar asked for its missions, and whether it asked without prompts. */
+const subscribed: Array<ReadonlyArray<[string, boolean]>> = [];
 const hostChanges = new Set<() => void>();
 const publishHosts = () =>
   act(() => {
@@ -182,7 +184,9 @@ vi.mock(import("../../state/server"), async (original) => {
       ...actual.serverEnvironment,
       missionsLiveAcross: (environmentIdsKey: string) =>
         Atom.make((get) => {
-          const asked = new Set(JSON.parse(environmentIdsKey) as ReadonlyArray<string>);
+          const pairs = JSON.parse(environmentIdsKey) as ReadonlyArray<[string, boolean]>;
+          subscribed.push(pairs);
+          const asked = new Set(pairs.map(([environmentId]) => environmentId));
           const read = () => hosts.filter((host) => asked.has(host.environmentId));
           const update = () => get.setSelf(read());
           hostChanges.add(update);
@@ -728,6 +732,7 @@ describe("missions in the sidebar", () => {
     savedPrompts.set("0123456789ab", "Ship it.");
     onTestFinished(() => savedPrompts.clear());
     await using screen = await renderSidebar();
+    expect(subscribed.at(-1)).toContainEqual([LOCAL, true]);
     await userEvent.click(rowOf(screen.container, "Plan the v2 release"), { button: "right" });
     const prompt = page.getByRole("textbox", { name: "Mission prompt" });
     await expect.element(prompt).toHaveValue("Ship it.");
@@ -798,11 +803,22 @@ describe("missions in the sidebar", () => {
     ).toHaveLength(1);
   });
 
-  it("asks a machine that does not keep Missions for none", async () => {
+  it("lists a server's missions from before the capability, and edits the prompt its list sends", async () => {
+    const show = vi.fn().mockResolvedValue("mission-prompt:local:0123456789ab");
+    vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
+    listedMissions[0] = { ...ship, prompt: "Ship it." };
+    onTestFinished(() => {
+      listedMissions[0] = ship;
+    });
     await using screen = await renderSidebar({}, { keepsMissions: false });
     await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
-    expect(screen.container.querySelector("[data-testid=sidebar-mission-members]")).toBeNull();
-    expect(screen.getByRole("heading", { name: "Missions" }).elements()).toHaveLength(0);
+    expect(screen.container.querySelector("[data-testid=sidebar-mission-members]")).not.toBeNull();
+    expect(subscribed.at(-1)).toContainEqual([LOCAL, false]);
+    await userEvent.click(rowOf(screen.container, "Plan the v2 release"), { button: "right" });
+    const prompt = page.getByRole("textbox", { name: "Mission prompt" });
+    await expect.element(prompt).toHaveValue("Ship it.");
+    (page.getByRole("button", { name: "Cancel" }).element() as HTMLElement).click();
+    await expect.element(prompt).not.toBeInTheDocument();
   });
 
   it("hides both headings when their settings are off", async () => {
