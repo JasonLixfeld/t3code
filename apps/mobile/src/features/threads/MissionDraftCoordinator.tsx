@@ -10,6 +10,7 @@ import { useThreadShell } from "../../state/entities";
 import {
   clearMissionDraft,
   type MissionDraft,
+  missionDraftOf,
   missionDraftsAtom,
   settleMissionDraftAttempt,
   startMissionDraftAttempt,
@@ -59,15 +60,14 @@ function MissionDraftWatch(props: {
     const settle = (outcome: "done" | "failed" | "retry") =>
       settleMissionDraftAttempt(thread, attempt, outcome);
     const retry = () => settle("retry");
+    const retired = () => missionDraftOf(thread)?.attempt !== attempt;
     if (intent.kind === "lead") {
-      const outcome = reportLeadOutcome(
-        await setLead({
-          environmentId: intent.host,
-          input: { missionId: draft.missionId, lead: thread, expectedLead: intent.expectedLead },
-        }),
-        retry,
-      );
-      settle(outcome === "failed" ? "failed" : "done");
+      const result = await setLead({
+        environmentId: intent.host,
+        input: { missionId: draft.missionId, lead: thread, expectedLead: intent.expectedLead },
+      });
+      if (retired()) return;
+      settle(reportLeadOutcome(result, retry) === "failed" ? "failed" : "done");
       return;
     }
     const [title, result] =
@@ -86,6 +86,7 @@ function MissionDraftWatch(props: {
               input: { missionId: draft.missionId, leadThreadId: thread.threadId },
             }),
           ];
+    if (retired()) return;
     if (result._tag === "Success") return settle("done");
     settle("failed");
     reportMissionFailure(title, result, retry);

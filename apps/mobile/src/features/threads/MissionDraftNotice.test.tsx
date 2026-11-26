@@ -6,10 +6,14 @@ import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
 import { appAtomRegistry } from "../../state/atom-registry";
-import { markMissionDraft, missionDraftOf } from "../../state/mission-drafts";
+import {
+  markMissionDraft,
+  missionDraftOf,
+  startMissionDraftAttempt,
+} from "../../state/mission-drafts";
 import { MissionDraftNotice } from "./MissionDraftNotice";
 
-type NoticeProps = { message: string; dismissLabel: string; onDismiss: () => void };
+type NoticeProps = { message: string; dismissLabel?: string; onDismiss?: () => void };
 const notice = vi.hoisted(() => ({ current: null as NoticeProps | null }));
 const shown = (): NoticeProps | null => notice.current;
 
@@ -52,6 +56,12 @@ it("tells an empty thread that sending starts its mission, and sends it as a pla
   });
   expect(shown()?.message).toBe('Sending adds this thread to "Docs"');
 
-  act(() => shown()?.onDismiss());
+  act(() => {
+    startMissionDraftAttempt(thread);
+  });
+  expect(shown()?.onDismiss).toBeUndefined();
+
+  act(() => markMissionDraft(thread, { kind: "new" }, () => "m4"));
+  act(() => shown()?.onDismiss?.());
   expect(missionDraftOf(thread)).toBeUndefined();
 });

@@ -56,12 +56,11 @@ describe("mission drafts", () => {
     settleMissionDraftAttempt(thread, first, "retry");
     const second = startMissionDraftAttempt(thread);
 
-    settleMissionDraftAttempt(thread, first, "done");
-    settleMissionDraftAttempt(thread, first, "retry");
+    expect(settleMissionDraftAttempt(thread, first, "done")).toBe(false);
+    expect(settleMissionDraftAttempt(thread, first, "retry")).toBe(false);
     expect(missionDraftOf(thread)).toMatchObject({ step: "trying", attempt: second });
 
-    settleMissionDraftAttempt(thread, second, "failed");
-    expect(missionDraftOf(thread)?.step).toBe("failed");
+    expect(settleMissionDraftAttempt(thread, second, "failed")).toBe(true);
     settleMissionDraftAttempt(thread, second, "retry");
     expect(missionDraftOf(thread)?.step).toBe("waiting");
     settleMissionDraftAttempt(thread, second, "done");

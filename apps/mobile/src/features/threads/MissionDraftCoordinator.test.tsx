@@ -16,6 +16,8 @@ import { environmentShell } from "../../state/shell";
 import { MissionDraftCoordinator } from "./MissionDraftCoordinator";
 
 const createMission = vi.hoisted(() => vi.fn());
+const sentThreads = vi.hoisted(() => new Set<string>());
+const reportMissionFailure = vi.hoisted(() => vi.fn());
 
 vi.mock("../../state/shell", async () => {
   const { Atom } = await import("effect/reactivity");
@@ -27,7 +29,12 @@ vi.mock("../../state/shell", async () => {
     },
   };
 });
-vi.mock("../../state/entities", () => ({ useThreadShell: () => null }));
+vi.mock("../../state/entities", () => ({
+  useThreadShell: (ref: { threadId: string }) =>
+    sentThreads.has(ref.threadId)
+      ? { latestUserMessageAt: "2026-11-26", visibleItemCount: 1 }
+      : null,
+}));
 vi.mock("../../state/missions", () => {
   const noHosts: ReadonlyArray<never> = [];
   return { useMissionHosts: () => noHosts };
@@ -36,7 +43,7 @@ vi.mock("../../state/server", () => ({ serverEnvironment: {} }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => createMission }));
 vi.mock("./useMissionActions", () => ({
   reportLeadOutcome: vi.fn(),
-  reportMissionFailure: vi.fn(),
+  reportMissionFailure,
 }));
 
 it("keeps a waiting mark while its thread is not delivered, and clears it once the thread is removed", () => {
@@ -95,4 +102,30 @@ it("clears a failed mark once its thread is removed", () => {
     ),
   );
   expect(missionDraftOf(thread)).toBeUndefined();
+});
+
+it("drops the late failure of an attempt whose mark was replaced, without an alert", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  using _globals = { [Symbol.dispose]: () => vi.unstubAllGlobals() };
+  const thread = { environmentId: EnvironmentId.make("env-box"), threadId: ThreadId.make("t3") };
+  let fail: (result: unknown) => void = () => {};
+  createMission.mockImplementationOnce(() => new Promise((resolve) => (fail = resolve)));
+  sentThreads.add(thread.threadId);
+  markMissionDraft(thread, { kind: "new" }, () => "m3");
+  const root = createRoot(document.createElement("div"));
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  act(() =>
+    root.render(
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <MissionDraftCoordinator />
+      </RegistryContext.Provider>,
+    ),
+  );
+  expect(missionDraftOf(thread)?.step).toBe("trying");
+
+  sentThreads.delete(thread.threadId);
+  act(() => markMissionDraft(thread, { kind: "new" }, () => "m4"));
+  await act(async () => fail({ _tag: "Failure" }));
+  expect(reportMissionFailure).not.toHaveBeenCalled();
+  expect(missionDraftOf(thread)).toMatchObject({ missionId: "m4", step: "waiting" });
 });

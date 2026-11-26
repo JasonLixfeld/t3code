@@ -88,8 +88,10 @@ export function useMissionDraft(
   return undefined;
 }
 
+let lastAttempt = 0;
+
 export function startMissionDraftAttempt(thread: ScopedThreadRef): number {
-  const attempt = (missionDraftOf(thread)?.attempt ?? 0) + 1;
+  const attempt = ++lastAttempt;
   update((drafts) => {
     const draft = drafts.get(scopedThreadKey(thread));
     if (draft !== undefined)
@@ -102,9 +104,9 @@ export function settleMissionDraftAttempt(
   thread: ScopedThreadRef,
   attempt: number,
   outcome: "done" | "failed" | "retry",
-): void {
+): boolean {
   const draft = missionDraftOf(thread);
-  if (draft?.attempt !== attempt || (outcome === "retry" && draft.step !== "failed")) return;
+  if (draft?.attempt !== attempt || (outcome === "retry" && draft.step !== "failed")) return false;
   update((drafts) => {
     if (outcome === "done") drafts.delete(scopedThreadKey(thread));
     else
@@ -113,6 +115,7 @@ export function settleMissionDraftAttempt(
         step: outcome === "failed" ? "failed" : "waiting",
       });
   });
+  return true;
 }
 
 export function clearMissionDraft(target: MissionDraftTarget) {

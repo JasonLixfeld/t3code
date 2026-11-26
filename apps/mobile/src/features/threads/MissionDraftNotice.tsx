@@ -22,8 +22,12 @@ export function MissionDraftNotice(props: { readonly thread: ScopedThreadRef }) 
         }
         icon="info.circle"
         floating
-        onDismiss={() => clearMissionDraft(props.thread)}
-        dismissLabel={gt("Send as a plain thread")}
+        {...(draft.step === "waiting"
+          ? {
+              onDismiss: () => clearMissionDraft(props.thread),
+              dismissLabel: gt("Send as a plain thread"),
+            }
+          : {})}
       />
     </View>
   );
