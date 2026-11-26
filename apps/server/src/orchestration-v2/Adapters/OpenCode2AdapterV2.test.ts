@@ -6018,6 +6018,18 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       notices: [],
       written: [false, true],
     },
+    {
+      name: "OpenCode dropped it and neither the add nor the instruction write works",
+      first: [...mcpAdded, ...mcpConnected],
+      wake: [
+        ...mcpListed(),
+        ...failedTwice,
+        putInstructions[0]!,
+        reply("session.instructions.entry.put", { status: 500, body: { message: "down" } }),
+      ],
+      notices: [OPENCODE_2_MCP_UNAVAILABLE],
+      written: [true, false],
+    },
   ])(
     "repairs T3 MCP and its instructions for a wake after $name",
     ({ first, wake, notices, written }) =>
@@ -6062,6 +6074,47 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           written,
         );
       }),
+  );
+
+  it.effect("moves T3 MCP to a new credential without checking the old one", () =>
+    Effect.gen(function* () {
+      yield* useThreadMcp;
+      const { runtime, thread } = yield* resumed(
+        [
+          ...mcpAdded,
+          ...mcpConnected,
+          ...quickTurn,
+          ...mcpRemoved,
+          out("mcp.add", {
+            server: MCP_SERVER,
+            "location[directory]": WORK,
+            config: {
+              type: "remote",
+              url: "http://127.0.0.1:3773/mcp",
+              headers: { Authorization: "Bearer rotated-credential" },
+              oauth: false,
+            },
+          }),
+          reply("mcp.add", null),
+          ...mcpConnected,
+          ...quickTurn,
+          ...mcpRemoved,
+        ],
+        { version: "2.2.6" },
+      );
+      yield* turnEvents(runtime, runtime.startTurn(turnInput(thread)));
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+        threadId,
+        providerSessionId: "mcp:opencode2-adapter",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:3773/mcp",
+        authorizationHeader: "Bearer rotated-credential",
+        browserToolsAvailable: false,
+      });
+      yield* turnEvents(runtime, runtime.startTurn(turnInput(thread)));
+    }),
   );
 
   it.effect("keeps each wake's own reply while the first wake's MCP check waits", () =>
