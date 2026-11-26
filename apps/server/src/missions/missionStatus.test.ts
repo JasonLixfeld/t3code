@@ -184,6 +184,10 @@ it("reads a member's status from its thread", () => {
     pendingBackgroundTasks: [{ taskId: "t", kind, ...(awaited ? { awaited } : {}) }] as never,
   });
   assert.equal(memberStatusOf({ ...shell, status: "completed", ...tasks("subagent") }), "working");
+  assert.equal(
+    memberStatusOf({ ...shell, status: "completed", ...tasks("background_task") }),
+    "working",
+  );
   assert.equal(memberStatusOf({ ...shell, status: "completed", ...tasks("command") }), "idle");
   assert.equal(
     memberStatusOf({ ...shell, status: "completed", ...tasks("command", true) }),
