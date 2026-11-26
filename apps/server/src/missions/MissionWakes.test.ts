@@ -225,6 +225,7 @@ const makeWorld = () => {
             const missions = yield* session.store!.missions;
             if (!missions.some((mission) => mission.leadThreadId === id)) {
               const shell = shells.get(id) ?? null;
+              if (shell?.unreadable === true) return yield* Effect.fail("unreadable" as never);
               yield* hooks.afterMemberRead(id);
               yield* Queue.offer(session.memberReads!, id);
               return shell as never;
@@ -546,6 +547,27 @@ it.effect.each(["completed", "interrupted"] as const)(
     );
   },
 );
+
+it.effect("a failure is told from its event when the member's thread cannot be read", () => {
+  const world = makeWorld();
+  return withWakes(
+    world,
+    Effect.gen(function* () {
+      world.set(first, { pendingBackgroundTasks: [subagent] });
+      yield* world.runThenWaitForMemberShellRead(first, world.run(first, "f1", "completed"));
+      world.set(first, { unreadable: true, pendingBackgroundTasks: [] });
+      yield* world.run(first, "f2", "failed");
+      assert.equal(yield* nextText(world), told(["member 1 on this machine failed."]));
+      yield* world.leadRead;
+      yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+      world.set(first, { unreadable: false });
+      yield* world.run(first, "f3", "interrupted");
+      yield* world.run(second, "s1", "failed");
+      assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
+      assert.equal(world.sent.length, 2);
+    }),
+  );
+});
 
 it.effect("a failure ends an owed completion, so a later stopped run does not revive it", () => {
   const world = makeWorld();

@@ -136,9 +136,18 @@ export const layer = Layer.effectDiscard(
       observe(
         missionId,
         ref,
-        Effect.map(
+        Effect.flatMap(
           localDetail(ref.threadId, run),
-          (detail) => detail && { ...detail, requests: [] },
+          (detail): Effect.Effect<MemberDetail | undefined> => {
+            if (detail !== undefined) return Effect.succeed({ ...detail, requests: [] });
+            if (run?.status !== "failed") return Effect.undefined;
+            return Effect.as(
+              Effect.logWarning("A failed member's thread was not read; its event tells it", {
+                threadId: ref.threadId,
+              }),
+              { status: "failed", title: "", project: "", run, requests: [] },
+            );
+          },
         ),
         "{}",
       );
