@@ -231,20 +231,14 @@ export function buildMissionMenuItems(
             label: resolve(msg("Start mission from this thread")),
             icon: "folder-tree",
             separatorBefore: true,
-            disabled:
-              inMission ||
-              startHost === undefined ||
-              !threadHasMessages(single) ||
-              !canChangeOn(single.environmentId),
+            disabled: inMission || startHost === undefined || !canChangeOn(single.environmentId),
             ...(inMission
               ? { detail: resolve(msg("In a mission")) }
               : startHost === undefined
                 ? { detail: resolve(msg("Not supported here")) }
-                : !threadHasMessages(single)
-                  ? { detail: resolve(msg("No messages yet")) }
-                  : !canChangeOn(single.environmentId)
-                    ? { detail: blockLabel("not-allowed", "", resolve) }
-                    : {}),
+                : !canChangeOn(single.environmentId)
+                  ? { detail: blockLabel("not-allowed", "", resolve) }
+                  : {}),
           },
         ]),
     ...(single === undefined || (heldBy === undefined && claimHere(single, hosts) === undefined)

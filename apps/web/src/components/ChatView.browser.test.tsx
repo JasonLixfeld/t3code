@@ -33,7 +33,12 @@ import stylesheet from "~/index.css?inline";
 import { environmentContextRecord } from "~/lib/composerContextRecords";
 import { startWorkspaceFocus } from "~/lib/workspaceFocus";
 import { usePromptStashStore } from "~/promptStashStore";
-import { clearMissionDraft, markMissionDraft } from "~/components/sidebar/missionDraftStore";
+import {
+  clearMissionDraft,
+  markMissionDraft,
+  missionDraftOf,
+  serverThreadMissionDraftId,
+} from "~/components/sidebar/missionDraftStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -731,6 +736,32 @@ it("refuses to send a mission draft that left its mission's machine", async () =
   await expect.element(page.getByText("This draft left its mission's machine")).toBeVisible();
   expect(launch.calls).toHaveLength(0);
   expect(dispatchedCommands()).toHaveLength(0);
+});
+
+it("shows an empty server thread's mission mark in its composer, and sends it plain on undo", async () => {
+  const thread = threadWithHistory("empty-mission-lead", 0);
+  using _environment = installFakeEnvironment([thread]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const threadRef = scopeThreadRef(ENVIRONMENT_ID, thread.id);
+  const markId = serverThreadMissionDraftId(threadRef);
+  markMissionDraft(markId, { intent: { kind: "new" }, thread: threadRef });
+  using _mark = { [Symbol.dispose]: () => clearMissionDraft(markId) };
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, { router: false });
+  await expect
+    .element(page.getByText("Sending starts a new mission led by this thread"))
+    .toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Send as a plain thread" }));
+  await expect
+    .element(page.getByText("Sending starts a new mission led by this thread"))
+    .not.toBeInTheDocument();
+  expect(missionDraftOf(markId)).toBeUndefined();
 });
 
 it("a stashed prompt ending in a file chip restores with the chip", async () => {

@@ -42,6 +42,7 @@ import { useUiStateStore } from "../../uiStateStore";
 import { toastManager } from "../ui/toast";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import Sidebar from "../Sidebar";
+import { clearMissionDraft, missionDraftOf, serverThreadMissionDraftId } from "./missionDraftStore";
 import { MissionPromptDialog } from "./MissionsSection";
 import { SidebarProvider } from "../ui/sidebar";
 import type { MissionHost } from "./missions.logic";
@@ -1661,6 +1662,36 @@ describe("new missions and missing leads", () => {
         },
       }),
     );
+  });
+
+  it("marks an empty thread to lead a new mission when it first sends, and opens it", async () => {
+    const show = vi.fn().mockResolvedValue("mission-start");
+    vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
+    const empty = ref(LOCAL, "empty");
+    onTestFinished(() => clearMissionDraft(serverThreadMissionDraftId(empty)));
+    await using screen = await renderSidebar(
+      {},
+      { extra: [shell("empty", "Empty thread", { empty: true })] },
+    );
+    await expect.element(screen.getByText("Empty thread")).toBeInTheDocument();
+    await userEvent.click(rowOf(screen.container, "Empty thread"), { button: "right" });
+    await vi.waitFor(() =>
+      expect(missionDraftOf(serverThreadMissionDraftId(empty))).toMatchObject({
+        intent: { kind: "new" },
+        thread: empty,
+        step: "waiting",
+      }),
+    );
+    await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/local/empty"));
+    expect(commandFor("mission create")).not.toHaveBeenCalled();
+    await userEvent.click(rowOf(screen.container, "Unrelated bug"), { button: "right" });
+    await vi.waitFor(() =>
+      expect(commandFor("mission create")).toHaveBeenCalledExactlyOnceWith({
+        environmentId: LOCAL,
+        input: { missionId: expect.any(String), leadThreadId: "plain" },
+      }),
+    );
+    expect(missionDraftOf(serverThreadMissionDraftId(ref(LOCAL, "plain")))).toBeUndefined();
   });
 
   it("says a menu opened before another lead took over is too late, and offers no retry", async () => {

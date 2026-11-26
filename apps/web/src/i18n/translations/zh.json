@@ -13013,7 +13013,6 @@
   "90f53409e1e8c8dd": "任务 主会话 成员 分组 会话 侧边栏 分区",
   "783a6b7b1b1a2eac": "任务 标题 名称 标签 侧边栏 分区",
   "b59dd4f7877f1064": "会话 标题 名称 标签 侧边栏 分区 任务",
-  "e096948ea00955cb": "还没有消息",
   "19cd8fa8198eabf5": "收起任务 {mission}，{count, plural, other {{count} 个会话}}",
   "18c378583d4d0beb": "展开任务 {mission}，{count, plural, other {{count} 个会话}}",
   "b4ba50773b3fa3d5": "新建任务...",

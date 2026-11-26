@@ -1,7 +1,8 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 
-import type { DraftId } from "../../composerDraftStore";
+import { DraftId } from "../../composerDraftStore";
 import { type MissionDraftIntent, newMissionId } from "./missions.logic";
 
 export interface MissionDraft {
@@ -21,6 +22,10 @@ const update = (change: (drafts: Map<DraftId, MissionDraft>) => void) =>
     change(next);
     return { drafts: next };
   });
+
+/** A server thread has no composer draft, so its mark is keyed by the thread itself. */
+export const serverThreadMissionDraftId = (thread: ScopedThreadRef) =>
+  DraftId.make(scopedThreadKey(thread));
 
 export function markMissionDraft(draftId: DraftId, draft: Pick<MissionDraft, "intent" | "thread">) {
   const missionId = draft.intent.kind === "new" ? newMissionId() : draft.intent.missionId;

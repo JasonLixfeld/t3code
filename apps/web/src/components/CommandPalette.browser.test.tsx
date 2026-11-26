@@ -786,14 +786,17 @@ describe("CommandPalette mission thread actions", () => {
     );
   });
 
-  it("disables mission actions with the context menu's reasons", async () => {
+  it("disables mission actions with the context menu's reasons, and starts one from an empty thread", async () => {
     const items = listMissions([hostWith([])]);
     const thread = openThread(false);
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     openCommandPalette();
     const expected = items([thread]);
-    expect(expected.map((item) => item.detail)).toEqual(["No messages yet", "No missions yet"]);
-    for (const item of expected) {
+    expect(expected.map((item) => [item.id, item.detail])).toEqual([
+      ["mission-start", undefined],
+      ["mission-add", "No missions yet"],
+    ]);
+    for (const item of expected.filter((candidate) => candidate.disabled === true)) {
       const title = page.getByText(item.label, { exact: true });
       await expect.element(title).toBeVisible();
       expect(title.element().closest("[role=option]")).toBeNull();
@@ -801,6 +804,12 @@ describe("CommandPalette mission thread actions", () => {
         `${item.label}${item.detail}`,
       );
     }
+    await page.getByRole("option", { name: /Start mission from this thread/ }).click();
+    await vi.waitFor(() =>
+      expect(missionRun).toHaveBeenCalledWith("mission-start", [
+        { environmentId: LOCAL, threadId: thread.id },
+      ]),
+    );
   });
 
   it.each([

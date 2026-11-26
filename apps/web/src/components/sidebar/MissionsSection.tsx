@@ -14,7 +14,9 @@ import {
   MISSION_PROMPT_MAX_LENGTH,
   type ScopedThreadRef,
   type ThreadId,
+  threadHasMessages,
 } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import {
@@ -58,6 +60,7 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { waitForAtomValue } from "../../state/waitForAtomValue";
 import { threadFamilies } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import { useUiStateStore } from "../../uiStateStore";
 import { Button, InlineButton } from "../ui/button";
 import {
@@ -91,6 +94,7 @@ import {
   type SidebarMission,
   type SidebarMissionEntry,
 } from "./missions.logic";
+import { markMissionDraft, serverThreadMissionDraftId } from "./missionDraftStore";
 import { SidebarHeading } from "./SidebarListMarkers";
 import type { SidebarMissionToggle } from "./SidebarThreadRow";
 
@@ -205,6 +209,7 @@ export function useMissionMenu() {
   const leave = useAtomCommand(serverEnvironment.leaveMission, "mission leave");
   const release = useAtomCommand(serverEnvironment.releaseMissionMember, "mission release member");
   const deleteMission = useAtomCommand(serverEnvironment.deleteMission, "mission delete");
+  const navigate = useNavigate();
   const canChangeOn = (environmentId: EnvironmentId) =>
     registry.get(serverEnvironment.addMissionMember.permissionAtom(environmentId));
   return {
@@ -228,6 +233,15 @@ export function useMissionMenu() {
     ): Promise<ReadonlyArray<ScopedThreadRef>> => {
       const lead = threads[0];
       if (id === "mission-start" && lead !== undefined) {
+        const shell = readThreadShell(lead);
+        if (shell !== null && !threadHasMessages(shell)) {
+          markMissionDraft(serverThreadMissionDraftId(lead), {
+            intent: { kind: "new" },
+            thread: lead,
+          });
+          void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(lead) });
+          return [];
+        }
         const result = await create({
           environmentId: lead.environmentId,
           input: { missionId: newMissionId(), leadThreadId: lead.threadId },

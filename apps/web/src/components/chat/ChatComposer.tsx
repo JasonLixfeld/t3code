@@ -131,6 +131,7 @@ import { ComposerSurface } from "./ComposerSurface";
 import { CollapsedComposerPromptPreview } from "./CollapsedComposerPromptPreview";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./ComposerBannerStack";
 import { useMissionDraftBanner } from "../sidebar/MissionDrafts";
+import { serverThreadMissionDraftId } from "../sidebar/missionDraftStore";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
   composerOtherFilesForPresentation,
@@ -2789,7 +2790,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         },
       ]
     : [];
-  const missionDraftBannerItems = useMissionDraftBanner(draftId);
+  const missionDraftBannerItems = useMissionDraftBanner(
+    draftId ?? serverThreadMissionDraftId(routeThreadRef),
+  );
   const bannerItems: readonly ComposerBannerStackItem[] =
     runtimeModeCeilingDenial === undefined || activePendingProgress
       ? [...props.bannerItems, ...replyBannerItems, ...missionDraftBannerItems]

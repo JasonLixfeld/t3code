@@ -112,17 +112,23 @@ describe("buildMissionMenuItems", () => {
     ).toEqual(["mission-add"]);
   });
 
-  it("adds a thread with no messages as a member, but does not start a mission from it", () => {
+  it("starts a mission from a thread with no messages, and adds one as a member", () => {
     const empty = { ...thread(DESK), latestUserMessageAt: null, visibleItemCount: 0 };
     const items = buildMissionMenuItems([empty], hosts, label, allowed);
-    expect(items[0]).toMatchObject({
+    expect(items[0]).toEqual({
       id: "mission-start",
-      disabled: true,
-      detail: "No messages yet",
+      label: "Start mission from this thread",
+      icon: "folder-tree",
+      separatorBefore: true,
+      disabled: false,
     });
     const add = items.find((item) => item.id === "mission-add")!;
     expect(add.disabled).toBe(false);
     expect(add.children!.every((child) => child.disabled === false)).toBe(true);
+    expect(buildMissionMenuItems([empty], hosts, label, () => false)[0]).toMatchObject({
+      disabled: true,
+      detail: "Not allowed here",
+    });
   });
 
   it("gives a mission's lead the mission's own group, deletable only with no members", () => {
