@@ -96,7 +96,7 @@ export const MissionToolkit = Toolkit.make(
     .annotate(McpSchema.EnabledWhen, shownOnlyToLinks),
   Tool.make("t3_mission_roster", {
     description:
-      "List the member threads of the mission you lead: machine, project, status, title, whether each needs you, and its workspace: kind, and each repository's branch and pull requests. `byRepository` names this page's members in each repository, by remote, else `<environmentId>:<repositoryPath>`. Members with none are absent. A workspace is `omitted` when its machine's answer reached 48 KB of workspace JSON, and `tooLarge` when it alone is over that or over a page. Call again in a few seconds for one that is `pending`, `omitted` or `stale`. A page is cut to fit 30 KB. Page with `cursor`.",
+      "List the member threads of the mission you lead: machine, project, status, title, whether each needs you, and its workspace: kind, and each repository's branch and pull requests. `byRepository` lists this page's members by remote, else `<environmentId>:<repositoryPath>`. Members with none are absent. A workspace is `omitted` when its machine's answer reached 48 KB of workspace JSON, and `tooLarge` when it alone is over that or a page. Call again in seconds for one `pending`, `omitted` or `stale`. Page with `cursor`, 30 KB at most.",
     parameters: Schema.Struct({
       cursor: Schema.optional(NonNegativeInt),
       limit: Schema.optional(clampedPositiveInt(100)),

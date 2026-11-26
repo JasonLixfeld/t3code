@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
+import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -67,6 +68,7 @@ import * as FeedbackHandlers from "./toolkits/feedback/handlers.ts";
 import { FeedbackToolkit } from "./toolkits/feedback/tools.ts";
 import * as MissionClaims from "../missions/MissionClaims.ts";
 import * as Missions from "../missions/Missions.ts";
+import * as MissionStore from "../missions/MissionStore.ts";
 import * as MissionHandlers from "./toolkits/mission/handlers.ts";
 import { MissionToolkit } from "./toolkits/mission/tools.ts";
 import * as Feedback from "../feedback/FeedbackService.ts";
@@ -1581,6 +1583,36 @@ const layerDeferredListing = McpServer.visibility(
   { global: true },
 );
 
+/**
+ * The lead tools are listed only to a thread that leads a Mission, and clients such as OpenCode
+ * list tools again only on `tools/list_changed`, so a thread that starts or stops leading is told.
+ */
+export const layerLeadToolsListChanged = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const store = yield* MissionStore.MissionStore;
+    const leads = Effect.map(store.missions, (missions) =>
+      missions
+        .map((mission) => mission.leadThreadId)
+        .toSorted()
+        .join("\n"),
+    );
+    const changes = yield* PubSub.subscribe(store.changes);
+    let listed = yield* leads;
+    yield* Stream.fromSubscription(changes).pipe(
+      Stream.runForEach(() =>
+        Effect.gen(function* () {
+          const now = yield* leads;
+          if (now === listed) return;
+          listed = now;
+          yield* server.notifications["notifications/tools/list_changed"]({});
+        }),
+      ),
+      Effect.forkScoped,
+    );
+  }),
+);
+
 /** Outside layerTools: the clients its budget measures never list `tool_search`. */
 export const layerToolSearch = Layer.mergeAll(
   toolkitRegistration(ToolSearchToolkit, ToolSearchHandlers.layer),
@@ -1649,5 +1681,10 @@ export const layerMilestoneEvents = Layer.effectDiscard(
 );
 
 export const layer = layerMcpTransport(
-  Layer.mergeAll(layerTools, layerToolSearch, layerMilestoneEvents),
+  Layer.mergeAll(
+    layerTools,
+    layerToolSearch,
+    layerMilestoneEvents,
+    layerLeadToolsListChanged.pipe(Layer.provide(MissionClaims.layerLive)),
+  ),
 );
