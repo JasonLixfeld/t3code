@@ -78,7 +78,6 @@ export function clearMissionDraft(draftId: DraftId) {
   update((drafts) => drafts.delete(draftId));
 }
 
-/** Puts back a mark as it was, as Undo of a discarded draft does, with the same Mission id. */
 export function restoreMissionDraft(draftId: DraftId, draft: MissionDraft) {
   update((drafts) => drafts.set(draftId, draft));
 }

@@ -545,7 +545,6 @@ function OpenCommandPaletteDialog(props: {
     threadRef: currentThreadRef,
     projectCwd: currentProjectCwd,
   });
-  // Add to mission shows only while its thread still offers it; the view under it shows after.
   const storedTop = storedViews.at(-1);
   const storedGroup = storedTop?.view.groups[0];
   const missionAddGone =
@@ -619,7 +618,6 @@ function OpenCommandPaletteDialog(props: {
   const missionCreatePermissions = useAtomValue(
     missionCreatePermissionsAtom(environmentIdsKey(missionHosts.map((host) => host.environmentId))),
   );
-  // A new Mission starts only where its first send can create it.
   const missionStartMachines = new Set(
     missionHosts.flatMap((host, index) =>
       missionCreatePermissions[index] === true ? [host.environmentId] : [],
