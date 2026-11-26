@@ -52,7 +52,9 @@ const state = vi.hoisted(() => ({
 
 vi.mock("~/state/server", async () => ({
   serverEnvironment: { configValueAtom: () => state.config },
-  primaryServerKeybindingsAtom: (await import("effect/reactivity")).Atom.make([]),
+  primaryServerKeybindingsAtom: (await import("effect/reactivity")).Atom.make(
+    (await import("@t3tools/shared/keybindings")).mergeWithDefaultKeybindings([]),
+  ),
 }));
 vi.mock("~/state/review", () => ({
   reviewEnvironment: {
@@ -119,7 +121,7 @@ vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null 
 import DiffPanel from "./DiffPanel";
 import { useDiffPanelSessionStore, useDiffPanelStore } from "~/diffPanelStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
-import { dispatchPreviewAction } from "./preview/previewActionBus";
+import { registerCommands } from "~/shortcuts/dispatcher";
 
 const cwd = "/project-worktree";
 const errorMessage = "Could not find a common commit between 'origin/orphan' and HEAD.";
@@ -513,6 +515,7 @@ it("opens a file from a tool call's diff by the path its agent recorded", async 
 const FIND_DIFF = [
   "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,2 +1,2 @@\n const retry = 1;\n-old retry\n+new retry retry\n",
   "diff --git a/lib/b.ts b/lib/b.ts\n--- a/lib/b.ts\n+++ b/lib/b.ts\n@@ -1 +1 @@\n-before\n+retry here\n",
+  "diff --git a/docs/My File.md b/docs/My File.md\n--- a/docs/My File.md\n+++ b/docs/My File.md\n@@ -1 +1 @@\n-draft\n+notes\n",
 ].join("");
 
 async function renderFindDiff(threadRef: ScopedThreadRef, registry: AtomRegistry.AtomRegistry) {
@@ -533,7 +536,10 @@ async function renderFindDiff(threadRef: ScopedThreadRef, registry: AtomRegistry
   const screen = stack.use(
     await render(
       <RegistryContext.Provider value={registry}>
-        <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+        <div
+          data-preview-panel-mode="embedded"
+          style={{ height: 600, display: "flex", flexDirection: "column" }}
+        >
           <DiffPanel composerDraftTarget={threadRef} workspaceMutationId={null} visible />
         </div>
       </RegistryContext.Provider>,
@@ -548,29 +554,38 @@ const pressFind = () =>
   userEvent.keyboard(
     navigator.platform.toLowerCase().includes("mac") ? "{Meta>}f{/Meta}" : "{Control>}f{/Control}",
   );
+const findInput = () => page.getByPlaceholder("Search", { exact: true });
+// Pierre's find input lives in its panel's shadow root.
+const findHasFocus = () =>
+  expect(document.activeElement?.shadowRoot?.activeElement).toBe(findInput().element());
 
-it("opens find in the diff from its toolbar button and from the panel find command", async () => {
+it("opens find in the diff from its toolbar button and from mod+f on any toolbar button", async () => {
   using context = setup("origin/orphan");
+  // The chat route's panel find, which a client without preview access declines.
+  const panelFind = vi.fn(() => false);
+  using _scope = { [Symbol.dispose]: registerCommands({ "preview.find": panelFind }) };
   await using screen = await renderFindDiff(context.threadRef, context.registry);
   const findToggle = screen.getByRole("button", { name: "Find in diff" });
   await userEvent.click(findToggle);
-  const findInput = page.getByPlaceholder("Search", { exact: true });
-  // Pierre's find input lives in its panel's shadow root.
-  const findHasFocus = () =>
-    expect(document.activeElement?.shadowRoot?.activeElement).toBe(findInput.element());
   await vi.waitFor(findHasFocus);
   await expect.element(findToggle).toHaveAttribute("aria-pressed", "true");
   await userEvent.keyboard("{Escape}");
-  await expect.element(findInput).not.toBeInTheDocument();
+  await expect.element(findInput()).not.toBeInTheDocument();
   await expect.element(findToggle).toHaveAttribute("aria-pressed", "false");
-  findToggle.element().focus();
-  await act(() => dispatchPreviewAction("find"));
+  screen.getByRole("button", { name: "Collapse all files" }).element().focus();
+  await pressFind();
   await vi.waitFor(findHasFocus);
+  expect(panelFind).not.toHaveBeenCalled();
 });
 
-it("filters the Files list by name from mod+f in the list and closes on Escape", async () => {
+it("filters the Files list by the typed name and closes on Escape from its controls", async () => {
   using context = setup("origin/orphan");
   state.realFileTree = true;
+  const reachedDocument = vi.fn((event: KeyboardEvent) => event.key);
+  document.addEventListener("keydown", reachedDocument);
+  using _listener = {
+    [Symbol.dispose]: () => document.removeEventListener("keydown", reachedDocument),
+  };
   await using screen = await renderFindDiff(context.threadRef, context.registry);
   await userEvent.click(screen.getByRole("button", { name: "Show file tree" }));
   const otherFile = screen.getByRole("treeitem", { name: /b\.ts/ });
@@ -578,13 +593,18 @@ it("filters the Files list by name from mod+f in the list and closes on Escape",
   await pressFind();
   const search = screen.getByRole("searchbox", { name: "Filter files by name" });
   await expect.element(search).toHaveFocus();
-  await expect.element(page.getByPlaceholder("Search", { exact: true })).not.toBeInTheDocument();
-  await userEvent.type(search, "a.ts");
+  await expect.element(findInput()).not.toBeInTheDocument();
+  await userEvent.type(search, "My File");
+  await expect.element(search).toHaveValue("My File");
   await expect.element(otherFile).not.toBeInTheDocument();
-  await expect.element(screen.getByRole("treeitem", { name: /a\.ts/ })).toBeVisible();
+  await expect.element(screen.getByRole("treeitem", { name: /My File\.md/ })).toBeVisible();
+  screen.getByRole("button", { name: "Name" }).element().focus();
+  reachedDocument.mockClear();
   await userEvent.keyboard("{Escape}");
   await expect.element(search).not.toBeInTheDocument();
   await expect.element(screen.getByRole("treeitem", { name: /b\.ts/ })).toBeVisible();
+  // The right panel sheet closes itself on an Escape that reaches the document.
+  expect(reachedDocument.mock.results.map((result) => result.value)).not.toContain("Escape");
 });
 
 it("lists the diff find's matches by file in Contents mode and jumps to a clicked line", async () => {
@@ -594,9 +614,12 @@ it("lists the diff find's matches by file in Contents mode and jumps to a clicke
   await userEvent.click(screen.getByRole("button", { name: "Show file tree" }));
   await userEvent.click(screen.getByRole("button", { name: "Search files" }));
   await userEvent.click(screen.getByRole("button", { name: "Contents" }));
-  await userEvent.type(screen.getByRole("searchbox", { name: "Search changed lines" }), "retry");
+  await userEvent.type(
+    screen.getByRole("searchbox", { name: "Search lines in the diff" }),
+    "retry",
+  );
   // The stacked diff shows the context line once: 1 context, 1 removed and 2 added in a.ts.
-  await expect.element(page.getByPlaceholder("Search", { exact: true })).toHaveValue("retry");
+  await expect.element(findInput()).toHaveValue("retry");
   await expect.element(page.getByText("1 of 5", { exact: true })).toBeInTheDocument();
   await expect.element(screen.getByRole("tree")).not.toBeInTheDocument();
   const fileA = screen.getByRole("region", { name: "src/a.ts" });
@@ -614,4 +637,23 @@ it("lists the diff find's matches by file in Contents mode and jumps to a clicke
   await userEvent.click(addedLine);
   await expect.element(page.getByText("4 of 5", { exact: true })).toBeInTheDocument();
   await expect.element(addedLine).toHaveAttribute("aria-current", "true");
+  await userEvent.click(fileA.getByRole("button", { name: /^a\.ts/ }));
+  await expect.element(page.getByText("2 of 5", { exact: true })).toBeInTheDocument();
+});
+
+it("shows the diff find's query when the Files search switches to Contents", async () => {
+  using context = setup("origin/orphan");
+  state.realFileTree = true;
+  await using screen = await renderFindDiff(context.threadRef, context.registry);
+  await userEvent.click(screen.getByRole("button", { name: "Find in diff" }));
+  await userEvent.type(findInput(), "retry");
+  await expect.element(page.getByText("1 of 5", { exact: true })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Show file tree" }));
+  await userEvent.click(screen.getByRole("button", { name: "Search files" }));
+  await userEvent.click(screen.getByRole("button", { name: "Contents" }));
+  await expect
+    .element(screen.getByRole("searchbox", { name: "Search lines in the diff" }))
+    .toHaveValue("retry");
+  await expect.element(findInput()).toHaveValue("retry");
+  await expect.element(screen.getByRole("region", { name: "src/a.ts" })).toBeVisible();
 });

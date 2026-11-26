@@ -1,21 +1,13 @@
-import { useAtomValue } from "@effect/atom-react";
 import { useGT } from "gt-react";
 import { SearchIcon } from "lucide-react";
 
-import { shortcutLabelForCommand } from "~/keybindings";
-import { primaryServerKeybindingsAtom } from "~/state/server";
-
 import { Toggle } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import type { DiffFind } from "./useDiffFind";
+import { type DiffFind, useFindShortcut } from "./useDiffFind";
 
 export function DiffFindToggle({ find }: { readonly find: DiffFind }) {
   const gt = useGT();
-  const shortcutLabel = shortcutLabelForCommand(
-    useAtomValue(primaryServerKeybindingsAtom),
-    "preview.find",
-    { context: { previewFocus: true } },
-  );
+  const shortcutLabel = useFindShortcut().label;
   return (
     <Tooltip>
       <TooltipTrigger

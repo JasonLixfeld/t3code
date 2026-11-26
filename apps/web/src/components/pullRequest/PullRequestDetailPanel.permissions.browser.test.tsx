@@ -7,13 +7,14 @@ import {
   type PullRequestDetailView,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import appCss from "~/index.css?inline";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { act, fakeTimers, render } from "../../../test/render";
 
-const { command, permissions, reads, shown } = vi.hoisted(() => ({
+const { command, codeFind, permissions, reads, shown } = vi.hoisted(() => ({
   command: vi.fn(),
+  codeFind: vi.fn(),
   permissions: { checkout: true, operate: true },
   reads: { diff: [] as unknown[] },
   shown: { detail: null as PullRequestDetailView | null },
@@ -69,11 +70,22 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
     },
   };
 });
+vi.mock(import("../diffs/useDiffFind"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    useDiffFind: () => {
+      const diffFind = actual.useDiffFind();
+      return { ...diffFind, find: { ...diffFind.find, open: codeFind } };
+    },
+  };
+});
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: (() => command) as never,
 }));
 
+import { isMacPlatform } from "~/lib/utils";
 import { createWorkspaceFocusController, workspaceAreaProps } from "~/lib/workspaceFocus";
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 
@@ -155,6 +167,7 @@ function setup() {
   reads.diff = [];
   shown.detail = detail;
   command.mockReset();
+  codeFind.mockReset();
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
 }
 
@@ -296,4 +309,17 @@ it("keeps a screen reader's place when scrolling the description condenses the h
   await act(() => vi.advanceTimersToNextFrame());
   // A programmatic focus() pulls the screen reader's browse cursor back to the header.
   expect(moves).not.toHaveBeenCalled();
+});
+
+it("opens find in the Code tab on the find shortcut while its tab button has focus", async () => {
+  setup();
+  await using screen = await render(panel());
+  const code = screen.getByRole("button", { name: "Code", exact: true });
+  await userEvent.click(code);
+  await expect.element(screen.getByRole("button", { name: "Diff options" })).toBeInTheDocument();
+  await expect.element(code).toHaveFocus();
+  await userEvent.keyboard(
+    isMacPlatform(navigator.platform) ? "{Meta>}f{/Meta}" : "{Control>}f{/Control}",
+  );
+  await vi.waitFor(() => expect(codeFind).toHaveBeenCalledOnce());
 });

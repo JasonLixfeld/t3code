@@ -57,10 +57,12 @@ import {
   useContext,
   useEffect,
   useEffectEvent,
+  useImperativeHandle,
   useRef,
   useState,
   type ComponentProps,
   type ReactNode,
+  type Ref,
 } from "react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 
@@ -119,7 +121,7 @@ import { FileExplorerPane } from "../files/FileExplorerPane";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { DiffFindToggle } from "../diffs/DiffFindToggle";
-import { isFindShortcut, useDiffFind } from "../diffs/useDiffFind";
+import { type DiffFind, useDiffFind } from "../diffs/useDiffFind";
 import { useHideTestFiles } from "../diffs/useHideTestFiles";
 import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
@@ -456,6 +458,7 @@ function PullRequestCodeTab({
   revealRequest = null,
   revealUrl,
   onRevealSettled,
+  findRef,
 }: {
   scrollerRef: (node: HTMLDivElement | null) => void;
   environmentId: EnvironmentId;
@@ -476,6 +479,7 @@ function PullRequestCodeTab({
   revealUrl?: string | undefined;
   onRevealSettled?: ((revealUrl: string) => void) | undefined;
   revealRequest?: { readonly path: string; readonly nonce: number } | null;
+  findRef?: Ref<Pick<DiffFind, "open">>;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -690,6 +694,7 @@ function PullRequestCodeTab({
 
   const codeViewReveal = useCodeViewFileReveal();
   const diffFind = useDiffFind();
+  useImperativeHandle(findRef, () => ({ open: diffFind.find.open }));
   const attachCodeView = useStableCallback(
     (handle: CodeViewHandle<ReviewAnnotationGroup, undefined> | null) => {
       codeViewReveal.attach(handle);
@@ -1979,14 +1984,7 @@ function PullRequestCodeTab({
   }
 
   return (
-    <div
-      className="flex h-full min-h-0 flex-col"
-      onKeyDown={(event) => {
-        if (event.defaultPrevented || !isFindShortcut(event)) return;
-        event.preventDefault();
-        diffFind.find.open();
-      }}
-    >
+    <div className="flex h-full min-h-0 flex-col">
       {toolbar}
       {orphanFiles.size > 0 ? (
         <div className="shrink-0 border-b border-border/60">

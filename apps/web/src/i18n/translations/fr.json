@@ -13070,15 +13070,15 @@
   "3f5959354b360f90": "Que devons-nous construire dans {project}, dans {mission} ?",
   "ba05bd1545ef3881": "Que devons-nous construire dans {project}, en tant que nouveau fil principal de {mission} ?",
   "06b6bb85f2e34802": "Que devons-nous construire dans {project} ?",
-  "05ea16f4e0a5c9eb": "Rechercher dans les lignes modifiées",
   "fcd82e4633e09f3c": "Filtrer les fichiers par nom",
   "c20e8b3635b1145d": "Filtrer par nom de fichier",
   "f2f26b2495c97459": "Fermer la recherche de fichiers",
   "c9cc296e7ed91ee8": "Rechercher par",
   "0b2386ff3d38927b": "Nom",
-  "060d69716652d764": "Contenu",
   "a6ef358f3e49fce5": "{count, plural, one {{count} ligne de plus} other {{count} lignes de plus}}",
-  "81f17b378a386c37": "Saisissez du texte pour rechercher dans les lignes modifiées.",
-  "a023bd0c3a131279": "Aucune ligne modifiée ne correspond.",
-  "ab51922b640ce105": "Rechercher dans le diff"
+  "ab51922b640ce105": "Rechercher dans le diff",
+  "50e45ddb773084b9": "Rechercher dans les lignes du diff",
+  "f22251e844674ecd": "Contenu",
+  "7f6f01bf21dca1a7": "Saisissez du texte pour rechercher dans les lignes du diff.",
+  "5ae076fdacf17370": "Aucune ligne du diff ne correspond."
 }
