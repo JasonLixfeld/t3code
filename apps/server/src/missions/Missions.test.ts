@@ -659,7 +659,7 @@ it.effect(
           ["env-laptop/laptop", "active"],
         ]);
         assert.deepEqual(
-          snapshot.links.map((link) => [link.label, link.fullAccess]),
+          snapshot.links?.map((link) => [link.label, link.fullAccess]),
           [
             ["Laptop", true],
             ["Fenced box", false],
