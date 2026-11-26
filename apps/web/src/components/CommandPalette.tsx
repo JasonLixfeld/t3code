@@ -245,8 +245,7 @@ import {
   useSortedProjectGroups,
 } from "./CommandPaletteLookups";
 import { markMissionDraft } from "./sidebar/missionDraftStore";
-import { environmentAtomList, environmentIdsKey } from "../state/environmentAtomList";
-import { useMissionHosts } from "./sidebar/MissionsSection";
+import { useMissionHosts, useMissionStartMachines } from "./sidebar/MissionsSection";
 import { missionDraftMachines, missionScratchHome } from "./sidebar/missions.logic";
 import {
   buildNewThreadInProjectItems,
@@ -339,11 +338,6 @@ function openIntentView(
 }
 
 const NEW_THREAD_NO_PROJECT_VALUE = "new-thread-in:no-project";
-
-const missionCreatePermissionsAtom = environmentAtomList(
-  "command-palette-mission-create-permissions",
-  serverEnvironment.createMission.permissionAtom,
-);
 
 export function CommandPalette({ children }: { children: ReactNode }) {
   useCommandPaletteMount();
@@ -615,14 +609,7 @@ function OpenCommandPaletteDialog(props: {
   // A draft made from this view starts or leads a Mission once it is sent.
   const missionIntent = currentView?.mission;
   const missionHosts = useMissionHosts();
-  const missionCreatePermissions = useAtomValue(
-    missionCreatePermissionsAtom(environmentIdsKey(missionHosts.map((host) => host.environmentId))),
-  );
-  const missionStartMachines = new Set(
-    missionHosts.flatMap((host, index) =>
-      missionCreatePermissions[index] === true ? [host.environmentId] : [],
-    ),
-  );
+  const missionStartMachines = useMissionStartMachines(missionHosts);
   const missionMachines =
     missionIntent === undefined
       ? null

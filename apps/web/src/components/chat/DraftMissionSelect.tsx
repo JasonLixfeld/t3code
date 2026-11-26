@@ -9,7 +9,7 @@ import {
   markMissionDraft,
   useMissionDrafts,
 } from "../sidebar/missionDraftStore";
-import { useMissionHosts } from "../sidebar/MissionsSection";
+import { useMissionHosts, useMissionStartMachines } from "../sidebar/MissionsSection";
 import { missionDraftMachines } from "../sidebar/missions.logic";
 import {
   Menu,
@@ -61,6 +61,7 @@ export function useDraftMissionChoice(
   const gt = useGT();
   const enabled = useClientSettings((settings) => settings.sidebarMissionsEnabled);
   const hosts = useMissionHosts();
+  const startMachines = useMissionStartMachines(hosts);
   const marked = useMissionDrafts((state) =>
     draftId === null ? undefined : state.drafts.get(draftId),
   );
@@ -71,6 +72,9 @@ export function useDraftMissionChoice(
     draftId === null ? null : (store.getDraftSession(draftId)?.threadId ?? null),
   );
   if (!enabled || draftId === null || environmentId === null || threadId === null) return null;
+  // A marked draft keeps its choice in view, so it can still be sent as a plain thread.
+  const writable = startMachines.has(environmentId);
+  if (!writable && marked === undefined) return null;
   const missionOn = (host: EnvironmentId) =>
     hosts.find((candidate) => candidate.environmentId === host)?.snapshot.missions ?? [];
   const keyOf = (host: EnvironmentId, missionId: string) => `${host}:${missionId}`;
@@ -189,14 +193,14 @@ export function useDraftMissionChoice(
               <MenuRadioItem
                 key={item.value}
                 value={item.value}
-                disabled={item.value !== NO_MISSION && item.mission === undefined}
+                disabled={item.value !== NO_MISSION && (item.mission === undefined || !writable)}
                 closeOnClick
               >
                 <span className="min-w-0 truncate">{item.label}</span>
               </MenuRadioItem>
             ))}
             <MenuSeparator />
-            <MenuRadioItem value={NEW_MISSION} closeOnClick>
+            <MenuRadioItem value={NEW_MISSION} disabled={!writable} closeOnClick>
               <T>New mission (this thread leads)</T>
             </MenuRadioItem>
           </MenuRadioGroup>

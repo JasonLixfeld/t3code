@@ -13,7 +13,7 @@ import { toastManager } from "../ui/toast";
 import { useDraftMissionChoice } from "../chat/DraftMissionSelect";
 import { markMissionDraft, missionDraftOf } from "./missionDraftStore";
 import { MissionDraftCoordinator, useMissionDraftBanner } from "./MissionDrafts";
-import { useMissionHosts } from "./MissionsSection";
+import { useMissionHosts, useMissionStartMachines } from "./MissionsSection";
 
 const LOCAL = EnvironmentId.make("local");
 const thread = { environmentId: LOCAL, threadId: ThreadId.make("draft-thread") };
@@ -123,6 +123,8 @@ it("starts a mission led by a draft once sent, when its Mission choice picked a 
     .getState()
     .setProjectDraftThreadId(scopeProjectRef(LOCAL, ProjectId.make("project")), draftId);
   const threadId = useComposerDraftStore.getState().getDraftSession(draftId)!.threadId;
+  vi.mocked(useMissionStartMachines).mockReturnValue(new Set([LOCAL]));
+  onTestFinished(() => vi.mocked(useMissionStartMachines).mockRestore());
   await using screen = await renderDraft(draftId, <MissionWord draftId={draftId} />);
   await userEvent.click(page.getByRole("button", { name: "Add to a mission" }));
   await page.getByRole("menuitemradio", { name: "New mission (this thread leads)" }).click();
@@ -304,4 +306,22 @@ it("holds a member's join while its mission's machine no longer lists the missio
     .element(screen.getByText("This thread will not join a mission unless you pick one."))
     .toBeInTheDocument();
   expect(screen.container.textContent).not.toContain("Sending adds");
+});
+
+it("offers no Mission choice on a machine where this client cannot start or join one", async () => {
+  const draftId = DraftId.make("unwritable-draft");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(LOCAL, ProjectId.make("project")), draftId);
+  vi.mocked(useMissionHosts).mockReturnValue([
+    { environmentId: LOCAL, snapshot: { missions: [], links: [], claims: [] } },
+  ]);
+  onTestFinished(() => vi.mocked(useMissionHosts).mockRestore());
+  vi.mocked(useMissionStartMachines).mockReturnValue(new Set());
+  onTestFinished(() => vi.mocked(useMissionStartMachines).mockRestore());
+  await using screen = await renderDraft(draftId, <MissionWord draftId={draftId} />);
+  expect(screen.getByRole("button", { name: "Add to a mission" }).elements()).toHaveLength(0);
+  // A draft already marked keeps its choice in view, so it can still go as a plain thread.
+  await act(() => markMissionDraft(draftId, { intent: { kind: "new" }, thread }));
+  await expect.element(screen.getByRole("button", { name: "New mission" })).toBeInTheDocument();
 });

@@ -51,6 +51,7 @@ import {
   useServerConfigs,
 } from "../../state/entities";
 import { useEnvironmentsWithScope } from "../../state/session";
+import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
@@ -113,6 +114,23 @@ export function useMissionHosts(): ReadonlyArray<MissionHost> {
       )
     : [];
   return useAtomValue(serverEnvironment.missionsLiveAcross(JSON.stringify(environmentIds)));
+}
+
+const missionCreatePermissionsAtom = environmentAtomList(
+  "mission-create-permissions",
+  serverEnvironment.createMission.permissionAtom,
+);
+
+/** The machines of `hosts` where this client may start or join a Mission. */
+export function useMissionStartMachines(
+  hosts: ReadonlyArray<MissionHost>,
+): ReadonlySet<EnvironmentId> {
+  const permissions = useAtomValue(
+    missionCreatePermissionsAtom(environmentIdsKey(hosts.map((host) => host.environmentId))),
+  );
+  return new Set(
+    hosts.flatMap((host, index) => (permissions[index] === true ? [host.environmentId] : [])),
+  );
 }
 
 function useMachineLabel(hosts: ReadonlyArray<MissionHost>) {
