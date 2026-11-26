@@ -110,9 +110,11 @@ export function parseMissionTarget(id: MissionMenuId): {
 export type MissionBlock = "in-mission" | "no-link" | "fenced" | "not-allowed";
 
 export const claimHere = (thread: MissionThread, hosts: ReadonlyArray<MissionHost>) =>
-  hosts
-    .find((host) => host.environmentId === thread.environmentId)
-    ?.snapshot.claims.find((claim) => claim.threadId === thread.id);
+  thread.id === undefined
+    ? undefined
+    : missionIndex(hosts).claims.get(
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      );
 
 export function missionLeaveId(
   thread: MissionThread,
@@ -231,7 +233,9 @@ export function buildMissionMenuItems(
   const holding =
     single?.id === undefined
       ? undefined
-      : missionHolders(hosts).get(scopedThreadKey(scopeThreadRef(single.environmentId, single.id)));
+      : missionIndex(hosts).holders.get(
+          scopedThreadKey(scopeThreadRef(single.environmentId, single.id)),
+        );
   const heldBy =
     holding !== undefined && holding.member.role === "member" && isJoined(holding.member)
       ? holding
@@ -397,6 +401,34 @@ function missionHolders(hosts: ReadonlyArray<MissionHost>) {
   return holders;
 }
 
+// A list builds a menu for each row from the same snapshot, so each snapshot is indexed once.
+const missionIndexes = new WeakMap<
+  ReadonlyArray<MissionHost>,
+  {
+    readonly holders: ReturnType<typeof missionHolders>;
+    readonly claims: ReadonlyMap<string, MissionsSnapshot["claims"][number]>;
+  }
+>();
+
+function missionIndex(hosts: ReadonlyArray<MissionHost>) {
+  let index = missionIndexes.get(hosts);
+  if (index === undefined) {
+    const claims = new Map<string, MissionsSnapshot["claims"][number]>();
+    const seenHosts = new Set<EnvironmentId>();
+    for (const host of hosts) {
+      if (seenHosts.has(host.environmentId)) continue;
+      seenHosts.add(host.environmentId);
+      for (const claim of host.snapshot.claims) {
+        const key = scopedThreadKey(scopeThreadRef(host.environmentId, claim.threadId));
+        if (!claims.has(key)) claims.set(key, claim);
+      }
+    }
+    index = { holders: missionHolders(hosts), claims };
+    missionIndexes.set(hosts, index);
+  }
+  return index;
+}
+
 export function groupSidebarMissions<T extends ListedThread>(
   hosts: ReadonlyArray<MissionHost>,
   threads: readonly T[],
@@ -419,7 +451,7 @@ export function groupSidebarMissions<T extends ListedThread>(
       mission,
     })),
   );
-  const holders = missionHolders(hosts);
+  const { holders } = missionIndex(hosts);
   const threadKeys = new Set<string>();
   const leads: Array<SidebarMissionEntry<T>> = [];
   const missions = listed.flatMap(({ key, host, mission }): Array<SidebarMission<T>> => {

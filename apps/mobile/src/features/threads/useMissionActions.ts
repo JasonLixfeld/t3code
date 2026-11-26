@@ -109,24 +109,23 @@ export function useMissionMenuContext(
   const resolve = useMessages();
   const hosts = useMissionHosts();
   const { savedConnectionsById } = useSavedRemoteConnections();
-  return useMemo(
-    () =>
-      hosts.length === 0
-        ? null
-        : {
-            hosts,
-            threads,
-            resolve,
-            can,
-            machineLabel: (environmentId: EnvironmentId) =>
-              savedConnectionsById[environmentId]?.environmentLabel ??
-              hosts
-                .flatMap((host) => host.snapshot.links)
-                .find((link) => link.environmentId === environmentId)?.label ??
-              environmentId,
-          },
-    [hosts, threads, resolve, savedConnectionsById],
-  );
+  return useMemo(() => {
+    if (hosts.length === 0) return null;
+    const linkLabels = new Map<EnvironmentId, string>();
+    for (const link of hosts.flatMap((host) => host.snapshot.links)) {
+      if (!linkLabels.has(link.environmentId)) linkLabels.set(link.environmentId, link.label);
+    }
+    return {
+      hosts,
+      threads,
+      resolve,
+      can,
+      machineLabel: (environmentId: EnvironmentId) =>
+        savedConnectionsById[environmentId]?.environmentLabel ??
+        linkLabels.get(environmentId) ??
+        environmentId,
+    };
+  }, [hosts, threads, resolve, savedConnectionsById]);
 }
 
 export function useMissionListMenus(

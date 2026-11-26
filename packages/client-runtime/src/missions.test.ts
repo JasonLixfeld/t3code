@@ -12,6 +12,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   addEachToMission,
   buildMissionMenuItems,
+  claimHere,
   groupSidebarMissions,
   missionAddSummary,
   missionDraftMachines,
@@ -370,6 +371,18 @@ describe("buildMissionMenuItems", () => {
       environmentId: "env:with:colons",
       missionId: "0123456789ab",
     });
+  });
+});
+
+describe("claimHere", () => {
+  it("answers each snapshot from its own claims, so a new snapshot is never read from an old one", () => {
+    const held = thread(DESK, "held");
+    expect(claimHere(held, hosts)?.name).toBe("Theirs");
+    expect(claimHere(thread(LAPTOP, "held"), hosts)).toBeUndefined();
+    expect(claimHere(thread(DESK), hosts)).toBeUndefined();
+    const released = hosts.map((host) => ({ ...host, snapshot: { ...host.snapshot, claims: [] } }));
+    expect(claimHere(held, released)).toBeUndefined();
+    expect(claimHere(held, hosts)?.name).toBe("Theirs");
   });
 });
 
