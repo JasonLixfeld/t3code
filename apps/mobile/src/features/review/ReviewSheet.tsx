@@ -1,21 +1,26 @@
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
-import { LegendList } from "@legendapp/list/react-native";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { AppBar } from "../../components/ui/AppBar";
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
 import type { ReviewSectionItem } from "./reviewModel";
 import { useReviewHeaderPresentation } from "./useReviewHeaderPresentation";
 import { T, useGT, Var } from "gt-react-native";
-import { type Ref, type ReactElement, useImperativeHandle, useRef, useState } from "react";
+import {
+  type ReactElement,
+  useDeferredValue,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Pressable, ScrollView, type NativeSyntheticEvent, StyleSheet, View } from "react-native";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReduceMotionEnabled } from "../../lib/appState";
 import { useContentTopInset, useSheetContentBottomInset } from "../../components/ui/useBarInset";
-import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
@@ -26,9 +31,7 @@ import {
   ContentStatus,
   contentStatusContainerStyle,
 } from "../../components/ui/ContentBand";
-import { PaneListItem } from "../../components/ui/PaneListItem";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import { SheetPane } from "../../components/ui/SheetPane";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
@@ -55,7 +58,10 @@ import { useReviewSections } from "./useReviewSections";
 import { useNativeReviewDiffBridge } from "./useNativeReviewDiffBridge";
 import { useReviewCommentSelectionController } from "./useReviewCommentSelectionController";
 import { resolveReviewAvailability } from "./reviewAvailability";
-import { resolveSelectedReviewFileId } from "./reviewPaneSelection";
+import { useHardwareBack } from "../../lib/backHandler";
+import { ReviewFindBar } from "./ReviewFindBar";
+import { ReviewFileNavigator, type ReviewFileNavigatorHandle } from "./ReviewFileNavigator";
+import { findInReviewRows, reviewFindHighlightsJson } from "./reviewFind";
 import { buildReviewSectionMenu } from "./review-section-menu";
 import { reportShowcaseSceneRendered } from "../showcase/showcaseRenderSignal";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
@@ -66,6 +72,7 @@ function ReviewHeader(
     readonly sectionMenu: ReturnType<typeof buildReviewSectionMenu>;
     readonly showSectionToolbar: boolean;
     readonly showChangedFilesToggle: boolean;
+    readonly onOpenFind: () => void;
     readonly selectedRepositoryKey: string | null;
     readonly onSelectRepository: (key: string | null) => void;
     readonly fileFilter: ReturnType<typeof usePullRequestFileFilter>;
@@ -96,6 +103,11 @@ function ReviewHeader(
       actions={
         props.showChangedFilesToggle
           ? [
+              {
+                accessibilityLabel: gt("Find in diff"),
+                icon: "magnifyingglass",
+                onPress: props.onOpenFind,
+              },
               {
                 accessibilityLabel: panes.auxiliaryPaneVisible
                   ? gt("Hide changed files")
@@ -267,129 +279,6 @@ function ReviewSelectionActionBar(props: {
   );
 }
 
-interface ReviewNavigatorFile {
-  readonly id: string;
-  readonly path: string;
-  readonly additions: number;
-  readonly deletions: number;
-}
-
-const ReviewFileNavigatorRow = function ReviewFileNavigatorRow(props: {
-  readonly file: ReviewNavigatorFile;
-  readonly selected: boolean;
-  readonly onSelectFile: (fileId: string | null) => void;
-}) {
-  const { file, selected, onSelectFile } = props;
-  const handlePress = () => {
-    onSelectFile(selected ? null : file.id);
-  };
-
-  return (
-    <PaneListItem selected={selected} onPress={handlePress}>
-      <Text
-        className={
-          selected
-            ? "text-xs font-t3-bold text-foreground"
-            : "text-xs font-t3-medium text-foreground-secondary"
-        }
-        numberOfLines={2}
-      >
-        {file.path}
-      </Text>
-      <View className="mt-1 flex-row gap-2">
-        <Text className="text-2xs font-t3-bold text-adaptive-emerald-700-300">
-          +{formatDiffCount(file.additions)}
-        </Text>
-        <Text className="text-2xs font-t3-bold text-adaptive-rose-700-300">
-          -{formatDiffCount(file.deletions)}
-        </Text>
-      </View>
-    </PaneListItem>
-  );
-};
-
-interface ReviewFileNavigatorHandle {
-  readonly setVisibleFile: (fileId: string | null) => void;
-}
-
-interface ReviewFileNavigatorProps {
-  readonly files: ReadonlyArray<ReviewNavigatorFile>;
-  readonly sectionId: string | null;
-  readonly onSelectFile: (fileId: string | null) => void;
-  readonly ref?: Ref<ReviewFileNavigatorHandle>;
-}
-
-function ReviewFileNavigator({ files, sectionId, onSelectFile, ref }: ReviewFileNavigatorProps) {
-  const [fileSelection, setFileSelection] = useState<{
-    readonly sectionId: string | null;
-    readonly fileId: string | null;
-  }>({ sectionId: null, fileId: null });
-  const availableFileIds = files.map((file) => file.id);
-  const selectedFileId = resolveSelectedReviewFileId({
-    selection: fileSelection,
-    sectionId,
-    availableFileIds,
-  });
-
-  useImperativeHandle(
-    ref,
-    () => ({
-      setVisibleFile: (fileId) => {
-        if (fileId !== null && !availableFileIds.includes(fileId)) {
-          return;
-        }
-        setFileSelection((current) => {
-          if (current.sectionId === sectionId && current.fileId === fileId) {
-            return current;
-          }
-          return { sectionId, fileId };
-        });
-      },
-    }),
-    [availableFileIds, sectionId],
-  );
-
-  const handleSelectFile = (fileId: string | null) => {
-    setFileSelection({ sectionId, fileId });
-    onSelectFile(fileId);
-  };
-  const gt = useGT();
-
-  const renderFile = ({ item }: { readonly item: ReviewNavigatorFile }) => (
-    <ReviewFileNavigatorRow
-      file={item}
-      selected={selectedFileId === item.id}
-      onSelectFile={handleSelectFile}
-    />
-  );
-
-  return (
-    <SheetPane>
-      <AppBar
-        title={gt("Changed files")}
-        subtitle={gt("{count, plural, one {{count} file} other {{count} files}}", {
-          count: files.length,
-        })}
-        hideBottomBorder
-      />
-      <ScreenContent insetHorizontal>
-        <LegendList
-          renderScrollComponent={NativeScrollView}
-          data={files}
-          // Rows keep their callback until extraData changes; it reads collapsed files.
-          extraData={[selectedFileId, handleSelectFile]}
-          keyExtractor={(file) => file.id}
-          estimatedItemSize={64}
-          recycleItems
-          contentInsetAdjustmentBehavior="automatic"
-          contentContainerStyle={{ paddingHorizontal: 8, paddingVertical: 8 }}
-          renderItem={renderFile}
-        />
-      </ScreenContent>
-    </SheetPane>
-  );
-}
-
 type ReviewSheetProps = StaticScreenProps<{
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -399,7 +288,6 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const gt = useGT();
   const reduceMotion = useReduceMotionEnabled();
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
-  const { panes } = useWorkspacePaneState();
   const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
   const insets = useSafeAreaInsets();
@@ -567,12 +455,103 @@ export function ReviewSheet(props: ReviewSheetProps) {
     loadVisibleFile(event.nativeEvent.fileId ?? null);
     reviewFileNavigatorRef.current?.setVisibleFile(event.nativeEvent.fileId ?? null);
   };
+  const [find, setFind] = useState<{
+    readonly open: boolean;
+    readonly query: string;
+    /** Kept by identity, so rows loading around it do not move it. */
+    readonly active: { readonly rowId: string; readonly start: number } | null;
+    /** Each step, choice or new query asks for one reveal. */
+    readonly revision: number;
+  }>({ open: false, query: "", active: null, revision: 0 });
+  const findQuery = useDeferredValue(find.query);
+  const findResult = useMemo(
+    () => findInReviewRows(nativeReviewDiffData.rows, findQuery),
+    [nativeReviewDiffData.rows, findQuery],
+  );
+  const findMatches = findResult.matches;
+  const findActiveIndex =
+    findMatches.length === 0
+      ? null
+      : Math.max(
+          0,
+          findMatches.findIndex(
+            (match) => match.rowId === find.active?.rowId && match.start === find.active.start,
+          ),
+        );
+  const activeMatch = findActiveIndex === null ? undefined : findMatches[findActiveIndex];
+  const searchHighlightsJson = useMemo(
+    () => (find.open ? reviewFindHighlightsJson(findMatches, findActiveIndex) : ""),
+    [find.open, findMatches, findActiveIndex],
+  );
+  const selectFindMatch = (index: number) => {
+    const match = findMatches[index];
+    if (!match) return;
+    setFind((current) => ({
+      ...current,
+      open: true,
+      active: { rowId: match.rowId, start: match.start },
+      revision: current.revision + 1,
+    }));
+  };
+  const changeFindQuery = (query: string) =>
+    setFind((current) => ({ open: true, query, active: null, revision: current.revision + 1 }));
+  const stepFind = (direction: 1 | -1) => {
+    if (findActiveIndex === null) return;
+    selectFindMatch((findActiveIndex + direction + findMatches.length) % findMatches.length);
+  };
+  const closeFind = () => setFind((current) => ({ ...current, open: false }));
+  useHardwareBack(find.open, () => {
+    closeFind();
+    return true;
+  });
+  const revealedFindRevision = useRef(-1);
+  const revealActiveMatch = useEffectEvent(async () => {
+    if (!activeMatch) return;
+    revealedFindRevision.current = find.revision;
+    // Opening a fold leaves its viewed state alone; native waits for the opened rows.
+    if (collapsedFileIds.includes(activeMatch.fileId)) toggleExpandedFile(activeMatch.fileId);
+    const nativeView = nativeReviewDiffViewRef.current;
+    if (!nativeView) return;
+    const result = await settlePromise(() =>
+      nativeView.scrollToMatch(
+        activeMatch.rowId,
+        activeMatch.start,
+        activeMatch.end,
+        !reduceMotion,
+      ),
+    );
+    if (AsyncResult.isFailure(result)) {
+      console.error("[review] Failed to reveal find match", squashAtomCommandFailure(result));
+    }
+  });
+  const findResultIsCurrent = findQuery === find.query;
+  const hasActiveMatch = activeMatch !== undefined;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the native diff once a requested match is in the deferred find result
+  useEffect(() => {
+    if (
+      !find.open ||
+      !findResultIsCurrent ||
+      !hasActiveMatch ||
+      revealedFindRevision.current === find.revision
+    ) {
+      return;
+    }
+    void revealActiveMatch();
+  }, [find.open, find.revision, findResultIsCurrent, hasActiveMatch]);
   const renderInspector = () => (
     <ReviewFileNavigator
       ref={reviewFileNavigatorRef}
       files={nativeReviewDiffData.files}
       sectionId={selectedSection?.id ?? null}
       onSelectFile={(fileId) => void handleSelectFile(fileId)}
+      find={{
+        query: find.query,
+        result: findResult,
+        activeIndex: find.open ? findActiveIndex : null,
+        partial: findPartial,
+        onChangeQuery: changeFindQuery,
+        onSelectMatch: selectFindMatch,
+      }}
     />
   );
 
@@ -595,6 +574,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
 
   const parsedDiffNotice =
     parsedDiff.kind === "files" || parsedDiff.kind === "raw" ? parsedDiff.notice : null;
+  const findPartial = parsedDiffNotice !== null || reviewFiles.some((file) => file.notice);
   const hasCachedSelectedDiff = selectedSection?.diff != null;
   const hasAnyCachedDiff = reviewSections.some((section) => section.diff != null);
   const sectionMenu = buildReviewSectionMenu(reviewSections);
@@ -631,7 +611,6 @@ export function ReviewSheet(props: ReviewSheetProps) {
     selectedSection !== null &&
     parsedDiff.kind === "files" &&
     NativeReviewDiffView !== null;
-  const showChangedFilesToggle = panes.supportsAuxiliaryPane && showChangedFilesPane;
 
   const allFilesHidden = reviewFiles.length === 0 && fileFilter.hiddenCount > 0;
   const listHeader = (() => {
@@ -717,7 +696,8 @@ export function ReviewSheet(props: ReviewSheetProps) {
         sectionMenu={sectionMenu}
         selectedSection={selectedSection}
         showSectionToolbar={showSectionToolbar}
-        showChangedFilesToggle={showChangedFilesToggle}
+        showChangedFilesToggle={showChangedFilesPane}
+        onOpenFind={() => setFind((current) => ({ ...current, open: true }))}
         selectedRepositoryKey={selectedRepository?.key ?? null}
         onSelectRepository={handleSelectRepository}
         fileFilter={fileFilter}
@@ -758,8 +738,19 @@ export function ReviewSheet(props: ReviewSheetProps) {
             >
               <View
                 className="min-w-0 flex-1"
-                style={listHeader ? { paddingTop: topContentInset } : undefined}
+                style={listHeader || find.open ? { paddingTop: topContentInset } : undefined}
               >
+                {find.open ? (
+                  <ReviewFindBar
+                    query={find.query}
+                    result={findResult}
+                    activeIndex={findActiveIndex}
+                    partial={findPartial}
+                    onChangeQuery={changeFindQuery}
+                    onStep={stepFind}
+                    onClose={closeFind}
+                  />
+                ) : null}
                 {listHeader}
                 <View className="min-w-0 flex-1" collapsable={false}>
                   {/* oxlint-disable-next-line react/static-components -- The resolver returns a cached native component with stable identity. */}
@@ -776,11 +767,12 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     collapsedCommentIdsJson={nativeBridge.collapsedCommentIdsJson}
                     contentResetKey={`${reviewCache.threadKey}:${reviewContentKey}`}
                     contentWidth={NATIVE_REVIEW_DIFF_CONTENT_WIDTH}
-                    contentInsetTop={listHeader ? 0 : topContentInset}
+                    contentInsetTop={listHeader || find.open ? 0 : topContentInset}
                     contentInsetBottom={bottomContentInset}
                     nativeViewRef={nativeReviewDiffViewRef}
                     rowHeight={nativeReviewDiffStyle.rowHeight}
                     rowsJson={nativeBridge.rowsJson}
+                    searchHighlightsJson={searchHighlightsJson}
                     selectedRowIdsJson={nativeBridge.selectedRowIdsJson}
                     styleJson={nativeBridge.styleJson}
                     themeJson={nativeBridge.themeJson}

@@ -103,7 +103,13 @@ export function findInReviewRows(
   if (query.length === 0) return EMPTY_REVIEW_FIND_RESULT;
   const needle = foldCase(query);
   const matches: ReviewFindMatch[] = [];
-  const files: Array<ReviewFindFile & { lines: ReviewFindLine[] }> = [];
+  const files: Array<{
+    fileId: string;
+    matchCount: number;
+    firstMatchIndex: number;
+    lineCount: number;
+    lines: ReviewFindLine[];
+  }> = [];
   let shownLines = 0;
   let limited = false;
   for (const row of rows) {
