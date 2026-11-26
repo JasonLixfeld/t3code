@@ -133,8 +133,7 @@ export const markOf = (detail: MemberDetail): string =>
     requests: detail.requests?.map((request) => request.id),
   } satisfies Mark);
 
-/** A completed run whose member still works waits on the member's own background work. */
-export const holdsCompletion = (mark: string) => {
+export const wasCompletionHeld = (mark: string) => {
   const { status, run } = JSON.parse(mark) as Partial<Mark>;
   return status === "working" && run?.status === "completed";
 };
