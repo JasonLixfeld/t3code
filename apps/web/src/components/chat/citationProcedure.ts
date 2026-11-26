@@ -9,7 +9,8 @@ import type { TimelineEntry } from "../../session-logic";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { toastManager } from "../ui/toast";
 import type { AssistantCitationRequest } from "./AssistantCitationSource";
-import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
+import type { RunId } from "@t3tools/contracts";
+import { timelineEntryRunId, type MessagesTimelineRow } from "./MessagesTimeline.logic";
 
 /** Whether the cited response is in the loaded history, after paging toward it. */
 export type CitedHistory =
@@ -94,7 +95,9 @@ export async function loadCitedHistory(input: {
 export function resolveCitationPhase(input: {
   readonly history: CitedHistory;
   readonly messageId: string;
+  /** Every loaded entry, including those of hidden runs. */
   readonly entries: ReadonlyArray<TimelineEntry>;
+  readonly hiddenRunIds?: ReadonlySet<RunId> | undefined;
   readonly rows: ReadonlyArray<MessagesTimelineRow>;
 }): CitationPhase {
   if (input.history._tag === "failed") return { _tag: "failed" };
@@ -106,6 +109,9 @@ export function resolveCitationPhase(input: {
   // The history store can hold the message a render before the entries do.
   if (!source) return { _tag: "loading" };
   if (source.kind === "message" && source.message.role !== "assistant") return { _tag: "failed" };
+  // A hidden reply has no row to scroll to, so the citation settles where it is.
+  const runId = timelineEntryRunId(source);
+  if (runId !== null && input.hiddenRunIds?.has(runId) === true) return { _tag: "failed" };
   const row = input.rows.find(
     (candidate) =>
       (candidate.kind === "message" && candidate.message.id === input.messageId) ||

@@ -20,6 +20,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildThreadFeed,
+  threadFeedHidesMessage,
   workEntryRowLabel,
   threadFeedCompactionLabels,
   createThreadFeedCache,
@@ -471,6 +472,16 @@ describe("buildThreadFeed", () => {
         { ...quiet("item-read", 4), type: "dynamic_tool", toolName: "t3_thread_read", input: {} },
         3,
       ),
+      projected(
+        {
+          ...quiet("item-quiet-reply", 5),
+          type: "assistant_message",
+          messageId: MessageId.make("message-quiet"),
+          text: "No change.",
+          streaming: false,
+        },
+        4,
+      ),
     ];
     const attempts = [runId, quietRunId].map((attemptRunId) => ({
       id: RunAttemptId.make(`attempt-${attemptRunId}`),
@@ -499,6 +510,9 @@ describe("buildThreadFeed", () => {
       "message-user",
       "message-assistant",
     ]);
+    // A jump to the hidden reply ends instead of paging for a row the feed never shows.
+    expect(threadFeedHidesMessage(items, "message-quiet", { runs, attempts })).toBe(true);
+    expect(threadFeedHidesMessage(items, "message-assistant", { runs, attempts })).toBe(false);
   });
 
   it("keeps async answers in question history instead of user bubbles", () => {

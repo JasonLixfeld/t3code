@@ -897,6 +897,7 @@ describe("withoutQuietMissionUpdates", () => {
         reply("asked", "Started the mission."),
         ...quietRun("quiet-1"),
         wake("quiet-2"),
+        thought("quiet-2"),
         ...quietRun("quiet-3"),
         wake("spoke"),
         reply("spoke", "Member 1 needs your answer."),
@@ -912,8 +913,11 @@ describe("withoutQuietMissionUpdates", () => {
   });
 
   it.each([
-    ["wrote nothing", [wake("q"), reply("q", "")]],
-    ["replied with the quiet marker", [wake("q"), reply("q", ` ${MISSION_QUIET_REPLY}\n`)]],
+    ["thought and wrote nothing", [wake("q"), thought("q"), reply("q", "")]],
+    [
+      "read and replied with the quiet marker",
+      [wake("q"), tool("q", "t3_thread_read"), reply("q", ` ${MISSION_QUIET_REPLY}\n`)],
+    ],
     ["ran a Code Mode script that read", [wake("q"), script("q", READ_SCRIPT)]],
     ["ran a Code Mode script that read in a loop", [wake("q"), script("q", MULTI_READ_SCRIPT)]],
   ] as const)("hides a finished wake that %s", (_case, items) => {
@@ -962,6 +966,30 @@ describe("withoutQuietMissionUpdates", () => {
     ["its run is unknown", [wake("run")], { attempts: DONE.attempts }],
     ["its attempts are unknown", [wake("run")], { runs: DONE.runs }],
     ["it was no wake", [user("run")], DONE],
+    ["only its conversation items are loaded", [wake("run"), reply("run", "")], DONE],
+    [
+      "only its conversation items are loaded and it said the marker",
+      [wake("run"), reply("run", MISSION_QUIET_REPLY)],
+      DONE,
+    ],
+    [
+      "its script spells tools with an escape",
+      [
+        wake("run"),
+        script("run", `${READ_SCRIPT}\nawait \\u0074ools.opencode.worktree_remove({});`),
+      ],
+      DONE,
+    ],
+    [
+      "its script sends through a spaced namespace",
+      [wake("run"), script("run", `${READ_SCRIPT}\nawait tools ["t3-code-x"].t3_thread_send({});`)],
+      DONE,
+    ],
+    [
+      "its script picks a send by a spaced computed key",
+      [wake("run"), script("run", `${READ_SCRIPT}\nawait t ["t3_thread_send"]({});`)],
+      DONE,
+    ],
     ["its notification is not a mission wake", [wake("run", "turn-item:message:other")], DONE],
     ["it was a resumed thread", [wake("run", wakeId("run"), "Resumed thread")], DONE],
     [

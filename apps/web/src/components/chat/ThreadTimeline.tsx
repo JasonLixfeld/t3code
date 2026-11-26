@@ -6,6 +6,7 @@ import type { TimelineEntriesInput, TimelineEntry } from "../../session-logic";
 import { useTimelineVisibleTurnItems } from "../../state/entities";
 import {
   peekRememberedThreadTimeline,
+  rememberedThreadTimelineHiddenRunIds,
   rememberReadyThreadTimeline,
   resolveThreadSwitchTimeline,
   timelineHasEphemeralPreviewUrls,
@@ -42,6 +43,11 @@ export function ThreadTimeline({
     visibleTurnItems,
   });
   const entries = draftEntries ?? serverEntries;
+  const hiddenRunIds = quietMissionUpdateRunIds(
+    visibleTurnItems,
+    timelineProps.runs,
+    entriesInput.attempts,
+  );
   const displayedEntries = resolveThreadSwitchTimeline({
     loading: entries.length === 0 && syncing,
     activeThreadKey,
@@ -53,18 +59,18 @@ export function ThreadTimeline({
     if (detailLoading || entries.length === 0 || timelineHasEphemeralPreviewUrls(entries)) {
       return;
     }
-    rememberReadyThreadTimeline({ threadKey: activeThreadKey, entries });
-  }, [activeThreadKey, detailLoading, entries]);
+    rememberReadyThreadTimeline({ threadKey: activeThreadKey, entries, hiddenRunIds });
+  }, [activeThreadKey, detailLoading, entries, hiddenRunIds]);
   return (
     <MessagesTimeline
       {...timelineProps}
       syncing={syncing}
       timelineEntries={displayedEntries}
-      hiddenRunIds={quietMissionUpdateRunIds(
-        visibleTurnItems,
-        timelineProps.runs,
-        entriesInput.attempts,
-      )}
+      hiddenRunIds={
+        displayedEntries === entries
+          ? hiddenRunIds
+          : rememberedThreadTimelineHiddenRunIds(activeThreadKey, displayedEntries)
+      }
     />
   );
 }

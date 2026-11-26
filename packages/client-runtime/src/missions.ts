@@ -578,15 +578,32 @@ const isMissionUpdateNotification = (item: OrchestrationV2TurnItem) =>
 
 const MISSION_READ_TOOLS: ReadonlySet<string> = new Set(["t3_thread_read", "t3_mission_roster"]);
 
+// `\u` and `\x` escapes can spell a name the scans below cannot read.
 const CODE_MODE_ESCAPE =
-  /\b(?:fetch|eval|globalThis|this|Reflect|Object)\b|\b(?:search|Function|import)\s*\(/;
+  /\b(?:fetch|eval|globalThis|this|Reflect|Object)\b|\b(?:search|Function|import)\s*\(|\\[ux]/;
 const NON_T3_TOOLS_ACCESS =
   /\btools\b(?!\s*\[\s*(?:"t3-code[^"\n]*"|'t3-code[^'\n]*')\s*\]|\s*\.\s*t3[\w$]*)/;
 const NAMESPACE_USE =
   /(\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*)?\btools\s*(?:\[\s*(?:"t3-code[^"\n]*"|'t3-code[^'\n]*')\s*\]|\.\s*t3[\w$]*)(\s*\.\s*([A-Za-z_$][\w$]*))?/g;
 const MEMBER = /^\s*\.\s*([A-Za-z_$][\w$]*)/;
 const STATEMENT_END = /^\s*(?:;|\n|$)/;
-const COMPUTED_KEY_OPEN = /[\w$)\]]\[/g;
+const COMPUTED_KEY_OPEN = /([\w$]+|[)\]])\s*\[/g;
+// After these words `[` opens an array, not a computed key.
+const ARRAY_LITERAL_AFTER: ReadonlySet<string> = new Set([
+  "return",
+  "of",
+  "in",
+  "await",
+  "yield",
+  "typeof",
+  "void",
+  "delete",
+  "case",
+  "throw",
+  "new",
+  "else",
+  "do",
+]);
 const IDENTIFIER = /[A-Za-z_$][\w$]*/g;
 
 /**
@@ -595,11 +612,12 @@ const IDENTIFIER = /[A-Za-z_$][\w$]*/g;
  */
 function computedKeysAreSafe(code: string): boolean {
   for (const match of code.matchAll(COMPUTED_KEY_OPEN)) {
-    const rest = code.slice(match.index + 2);
+    const before = match[1] ?? "";
+    if (ARRAY_LITERAL_AFTER.has(before)) continue;
+    const rest = code.slice(match.index + match[0].length);
     const safe =
       /^\s*\d+\s*\]/.test(rest) ||
-      (/^\s*(?:"t3-code[^"\n]*"|'t3-code[^'\n]*')\s*\]/.test(rest) &&
-        /\btools\s*$/.test(code.slice(0, match.index + 1))) ||
+      (/^\s*(?:"t3-code[^"\n]*"|'t3-code[^'\n]*')\s*\]/.test(rest) && before === "tools") ||
       /^[^[\]\n]*\]\s*=(?!=)/.test(rest);
     if (!safe) return false;
   }
@@ -657,6 +675,15 @@ function codeModeOnlyReads(input: unknown): boolean {
   }
   return reads > 0;
 }
+
+// The server's conversation-only history page leaves out these item types
+// (`isConversationHistoryItem`), so a run with none of them may be missing its actions.
+const WORK_ITEM_TYPES: ReadonlySet<OrchestrationV2TurnItem["type"]> = new Set([
+  "command_execution",
+  "reasoning",
+  "file_change",
+  "dynamic_tool",
+]);
 
 const isQuietReply = (text: string) => {
   const trimmed = text.trim();
@@ -727,8 +754,10 @@ function quietMissionUpdateEntry(
     }
   }
   const quiet = new Map<RunId, boolean>();
+  const workLoaded = new Set<RunId>();
   for (const { item } of rows) {
     if (item.runId === null) continue;
+    if (WORK_ITEM_TYPES.has(item.type)) workLoaded.add(item.runId);
     const known = quiet.get(item.runId);
     if (known === undefined) {
       quiet.set(
@@ -741,7 +770,9 @@ function quietMissionUpdateEntry(
       quiet.set(item.runId, false);
     }
   }
-  const runIds = new Set([...quiet].flatMap(([runId, isQuiet]) => (isQuiet ? [runId] : [])));
+  const runIds = new Set(
+    [...quiet].flatMap(([runId, isQuiet]) => (isQuiet && workLoaded.has(runId) ? [runId] : [])),
+  );
   const entry: QuietMissionUpdates = {
     runs,
     attempts,

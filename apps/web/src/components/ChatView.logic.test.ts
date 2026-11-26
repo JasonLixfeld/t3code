@@ -66,6 +66,7 @@ import {
   resolveWorktreeSetupProgress,
   peekRememberedThreadTimeline,
   rememberReadyThreadTimeline,
+  rememberedThreadTimelineHiddenRunIds,
   resetHeldThreadTimeline,
   resolveThreadSwitchTimeline,
   timelineHasEphemeralPreviewUrls,
@@ -545,6 +546,18 @@ describe("resolveThreadSwitchTimeline", () => {
         nextEntries: [],
       }),
     ).toEqual(["a1", "a2"]);
+  });
+
+  it("hides the runs the remembered timeline hid while it stands in for a loading one", () => {
+    const hiddenRunIds = new Set([RunId.make("quiet")]);
+    rememberReadyThreadTimeline({ ...held, hiddenRunIds });
+    const shown = resolveThreadSwitchTimeline({
+      loading: true,
+      activeThreadKey: "env-1:thread-a",
+      nextEntries: [],
+    });
+    expect(rememberedThreadTimelineHiddenRunIds("env-1:thread-a", shown)).toBe(hiddenRunIds);
+    expect(rememberedThreadTimelineHiddenRunIds("env-1:thread-a", [])).toBeUndefined();
   });
 
   it("does not paint the last-viewed thread for a destination with nothing remembered", () => {

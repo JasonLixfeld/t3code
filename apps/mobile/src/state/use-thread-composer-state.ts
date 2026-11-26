@@ -68,7 +68,11 @@ import {
 } from "../lib/composerImages";
 import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
 import { scopedThreadKey } from "../lib/scopedEntities";
-import { buildThreadFeed, createThreadFeedCache } from "../lib/threadActivity";
+import {
+  buildThreadFeed,
+  createThreadFeedCache,
+  threadFeedHidesMessage,
+} from "../lib/threadActivity";
 import {
   acknowledgedThreadMessagesAtom,
   pruneCaughtUpAcknowledgedThreadMessages,
@@ -297,6 +301,12 @@ export function useThreadComposerState(input: {
   // detail is usually present but empty during a worktree checkout, so this
   // cannot be an either/or with the loaded messages.
   const pendingCreationMessage = selectedThreadCreation?.message ?? null;
+  const selectedThreadRuns = selectedThreadProjection?.projection.runs;
+  const selectedThreadHidesMessage = (messageId: string) =>
+    threadFeedHidesMessage(selectedThreadVisibleTurnItems, messageId, {
+      runs: selectedThreadRuns,
+      attempts: selectedThreadAttempts,
+    });
   const [feedCache] = useState(createThreadFeedCache);
   const selectedThreadFeed = (() => {
     const pendingCreation =
@@ -306,7 +316,7 @@ export function useThreadComposerState(input: {
         : [];
     const feed = buildThreadFeed(selectedThreadVisibleTurnItems, {
       anchoredMessages: pendingCreation,
-      runs: selectedThreadProjection?.projection.runs,
+      runs: selectedThreadRuns,
       attempts: selectedThreadAttempts,
       nodes: selectedThreadNodes,
       cache: feedCache,
@@ -1045,6 +1055,7 @@ export function useThreadComposerState(input: {
     feedbackSubmissions,
     dismissFeedback,
     selectedThreadFeed,
+    selectedThreadHidesMessage,
     selectedThreadActivityRun,
     selectedThreadAnnouncedRun,
     selectedThreadDetailBehindShell,

@@ -3,7 +3,10 @@ import type {
   ThreadPendingUserInput,
 } from "@t3tools/client-runtime/state/thread-requests";
 import { linkRequestTargetName } from "@t3tools/client-runtime/link-request";
-import { withoutQuietMissionUpdates } from "@t3tools/client-runtime/missions";
+import {
+  quietMissionUpdateRunIds,
+  withoutQuietMissionUpdates,
+} from "@t3tools/client-runtime/missions";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
@@ -2503,6 +2506,28 @@ function firstChangedIndex<T>(previous: ReadonlyArray<T>, next: ReadonlyArray<T>
   let index = 0;
   while (index < limit && previous[index] === next[index]) index += 1;
   return index;
+}
+
+/** Whether the thread holds this message but its feed leaves it out, in a quiet mission update. */
+export function threadFeedHidesMessage(
+  turnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  messageId: string,
+  options: {
+    readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status">> | undefined;
+    readonly attempts: ReadonlyArray<OrchestrationV2RunAttempt> | undefined;
+  },
+): boolean {
+  const hidden = quietMissionUpdateRunIds(turnItems, options.runs, options.attempts);
+  return (
+    hidden.size > 0 &&
+    turnItems.some(
+      ({ item }) =>
+        (item.type === "assistant_message" || item.type === "user_message") &&
+        item.messageId === messageId &&
+        item.runId !== null &&
+        hidden.has(item.runId),
+    )
+  );
 }
 
 export function buildThreadFeed(

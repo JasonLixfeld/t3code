@@ -271,7 +271,7 @@ interface MessagesTimelineProps {
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReadonlyArray<TimelineEntry>;
   /** Runs left out of the timeline; their entries still count for rewind targets. */
-  hiddenRunIds?: ReadonlySet<RunId>;
+  hiddenRunIds?: ReadonlySet<RunId> | undefined;
   latestRun: TimelineLatestRun | null;
   usageLimitRunId?: RunId | null;
   /** The run the screen reader announcer follows; see announcedRun. */
@@ -873,7 +873,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
       ? resolveCitationPhase({
           history: citationHistory,
           messageId: citationRequest.citation.messageId,
-          entries: timelineEntries,
+          entries: allTimelineEntries,
+          hiddenRunIds,
           rows,
         })
       : null,
@@ -1379,7 +1380,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     // scroll the list directly, so the restore would otherwise pull it back.
     listReady: findListReady && !restoringThreadPosition,
     historyControls,
-    entries: timelineEntries,
+    // A match in a hidden run is loaded but has no row, so it neither pages nor scrolls.
+    entries: allTimelineEntries,
     container: timelineViewportElement,
     query: normalizedFindQuery,
     match: activeFindMatch,
