@@ -1104,7 +1104,22 @@ it.effect("a member's run the lead still waits on in t3_thread_wait wakes no one
         yield* nextText(world),
         told(["member 1 on this machine finished its turn and is idle."]),
       );
-      assert.equal(world.sent.length, 2);
+      yield* world.leadRead;
+      // Another run of the thread it waits on, and the awaited run failing, still wake it.
+      world.leadWait.current = { threadId: first, runId: "next", status: "running" };
+      yield* world.run(first, "other", "completed");
+      yield* world.run(first, "next", "failed");
+      yield* world.leadRead;
+      yield* world.leadRead;
+      yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+      assert.equal(
+        yield* nextText(world),
+        told([
+          "member 1 on this machine finished its turn and is idle.",
+          "member 1 on this machine failed.",
+        ]),
+      );
+      assert.equal(world.sent.length, 3);
     }),
   );
 });

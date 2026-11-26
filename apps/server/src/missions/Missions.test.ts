@@ -3883,19 +3883,18 @@ it.effect("the lead adding itself, or a member already in, is not nudged for a b
 });
 
 it.effect(
-  "a roster answer stays within 30,000 bytes and resumes at the first member it left out",
+  "a roster answer stays within 30,000 bytes, resumes at the first member it left out, and lists a member too large alone without its workspace",
   () => {
     const members = Array.from({ length: 10 }, (_, index) => ref(HERE, `big-${index}`));
     const world = makeWorld([lead, ...members]);
-    for (const member of members) {
+    for (const [position, member] of members.entries()) {
+      const branch = position === 9 ? `t3/${"x".repeat(1_000)}` : `t3/${member.threadId}`;
       world.workspaces.set(
         worktreeOf(member.threadId),
         workspaceOf(
           "worktree",
           Array.from({ length: MEMBER_REPOSITORIES_MAX }, (_, index) =>
-            repository(`repo-${index}`, `github.com/acme/repo-${index}`, `t3/${member.threadId}`, [
-              index,
-            ]),
+            repository(`repo-${index}`, `github.com/acme/repo-${index}`, branch, [index]),
           ),
         ),
       );
@@ -3913,12 +3912,17 @@ it.effect(
           assert.isAtMost(Buffer.byteLength(answer, "utf8"), 30_000);
           const roster = decodeRoster(JSON.parse(answer));
           assert.isNotEmpty(roster.members);
-          seen.push(...roster.members.map((row) => row.member));
+          seen.push(
+            ...roster.members.map(
+              (row) =>
+                `${row.member}: ${typeof row.workspace === "string" ? row.workspace : "listed"}`,
+            ),
+          );
           cursor = roster.nextCursor;
         }
         assert.deepEqual(
           seen,
-          members.map((_, index) => `member ${index + 1}`),
+          members.map((_, index) => `member ${index + 1}: ${index === 9 ? "tooLarge" : "listed"}`),
         );
       }),
     );

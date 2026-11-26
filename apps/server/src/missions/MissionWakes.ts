@@ -179,6 +179,7 @@ export const layer = Layer.effectDiscard(
       // The lead hears this run end from the t3_thread_wait it is still in: no turn for it.
       if (
         event.type === "run.updated" &&
+        update.event === "completed" &&
         (yield* leadAwaits(claim.missionId, ref, event.payload.id))
       ) {
         return yield* record(claim.missionId, ref, [update], false);

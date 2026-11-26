@@ -202,8 +202,9 @@ export const layer = McpToolAccess.toLayer(
       t3_mission_roster: McpToolAccess.readsAsCaller((input) =>
         Effect.gen(function* () {
           const { missions, mission } = yield* callersMission;
-          const rows = yield* missions.roster(mission.missionId);
+          const listed = yield* missions.roster(mission.missionId);
           const cursor = input.cursor ?? 0;
+          let rows = listed;
           const page = (end: number) => ({
             missionId: mission.missionId,
             name: mission.name,
@@ -225,6 +226,9 @@ export const layer = McpToolAccess.toLayer(
           // Whole members only, at least one, until the answer would pass its cap.
           const last = Math.min(rows.length, cursor + (input.limit ?? 10));
           let end = Math.min(last, cursor + 1);
+          if (end > cursor && jsonBytes(page(end)) > ROSTER_MAX_BYTES) {
+            rows = listed.with(cursor, { ...listed[cursor]!, workspace: "tooLarge" });
+          }
           while (end < last && jsonBytes(page(end + 1)) <= ROSTER_MAX_BYTES) {
             end += 1;
           }
