@@ -1,8 +1,14 @@
-import type { CodeView, SearchPanelState } from "@pierre/diffs";
+import { useAtomValue } from "@effect/atom-react";
+import type { CodeView, FileDiffMetadata, SearchPanelState } from "@pierre/diffs";
 import type { CodeViewHandle } from "@pierre/diffs/react";
-import { type KeyboardEvent, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
-import { isMacPlatform } from "~/lib/utils";
+import {
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+  type ShortcutEventLike,
+} from "~/keybindings";
+import { primaryServerKeybindingsAtom } from "~/state/server";
 
 import { type DiffFindFile, type DiffFindMatch, groupDiffFindMatches } from "./diffFind.logic";
 
@@ -22,9 +28,16 @@ export interface DiffFind {
   readonly navigate: (direction: "next" | "previous") => void;
 }
 
-export function isFindShortcut(event: KeyboardEvent<HTMLElement>) {
-  const isModPressed = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
-  return isModPressed && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f";
+// The standalone pull request page has no right panel, but its Code tab uses the same binding.
+const FIND_CONTEXT = { previewFocus: true };
+
+export function useFindShortcut() {
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  return {
+    label: shortcutLabelForCommand(keybindings, "preview.find", { context: FIND_CONTEXT }),
+    matches: (event: ShortcutEventLike) =>
+      resolveShortcutCommand(event, keybindings, { context: FIND_CONTEXT }) === "preview.find",
+  };
 }
 
 type FindableCodeView = Pick<
@@ -50,16 +63,20 @@ export function useDiffFind() {
       return;
     }
     const matches = handle.getInstance()?.getSearchMatches() ?? [];
-    if (groupedRef.current?.matches !== matches) {
-      groupedRef.current = {
-        matches,
-        files: groupDiffFindMatches(matches, (itemId) => {
-          const item = handle.getItem(itemId);
-          return item?.type === "diff" ? item.fileDiff : undefined;
-        }),
-      };
+    const getFileDiff = (itemId: string): FileDiffMetadata | undefined => {
+      const item = handle.getItem(itemId);
+      return item?.type === "diff" ? item.fileDiff : undefined;
+    };
+    let grouped = groupedRef.current;
+    // Pierre keeps its match array when a refresh moves no match, even if the line text changed.
+    if (
+      grouped?.matches !== matches ||
+      grouped.files.some((file) => getFileDiff(file.itemId) !== file.fileDiff)
+    ) {
+      grouped = { matches, files: groupDiffFindMatches(matches, getFileDiff) };
+      groupedRef.current = grouped;
     }
-    const files = groupedRef.current.files;
+    const files = grouped.files;
     setState((previous) =>
       previous?.query === next.text &&
       previous.matchCount === next.matchCount &&

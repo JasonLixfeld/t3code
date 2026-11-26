@@ -13,26 +13,20 @@ const LINE_MARKERS: Record<DiffFindLine["kind"], string> = {
   context: "",
 };
 
-export function DiffFindResults({
-  find,
-  onSelectFile,
-}: {
-  readonly find: DiffFind;
-  readonly onSelectFile: (path: string) => void;
-}) {
+export function DiffFindResults({ find }: { readonly find: DiffFind }) {
   const gt = useGT();
   const state = find.state;
   if (!state?.query) {
     return (
       <p className="px-3 py-4 text-xs text-muted-foreground">
-        <T>Type to search the changed lines.</T>
+        <T>Type to search the lines in the diff.</T>
       </p>
     );
   }
   if (state.files.length === 0) {
     return (
       <p role="status" className="px-3 py-4 text-xs text-muted-foreground">
-        <T>No changed lines match.</T>
+        <T>No lines in the diff match.</T>
       </p>
     );
   }
@@ -42,12 +36,13 @@ export function DiffFindResults({
       {state.files.map((file) => {
         const path = resolveFileDiffPath(file.fileDiff);
         const slash = path.lastIndexOf("/");
+        const hiddenStart = file.firstHiddenMatchIndex;
         return (
           <section key={file.itemId} aria-label={path}>
             <button
               type="button"
               className="flex h-7 w-full min-w-0 items-center gap-1.5 px-2 text-left hover:bg-accent"
-              onClick={() => onSelectFile(path)}
+              onClick={() => find.selectMatch(file.firstMatchIndex)}
             >
               <span className="shrink-0 font-medium text-foreground">{path.slice(slash + 1)}</span>
               <span className="min-w-0 truncate text-muted-foreground">
@@ -103,12 +98,16 @@ export function DiffFindResults({
                 </button>
               );
             })}
-            {file.hiddenLineCount > 0 ? (
-              <p className="ps-14 pe-2 py-0.5 text-2xs text-muted-foreground">
+            {hiddenStart !== undefined ? (
+              <button
+                type="button"
+                className="flex h-6 w-full items-center ps-14 pe-2 text-left text-2xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                onClick={() => find.selectMatch(hiddenStart)}
+              >
                 {gt("{count, plural, one {{count} more line} other {{count} more lines}}", {
                   count: file.hiddenLineCount,
                 })}
-              </p>
+              </button>
             ) : null}
           </section>
         );

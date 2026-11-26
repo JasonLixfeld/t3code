@@ -31,7 +31,7 @@ import {
 } from "./diffFileTree.logic";
 import { diffFileTreePositions } from "@t3tools/client-runtime/diff-file-order";
 import { DiffFindResults } from "./DiffFindResults";
-import { type DiffFind, isFindShortcut } from "./useDiffFind";
+import { type DiffFind, useFindShortcut } from "./useDiffFind";
 
 export type { DiffFileTreeEntry } from "./diffFileTree.logic";
 
@@ -63,6 +63,8 @@ export function DiffFileTree({
   const gt = useGT();
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchMode, setSearchMode] = useState<SearchMode>("name");
+  const [nameQuery, setNameQueryState] = useState("");
+  const findShortcut = useFindShortcut();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchButtonRef = useRef<HTMLButtonElement>(null);
   const contentsMode = searchOpen && searchMode === "contents" && find !== undefined;
@@ -121,7 +123,7 @@ export function DiffFileTree({
   const nameSearch = useFileTreeSearch(model);
   // Pierre restores the unfiltered tree when a search has no matches.
   const noNameMatches =
-    searchOpen && nameSearch.value.trim() !== "" && nameSearch.matchingPaths.length === 0;
+    searchOpen && nameQuery.trim() !== "" && nameSearch.matchingPaths.length === 0;
 
   const focusSearch = () => {
     if (!searchOpen) {
@@ -131,23 +133,25 @@ export function DiffFileTree({
     searchInputRef.current?.focus();
     searchInputRef.current?.select();
   };
-  const closeSearch = () => {
-    nameSearch.close();
-    setSearchOpen(false);
-  };
+  // Pierre trims and lowercases the value it keeps, so the input shows its own copy.
   const setNameQuery = (value: string) => {
+    setNameQueryState(value);
     if (value.trim() === "") nameSearch.close();
     else nameSearch.setValue(value);
   };
+  const closeSearch = () => {
+    setNameQuery("");
+    setSearchOpen(false);
+  };
   const changeSearchMode = (mode: SearchMode) => {
     if (mode === searchMode || find === undefined) return;
-    const query = mode === "contents" ? nameSearch.value : (find.state?.query ?? "");
     setSearchMode(mode);
-    if (mode === "contents") {
-      nameSearch.close();
-      find.search(query, searchInputRef.current);
+    if (mode === "name") {
+      setNameQuery(find.state?.query ?? "");
     } else {
-      setNameQuery(query);
+      const query = nameQuery;
+      setNameQuery("");
+      if (query !== "") find.search(query, searchInputRef.current);
     }
     searchInputRef.current?.focus();
   };
@@ -245,9 +249,16 @@ export function DiffFileTree({
     <div
       className={cn("flex min-h-0 flex-1 flex-col bg-background", className)}
       onKeyDown={(event) => {
-        if (!isFindShortcut(event)) return;
-        event.preventDefault();
-        focusSearch();
+        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+        if (event.key === "Escape" && searchOpen) {
+          event.preventDefault();
+          event.stopPropagation();
+          closeSearch();
+          searchButtonRef.current?.focus();
+        } else if (findShortcut.matches(event.nativeEvent)) {
+          event.preventDefault();
+          focusSearch();
+        }
       }}
     >
       <div
@@ -317,9 +328,13 @@ export function DiffFileTree({
                 size="sm"
                 autoFocus
                 spellCheck={false}
-                aria-label={contentsMode ? gt("Search changed lines") : gt("Filter files by name")}
-                placeholder={contentsMode ? gt("Search changed lines") : gt("Filter by file name")}
-                value={contentsMode ? (find.state?.query ?? "") : nameSearch.value}
+                aria-label={
+                  contentsMode ? gt("Search lines in the diff") : gt("Filter files by name")
+                }
+                placeholder={
+                  contentsMode ? gt("Search lines in the diff") : gt("Filter by file name")
+                }
+                value={contentsMode ? (find.state?.query ?? "") : nameQuery}
                 onChange={(event) =>
                   contentsMode
                     ? find.search(event.target.value, event.currentTarget)
@@ -327,12 +342,7 @@ export function DiffFileTree({
                 }
                 onKeyDown={(event) => {
                   if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    closeSearch();
-                    searchButtonRef.current?.focus();
-                  } else if (event.key === "Enter" && contentsMode) {
+                  if (event.key === "Enter" && contentsMode) {
                     event.preventDefault();
                     find.navigate(event.shiftKey ? "previous" : "next");
                   }
@@ -362,14 +372,14 @@ export function DiffFileTree({
                 <T context="search files by file name">Name</T>
               </Toggle>
               <Toggle value="contents">
-                <T context="search files by their changed lines">Contents</T>
+                <T context="search files by the lines in their diff">Contents</T>
               </Toggle>
             </ToggleGroup>
           ) : null}
         </div>
       ) : null}
       {contentsMode ? (
-        <DiffFindResults find={find} onSelectFile={onSelectFile} />
+        <DiffFindResults find={find} />
       ) : noNameMatches ? (
         <p role="status" className="px-3 py-4 text-xs text-muted-foreground">
           <T>No matching files.</T>

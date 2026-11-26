@@ -19,12 +19,16 @@ export interface DiffFindFile {
   readonly itemId: string;
   readonly fileDiff: FileDiffMetadata;
   readonly matchCount: number;
+  readonly firstMatchIndex: number;
   readonly lines: ReadonlyArray<DiffFindLine>;
   readonly hiddenLineCount: number;
+  readonly firstHiddenMatchIndex: number | undefined;
 }
 
 export const DIFF_FIND_LINES_PER_FILE = 20;
-const DIFF_FIND_MAX_LINES = 500;
+export const DIFF_FIND_MAX_LINES = 500;
+export const DIFF_FIND_SNIPPET_LENGTH = 200;
+export const DIFF_FIND_HIGHLIGHTS_PER_LINE = 10;
 const LEADING_CONTEXT = 16;
 
 function changedLineIndexes(fileDiff: FileDiffMetadata) {
@@ -55,8 +59,17 @@ function presentLine(
   const fullText = (source[first.lineIndex] ?? "").replace(/[\r\n]+$/, "");
   const indent = fullText.length - fullText.trimStart().length;
   const start = Math.max(indent, first.startCharacter - LEADING_CONTEXT);
-  const clipped = start > indent;
-  const prefix = clipped ? "…" : "";
+  const end = Math.min(fullText.length, start + DIFF_FIND_SNIPPET_LENGTH);
+  const prefix = start > indent ? "…" : "";
+  const suffix = end < fullText.length ? "…" : "";
+  const ranges: SearchRange[] = [];
+  for (const match of matches) {
+    if (ranges.length === DIFF_FIND_HIGHLIGHTS_PER_LINE || match.startCharacter >= end) break;
+    ranges.push({
+      start: match.startCharacter - start + prefix.length,
+      end: Math.min(match.endCharacter, end) - start + prefix.length,
+    });
+  }
   return {
     key: `${side}:${first.lineNumber}`,
     kind: changed[side].has(first.lineIndex)
@@ -65,11 +78,8 @@ function presentLine(
         : "addition"
       : "context",
     lineNumber: first.lineNumber,
-    text: prefix + fullText.slice(start),
-    ranges: matches.map((match) => ({
-      start: match.startCharacter - start + prefix.length,
-      end: match.endCharacter - start + prefix.length,
-    })),
+    text: prefix + fullText.slice(start, end) + suffix,
+    ranges,
     firstMatchIndex,
     matchCount: matches.length,
   };
@@ -91,6 +101,7 @@ export function groupDiffFindMatches(
     const changed = changedLineIndexes(fileDiff);
     const lines: DiffFindLine[] = [];
     let lineCount = 0;
+    let firstHiddenMatchIndex: number | undefined;
     let lineStart = fileStart;
     while (lineStart < index) {
       const { side, lineNumber } = matches[lineStart]!;
@@ -105,6 +116,8 @@ export function groupDiffFindMatches(
       if (lines.length < DIFF_FIND_LINES_PER_FILE && shownLines < DIFF_FIND_MAX_LINES) {
         lines.push(presentLine(fileDiff, changed, matches.slice(lineStart, lineEnd), lineStart));
         shownLines++;
+      } else {
+        firstHiddenMatchIndex ??= lineStart;
       }
       lineCount++;
       lineStart = lineEnd;
@@ -113,8 +126,10 @@ export function groupDiffFindMatches(
       itemId,
       fileDiff,
       matchCount: index - fileStart,
+      firstMatchIndex: fileStart,
       lines,
       hiddenLineCount: lineCount - lines.length,
+      firstHiddenMatchIndex,
     });
   }
   return files;

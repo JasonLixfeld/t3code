@@ -119,6 +119,7 @@ import { SourceControlAppAccessNotice } from "../SourceControlAppAccessNotice";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
+import { type DiffFind, useFindShortcut } from "../diffs/useDiffFind";
 import { openOnHostLabel } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
 import { pullRequestMarkdownExtensions } from "./pullRequestMarkdown.logic";
@@ -617,6 +618,8 @@ export function PullRequestDetailPanel({
     handoffSummary?.provider ?? listEntry?.provider ?? repositoryIdentity?.provider,
   ).changeRequest;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const findShortcut = useFindShortcut();
+  const codeFindRef = useRef<Pick<DiffFind, "open">>(null);
   const { copyToClipboard: copyReference } = useCopyToClipboard<string>({
     target: {
       target: `${terminology.singular} reference`,
@@ -1604,7 +1607,16 @@ export function PullRequestDetailPanel({
   return (
     // One tooltip for the panel's many triggers; mounting one per trigger dominated opening it.
     <SharedTooltipProvider>
-      <div className="relative flex h-full min-h-0 w-full flex-col bg-background">
+      <div
+        className="relative flex h-full min-h-0 w-full flex-col bg-background"
+        onKeyDown={(event) => {
+          // The selected Code tab button sits outside the tab's content.
+          if (tab !== "code" || event.defaultPrevented) return;
+          if (!findShortcut.matches(event.nativeEvent)) return;
+          event.preventDefault();
+          codeFindRef.current?.open();
+        }}
+      >
         {threadPickerOpen && detail ? (
           <PullRequestThreadLinks
             key={`${environmentId}:${detail.url}`}
@@ -2305,6 +2317,7 @@ export function PullRequestDetailPanel({
                       revealRequest={codeRevealRequest}
                       revealUrl={tab === "code" ? revealUrl : undefined}
                       onRevealSettled={settleReveal}
+                      findRef={codeFindRef}
                     />
                   </Suspense>
                 </div>

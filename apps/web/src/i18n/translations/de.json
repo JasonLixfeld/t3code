@@ -13070,15 +13070,15 @@
   "3f5959354b360f90": "Was sollen wir in {project} bauen, in {mission}?",
   "ba05bd1545ef3881": "Was sollen wir in {project} bauen, als neue Leitung für {mission}?",
   "06b6bb85f2e34802": "Was sollen wir in {project} bauen?",
-  "05ea16f4e0a5c9eb": "Geänderte Zeilen durchsuchen",
   "fcd82e4633e09f3c": "Dateien nach Namen filtern",
   "c20e8b3635b1145d": "Nach Dateinamen filtern",
   "f2f26b2495c97459": "Dateisuche schließen",
   "c9cc296e7ed91ee8": "Suchen nach",
   "0b2386ff3d38927b": "Name",
-  "060d69716652d764": "Inhalt",
   "a6ef358f3e49fce5": "{count, plural, one {{count} weitere Zeile} other {{count} weitere Zeilen}}",
-  "81f17b378a386c37": "Tippe, um die geänderten Zeilen zu durchsuchen.",
-  "a023bd0c3a131279": "Keine geänderte Zeile passt.",
-  "ab51922b640ce105": "Im Diff suchen"
+  "ab51922b640ce105": "Im Diff suchen",
+  "50e45ddb773084b9": "Zeilen im Diff durchsuchen",
+  "f22251e844674ecd": "Inhalt",
+  "7f6f01bf21dca1a7": "Tippe, um die Zeilen im Diff zu durchsuchen.",
+  "5ae076fdacf17370": "Keine Zeile im Diff passt."
 }

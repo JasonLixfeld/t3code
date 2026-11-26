@@ -13070,15 +13070,15 @@
   "3f5959354b360f90": "O que vamos construir em {project}, em {mission}?",
   "ba05bd1545ef3881": "O que vamos construir em {project}, como nova thread principal de {mission}?",
   "06b6bb85f2e34802": "O que vamos construir em {project}?",
-  "05ea16f4e0a5c9eb": "Pesquisar nas linhas alteradas",
   "fcd82e4633e09f3c": "Filtrar arquivos por nome",
   "c20e8b3635b1145d": "Filtrar por nome de arquivo",
   "f2f26b2495c97459": "Fechar a pesquisa de arquivos",
   "c9cc296e7ed91ee8": "Pesquisar por",
   "0b2386ff3d38927b": "Nome",
-  "060d69716652d764": "Conteúdo",
   "a6ef358f3e49fce5": "{count, plural, one {Mais {count} linha} other {Mais {count} linhas}}",
-  "81f17b378a386c37": "Digite para pesquisar nas linhas alteradas.",
-  "a023bd0c3a131279": "Nenhuma linha alterada corresponde.",
-  "ab51922b640ce105": "Localizar no diff"
+  "ab51922b640ce105": "Localizar no diff",
+  "50e45ddb773084b9": "Pesquisar nas linhas do diff",
+  "f22251e844674ecd": "Conteúdo",
+  "7f6f01bf21dca1a7": "Digite para pesquisar nas linhas do diff.",
+  "5ae076fdacf17370": "Nenhuma linha do diff corresponde."
 }
