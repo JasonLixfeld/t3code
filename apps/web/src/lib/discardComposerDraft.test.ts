@@ -7,6 +7,11 @@ import {
   DraftId,
   useComposerDraftStore,
 } from "../composerDraftStore";
+import {
+  clearMissionDraft,
+  markMissionDraft,
+  missionDraftOf,
+} from "../components/sidebar/missionDraftStore";
 import { showThreadUndoNotice } from "../hooks/showThreadUndoNotice";
 import { discardComposerDraft } from "./discardComposerDraft";
 
@@ -78,6 +83,19 @@ describe("discardComposerDraft", () => {
     } finally {
       URL.revokeObjectURL(restoredUrl);
     }
+  });
+
+  it("lets go of a discarded draft's mission mark, and puts it back as it was on Undo", async () => {
+    useComposerDraftStore.getState().setProjectDraftThreadId(projectRef, draftId);
+    markMissionDraft(draftId, { intent: { kind: "new" }, thread: threadRef });
+    const marked = missionDraftOf(draftId);
+
+    discardComposerDraft(draftId);
+    expect(missionDraftOf(draftId)).toBeUndefined();
+
+    await undoNotice().undo();
+    expect(missionDraftOf(draftId)).toEqual(marked);
+    clearMissionDraft(draftId);
   });
 
   it("discards and restores a draft session that has no composer record", async () => {

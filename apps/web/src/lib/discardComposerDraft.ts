@@ -4,6 +4,11 @@ import { msg } from "gt-react";
 
 import { cancelPreparingComposerImages } from "../components/chat/preparingComposerImages";
 import {
+  clearMissionDraft,
+  missionDraftOf,
+  restoreMissionDraft,
+} from "../components/sidebar/missionDraftStore";
+import {
   type ComposerThreadTarget,
   composerDraftHasUserContent,
   composerTargetKey,
@@ -32,8 +37,11 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
   // compression under either would recreate the draft.
   cancelPreparingComposerImages(composerTargetKey(target));
   cancelPreparingComposerImages(key);
+  // The mark would start or join a Mission when a thread with this draft's id is sent.
+  const missionDraft = discardsSession ? missionDraftOf(target) : undefined;
   if (discardsSession) {
     store.clearDraftThread(target);
+    clearMissionDraft(target);
   } else {
     store.clearComposerContent(target);
   }
@@ -88,6 +96,7 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
           logicalProjectDraftThreadKeyByLogicalProjectKey,
         };
       });
+      if (discardsSession && missionDraft !== undefined) restoreMissionDraft(target, missionDraft);
       return AsyncResult.success(undefined);
     },
     commit: releaseDiscardedDraft,
