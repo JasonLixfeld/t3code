@@ -13,7 +13,7 @@ import {
   type ThreadId,
   threadHasMessages,
 } from "@t3tools/contracts";
-import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
+import { resolveT3McpToolId, T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -572,6 +572,29 @@ const isMissionUpdateNotification = (item: OrchestrationV2TurnItem) =>
 
 const MISSION_READ_TOOLS: ReadonlySet<string> = new Set(["t3_thread_read", "t3_mission_roster"]);
 
+const CODE_MODE_ESCAPE =
+  /\b(?:fetch|eval|globalThis|this|Reflect|Object)\b|\b(?:search|Function|import)\s*\(/;
+const NON_T3_TOOLS_ACCESS = /\btools\b(?!\s*\[\s*(["'])t3-code[^"'\n]*\1\s*\]|\s*\.\s*t3[\w$]*)/;
+// A computed key could build a tool name the name scan cannot see.
+const COMPUTED_KEY = /[\w$)\]]\[(?!\s*\d+\s*\]|\s*(["'])t3-code[^"'\n]*\1\s*\])/;
+const IDENTIFIER = /[A-Za-z_$][\w$]*/g;
+
+/** An OpenCode Code Mode script reads only when every T3 tool it names is a mission read. */
+function codeModeOnlyReads(input: unknown): boolean {
+  const code =
+    typeof input === "object" && input !== null && "code" in input ? input.code : undefined;
+  if (
+    typeof code !== "string" ||
+    CODE_MODE_ESCAPE.test(code) ||
+    NON_T3_TOOLS_ACCESS.test(code) ||
+    COMPUTED_KEY.test(code)
+  ) {
+    return false;
+  }
+  const named = (code.match(IDENTIFIER) ?? []).filter((name) => T3_MCP_TOOL_NAMES.has(name));
+  return named.length > 0 && named.every((name) => MISSION_READ_TOOLS.has(name));
+}
+
 function changesNothing(item: OrchestrationV2TurnItem): boolean {
   if (item.status !== "completed" || item.deferredWork !== undefined) return false;
   switch (item.type) {
@@ -582,7 +605,9 @@ function changesNothing(item: OrchestrationV2TurnItem): boolean {
     case "checkpoint":
       return item.files.length === 0 && item.filesOmitted !== true;
     case "dynamic_tool":
-      return MISSION_READ_TOOLS.has(resolveT3McpToolId(item.toolName) ?? "");
+      return item.toolName === "execute"
+        ? codeModeOnlyReads(item.input)
+        : MISSION_READ_TOOLS.has(resolveT3McpToolId(item.toolName) ?? "");
     default:
       return false;
   }

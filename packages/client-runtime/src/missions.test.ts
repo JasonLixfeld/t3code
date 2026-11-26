@@ -799,6 +799,18 @@ describe("withoutQuietMissionUpdates", () => {
     toolName,
     input: {},
   });
+  const script = (run: string, code: string): Item => ({
+    ...base(run, "execute"),
+    type: "dynamic_tool",
+    toolName: "execute",
+    input: { code },
+  });
+  const NAMESPACE = `tools["t3-code-af84a96a-cb76-409a-851b-c0fb0d783eb2"]`;
+  const READ_SCRIPT = [
+    `const t = ${NAMESPACE};`,
+    `const r = await t.t3_thread_read({threadId: "mcp:launch:member", limit: 2, runLimit: 1, maxCharsPerItem: 3000});`,
+    "return {status: r.thread.status, items: r.items.map(i => i.text)};",
+  ].join("\n");
   const reply = (run: string, text: string): Item => ({
     ...base(run, "reply"),
     type: "assistant_message",
@@ -892,11 +904,45 @@ describe("withoutQuietMissionUpdates", () => {
     ["it was interrupted", [wake("run")], "interrupted"],
     ["its attempts are unknown", [wake("run")], null],
     ["it was no wake", [user("run")], "completed"],
+    [
+      "its script sends",
+      [
+        wake("run"),
+        script("run", `await ${NAMESPACE}.t3_thread_send({threadId: "m", text: "go"});`),
+      ],
+      "completed",
+    ],
+    [
+      "its script reads and launches",
+      [wake("run"), script("run", `${READ_SCRIPT}\nawait t.t3_thread_launch({});`)],
+      "completed",
+    ],
+    [
+      "its script reaches OpenCode",
+      [wake("run"), script("run", `${READ_SCRIPT}\nawait tools.opencode.worktree_list();`)],
+      "completed",
+    ],
+    [
+      "its script picks a tool by a computed key",
+      [wake("run"), script("run", `const k = "t3-code-x";\nawait tools[k].t3_thread_read({});`)],
+      "completed",
+    ],
+    [
+      "its script fetches",
+      [wake("run"), script("run", `${READ_SCRIPT}\nawait fetch("https://example.com");`)],
+      "completed",
+    ],
+    ["its script calls no T3 tool", [wake("run"), script("run", "return 1 + 1;")], "completed"],
   ] as const)("shows a mission update when %s", (_case, items, status) => {
     const thread = rows(items);
     expect(
       withoutQuietMissionUpdates(thread, status === null ? undefined : [attempt("run", status)]),
     ).toBe(thread);
+  });
+
+  it("hides a wake whose only tool was an OpenCode Code Mode script that read", () => {
+    const thread = rows([wake("quiet"), script("quiet", READ_SCRIPT), reply("quiet", "")]);
+    expect(withoutQuietMissionUpdates(thread, [attempt("quiet", "completed")])).toEqual([]);
   });
 
   it("returns the same rows for the same inputs, so a render does not loop", () => {
