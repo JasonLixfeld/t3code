@@ -3723,6 +3723,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             }
                             thread={thread}
                             missionToggle={missionToggle}
+                            missionLeavable={missionDrop.leavable.has(threadKey)}
                             footer={footer}
                             variant={rowVariant}
                             navigationParent={

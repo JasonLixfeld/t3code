@@ -934,6 +934,11 @@ export function useMissionDrop(missions: ReadonlyArray<SidebarMission<Environmen
   const machineLabel = useMachineLabel(hosts);
   const menu = useMissionMenu();
   const [target, setTarget] = useState<MissionDrop | null>(null);
+  // Where the dragged member was when its drag began, read on the drag's first move.
+  const source = useRef<{
+    readonly dragged: string;
+    readonly from: { readonly host: EnvironmentId; readonly missionId: string } | null;
+  } | null>(null);
   type At = {
     readonly point: { readonly x: number; readonly y: number };
     /** The thread list the drag runs in. */
@@ -981,9 +986,19 @@ export function useMissionDrop(missions: ReadonlyArray<SidebarMission<Environmen
         [...list.querySelectorAll<HTMLElement>("[data-thread-item]")].some(
           (row) => row.getBoundingClientRect().top >= below && contains(row),
         ));
+    if (source.current?.dragged !== dragged) {
+      const from = missions.find((mission) =>
+        mission.members.some((entry) => scopedThreadKey(entry.member.ref) === dragged),
+      );
+      source.current = {
+        dragged,
+        from: from === undefined ? null : { host: from.host, missionId: from.mission.missionId },
+      };
+    }
     return resolveMissionDrop({
       dragged,
       threads,
+      source: source.current.from,
       over: mission?.dataset.missionDrop ?? (releases ? "list" : null),
       missions,
       hosts,
@@ -1004,6 +1019,7 @@ export function useMissionDrop(missions: ReadonlyArray<SidebarMission<Environmen
     }),
     drop: useStableCallback((at: At) => {
       const next = dropAt(at);
+      source.current = null;
       show(null);
       if (next === null) return false;
       if (next.refusal !== null) {
@@ -1028,6 +1044,20 @@ export function useMissionDrop(missions: ReadonlyArray<SidebarMission<Environmen
       }
       return true;
     }),
-    clear: useStableCallback(() => show(null)),
+    clear: useStableCallback(() => {
+      source.current = null;
+      show(null);
+    }),
+    /** Members a drag can take out by a route this client may change, even from a read-only row. */
+    leavable: new Set(
+      missions.flatMap((mission) =>
+        mission.members.flatMap(({ member }) =>
+          member.role === "member" &&
+          menu.leaveId(member.ref, { host: mission.host, mission: mission.mission }) !== null
+            ? [scopedThreadKey(member.ref)]
+            : [],
+        ),
+      ),
+    ),
   };
 }

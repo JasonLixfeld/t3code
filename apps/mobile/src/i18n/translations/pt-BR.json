@@ -5691,5 +5691,9 @@
   "1a1beecff68a6e61": "Verificar conta Google",
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
-  "201490988858b511": "retirada por {by}"
+  "201490988858b511": "retirada por {by}",
+  "58aa5059cf714786": "{status, select, inProgress {Listando as threads da missão} completed {Listou as threads da missão} failed {Falha ao listar as threads da missão} declined {Recusou listar as threads da missão} stopped {Parou de listar as threads da missão} other {Listando as threads da missão}}",
+  "ce059975145aa8c1": "{status, select, inProgress {Adicionando uma thread à missão} completed {Adicionou uma thread à missão} failed {Falha ao adicionar uma thread à missão} declined {Recusou adicionar uma thread à missão} stopped {Parou de adicionar uma thread à missão} other {Adicionando uma thread à missão}}",
+  "c5b456a231ea6b6d": "{status, select, inProgress {Fazendo uma thread sair da missão} completed {Uma thread saiu da missão} failed {Falha ao fazer uma thread sair da missão} declined {Recusou fazer uma thread sair da missão} stopped {Parou de fazer uma thread sair da missão} other {Fazendo uma thread sair da missão}}",
+  "7c80cb764b3df506": "{status, select, inProgress {Marcando a missão de uma thread} completed {Marcou a missão de uma thread} failed {Falha ao marcar a missão de uma thread} declined {Recusou marcar a missão de uma thread} stopped {Parou de marcar a missão de uma thread} other {Marcando a missão de uma thread}}"
 }

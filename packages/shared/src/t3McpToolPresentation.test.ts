@@ -8,6 +8,22 @@ import {
 } from "./t3McpToolPresentation.ts";
 
 describe("resolveT3McpToolPresentation", () => {
+  it("names the lead's tool that makes a member leave Leave mission", () => {
+    expect(resolveT3McpToolPresentation("mcp__t3-code__t3_mission_release")?.displayName).toBe(
+      "Leave mission",
+    );
+    for (const tool of [
+      "t3_mission_roster",
+      "t3_mission_add",
+      "t3_mission_release",
+      "t3_mission_tag",
+    ]) {
+      expect(resolveT3McpToolDefinition(`mcp__t3-code__${tool}`)?.labels.join(" ")).not.toMatch(
+        /releas/i,
+      );
+    }
+  });
+
   it("recognizes every T3 tool across provider prefixes and completion suffixes", () => {
     for (const tool of T3_MCP_TOOL_NAMES) {
       const presentation = resolveT3McpToolPresentation(tool);

@@ -5691,5 +5691,9 @@
   "1a1beecff68a6e61": "Vérifier le compte Google",
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
-  "201490988858b511": "retirée par {by}"
+  "201490988858b511": "retirée par {by}",
+  "58aa5059cf714786": "{status, select, inProgress {Liste des fils de la mission en cours} completed {Fils de la mission listés} failed {Échec de la liste des fils de la mission} declined {Liste des fils de la mission refusée} stopped {Liste des fils de la mission arrêtée} other {Liste des fils de la mission en cours}}",
+  "ce059975145aa8c1": "{status, select, inProgress {Ajout d’un fil à la mission} completed {Fil ajouté à la mission} failed {Échec de l’ajout d’un fil à la mission} declined {Ajout d’un fil à la mission refusé} stopped {Ajout d’un fil à la mission arrêté} other {Ajout d’un fil à la mission}}",
+  "c5b456a231ea6b6d": "{status, select, inProgress {Un fil quitte la mission} completed {Un fil a quitté la mission} failed {Échec du départ d’un fil de la mission} declined {Départ d’un fil de la mission refusé} stopped {Départ d’un fil de la mission arrêté} other {Un fil quitte la mission}}",
+  "7c80cb764b3df506": "{status, select, inProgress {Marquage de la mission d’un fil} completed {Mission d’un fil marquée} failed {Échec du marquage de la mission d’un fil} declined {Marquage de la mission d’un fil refusé} stopped {Marquage de la mission d’un fil arrêté} other {Marquage de la mission d’un fil}}"
 }

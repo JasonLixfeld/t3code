@@ -13062,5 +13062,10 @@
   "fc8c4754555661d2": "Lämnade inte uppdraget",
   "170f9d0b497cc95f": "Lämna uppdraget \"{mission}\"? Dess ledare ser att den här tråden lämnade det.",
   "24866304a8179ac3": "Lämnande väntar (datorn är offline)",
-  "af6ff641b523306c": "Lämnande nekades: {reason}"
+  "af6ff641b523306c": "Lämnande nekades: {reason}",
+  "58aa5059cf714786": "{status, select, inProgress {Listar uppdragets trådar} completed {Listade uppdragets trådar} failed {Kunde inte lista uppdragets trådar} declined {Avböjde att lista uppdragets trådar} stopped {Slutade lista uppdragets trådar} other {Listar uppdragets trådar}}",
+  "ce059975145aa8c1": "{status, select, inProgress {Lägger till en tråd i uppdraget} completed {Lade till en tråd i uppdraget} failed {Kunde inte lägga till en tråd i uppdraget} declined {Avböjde att lägga till en tråd i uppdraget} stopped {Slutade lägga till en tråd i uppdraget} other {Lägger till en tråd i uppdraget}}",
+  "c5b456a231ea6b6d": "{status, select, inProgress {Låter en tråd lämna uppdraget} completed {En tråd lämnade uppdraget} failed {Kunde inte låta en tråd lämna uppdraget} declined {Avböjde att låta en tråd lämna uppdraget} stopped {Slutade låta en tråd lämna uppdraget} other {Låter en tråd lämna uppdraget}}",
+  "7c80cb764b3df506": "{status, select, inProgress {Markerar en tråds uppdrag} completed {Markerade en tråds uppdrag} failed {Kunde inte markera en tråds uppdrag} declined {Avböjde att markera en tråds uppdrag} stopped {Slutade markera en tråds uppdrag} other {Markerar en tråds uppdrag}}",
+  "99f9a58a916a5c12": "Den här tråden flyttade till ett annat uppdrag."
 }

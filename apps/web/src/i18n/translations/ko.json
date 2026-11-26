@@ -12988,5 +12988,10 @@
   "fc8c4754555661d2": "미션에서 나가지 않음",
   "170f9d0b497cc95f": "미션 \"{mission}\"에서 나갈까요? 리드에는 이 스레드가 나간 것으로 표시됩니다.",
   "24866304a8179ac3": "나가기 대기 중(머신 오프라인)",
-  "af6ff641b523306c": "나가기 거부됨: {reason}"
+  "af6ff641b523306c": "나가기 거부됨: {reason}",
+  "58aa5059cf714786": "{status, select, inProgress {미션의 스레드 나열 중} completed {미션의 스레드를 나열함} failed {미션의 스레드를 나열하지 못함} declined {미션의 스레드 나열을 거부함} stopped {미션의 스레드 나열을 중지함} other {미션의 스레드 나열 중}}",
+  "ce059975145aa8c1": "{status, select, inProgress {미션에 스레드 추가 중} completed {미션에 스레드를 추가함} failed {미션에 스레드를 추가하지 못함} declined {미션에 스레드 추가를 거부함} stopped {미션에 스레드 추가를 중지함} other {미션에 스레드 추가 중}}",
+  "c5b456a231ea6b6d": "{status, select, inProgress {스레드를 미션에서 나가게 하는 중} completed {스레드가 미션에서 나감} failed {스레드를 미션에서 나가게 하지 못함} declined {스레드가 미션에서 나가는 것을 거부함} stopped {스레드를 미션에서 나가게 하는 것을 중지함} other {스레드를 미션에서 나가게 하는 중}}",
+  "7c80cb764b3df506": "{status, select, inProgress {스레드의 미션 표시 중} completed {스레드의 미션을 표시함} failed {스레드의 미션을 표시하지 못함} declined {스레드의 미션 표시를 거부함} stopped {스레드의 미션 표시를 중지함} other {스레드의 미션 표시 중}}",
+  "99f9a58a916a5c12": "이 스레드는 다른 미션으로 옮겨졌습니다."
 }

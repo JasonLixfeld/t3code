@@ -397,6 +397,16 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_thread_transfers: tool(["Read", "Reading", "Read", "thread transfers"], "thread-transfers"),
   t3_thread_organize: tool(["Organize", "Organizing", "Organized", "a thread"], "thread-organize"),
   t3_thread_update: tool(["Update", "Updating", "Updated", "T3 thread metadata"], "thread-update"),
+  t3_mission_roster: tool(["List", "Listing", "Listed", "the mission's threads"], "thread-list"),
+  t3_mission_add: tool(["Add", "Adding", "Added", "a thread to the mission"], "thread-update"),
+  // The tool keeps its name, which leads use mid-session; people see the member leave.
+  t3_mission_release: tool(
+    ["Make", "Making", "Made", "a thread leave the mission"],
+    "thread-update",
+    "t3-code",
+    "Leave mission",
+  ),
+  t3_mission_tag: tool(["Mark", "Marking", "Marked", "a thread's mission"], "thread-update"),
   t3_worktree_list: tool(["List", "Listing", "Listed", "workspace branches"], "worktree-list"),
   t3_preview_list: tool(["List", "Listing", "Listed", "preview tabs"], "browser", "browser"),
   t3_preview_close: tool(["Close", "Closing", "Closed", "a preview tab"], "browser", "browser"),

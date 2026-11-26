@@ -118,6 +118,12 @@ const listedClaims: Array<MissionHost["snapshot"]["claims"][number]> = [];
 const hosts: Array<MissionHost> = [
   { environmentId: LOCAL, snapshot: { missions: listedMissions, links: [], claims: listedClaims } },
 ];
+/** The sidebar's mission lists, told when a test changes what the machines list mid-test. */
+const hostChanges = new Set<() => void>();
+const publishHosts = () =>
+  act(() => {
+    for (const update of hostChanges) update();
+  });
 /** Machines whose missions this client may not change, which a test may add to for itself. */
 const readOnly = new Set<EnvironmentId>();
 const permissions = new Map<string, ReturnType<typeof Atom.make<boolean>>>();
@@ -177,7 +183,14 @@ vi.mock(import("../../state/server"), async (original) => {
     ),
     serverEnvironment: {
       ...actual.serverEnvironment,
-      missionsLiveAcross: () => Atom.make([...hosts]),
+      // Each sidebar read sees the hosts as they are, and a test's live update reaches it.
+      missionsLiveAcross: () =>
+        Atom.make((get) => {
+          const update = () => get.setSelf([...hosts]);
+          hostChanges.add(update);
+          get.addFinalizer(() => hostChanges.delete(update));
+          return [...hosts];
+        }),
       // This client may change the missions every machine keeps, unless a test says otherwise.
       addMissionMember: Object.assign(actual.serverEnvironment.addMissionMember, {
         permissionAtom: (environmentId: EnvironmentId) => mayChange(environmentId),
@@ -825,10 +838,12 @@ describe("missions in the sidebar", () => {
   });
 });
 
-/** Rows drag only on a connected machine this client may operate. */
+/** Rows drag only on a connected machine this client may operate, as missions may change there. */
 function allowDrag(): Disposable {
   vi.mocked(useConnectedEnvironmentIds).mockReturnValue([LOCAL]);
-  vi.mocked(useEnvironmentScope).mockReturnValue(true);
+  vi.mocked(useEnvironmentScope).mockImplementation(
+    (environmentId) => environmentId === null || !readOnly.has(environmentId),
+  );
   return {
     [Symbol.dispose]: () => {
       vi.mocked(useConnectedEnvironmentIds).mockReset();
@@ -1232,6 +1247,55 @@ describe("dragging threads into and out of missions", () => {
         input: { threadId: "unread", missionId: "dddddddddddd" },
       }),
     );
+    expect(commandFor("mission release member")).not.toHaveBeenCalled();
+  });
+
+  it("leaves nothing when a live update moves the dragged member to another mission", async () => {
+    leadOnLaptop("active", [LOCAL, LAPTOP]);
+    using _drag = allowDrag();
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
+    const drag = await dragBetween(
+      rowOf(screen.container, "Unrelated bug"),
+      releaseZone(screen.container),
+    );
+    // Mid-drag, the laptop lists it no more and a mission this machine leads holds it instead.
+    const laptop = hosts[1]!;
+    hosts[1] = {
+      ...laptop,
+      snapshot: {
+        ...laptop.snapshot,
+        missions: laptop.snapshot.missions.map((mission) => ({
+          ...mission,
+          members: mission.members.filter((member) => member.ref.threadId !== "plain"),
+        })),
+      },
+    };
+    listedMissions.push({
+      missionId: "eeeeeeeeeeee",
+      name: "Moved here",
+      createdAt: "2026-11-23T00:00:00.000Z",
+      members: [
+        { ref: ref(LOCAL, "moved-lead"), role: "lead", state: "active" },
+        { ref: ref(LOCAL, "plain"), role: "member", state: "active" },
+      ],
+    });
+    onTestFinished(() => void listedMissions.pop());
+    listedClaims[0] = {
+      threadId: ThreadId.make("plain"),
+      missionId: "eeeeeeeeeeee",
+      name: "Moved here",
+    };
+    const here = hosts[0]!;
+    hosts[0] = { ...here, snapshot: { ...here.snapshot, missions: [...listedMissions] } };
+    onTestFinished(() => {
+      hosts[0] = here;
+    });
+    await publishHosts();
+    await drag.moveTo(releaseZone(screen.container));
+    await drag.release();
+    await act(async () => {});
+    expect(commandFor("mission leave")).not.toHaveBeenCalled();
     expect(commandFor("mission release member")).not.toHaveBeenCalled();
   });
 

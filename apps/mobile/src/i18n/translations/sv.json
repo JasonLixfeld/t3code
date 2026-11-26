@@ -5697,5 +5697,9 @@
   "1a1beecff68a6e61": "Verifiera Google-konto",
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
-  "201490988858b511": "återkallad av {by}"
+  "201490988858b511": "återkallad av {by}",
+  "58aa5059cf714786": "{status, select, inProgress {Listar uppdragets trådar} completed {Listade uppdragets trådar} failed {Kunde inte lista uppdragets trådar} declined {Avböjde att lista uppdragets trådar} stopped {Slutade lista uppdragets trådar} other {Listar uppdragets trådar}}",
+  "ce059975145aa8c1": "{status, select, inProgress {Lägger till en tråd i uppdraget} completed {Lade till en tråd i uppdraget} failed {Kunde inte lägga till en tråd i uppdraget} declined {Avböjde att lägga till en tråd i uppdraget} stopped {Slutade lägga till en tråd i uppdraget} other {Lägger till en tråd i uppdraget}}",
+  "c5b456a231ea6b6d": "{status, select, inProgress {Låter en tråd lämna uppdraget} completed {En tråd lämnade uppdraget} failed {Kunde inte låta en tråd lämna uppdraget} declined {Avböjde att låta en tråd lämna uppdraget} stopped {Slutade låta en tråd lämna uppdraget} other {Låter en tråd lämna uppdraget}}",
+  "7c80cb764b3df506": "{status, select, inProgress {Markerar en tråds uppdrag} completed {Markerade en tråds uppdrag} failed {Kunde inte markera en tråds uppdrag} declined {Avböjde att markera en tråds uppdrag} stopped {Slutade markera en tråds uppdrag} other {Markerar en tråds uppdrag}}"
 }

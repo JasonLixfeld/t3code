@@ -576,6 +576,8 @@ export function resolveMissionDrop(input: {
   readonly hosts: ReadonlyArray<MissionHost>;
   readonly machineLabel: (environmentId: EnvironmentId) => string;
   readonly canChangeOn: (environmentId: EnvironmentId) => boolean;
+  /** The Mission the dragged member was in when the drag began, if it was in one. */
+  readonly source?: { readonly host: EnvironmentId; readonly missionId: string } | null;
   readonly resolve?: MessageResolver;
 }): MissionDrop | null {
   const resolve = input.resolve ?? m;
@@ -588,6 +590,11 @@ export function resolveMissionDrop(input: {
   if (input.over === "list") {
     const ref = from?.members.find((entry) => scopedThreadKey(entry.member.ref) === input.dragged)
       ?.member.ref;
+    // Its row moved to another Mission during the drag, so it leaves neither.
+    const moved =
+      input.source != null &&
+      from !== undefined &&
+      (input.source.host !== from.host || input.source.missionId !== from.mission.missionId);
     return from === undefined || ref === undefined
       ? null
       : {
@@ -595,14 +602,15 @@ export function resolveMissionDrop(input: {
           mission: from.key,
           host: from.host,
           missionId: from.mission.missionId,
-          refusal:
-            missionLeaveId(
-              { environmentId: ref.environmentId, id: ref.threadId },
-              from,
-              input.hosts,
-              input.canChangeOn,
-              from.mission.missionId,
-            ) === null
+          refusal: moved
+            ? resolve(msg("This thread moved to another mission."))
+            : missionLeaveId(
+                  { environmentId: ref.environmentId, id: ref.threadId },
+                  from,
+                  input.hosts,
+                  input.canChangeOn,
+                  from.mission.missionId,
+                ) === null
               ? blockLabel("not-allowed", "", resolve)
               : null,
         };

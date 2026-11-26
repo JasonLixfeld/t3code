@@ -6,6 +6,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
+import { readLocalApi } from "../localApi";
 import { dispatchCommandPalette, useCommandPaletteStore } from "../commandPaletteStore";
 import { LAST_USED_PROJECT_STORAGE_KEY } from "../hooks/useHandleNewThread";
 import { removeLocalStorageItem } from "../hooks/useLocalStorage";
@@ -19,7 +20,7 @@ import { missionAddGroupValue } from "./CommandPaletteThreadActions";
 import { markMissionDraft } from "./sidebar/missionDraftStore";
 import { useMissionHosts, useMissionMenu } from "./sidebar/MissionsSection";
 import { buildMissionMenuItems, type MissionHost } from "./sidebar/missions.logic";
-import type { Mission } from "@t3tools/contracts";
+import type { LocalApi, Mission } from "@t3tools/contracts";
 import { __setClientSettingsForTests } from "../hooks/useSettings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { useScratchProject } from "../hooks/useScratchProject";
@@ -44,8 +45,41 @@ vi.mock("../state/server", async (original) => {
       command,
     })),
   );
-  return { ...actual, primaryServerKeybindingsAtom: Atom.make(jumpBindings) };
+  return {
+    ...actual,
+    primaryServerKeybindingsAtom: Atom.make(jumpBindings),
+    // The machines' mission lists the real mission menu reads, and the right to change them.
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      missionsLiveAcross: () => Atom.make(realMissionMenu.hosts),
+      addMissionMember: Object.assign(actual.serverEnvironment.addMissionMember, {
+        permissionAtom: () => Atom.make(true),
+      }),
+    },
+  };
 });
+// The commands the real mission menu sends, by the label it sends them under.
+const realMissionMenu = vi.hoisted(() => ({
+  hosts: [] as ReadonlyArray<unknown>,
+  commands: new Map<string, ReturnType<typeof vi.fn>>(),
+}));
+vi.mock(import("../state/use-atom-command"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    useAtomCommand: ((command: never, options?: string) => {
+      if (typeof options !== "string" || !options.startsWith("mission ")) {
+        return actual.useAtomCommand(command, options);
+      }
+      const sent =
+        realMissionMenu.commands.get(options) ??
+        vi.fn().mockResolvedValue({ _tag: "Success", value: undefined });
+      realMissionMenu.commands.set(options, sent);
+      return sent;
+    }) as never,
+  };
+});
+vi.mock("../localApi", { spy: true });
 vi.mock("../hooks/useHandleNewThread", async (original) => {
   const actual = await original<typeof import("../hooks/useHandleNewThread")>();
   return {
@@ -915,5 +949,26 @@ describe("CommandPalette mission thread actions", () => {
       await page.getByRole("option", { name: /^Leave mission/ }).click();
       await vi.waitFor(() => expect(missionRun).toHaveBeenCalledWith(id, [ref]));
     }
+  });
+
+  it("sends no leave when Leave mission's confirmation is cancelled in the real menu", async () => {
+    const thread = openThread(true);
+    const ref = { environmentId: LOCAL, threadId: thread.id };
+    const host = hostWith(["Ship v2"], undefined, [{ ref, role: "member", state: "active" }]);
+    const claims = [{ threadId: thread.id, missionId: "ba9876543210", name: "Ship v2" }];
+    realMissionMenu.hosts = [{ ...host, snapshot: { ...host.snapshot, claims } }];
+    realMissionMenu.commands.clear();
+    const confirm = vi.fn().mockResolvedValue(false);
+    vi.mocked(readLocalApi).mockReturnValue({ dialogs: { confirm } } as unknown as LocalApi);
+    onTestFinished(() => {
+      realMissionMenu.hosts = [];
+      vi.mocked(readLocalApi).mockRestore();
+    });
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    openCommandPalette();
+    await page.getByRole("option", { name: /^Leave mission/ }).click();
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(realMissionMenu.commands.get("mission leave")).not.toHaveBeenCalled();
   });
 });

@@ -5678,5 +5678,9 @@
   "1a1beecff68a6e61": "验证 Google 账户",
   "99451a5d2d40440f": "已由 {by} 撤回。",
   "3ee30a50b70fffab": "已由 {by} 撤回：{reason}",
-  "201490988858b511": "已由 {by} 撤回"
+  "201490988858b511": "已由 {by} 撤回",
+  "58aa5059cf714786": "{status, select, inProgress {正在列出任务的会话} completed {已列出任务的会话} failed {未能列出任务的会话} declined {已拒绝列出任务的会话} stopped {已停止列出任务的会话} other {正在列出任务的会话}}",
+  "ce059975145aa8c1": "{status, select, inProgress {正在将会话添加到任务} completed {已将会话添加到任务} failed {未能将会话添加到任务} declined {已拒绝将会话添加到任务} stopped {已停止将会话添加到任务} other {正在将会话添加到任务}}",
+  "c5b456a231ea6b6d": "{status, select, inProgress {正在让会话离开任务} completed {已让会话离开任务} failed {未能让会话离开任务} declined {已拒绝让会话离开任务} stopped {已停止让会话离开任务} other {正在让会话离开任务}}",
+  "7c80cb764b3df506": "{status, select, inProgress {正在标记会话的任务} completed {已标记会话的任务} failed {未能标记会话的任务} declined {已拒绝标记会话的任务} stopped {已停止标记会话的任务} other {正在标记会话的任务}}"
 }

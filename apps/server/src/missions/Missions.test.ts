@@ -2129,6 +2129,35 @@ it.effect("many watching clients share one sweep, at the start and on each inter
   );
 });
 
+it.effect("a leave meant for one mission keeps the thread in the mission it moved to", () => {
+  const secondLead = ref(HERE, "second-lead");
+  const world = makeWorld([lead, secondLead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const first = yield* createOne;
+      const second = yield* missions.create({
+        missionId: "ba9876543210",
+        leadThreadId: secondLead.threadId,
+      });
+      yield* missions.addMember({ missionId: first.missionId, member: localMember });
+      yield* missions.leaveHere(localMember.threadId, first.missionId);
+      yield* missions.addMember({ missionId: second.missionId, member: localMember });
+      const tags = world.tags(localMember);
+
+      // A stale row under the first mission asks to leave it.
+      const refused = yield* missions
+        .leaveHere(localMember.threadId, first.missionId)
+        .pipe(Effect.flip);
+      assert.include(refused.message, "now in another mission");
+      assert.deepEqual(world.tags(localMember), tags);
+      const store = yield* MissionStore.MissionStore;
+      assert.equal((yield* store.claim(localMember.threadId))?.missionId, second.missionId);
+    }),
+  );
+});
+
 it.effect("the lead thread of a mission here cannot leave it", () => {
   const world = makeWorld([lead]);
   return withMissions(

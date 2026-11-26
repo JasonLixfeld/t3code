@@ -873,4 +873,36 @@ const T3_TOOL_SENTENCES: ReadonlyMap<string, T3ToolSentence> = new Map<string, T
       ),
     },
   ],
+  [
+    "List\nListing\nListed\nthe mission's threads",
+    {
+      detail: msg(
+        "{status, select, inProgress {Listing the mission's threads} completed {Listed the mission's threads} failed {Failed to list the mission's threads} declined {Declined to list the mission's threads} stopped {Stopped listing the mission's threads} other {Listing the mission's threads}}",
+      ),
+    },
+  ],
+  [
+    "Add\nAdding\nAdded\na thread to the mission",
+    {
+      detail: msg(
+        "{status, select, inProgress {Adding a thread to the mission} completed {Added a thread to the mission} failed {Failed to add a thread to the mission} declined {Declined to add a thread to the mission} stopped {Stopped adding a thread to the mission} other {Adding a thread to the mission}}",
+      ),
+    },
+  ],
+  [
+    "Make\nMaking\nMade\na thread leave the mission",
+    {
+      detail: msg(
+        "{status, select, inProgress {Making a thread leave the mission} completed {Made a thread leave the mission} failed {Failed to make a thread leave the mission} declined {Declined to make a thread leave the mission} stopped {Stopped making a thread leave the mission} other {Making a thread leave the mission}}",
+      ),
+    },
+  ],
+  [
+    "Mark\nMarking\nMarked\na thread's mission",
+    {
+      detail: msg(
+        "{status, select, inProgress {Marking a thread's mission} completed {Marked a thread's mission} failed {Failed to mark a thread's mission} declined {Declined to mark a thread's mission} stopped {Stopped marking a thread's mission} other {Marking a thread's mission}}",
+      ),
+    },
+  ],
 ]);
