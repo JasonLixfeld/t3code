@@ -406,7 +406,7 @@ it.effect(
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const leads = new Set<string>([leadHere.thread.threadId]);
+        const leads = new Map<string, string>([[leadHere.thread.threadId, SHIP]]);
         const settingsContext = yield* Layer.build(ServerSettings.layerTest());
         yield* Context.get(settingsContext, ServerSettings.ServerSettingsService).updateSettings({
           linkedEnvironmentsEnabled: true,
@@ -430,7 +430,7 @@ it.effect(
                   Effect.sync(() =>
                     leads.has(threadId)
                       ? {
-                          missionId: SHIP,
+                          missionId: leads.get(threadId)!,
                           name: "Ship",
                           leadThreadId: threadId,
                           createdAt: "",
@@ -445,11 +445,10 @@ it.effect(
                     ? Effect.succeed({ state: "joined" as const, needsBrief: false })
                     : Effect.fail(new MissionError({ message: Missions.LEADS_NO_MISSION })),
                 releaseMember: () => Effect.succeed("released" as const),
-                claimOf: () => Effect.undefined,
-                create: ({ missionId, leadThreadId }) =>
+                startAsLead: (lead) =>
                   Effect.sync(() => {
-                    leads.add(leadThreadId);
-                    return { missionId, name: "Ship", createdAt: "", members: [] };
+                    leads.set(lead, "abcdef012345");
+                    return { missionId: "abcdef012345", name: "Next", createdAt: "", members: [] };
                   }),
               }),
             ),
@@ -490,7 +489,10 @@ it.effect(
           readonly result?: {
             readonly isError?: boolean;
             readonly tools?: ReadonlyArray<{ readonly name: string }>;
-            readonly structuredContent?: { readonly tools?: ReadonlyArray<{ name: string }> };
+            readonly structuredContent?: {
+              readonly tools?: ReadonlyArray<{ name: string }>;
+              readonly missionId?: string;
+            };
           };
           readonly error?: unknown;
         };
@@ -576,8 +578,10 @@ it.effect(
         });
         assert.include(JSON.stringify(refused), "This thread leads no mission.");
         const started = yield* agent.rpc("tools/call", { name: "t3_mission_start", arguments: {} });
-        assert.notEqual(started.result?.isError, true, JSON.stringify(started));
-        assert.isTrue(leads.has(agentHere.thread.threadId));
+        const startedId = started.result?.structuredContent?.missionId;
+        assert.match(startedId ?? "", /^[0-9a-f]{12}$/, JSON.stringify(started));
+        const roster = yield* agent.rpc("tools/call", { name: "t3_mission_roster", arguments: {} });
+        assert.equal(roster.result?.structuredContent?.missionId, startedId);
         for (const [name, args] of leadCalls) {
           const answer = yield* agent.rpc("tools/call", { name, arguments: args });
           assert.isUndefined(answer.error, name);

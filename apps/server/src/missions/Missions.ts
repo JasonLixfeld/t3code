@@ -120,7 +120,7 @@ export class Missions extends Context.Service<
       missionId?: string,
     ) => Effect.Effect<void, MissionError>;
     readonly ledBy: (threadId: ThreadId) => Effect.Effect<MissionRecord | undefined>;
-    readonly claimOf: (threadId: ThreadId) => Effect.Effect<MissionClaim | undefined>;
+    readonly startAsLead: (lead: ThreadId) => Effect.Effect<Mission, MissionError>;
     readonly heardInWait: (
       lead: ThreadId,
       member: ScopedThreadRef,
@@ -209,6 +209,7 @@ interface Machine {
 }
 
 export const LEADS_NO_MISSION = "This thread leads no mission.";
+const LEADS_A_MISSION = "This thread already leads a mission.";
 
 const memberKey = (ref: ScopedThreadRef) => JSON.stringify([ref.environmentId, ref.threadId]);
 const sameSnapshot = (a: MissionsSnapshot, b: MissionsSnapshot) =>
@@ -953,21 +954,29 @@ const make = Effect.gen(function* () {
     return mission ?? (yield* fail("That mission was not found."));
   });
 
-  const create = Effect.fn("Missions.create")(function* (input: {
-    readonly missionId: string;
-    readonly leadThreadId: ThreadId;
-  }) {
+  const leadTitle = Effect.fn("Missions.leadTitle")(function* (leadThreadId: ThreadId) {
     const shell = yield* threads
-      .getThreadShell(input.leadThreadId)
+      .getThreadShell(leadThreadId)
       .pipe(Effect.catch((error) => fail(`The thread could not be read: ${error.message}`)));
     if (shell !== null && shell.deletedAt === null && !threadHasMessages(shell)) {
       return yield* fail("A mission needs a lead thread with messages. Send a message first.");
     }
-    const mission = yield* claims.create(here, {
-      ...input,
-      name: missionNameFromTitle(shell?.title ?? ""),
-    });
+    return shell?.title ?? "";
+  });
+
+  const createLedBy = Effect.fn("Missions.createLedBy")(function* (
+    input: { readonly missionId: string; readonly leadThreadId: ThreadId },
+    title: string,
+  ) {
+    const mission = yield* claims.create(here, { ...input, name: missionNameFromTitle(title) });
     return yield* missionView(mission, yield* machines, yield* shown);
+  });
+
+  const create = Effect.fn("Missions.create")(function* (input: {
+    readonly missionId: string;
+    readonly leadThreadId: ThreadId;
+  }) {
+    return yield* createLedBy(input, yield* leadTitle(input.leadThreadId));
   });
 
   const deleteMission = Effect.fn("Missions.deleteMission")(function* (input: {
@@ -1500,13 +1509,25 @@ const make = Effect.gen(function* () {
     }
   });
 
+  const startAsLead = Effect.fn("Missions.startAsLead")(function* (lead: ThreadId) {
+    if ((yield* ledBy(lead)) !== undefined) return yield* fail(LEADS_A_MISSION);
+    const title = yield* leadTitle(lead);
+    const claim = yield* store.claim(lead);
+    if (claim !== undefined) yield* leaveHere(lead, claim.missionId);
+    const uuid = yield* random.uuidV4().pipe(Effect.orDie);
+    return yield* createLedBy(
+      { missionId: uuid.replaceAll("-", "").slice(0, 12), leadThreadId: lead },
+      title,
+    );
+  });
+
   return Missions.of({
     joinStarted,
     withLead,
     leadChanges: Stream.fromPubSub(leadChanged),
     joinedWithPriorWork: Stream.fromPubSub(joined),
     ledBy,
-    claimOf: store.claim,
+    startAsLead,
     heardInWait,
     roster,
     memberStatuses,

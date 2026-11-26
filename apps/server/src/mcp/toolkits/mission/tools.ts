@@ -11,7 +11,6 @@ import {
 } from "@t3tools/contracts";
 import * as Fiber from "effect/Fiber";
 import * as Context from "effect/Context";
-import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
@@ -124,7 +123,7 @@ export const MissionToolkit = Toolkit.make(
     success: Schema.Struct({ missionId: Schema.String, name: Schema.String }),
     failure: OrchestratorMcpFailure,
     failureMode: "return",
-    dependencies: [...leadOnly, SecureRandom.SecureRandom],
+    dependencies: leadOnly,
   })
     .annotate(Tool.Destructive, true)
     .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),

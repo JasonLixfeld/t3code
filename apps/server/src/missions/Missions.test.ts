@@ -1947,11 +1947,12 @@ it.effect("a thread added again keeps its claim when the release sent before arr
       const [first] = yield* world.laptop.claims!.list(LEAD_ON_LAPTOP);
       world.laptop.mode = "hanging";
       const releasing = yield* Effect.forkChild(missions.releaseMember(member));
+      assert.deepEqual(yield* world.nextCalls(2), ["join", "release"]);
       yield* TestClock.adjust(Missions.MEMBER_CALL_DEADLINE);
       yield* Fiber.join(releasing);
       world.laptop.mode = "offline";
       yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
-      assert.deepEqual(yield* world.nextCalls(4), ["join", "release", "release", "release"]);
+      assert.deepEqual(yield* world.nextCalls(2), ["release", "release"]);
       assert.deepEqual(yield* world.laptop.claims!.list(LEAD_ON_LAPTOP), [first!]);
       assert.equal(stateOf(yield* listed, laptopMember), "release-pending");
 
@@ -2349,7 +2350,6 @@ const leadTool = (
       Layer.mock(Project.ProjectService)({}),
       world.workspacesLayer,
       NodeServices.layer,
-      NodeCrypto.layer,
     );
     const result = yield* McpServer.McpServer.pipe(
       Effect.flatMap((server) => server.callTool({ name, arguments: { ...args } })),
@@ -2368,19 +2368,50 @@ const leadTool = (
 const leadRuns = (world: ReturnType<typeof makeWorld>, fields: Record<string, unknown> = {}) =>
   world.shell(lead, { activeRunId: "run-lead", providerInstanceId: "codex", ...fields });
 
+const memberScope = {
+  ...leadScope,
+  requestNamespace: "provider:local",
+  thread: {
+    ...leadScope.thread!,
+    threadId: localMember.threadId,
+    providerSessionId: "provider:local",
+  },
+};
+
+it.effect("a member with no messages cannot start a mission, and stays in its old one", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const first = yield* createOne;
+      yield* (yield* Missions.Missions).addMember({
+        missionId: first.missionId,
+        member: localMember,
+      });
+      world.empty(localMember);
+      world.shell(localMember, { activeRunId: "run-local", providerInstanceId: "codex" });
+      const refused = yield* leadTool(world, "t3_mission_start", {}, memberScope);
+      assert.include(refused, "A mission needs a lead thread with messages. Send a message first.");
+      assert.deepEqual(
+        (yield* listed).missions.map((mission) => [mission.missionId, membersOf(mission)]),
+        [
+          [
+            first.missionId,
+            [
+              [keyOf(lead), "active"],
+              [keyOf(localMember), "active"],
+            ],
+          ],
+        ],
+      );
+    }),
+  );
+});
+
 it.effect(
   "a member that starts a mission leaves its old one and leads the new one, and a lead is refused",
   () => {
     const world = makeWorld([lead, localMember]);
-    const memberScope = {
-      ...leadScope,
-      requestNamespace: "provider:local",
-      thread: {
-        ...leadScope.thread!,
-        threadId: localMember.threadId,
-        providerSessionId: "provider:local",
-      },
-    };
     return withMissions(
       world,
       Effect.gen(function* () {
