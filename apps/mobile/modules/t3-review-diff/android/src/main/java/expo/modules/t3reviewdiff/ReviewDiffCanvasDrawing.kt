@@ -227,6 +227,7 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
   private var asciiCharacterWidth = 0f
   private var asciiFixedPitch = false
   private var wordDiffLefts = FloatArray(0)
+  private val selectionPath = Path()
 
   fun tokensChangeWidth(
     previous: Map<String, List<DiffToken>>,
@@ -426,18 +427,81 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     style: DiffStyle
   ) {
     val changed = row.change == "add" || row.change == "delete"
+    // Native layouts carry word diffs as spans.
     if (lines.nativeLayout != null || row.wordDiffRanges.isEmpty() || !changed) return
     val color = if (row.change == "add") theme.addBar else theme.deleteBar
-    backgroundPaint.color = withAlpha(color, 71)
+    fillRanges(canvas, row, tokens, codeX, top, bottom, lines, style, row.wordDiffRanges, withAlpha(color, 71))
+  }
+
+  /** Paints search matches without touching the cached layouts, so geometry stays as it is. */
+  @Suppress("LongParameterList")
+  fun drawSearchRanges(
+    canvas: Canvas,
+    row: DiffRow,
+    tokens: List<DiffToken>?,
+    codeX: Float,
+    top: Int,
+    bottom: Int,
+    baseline: Float,
+    lines: CodeLines,
+    style: DiffStyle,
+    ranges: List<DiffWordDiffRange>,
+    color: Int
+  ) {
+    if (ranges.isEmpty()) return
+    val nativeLayout = lines.nativeLayout
+    if (nativeLayout == null) {
+      fillRanges(canvas, row, tokens, codeX, top, bottom, lines, style, ranges, color)
+      return
+    }
+    backgroundPaint.color = color
+    canvas.save()
+    canvas.translate(codeX, baseline - nativeLayout.getLineBaseline(0))
+    val length = nativeLayout.text.length
+    for (range in ranges) {
+      selectionPath.reset()
+      nativeLayout.getSelectionPath(
+        range.start.coerceIn(0, length),
+        range.end.coerceIn(0, length),
+        selectionPath,
+      )
+      canvas.drawPath(selectionPath, backgroundPaint)
+    }
+    canvas.restore()
+  }
+
+  /** Where `offset` of the row's code starts, from the code's left edge. */
+  fun codeOffsetX(row: DiffRow, lines: CodeLines, offset: Int, style: DiffStyle): Float {
+    lines.nativeLayout?.let { return it.getPrimaryHorizontal(offset.coerceIn(0, it.text.length)) }
+    val line = lines.lineForOffset(offset)
+    configureCodePaint(theme.text, 0, style)
+    val start = lines.starts[line].coerceIn(0, row.content.length)
+    return textPaint.measureText(row.content, start, offset.coerceIn(start, row.content.length))
+  }
+
+  @Suppress("LongParameterList")
+  private fun fillRanges(
+    canvas: Canvas,
+    row: DiffRow,
+    tokens: List<DiffToken>?,
+    codeX: Float,
+    top: Int,
+    bottom: Int,
+    lines: CodeLines,
+    style: DiffStyle,
+    ranges: List<DiffWordDiffRange>,
+    color: Int
+  ) {
+    backgroundPaint.color = color
     configureCodePaint(theme.text, 0, style)
     val fontHeight = textPaint.fontMetrics.run { descent - ascent }
     val highlightHeight = max(4f * density, min(bottom - top - 4f * density, fontHeight))
     val highlightTop = (top + bottom - highlightHeight) / 2f
-    if (wordDiffLefts.size < row.wordDiffRanges.size) {
-      wordDiffLefts = FloatArray(row.wordDiffRanges.size)
+    if (wordDiffLefts.size < ranges.size) {
+      wordDiffLefts = FloatArray(ranges.size)
     }
     val lefts = wordDiffLefts
-    val lastEnd = row.wordDiffRanges.maxOf { it.end }
+    val lastEnd = ranges.maxOf { it.end }
     forEachCodePiece(row, tokens, style, lines) { text, start, end, tokenStart, x, line, _ ->
       val pieceX = codeX + x
       val advance = textPaint.measureText(text, start, end)
@@ -449,7 +513,7 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
       } else {
         pieceX + textPaint.getRunAdvance(text, start, end, start, end, false, at)
       }
-      row.wordDiffRanges.forEachIndexed { index, range ->
+      ranges.forEachIndexed { index, range ->
         val left = max(range.start, lines.starts[line]) - tokenStart
         val right = min(range.end, lines.end(line, Int.MAX_VALUE)) - tokenStart
         if (right <= left) return@forEachIndexed
