@@ -192,7 +192,7 @@ export function missingMemberMenuItems(
     {
       host: place.host,
       mission,
-      leadGone: ctx.can("lead", place.host),
+      leadGone: place.member.state === "deleted" && ctx.can("lead", place.host),
       canChange: ctx.can("change", place.host),
     },
     ctx.resolve,

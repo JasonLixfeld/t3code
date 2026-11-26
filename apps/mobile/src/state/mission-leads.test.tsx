@@ -13,10 +13,16 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { missingMemberMenuItems } from "../features/threads/missionMenus";
+import {
+  buildThreadListV2Items,
+  buildThreadListV2ListItems,
+} from "../features/threads/threadListV2";
+import { m } from "../i18n/messages";
 import { makeRawThreadShell, makeThreadShellFixture } from "../test-fixtures";
 import { appAtomRegistry } from "./atom-registry";
 import { useMissionLeadShells } from "./mission-leads";
-import { threadFamilies } from "./threads";
+import { environmentThreadShells, threadFamilies } from "./threads";
 
 const mounts = vi.hoisted(() => new Map<string, number>());
 
@@ -127,5 +133,54 @@ describe("useMissionLeadShells", () => {
 
     render([], []);
     expect(mounts.get(`${DESK}:far`)).toBe(0);
+  });
+
+  it("offers lead recovery only for a lead that no read holds, not for a hidden one", () => {
+    const hosts = hostWith(["hidden", "family", "gone"]);
+    appAtomRegistry.set(
+      environmentThreadShells.environmentThreadIndexAtom(DESK) as Atom.Writable<
+        ReadonlyMap<ThreadId, OrchestrationV2ThreadShell>
+      >,
+      new Map([[ThreadId.make("hidden"), makeRawThreadShell({ id: ThreadId.make("hidden") })]]),
+    );
+    settle("hidden");
+    settle("family", ["family"]);
+    settle("gone");
+    render(hosts, []);
+    expect([...missing]).toEqual([`${DESK}:gone`]);
+
+    const built = buildThreadListV2Items({
+      threads: [],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      missionHosts: hosts,
+      settledMissingMissionLeadKeys: missing,
+    });
+    const recovery = buildThreadListV2ListItems({
+      items: built.items,
+      missions: built.missions,
+      pendingTasks: [],
+    }).flatMap((item) =>
+      item.type === "v2-mission-member"
+        ? [
+            [
+              item.mission.member.ref.threadId,
+              missingMemberMenuItems(item.mission, {
+                hosts,
+                threads: [],
+                machineLabel: () => "Desk",
+                can: () => true,
+                resolve: m,
+              }).some((row) => row.id === "mission-new-lead"),
+            ],
+          ]
+        : [],
+    );
+    expect(recovery).toEqual([
+      ["hidden", false],
+      ["family", false],
+      ["gone", true],
+    ]);
   });
 });

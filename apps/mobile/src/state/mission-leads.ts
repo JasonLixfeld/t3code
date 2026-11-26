@@ -7,11 +7,11 @@ import {
 import type { MissionHost } from "@t3tools/client-runtime/missions";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadFamilyRead } from "@t3tools/client-runtime/state/threads";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useState } from "react";
 
 import { appAtomRegistry } from "./atom-registry";
-import { threadFamilies } from "./threads";
+import { environmentThreadShells, threadFamilies } from "./threads";
 
 const activeLeadKeys = (hosts: ReadonlyArray<MissionHost>) =>
   hosts.flatMap((host) =>
@@ -22,27 +22,27 @@ const activeLeadKeys = (hosts: ReadonlyArray<MissionHost>) =>
     ),
   );
 
-const settledLeadReadsAtom = Atom.family((keys: string) =>
+const settledMissingLeadsAtom = Atom.family((keys: string) =>
   Atom.make(
     (get): ReadonlySet<string> =>
       new Set(
         (JSON.parse(keys) as ReadonlyArray<string>).filter((key) => {
           const ref = parseScopedThreadKey(key);
+          if (ref === null) return false;
+          const read = get(threadFamilies.familyAtom(ref.environmentId, ref.threadId));
           return (
-            ref !== null &&
-            threadFamilyRead(get(threadFamilies.familyAtom(ref.environmentId, ref.threadId))) ===
-              "settled"
+            threadFamilyRead(read) === "settled" &&
+            AsyncResult.isSuccess(read) &&
+            !read.value.threads.some((thread) => thread.id === ref.threadId) &&
+            !get(environmentThreadShells.environmentThreadIndexAtom(ref.environmentId)).has(
+              ref.threadId,
+            )
           );
         }),
       ),
-  ).pipe(Atom.withLabel(`mobile-mission-lead-reads:${keys}`)),
+  ).pipe(Atom.withLabel(`mobile-mission-missing-leads:${keys}`)),
 );
 
-/**
- * Loads each active lead the thread list does not hold, such as one on another project or
- * machine, so its row shows its real title and status. Returns the leads whose read settled
- * without them: those are gone.
- */
 export function useMissionLeadShells(
   hosts: ReadonlyArray<MissionHost>,
   threads: ReadonlyArray<Pick<EnvironmentThreadShell, "environmentId" | "id">>,
@@ -68,5 +68,5 @@ export function useMissionLeadShells(
       for (const release of releases) release();
     };
   }, [wantedKey]);
-  return useAtomValue(settledLeadReadsAtom(JSON.stringify(missing)));
+  return useAtomValue(settledMissingLeadsAtom(JSON.stringify(missing)));
 }

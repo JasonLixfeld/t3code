@@ -855,8 +855,7 @@ export function buildThreadListV2Items(input: {
   /** Settled threads in scope that are not local (older settled threads not loaded). */
   readonly unloadedSettledCount?: number;
   readonly missionHosts?: ReadonlyArray<MissionHost>;
-  /** Active leads whose read settled without them. */
-  readonly unavailableMissionLeads?: ReadonlySet<string>;
+  readonly settledMissingMissionLeadKeys?: ReadonlySet<string>;
   readonly collapsedMissions?: ReadonlySet<string>;
 }): ThreadListV2Layout {
   const now = input.now;
@@ -1127,7 +1126,7 @@ function groupThreadListV2Missions(
     input.missionHosts ?? [],
     input.threads,
     scope,
-    input.unavailableMissionLeads,
+    input.settledMissingMissionLeadKeys,
   );
   const item = (thread: EnvironmentThreadShell): ThreadListV2Item => {
     const snoozed =
