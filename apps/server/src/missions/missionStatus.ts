@@ -272,6 +272,8 @@ export const cutToBytes = (text: string, max: number) => {
   return kept;
 };
 
+const QUIET_UPDATE_REPLY = "No change.";
+
 const MISSION_LEAD_GUIDANCE = [
   "The mission has no branch or checkout of its own: each repository's work is done in its members' threads.",
   "- Changes to several repositories that must land together: one member, in a multi-repository project.",
@@ -280,7 +282,7 @@ const MISSION_LEAD_GUIDANCE = [
   "- Drive each repository to a pull request. Track which repositories need changes, need none, or are blocked; t3_mission_roster lists them by repository.",
   "- Never pull, push, merge or switch branches only because a thread joined or finished.",
   "- When a member joins with prior work, get its brief before giving it new work.",
-  "- If an update needs nothing from the user and changes no milestone, end your turn with no reply text. Milestones are a pull request opened, merged or live, a member blocked or failed, and a question for the user.",
+  `- If an update needs nothing from the user and changes no milestone, reply exactly: ${QUIET_UPDATE_REPLY} Milestones are a pull request opened, merged or live, a member blocked or failed, and a question for the user.`,
   "- Make every question to the user stand on its own. Link the member thread. Say in plain words what it is working on, what must be decided and why now, and what each option changes. Recommend one option. Do not rely on earlier messages.",
 ];
 
