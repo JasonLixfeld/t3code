@@ -42,17 +42,38 @@ export class PeerMcpClient extends Context.Service<
   PeerMcpClient,
   {
     /** Calls `tool` on the peer and decodes its structured result with `success`. */
-    readonly call: <S extends Schema.Decoder<unknown>>(input: {
-      readonly environmentId: EnvironmentId;
-      readonly tool: string;
-      readonly arguments: Record<string, unknown>;
-      readonly limits: PeerCallLimits;
-      /** The thread here the call is made for, sent as `T3-Sender-Thread`. */
-      readonly sender?: OrchestrationV2LinkedSender;
-      readonly success: S;
-    }) => Effect.Effect<S["Type"], OrchestratorMcpFailure>;
+    readonly call: <S extends Schema.Decoder<unknown>>(
+      input: PeerCallInput<S>,
+    ) => Effect.Effect<S["Type"], OrchestratorMcpFailure>;
+    /**
+     * As `call`, but keeps the peer's answer apart from its silence: the tool's result or refusal
+     * succeeds, and only a call no tool there answered fails, as `PeerUnanswered`.
+     */
+    readonly ask: <S extends Schema.Decoder<unknown>>(
+      input: PeerCallInput<S>,
+    ) => Effect.Effect<Result.Result<S["Type"], OrchestratorMcpFailure>, PeerUnanswered>;
   }
 >()("t3/peer/PeerMcpClient") {}
+
+export interface PeerCallInput<S extends Schema.Decoder<unknown>> {
+  readonly environmentId: EnvironmentId;
+  readonly tool: string;
+  readonly arguments: Record<string, unknown>;
+  readonly limits: PeerCallLimits;
+  /** The thread here the call is made for, sent as `T3-Sender-Thread`. */
+  readonly sender?: OrchestrationV2LinkedSender;
+  readonly success: S;
+}
+
+/** The call never reached a tool on the peer, or its answer never got back. */
+export class PeerUnanswered extends Schema.TaggedError<PeerUnanswered>()("PeerUnanswered", {
+  environmentId: Schema.String,
+  cause: OrchestratorMcpFailure,
+}) {
+  override get message(): string {
+    return `Linked environment ${this.environmentId} did not answer.`;
+  }
+}
 
 const ToolCallResponse = Schema.Struct({
   result: Schema.optional(
@@ -92,8 +113,7 @@ const linkedEnvironmentsOffThere = new OrchestratorMcpFailure({
     "The linked environment has Linked environments turned off. Turn it on in its Settings → Labs.",
 });
 
-/** What a call fails with when the peer answers HTTP 401: it no longer accepts this link. */
-export const LINK_NOT_ACCEPTED =
+const LINK_NOT_ACCEPTED =
   "The linked environment no longer accepts this link. It may have been revoked there; link it again.";
 
 const stoppedAnswering = new OrchestratorMcpFailure({
@@ -193,7 +213,7 @@ const make = Effect.gen(function* () {
     (effect, { url }) => Effect.timeout(effect, PeerLinks.probeTimeout(url)),
   );
 
-  const call: PeerMcpClient["Service"]["call"] = Effect.fn("PeerMcpClient.call")(
+  const ask: PeerMcpClient["Service"]["ask"] = Effect.fn("PeerMcpClient.ask")(
     function* (input) {
       const resolved = yield* links
         .resolve(input.environmentId)
@@ -322,11 +342,18 @@ const make = Effect.gen(function* () {
           HttpClientError: () => Effect.fail(stoppedAnswering),
           TimeoutError: () => Effect.fail(stoppedAnswering),
         }),
-        Effect.flatMap(Effect.fromResult),
+        Effect.mapError(
+          (cause) => new PeerUnanswered({ environmentId: input.environmentId, cause }),
+        ),
       ),
   );
+  const call: PeerMcpClient["Service"]["call"] = (input) =>
+    ask(input).pipe(
+      Effect.mapError((unanswered) => unanswered.cause),
+      Effect.flatMap(Effect.fromResult),
+    );
 
-  return PeerMcpClient.of({ call });
+  return PeerMcpClient.of({ call, ask });
 });
 
 export const layer = Layer.effect(PeerMcpClient, make);

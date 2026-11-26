@@ -36,6 +36,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as RpcTest from "effect/rpc/RpcTest";
@@ -308,7 +309,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     }
   };
   const peers = Layer.mock(PeerMcpClient.PeerMcpClient)({
-    call: ((input: {
+    ask: ((input: {
       readonly arguments: {
         readonly kind: ClaimKind;
         readonly threadId?: string;
@@ -324,10 +325,12 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
           laptop.limits.push(input.limits);
         }
         yield* Queue.offer(laptop.started!, input.arguments.kind);
-        const stoppedAnswering = new OrchestratorMcpFailure({
-          code: "orchestration_error",
-          message: "The linked environment stopped answering.",
-        });
+        const unanswered = (message: string) =>
+          new PeerMcpClient.PeerUnanswered({
+            environmentId: LAPTOP,
+            cause: new OrchestratorMcpFailure({ code: "orchestration_error", message }),
+          });
+        const stoppedAnswering = unanswered("The linked environment stopped answering.");
         if (mode === "offline") return yield* stoppedAnswering;
         const above = () =>
           exceededDispatchModeLimit(input.limits, {
@@ -341,16 +344,20 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
             (input.arguments.kind === "join" || input.arguments.kind === "release") &&
             above())
         ) {
-          return yield* new OrchestratorMcpFailure({
-            code: "capability_denied",
-            message: "That thread runs above this caller's limit.",
-          });
+          return Result.fail(
+            new OrchestratorMcpFailure({
+              code: "capability_denied",
+              message: "That thread runs above this caller's limit.",
+            }),
+          );
         }
         if (input.arguments.kind === "rename" && laptop.predatesRename) {
-          return yield* new OrchestratorMcpFailure({
-            code: "invalid_request",
-            message: "Invalid parameters for tool 't3_mission_tag'",
-          });
+          return Result.fail(
+            new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "Invalid parameters for tool 't3_mission_tag'",
+            }),
+          );
         }
         if (mode === "hanging" || laptop.hangingKinds.includes(input.arguments.kind)) {
           return yield* Effect.never;
@@ -370,26 +377,32 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
           laptop.mode = "offline";
           yield* Deferred.await(laptop.letGo!);
         }
-        if (mode === "revoked" || mode === "denies") {
-          return yield* new OrchestratorMcpFailure({
-            code: "capability_denied",
-            message:
-              mode === "revoked"
-                ? PeerMcpClient.LINK_NOT_ACCEPTED
-                : "This link may change only threads it started.",
-          });
+        if (mode === "revoked") {
+          return yield* unanswered("The linked environment no longer accepts this link.");
         }
-        const claims = yield* answer(laptop.claims!, input.arguments).pipe(
-          Effect.mapError(
-            (error) =>
-              new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
-          ),
-        );
+        if (mode === "denies") {
+          return Result.fail(
+            new OrchestratorMcpFailure({
+              code: "capability_denied",
+              message: "This link may change only threads it started.",
+            }),
+          );
+        }
+        const answered = yield* answer(laptop.claims!, input.arguments).pipe(Effect.result);
+        if (Result.isFailure(answered)) {
+          return Result.fail(
+            new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: answered.failure.message,
+            }),
+          );
+        }
+        const claims = answered.success;
         yield* Queue.offer(laptop.acted!, input.arguments.kind);
         if (mode === "lostReply") return yield* stoppedAnswering;
         if (mode === "actsThenHangs") return yield* Effect.never;
         yield* Queue.offer(laptop.answered!, input.arguments.kind);
-        return { claims };
+        return Result.succeed({ claims });
       })) as never,
   });
   const links = Layer.mock(PeerLinks.PeerLinks)({

@@ -48,8 +48,8 @@ const toolkit = Toolkit.make(
   }),
 );
 
-/** One `probe` call to a linked peer at a remote address, answered by `http`. */
-const probeThrough = Effect.fn(function* (http: HttpClient.HttpClient) {
+/** The client of a linked peer at a remote address, answered by `http`. */
+const clientThrough = Effect.fn(function* (http: HttpClient.HttpClient) {
   const box = descriptorOf("environment-box", "Box");
   const context = yield* Layer.build(
     PeerMcpClient.layer.pipe(
@@ -79,14 +79,20 @@ const probeThrough = Effect.fn(function* (http: HttpClient.HttpClient) {
       ),
     ),
   );
-  return Context.get(context, PeerMcpClient.PeerMcpClient).call({
-    environmentId: box.environmentId,
-    tool: "probe",
-    arguments: {},
-    limits: { runtimeMode: "approval-required", interactionMode: "plan" },
-    success: Result,
-  });
+  return Context.get(context, PeerMcpClient.PeerMcpClient);
 });
+
+const probeCall = {
+  environmentId: descriptorOf("environment-box", "Box").environmentId,
+  tool: "probe",
+  arguments: {},
+  limits: { runtimeMode: "approval-required", interactionMode: "plan" },
+  success: Result,
+} as const;
+
+/** One `probe` call to a linked peer at a remote address, answered by `http`. */
+const probeThrough = (http: HttpClient.HttpClient) =>
+  Effect.map(clientThrough(http), (client) => client.call(probeCall));
 
 const probeResult = JSON.stringify({
   result: { content: [{ type: "text", text: '{"modes":"approval-required/plan"}' }] },
@@ -240,6 +246,42 @@ it.effect("keeps a link healthy when the peer refuses a call", () =>
       expect(refused).toMatchObject({ code: refusal.code, message: refusal.message });
       const link = yield* links.get(box.environmentId);
       expect(link._tag === "Some" ? link.value.lastError : "missing").toBeNull();
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("tells a peer that refused apart from one that no longer accepts the link", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const busy = new OrchestratorMcpFailure({
+        code: "orchestration_error",
+        message: "The member's database is busy.",
+      });
+      const handlers = McpToolAccess.toLayer(toolkit, {
+        probe: McpToolAccess.reads(() => Effect.succeed({ modes: "" })),
+        hold: McpToolAccess.reads(() => Effect.succeed({ modes: "" })),
+        refuse: McpToolAccess.reads(() => Effect.fail(busy)),
+      });
+      const box = descriptorOf("environment-box", "Box");
+      const b = yield* servePeer(box, McpHttpServer.toolkitRegistration(toolkit, handlers));
+      const context = yield* Layer.build(
+        layerLinkingEnvironment(descriptorOf("environment-a", "A")),
+      );
+      yield* linkTo(Context.get(context, PeerLinks.PeerLinks), b);
+      const refused = yield* Context.get(context, PeerMcpClient.PeerMcpClient).ask({
+        ...probeCall,
+        environmentId: box.environmentId,
+        tool: "refuse",
+      });
+      // Whatever its code, the tool's own refusal is an answer.
+      expect(refused).toMatchObject({ _tag: "Failure", failure: { code: busy.code } });
+
+      const revoked = HttpClient.make((request) =>
+        Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 401 }))),
+      );
+      const unanswered = yield* (yield* clientThrough(revoked)).ask(probeCall).pipe(Effect.flip);
+      expect(unanswered).toBeInstanceOf(PeerMcpClient.PeerUnanswered);
+      expect(unanswered.cause.code).toBe("capability_denied");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

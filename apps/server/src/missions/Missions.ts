@@ -228,8 +228,13 @@ const USER_REACH: Reach = { limits: { runtimeMode: "full-access", interactionMod
 
 /** The member's machine did not answer in time: the call may or may not have happened there. */
 class Unreachable extends Schema.TaggedError<Unreachable>()("MissionMemberUnreachable", {
-  message: Schema.String,
-}) {}
+  environmentId: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {
+  override get message(): string {
+    return `Mission member machine ${this.environmentId} did not answer.`;
+  }
+}
 
 const fail = (message: string) => Effect.fail(new MissionError({ message }));
 
@@ -521,7 +526,15 @@ const make = Effect.gen(function* () {
 
   const linkTo = Effect.fn("Missions.linkTo")(function* (environmentId: EnvironmentId) {
     if (!(yield* links.enabled)) return yield* fail(PeerLinks.LINKED_ENVIRONMENTS_OFF);
-    const link = yield* links.get(environmentId).pipe(Effect.catch((error) => fail(error.message)));
+    const link = yield* links
+      .get(environmentId)
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("A mission link could not be read", cause).pipe(
+            Effect.andThen(fail("This machine could not read its link to the thread's machine.")),
+          ),
+        ),
+      );
     if (Option.isNone(link)) {
       return yield* fail(
         "This machine has no link to the thread's machine. Link them in Settings → Connections first.",
@@ -592,14 +605,16 @@ const make = Effect.gen(function* () {
     // whether the machine answers.
     const settlesReach = call.kind !== "workspaces";
     const { label } = yield* linkTo(environmentId).pipe(
-      Effect.catch((error) =>
+      Effect.catch((cause) =>
         (settlesReach ? setAnswering(environmentId, false) : Effect.void).pipe(
-          Effect.andThen(Effect.fail(new Unreachable({ message: error.message }))),
+          Effect.andThen(Effect.fail(new Unreachable({ environmentId, cause }))),
         ),
       ),
     );
+    // A call no tool there answered, as when the peer no longer accepts the link, says nothing
+    // about what happened there. A refusal from the tool does.
     const answered = yield* peers
-      .call({
+      .ask({
         environmentId,
         tool: "t3_mission_tag",
         arguments: { ...call },
@@ -607,22 +622,16 @@ const make = Effect.gen(function* () {
         success: MissionClaimResult,
       })
       .pipe(Effect.timeoutOption(MEMBER_CALL_DEADLINE), Effect.result);
-    // Transport failures, and a peer that no longer accepts the link, say nothing about what
-    // happened there. A refusal from the tool does.
-    const unreachable = Result.isFailure(answered)
-      ? answered.failure.code === "orchestration_error" ||
-        answered.failure.message === PeerMcpClient.LINK_NOT_ACCEPTED
-        ? answered.failure.message
-        : undefined
-      : Option.isNone(answered.success)
-        ? `${label} did not answer in time.`
-        : undefined;
-    if (settlesReach) yield* setAnswering(environmentId, unreachable === undefined);
-    if (unreachable !== undefined) return yield* new Unreachable({ message: unreachable });
-    if (Result.isFailure(answered)) {
-      return yield* fail(`${label} refused: ${answered.failure.message}`);
+    const reply = Result.isSuccess(answered) ? Option.getOrUndefined(answered.success) : undefined;
+    if (settlesReach) yield* setAnswering(environmentId, reply !== undefined);
+    if (reply === undefined) {
+      return yield* new Unreachable({
+        environmentId,
+        ...(Result.isFailure(answered) ? { cause: answered.failure } : {}),
+      });
     }
-    return Option.getOrThrow(answered.success).claims;
+    if (Result.isFailure(reply)) return yield* fail(`${label} refused: ${reply.failure.message}`);
+    return reply.success.claims;
   });
 
   /** Call only under the machine's lock. An answer settles the release, whatever it found there. */
@@ -1237,11 +1246,7 @@ const make = Effect.gen(function* () {
                 // the add is still there to send again. This machine's own threads need none.
                 if (environmentId !== here) yield* store.setPendingAdd(add);
                 // A release its machine did not answer may yet land: the join waits with it.
-                if (!released) {
-                  return yield* new Unreachable({
-                    message: "The thread's machine did not answer.",
-                  });
-                }
+                if (!released) return yield* new Unreachable({ environmentId });
                 return (yield* sendJoin(mission, add, reach))
                   ? ("joined" as const)
                   : ("spent" as const);
