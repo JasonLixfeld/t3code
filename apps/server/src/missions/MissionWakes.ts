@@ -109,10 +109,13 @@ export const layer = Layer.effectDiscard(
         ref: ScopedThreadRef,
         read: Effect.Effect<MemberDetail | undefined>,
         unseen?: string,
+        onlyIfHeld = false,
       ) {
+        const recorded = yield* store.memberMark(ref);
+        if (onlyIfHeld && (recorded === undefined || !wasCompletionHeld(recorded))) return;
         const detail = yield* read;
         if (detail === undefined) return;
-        const before = (yield* store.memberMark(ref)) ?? unseen;
+        const before = recorded ?? unseen;
         const { updates, mark } = memberUpdates(before, detail, yield* Clock.currentTimeMillis);
         yield* record(missionId, ref, updates);
         yield* store.setMemberMark(ref, mark);
@@ -132,6 +135,7 @@ export const layer = Layer.effectDiscard(
       missionId: string,
       ref: ScopedThreadRef,
       run?: { readonly id: string; readonly status: string },
+      onlyIfHeld = false,
     ) =>
       observe(
         missionId,
@@ -150,6 +154,7 @@ export const layer = Layer.effectDiscard(
           },
         ),
         "{}",
+        onlyIfHeld,
       );
 
     const seeLocalMembers = Effect.gen(function* () {
@@ -159,7 +164,7 @@ export const layer = Layer.effectDiscard(
         const ref = { environmentId: here, threadId: claim.threadId };
         const mark = yield* store.memberMark(ref);
         if (mark !== undefined) {
-          if (wasCompletionHeld(mark)) yield* observeRunWithoutRequests(claim.missionId, ref);
+          yield* observeRunWithoutRequests(claim.missionId, ref, undefined, true);
           continue;
         }
         yield* observe(claim.missionId, ref, localDetail(claim.threadId));
@@ -205,9 +210,7 @@ export const layer = Layer.effectDiscard(
       if (update !== undefined && ofRun !== undefined)
         return yield* observeRunWithoutRequests(claim.missionId, ref, ofRun);
       if (update !== undefined) return yield* record(claim.missionId, ref, [update]);
-      const mark = yield* store.memberMark(ref);
-      if (mark === undefined || !wasCompletionHeld(mark)) return;
-      yield* observeRunWithoutRequests(claim.missionId, ref, ofRun);
+      yield* observeRunWithoutRequests(claim.missionId, ref, ofRun, true);
     });
 
     const dropUpdates = (missionId: string, lead: ThreadId): Effect.Effect<void> =>
