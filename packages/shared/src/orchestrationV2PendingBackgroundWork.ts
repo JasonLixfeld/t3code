@@ -53,7 +53,6 @@ export function turnItemUpdateCanEndBackgroundWork(
   return BACKGROUND_TURN_ITEM_TYPES.has(item.type) && !isOrchestrationV2WorkActive(item.status);
 }
 
-/** Progress updates cannot end background work, so readers recheck a thread only after these. */
 export function eventCanEndBackgroundWork(event: OrchestrationV2DomainEvent): boolean {
   switch (event.type) {
     case "provider-session.detached":

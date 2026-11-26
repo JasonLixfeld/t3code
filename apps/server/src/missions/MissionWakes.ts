@@ -23,7 +23,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import { MissionStore, type MissionRecord, numberKey } from "./MissionStore.ts";
 import { Missions } from "./Missions.ts";
 import {
-  holdsCompletion,
+  wasCompletionHeld,
   markOf,
   ATTENTION_LINES,
   missionUpdateText,
@@ -111,15 +111,13 @@ export const layer = Layer.effectDiscard(
       yield* store.setMemberMark(ref, markOf(detail));
     });
 
-    // A shell shows only its latest request, so a local member's requests are told by their events.
-    const observeRun = Effect.fn("MissionWakes.observeRun")(function* (
-      missionId: string,
-      ref: ScopedThreadRef,
-    ) {
-      const shell = yield* shellOf(ref.threadId);
-      if (shell === null || shell.deletedAt !== null) return;
-      yield* observe(missionId, ref, { ...shellDetail(shell), requests: [] }, "{}");
-    });
+    const observeRunWithoutRequests = Effect.fn("MissionWakes.observeRunWithoutRequests")(
+      function* (missionId: string, ref: ScopedThreadRef) {
+        const shell = yield* shellOf(ref.threadId);
+        if (shell === null || shell.deletedAt !== null) return;
+        yield* observe(missionId, ref, { ...shellDetail(shell), requests: [] }, "{}");
+      },
+    );
 
     const seeLocalMembers = Effect.gen(function* () {
       const led = new Set((yield* store.missions).map((mission) => mission.missionId));
@@ -128,7 +126,7 @@ export const layer = Layer.effectDiscard(
         const ref = { environmentId: here, threadId: claim.threadId };
         const mark = yield* store.memberMark(ref);
         if (mark !== undefined) {
-          if (holdsCompletion(mark)) yield* observeRun(claim.missionId, ref);
+          if (wasCompletionHeld(mark)) yield* observeRunWithoutRequests(claim.missionId, ref);
           continue;
         }
         const shell = yield* shellOf(claim.threadId);
@@ -169,10 +167,12 @@ export const layer = Layer.effectDiscard(
         return;
       }
       const ref = { environmentId: here, threadId: event.threadId };
-      if (update?.event === "completed") return yield* observeRun(claim.missionId, ref);
+      if (update?.event === "completed")
+        return yield* observeRunWithoutRequests(claim.missionId, ref);
       if (update !== undefined) return yield* record(claim.missionId, ref, [update]);
       const mark = yield* store.memberMark(ref);
-      if (mark !== undefined && holdsCompletion(mark)) yield* observeRun(claim.missionId, ref);
+      if (mark !== undefined && wasCompletionHeld(mark))
+        yield* observeRunWithoutRequests(claim.missionId, ref);
     });
 
     const dropUpdates = (missionId: string, lead: ThreadId): Effect.Effect<void> =>
