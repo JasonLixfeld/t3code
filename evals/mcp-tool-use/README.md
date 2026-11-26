@@ -294,14 +294,14 @@ After the change, the first reference to a file is an absolute link. The remaini
 
 `cases/missions.ndjson` checks what a mission lead writes when a member update wakes it. The cases come from a 2026-11-26 field report. A lead was woken 8 times while one member moved between its build, check and review subagents, and it answered each wake with "Nothing is needed from you." Its questions to the user also relied on earlier messages.
 
-| Case                               | Kind    | What it checks                                                                                                                  |
-| ---------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| mission-quiet-idle-update          | bad     | A member finished a review round with nothing for the user. The lead writes no visible text at all. Reading the member is fine. |
-| mission-question-stands-alone      | bad     | A member needs a product choice. The lead asks the user with the member's link, its work, why it waits, the options and a pick. |
-| mission-member-failed-speaks       | control | A member failed. The lead says so.                                                                                              |
-| mission-pull-request-merged-speaks | control | The same kind of wake as the quiet case, but the member merged its pull request. The lead says so.                              |
+| Case                               | Kind    | What it checks                                                                                                                                                                            |
+| ---------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| mission-quiet-idle-update          | bad     | A member finished a review round with nothing for the user. The lead ends its turn with no visible text and no question or message to the user. Reading the member is fine.               |
+| mission-question-stands-alone      | bad     | A member needs a product choice. What the user reads, in text and AskUserQuestion together, has the member's link, its work, why it waits, the options and what each changes, and a pick. |
+| mission-member-failed-speaks       | control | A member failed. The lead says so.                                                                                                                                                        |
+| mission-pull-request-merged-speaks | control | The same kind of wake as the quiet case, but the member merged its pull request. The lead says it merged, not that it did not.                                                            |
 
-`setup.mission` makes the thread a mission lead. The runner builds the lead's mission prompt, its status and the wake message with T3's own `missionPromptText`, `missionStatusText` and `missionUpdateText`, and wraps them as the Claude adapter does. The cases run on Claude only. Codex gets its mission context another way, which the runner does not model. T3's mission tools are not in the eval's tool list, so a lead that calls `t3_mission_roster` finds no such tool and reads the member with `t3_thread_read` instead.
+`setup.mission` makes the thread a mission lead. The runner builds the lead's mission prompt, its status and the wake message with T3's own `missionPromptText`, `missionStatusText` and `missionUpdateText`, and wraps them as the Claude adapter does. `expect.userTextMust` checks each regex on the visible text and the question-tool text together. The cases run on Claude only. Codex gets its mission context another way, which the runner does not model. T3's mission tools are not in the eval's tool list, so a lead that calls `t3_mission_roster` finds no such tool and reads the member with `t3_thread_read` instead.
 
 From `evals/`:
 
