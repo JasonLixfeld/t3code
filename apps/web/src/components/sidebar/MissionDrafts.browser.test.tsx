@@ -7,13 +7,18 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
-import { useThreadShell } from "../../state/entities";
+import { readThreadShell, useThreadShell } from "../../state/entities";
 import { makeThreadFixture } from "../../test-fixtures";
 import { toastManager } from "../ui/toast";
 import { useDraftMissionChoice } from "../chat/DraftMissionSelect";
-import { markMissionDraft, missionDraftOf } from "./missionDraftStore";
+import {
+  clearMissionDraft,
+  markMissionDraft,
+  missionDraftOf,
+  serverThreadMissionDraftId,
+} from "./missionDraftStore";
 import { MissionDraftCoordinator, useMissionDraftBanner } from "./MissionDrafts";
-import { useMissionHosts, useMissionStartMachines } from "./MissionsSection";
+import { useMissionHosts, useMissionMenu, useMissionStartMachines } from "./MissionsSection";
 
 const LOCAL = EnvironmentId.make("local");
 const thread = { environmentId: LOCAL, threadId: ThreadId.make("draft-thread") };
@@ -112,6 +117,47 @@ it("starts a mission only once the draft's first message lands, led by that thre
   );
   await screen.stream("sent");
   expect(commandFor("mission create")).toHaveBeenCalledTimes(1);
+});
+
+function StartFromMenu() {
+  const menu = useMissionMenu();
+  return (
+    <button type="button" onClick={() => void menu.run("mission-start", [thread])}>
+      Start mission from this thread
+    </button>
+  );
+}
+
+it("starts one mission led by an empty server thread its menu marked, with the mark's id, once it first sends", async () => {
+  const markId = serverThreadMissionDraftId(thread);
+  onTestFinished(() => clearMissionDraft(markId));
+  const read = (sent: boolean) =>
+    makeThreadFixture({
+      environmentId: LOCAL,
+      id: thread.threadId,
+      title: "Plan the launch",
+      ...(sent ? { latestUserMessageAt: "2026-01-01T00:00:00.000Z", visibleItemCount: 1 } : {}),
+    });
+  vi.mocked(readThreadShell).mockReturnValue(read(false));
+  onTestFinished(() => vi.mocked(readThreadShell).mockRestore());
+  await using screen = await renderDraft(markId, <StartFromMenu />);
+  await screen.stream("empty");
+  const start = screen.getByRole("button", { name: "Start mission from this thread" });
+  await userEvent.click(start);
+  const mark = missionDraftOf(markId);
+  expect(mark).toMatchObject({ intent: { kind: "new" }, thread, step: "waiting" });
+  vi.mocked(readThreadShell).mockReturnValue(read(true));
+  await userEvent.click(start);
+  expect(missionDraftOf(markId)).toBe(mark);
+  expect(commandFor("mission create")).not.toHaveBeenCalled();
+  await screen.stream("sent");
+  await vi.waitFor(() =>
+    expect(commandFor("mission create")).toHaveBeenCalledExactlyOnceWith({
+      environmentId: LOCAL,
+      input: { missionId: mark!.missionId, leadThreadId: thread.threadId },
+    }),
+  );
+  await vi.waitFor(() => expect(missionDraftOf(markId)).toBeUndefined());
 });
 
 it("starts a mission led by a draft once sent, when its Mission choice picked a new one", async () => {

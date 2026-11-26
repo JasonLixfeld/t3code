@@ -1,7 +1,13 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
+import {
+  clearServerThreadMissionDraft,
+  markMissionDraft,
+  missionDraftOf,
+  serverThreadMissionDraftId,
+} from "../components/sidebar/missionDraftStore";
 import { useThreadActions } from "./useThreadActions";
 import { threadEnvironment } from "../state/threads";
 import { toastManager } from "../components/ui/toast";
@@ -429,6 +435,28 @@ describe("archive and delete Undo expiry", () => {
       expect(commands.unsettle).toHaveBeenCalledOnce();
     });
   });
+
+  it.each([
+    ["archiveThread", "archive", true],
+    ["deleteThread", "delete", true],
+    ["deleteThread", "delete", false],
+  ] as const)(
+    "%s clears that thread's mission mark only once the %s succeeds, with shell loaded: %s",
+    async (lifecycle, command, loaded) => {
+      shellLoaded.current = loaded;
+      for (const ref of [target, otherThread]) {
+        markMissionDraft(serverThreadMissionDraftId(ref), { intent: { kind: "new" }, thread: ref });
+        onTestFinished(() => clearServerThreadMissionDraft(ref));
+      }
+      const actions = useThreadActions();
+      commands[command].mockResolvedValueOnce(failure);
+      await actions[lifecycle](target);
+      expect(missionDraftOf(serverThreadMissionDraftId(target))).toBeDefined();
+      await actions[lifecycle](target);
+      expect(missionDraftOf(serverThreadMissionDraftId(target))).toBeUndefined();
+      expect(missionDraftOf(serverThreadMissionDraftId(otherThread))).toBeDefined();
+    },
+  );
 
   it.each([true, false])(
     "expires the Archived Undo when deleting with shell loaded: %s",

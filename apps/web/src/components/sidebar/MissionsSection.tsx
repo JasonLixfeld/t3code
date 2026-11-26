@@ -94,7 +94,12 @@ import {
   type SidebarMission,
   type SidebarMissionEntry,
 } from "./missions.logic";
-import { markMissionDraft, serverThreadMissionDraftId } from "./missionDraftStore";
+import {
+  clearServerThreadMissionDraft,
+  markMissionDraft,
+  missionDraftOf,
+  serverThreadMissionDraftId,
+} from "./missionDraftStore";
 import { SidebarHeading } from "./SidebarListMarkers";
 import type { SidebarMissionToggle } from "./SidebarThreadRow";
 
@@ -234,11 +239,14 @@ export function useMissionMenu() {
       const lead = threads[0];
       if (id === "mission-start" && lead !== undefined) {
         const shell = readThreadShell(lead);
-        if (shell !== null && !threadHasMessages(shell)) {
-          markMissionDraft(serverThreadMissionDraftId(lead), {
-            intent: { kind: "new" },
-            thread: lead,
-          });
+        const marked = missionDraftOf(serverThreadMissionDraftId(lead)) !== undefined;
+        if (marked || (shell !== null && !threadHasMessages(shell))) {
+          if (!marked) {
+            markMissionDraft(serverThreadMissionDraftId(lead), {
+              intent: { kind: "new" },
+              thread: lead,
+            });
+          }
           void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(lead) });
           return [];
         }
@@ -328,6 +336,7 @@ export function useMissionMenu() {
           }),
         ),
       );
+      for (const added of outcome.added) clearServerThreadMissionDraft(added);
       const summary = missionAddSummary(
         { ...outcome, refused: [...refusedFirst, ...outcome.refused] },
         resolve,

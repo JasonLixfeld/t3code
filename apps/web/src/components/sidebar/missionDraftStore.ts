@@ -2,7 +2,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 
-import { DraftId } from "../../composerDraftStore";
+import type { DraftId } from "../../composerDraftStore";
 import { type MissionDraftIntent, newMissionId } from "./missions.logic";
 
 export interface MissionDraft {
@@ -24,7 +24,7 @@ const update = (change: (drafts: Map<DraftId, MissionDraft>) => void) =>
   });
 
 export const serverThreadMissionDraftId = (thread: ScopedThreadRef) =>
-  DraftId.make(scopedThreadKey(thread));
+  scopedThreadKey(thread) as DraftId;
 
 export function markMissionDraft(draftId: DraftId, draft: Pick<MissionDraft, "intent" | "thread">) {
   const missionId = draft.intent.kind === "new" ? newMissionId() : draft.intent.missionId;
@@ -68,6 +68,9 @@ export function moveMissionDraft(from: DraftId, to: DraftId, thread: ScopedThrea
 export function clearMissionDraft(draftId: DraftId) {
   update((drafts) => drafts.delete(draftId));
 }
+
+export const clearServerThreadMissionDraft = (thread: ScopedThreadRef) =>
+  clearMissionDraft(serverThreadMissionDraftId(thread));
 
 export function restoreMissionDraft(draftId: DraftId, draft: MissionDraft) {
   update((drafts) => drafts.set(draftId, draft));

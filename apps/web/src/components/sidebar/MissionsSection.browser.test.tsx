@@ -42,7 +42,12 @@ import { useUiStateStore } from "../../uiStateStore";
 import { toastManager } from "../ui/toast";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import Sidebar from "../Sidebar";
-import { clearMissionDraft, missionDraftOf, serverThreadMissionDraftId } from "./missionDraftStore";
+import {
+  clearMissionDraft,
+  markMissionDraft,
+  missionDraftOf,
+  serverThreadMissionDraftId,
+} from "./missionDraftStore";
 import { MissionPromptDialog } from "./MissionsSection";
 import { SidebarProvider } from "../ui/sidebar";
 import type { MissionHost } from "./missions.logic";
@@ -1692,6 +1697,41 @@ describe("new missions and missing leads", () => {
       }),
     );
     expect(missionDraftOf(serverThreadMissionDraftId(ref(LOCAL, "plain")))).toBeUndefined();
+  });
+
+  it("drops an empty thread's mission mark once it joins another mission, not when the add fails", async () => {
+    const empty = ref(LOCAL, "empty");
+    markMissionDraft(serverThreadMissionDraftId(empty), { intent: { kind: "new" }, thread: empty });
+    onTestFinished(() => clearMissionDraft(serverThreadMissionDraftId(empty)));
+    const show = vi.fn().mockResolvedValue(`mission-add:local:${ship.missionId}`);
+    vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
+    await using screen = await renderSidebar(
+      {},
+      { extra: [shell("empty", "Empty thread", { empty: true })] },
+    );
+    await expect.element(screen.getByText("Empty thread")).toBeInTheDocument();
+    const addMember = commandFor("mission add member");
+    addMember.mockResolvedValueOnce({
+      _tag: "Failure",
+      cause: Cause.fail(new MissionError({ message: "Laptop refused." })),
+    });
+    const toasts = vi.spyOn(toastManager, "add");
+    onTestFinished(() => toasts.mockRestore());
+    await userEvent.click(rowOf(screen.container, "Empty thread"), { button: "right" });
+    await vi.waitFor(() =>
+      expect(toasts).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "0 added, 1 refused: Laptop refused." }),
+      ),
+    );
+    expect(missionDraftOf(serverThreadMissionDraftId(empty))).toBeDefined();
+    await userEvent.click(rowOf(screen.container, "Empty thread"), { button: "right" });
+    await vi.waitFor(() =>
+      expect(missionDraftOf(serverThreadMissionDraftId(empty))).toBeUndefined(),
+    );
+    expect(addMember).toHaveBeenLastCalledWith({
+      environmentId: LOCAL,
+      input: { missionId: ship.missionId, member: empty },
+    });
   });
 
   it("says a menu opened before another lead took over is too late, and offers no retry", async () => {
