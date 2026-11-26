@@ -14,10 +14,8 @@ import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
-import { MemberWorkspaces } from "../../../missions/MemberWorkspaces.ts";
 import { MissionClaims } from "../../../missions/MissionClaims.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
-import * as Project from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const shownOnlyToLinks = (): boolean => {
@@ -49,8 +47,6 @@ export const MissionToolkit = Toolkit.make(
     dependencies: [
       McpInvocationContext.McpInvocationContext,
       ThreadManagementService.ThreadManagementService,
-      Project.ProjectService,
-      MemberWorkspaces,
       MissionClaims,
     ],
   })

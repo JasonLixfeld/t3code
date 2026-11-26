@@ -64,13 +64,7 @@ export const MemberDetail = Schema.Struct({
 });
 export type MemberDetail = typeof MemberDetail.Type;
 
-export const MissionClaimKind = Schema.Literals([
-  "join",
-  "release",
-  "list",
-  "rename",
-  "workspaces",
-]);
+const MissionClaimKind = Schema.Literals(["join", "release", "list", "rename", "workspaces"]);
 
 export const MissionTagInput = Schema.Struct({
   kind: MissionClaimKind,
