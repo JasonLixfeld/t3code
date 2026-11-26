@@ -518,8 +518,6 @@ const make = Effect.gen(function* () {
         ),
       ),
     );
-    // A call no tool there answered, as when the peer no longer accepts the link, says nothing
-    // about what happened there. A refusal from the tool does.
     const answered = yield* peers
       .ask({
         environmentId,

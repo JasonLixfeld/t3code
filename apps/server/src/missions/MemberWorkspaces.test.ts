@@ -90,11 +90,7 @@ const inProject = (
 
 type Service = MemberWorkspaces.MemberWorkspaces["Service"];
 const READ_STEP = "1 millis";
-/**
- * The shipped read, after its background read has landed. Every read here starts by sleeping one
- * step on the test clock, and an adjust runs what it wakes until that is idle.
- */
-const settled = (workspaces: Service, shell: Parameters<Service["cached"]>[0]) =>
+const readAfterBackgroundRead = (workspaces: Service, shell: Parameters<Service["cached"]>[0]) =>
   Effect.gen(function* () {
     yield* workspaces.cached(shell);
     yield* TestClock.adjust(READ_STEP);
@@ -211,7 +207,7 @@ it.effect(
     const gitCalls: Array<string> = [];
     return Effect.gen(function* () {
       const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-      const workspace = yield* settled(workspaces, {
+      const workspace = yield* readAfterBackgroundRead(workspaces, {
         id: threadId,
         projectId,
         worktreePath: "/tasks/one/app",
@@ -267,8 +263,8 @@ it.effect("a member in the project's own checkout reads its branch there, once i
       otherPullRequests: [],
       stale: false,
     };
-    assert.deepEqual(yield* settled(workspaces, inProject()), expected);
-    assert.deepEqual(yield* settled(workspaces, inProject()), expected);
+    assert.deepEqual(yield* readAfterBackgroundRead(workspaces, inProject()), expected);
+    assert.deepEqual(yield* readAfterBackgroundRead(workspaces, inProject()), expected);
     assert.deepEqual(gitCalls, ["/code/solo"]);
   }).pipe(Effect.provide(machine(gitCalls)));
 });
@@ -276,7 +272,7 @@ it.effect("a member in the project's own checkout reads its branch there, once i
 it.effect("a shared checkout lists its root repository and the repositories it tracks", () =>
   Effect.gen(function* () {
     const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-    const workspace = yield* settled(
+    const workspace = yield* readAfterBackgroundRead(
       workspaces,
       inProject({
         pullRequests: [
@@ -309,7 +305,7 @@ it.effect("a shared checkout lists its root repository and the repositories it t
 it.effect("a plain project folder is no repository; the repositories it tracks are", () =>
   Effect.gen(function* () {
     const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-    const workspace = yield* settled(workspaces, inProject());
+    const workspace = yield* readAfterBackgroundRead(workspaces, inProject());
     assert.deepEqual(
       workspace.repositories.map((checkout) => checkout.path),
       ["/code/app/api", "/code/app/web"],
@@ -335,7 +331,7 @@ it.effect(
     const tracked = Array.from({ length: 128 }, (_, index) => folder(`/code/app/repo-${index}`));
     return Effect.gen(function* () {
       const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-      const workspace = yield* settled(workspaces, inProject());
+      const workspace = yield* readAfterBackgroundRead(workspaces, inProject());
       assert.equal(workspace.repositories.length, MemberWorkspaces.MEMBER_REPOSITORIES_MAX);
       assert.equal(workspace.repositories.at(-1)?.path, "/code/app/repo-31");
       assert.isTrue(workspace.truncated);
@@ -403,7 +399,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-      const workspace = yield* settled(workspaces, {
+      const workspace = yield* readAfterBackgroundRead(workspaces, {
         ...inProject(),
         pullRequests: [
           link("https://ci-bot:ghp_secret@github.com/acme/app/pull/4?token=abc", "open"),
@@ -430,7 +426,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-      const workspace = yield* settled(workspaces, {
+      const workspace = yield* readAfterBackgroundRead(workspaces, {
         ...inProject(),
         pullRequests: [
           link("https://dev.azure.com/acme/Proj/_git/Repo/pullrequest/7", "open"),
@@ -473,7 +469,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-      const workspace = yield* settled(workspaces, {
+      const workspace = yield* readAfterBackgroundRead(workspaces, {
         ...inProject(),
         pullRequests: [
           link(
@@ -527,7 +523,7 @@ it.effect("a forgotten thread is read again from the start", () => {
   const gitCalls: Array<string> = [];
   return Effect.gen(function* () {
     const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-    yield* settled(workspaces, inProject());
+    yield* readAfterBackgroundRead(workspaces, inProject());
     yield* workspaces.forget(threadId);
     assert.equal(yield* workspaces.cached(inProject()), "pending");
   }).pipe(Effect.provide(machine(gitCalls)));
@@ -558,10 +554,10 @@ it.effect("past its cap the cache drops the thread read least recently", () =>
     const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
     const thread = (index: number) => inProject({ id: ThreadId.make(`thread:${index}`) });
     for (let index = 0; index < MemberWorkspaces.CACHE_ENTRIES_MAX; index += 1) {
-      yield* settled(workspaces, thread(index));
+      yield* readAfterBackgroundRead(workspaces, thread(index));
     }
-    yield* settled(workspaces, thread(0));
-    yield* settled(workspaces, thread(MemberWorkspaces.CACHE_ENTRIES_MAX));
+    yield* readAfterBackgroundRead(workspaces, thread(0));
+    yield* readAfterBackgroundRead(workspaces, thread(MemberWorkspaces.CACHE_ENTRIES_MAX));
     assert.notEqual(yield* workspaces.cached(thread(0)), "pending");
     assert.equal(yield* workspaces.cached(thread(1)), "pending");
   }).pipe(Effect.provide(machine([]))),
@@ -570,7 +566,7 @@ it.effect("past its cap the cache drops the thread read least recently", () =>
 it.effect("a pull request two checkouts both match goes to neither", () =>
   Effect.gen(function* () {
     const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-    const workspace = yield* settled(workspaces, {
+    const workspace = yield* readAfterBackgroundRead(workspaces, {
       ...inProject(),
       pullRequests: [link("https://github.com/acme/api/pull/4", "open")],
     });

@@ -37,7 +37,6 @@ import {
 import { act, fakeTimers, render } from "../../../test/render";
 import { DraftHeroHeadline } from "./DraftHeroHeadline";
 
-// The socket is the only fake layer; see test/appScenarios.renders.tsx.
 vi.mock(
   "../../../../../packages/client-runtime/src/connection/driver.ts",
   async (importOriginal) => {

@@ -25,7 +25,6 @@ const shownOnlyToLinks = (): boolean => {
   return scope?.client?.linked === true;
 };
 
-/** Omit `environmentId` for a thread on this machine. */
 const MissionThreadRef = Schema.Struct({
   threadId: ThreadId,
   environmentId: Schema.optional(EnvironmentId),
@@ -64,7 +63,6 @@ export const MissionToolkit = Toolkit.make(
       name: Schema.String,
       members: Schema.Array(
         Schema.Struct({
-          /** The names the mission status and wakes use, as "member 3" on "machine 2". */
           member: Schema.String,
           place: Schema.String,
           threadRef: Schema.Struct({ environmentId: EnvironmentId, threadId: ThreadId }),
@@ -73,7 +71,6 @@ export const MissionToolkit = Toolkit.make(
           status: Schema.Union([MemberStatus, Schema.Literal("offline")]),
           title: Schema.String,
           needsAttention: Schema.Boolean,
-          /** `unknown`: its machine has not said, under the member's current claim. */
           workspace: Schema.Union([ListedWorkspace, Schema.Literal("unknown")]),
         }),
       ),
