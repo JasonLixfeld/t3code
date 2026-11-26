@@ -29,6 +29,7 @@ const scratch = project("scratch", "/scratch");
 
 const harness = vi.hoisted(() => ({
   setProject: vi.fn(),
+  missionTargets: [] as unknown[],
   openScratch: vi.fn(),
   selectDetail: vi.fn(),
   navigation: {
@@ -102,7 +103,12 @@ vi.mock("../../state/entities", () => ({
   useServerConfigs: () => new Map([[environmentId, { scratchWorkspaceRoot: "/scratch" }]]),
 }));
 vi.mock("../../state/projects", () => ({ projectEnvironment: { openScratch: {} } }));
-vi.mock("../../state/missions", () => ({ useMissionDraftMachines: () => null }));
+vi.mock("../../state/missions", () => ({
+  useMissionDraftMachines: (target: unknown) => {
+    harness.missionTargets.push(target);
+    return null;
+  },
+}));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => harness.openScratch }));
 vi.mock("../../state/use-composer-drafts", () => ({ retargetSavedNewTaskDraft: vi.fn() }));
 vi.mock("../../state/use-remote-environment-registry", () => ({
@@ -134,6 +140,7 @@ vi.mock("./new-task-flow-provider", () => ({
     ],
     selectedEnvironmentId: environmentId,
     setProject: harness.setProject,
+    draftKey: "new-task:shared-flow",
   }),
 }));
 
@@ -222,4 +229,19 @@ it("cancels the No project draft retarget when another project is picked", async
   await act(async () => screen.retargeting.resolve(true));
 
   expect(harness.selectDetail.mock.calls).toEqual(appDraftSelection);
+});
+
+it("reads the mission mark of the saved draft the route names, not the shared flow's", () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  harness.missionTargets.length = 0;
+  const root = createRoot(document.createElement("div"));
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  act(() =>
+    root.render(
+      <NewTaskRouteScreen
+        route={{ params: { requestId: "request-1", draftId: "new-task:saved" } } as never}
+      />,
+    ),
+  );
+  expect(harness.missionTargets.at(-1)).toEqual({ draftId: "new-task:saved" });
 });

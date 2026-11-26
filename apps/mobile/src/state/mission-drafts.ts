@@ -118,6 +118,10 @@ export function settleMissionDraftAttempt(
   return true;
 }
 
+export function clearMissionDraftIf(target: MissionDraftTarget, expected: MissionDraft) {
+  if (missionDraftOf(target) === expected) clearMissionDraft(target);
+}
+
 export function clearMissionDraft(target: MissionDraftTarget) {
   update((drafts) => drafts.delete(keyOf(target)));
 }

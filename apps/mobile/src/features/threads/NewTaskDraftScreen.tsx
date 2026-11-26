@@ -18,7 +18,7 @@ import { ThreadId } from "@t3tools/contracts";
 import * as Dialog from "../../components/ui/Dialog";
 import {
   adoptMissionDraft,
-  clearMissionDraft,
+  clearMissionDraftIf,
   draftMissionTarget,
   missionDraftOf,
 } from "../../state/mission-drafts";
@@ -90,6 +90,7 @@ import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import {
   useRemoteConnections,
   useRemoteEnvironmentRuntime,
+  useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import {
@@ -190,6 +191,7 @@ export function NewTaskDraftScreen(props: {
   const currentRoute = useRoute();
   const flowKey = newTaskFlowKey(currentRoute);
   const missionRequestId = props.requestId ?? flowKey ?? currentRoute.key;
+  const { savedConnectionsById } = useSavedRemoteConnections();
   const missionTarget = draftMissionTarget(flow.draftKey, missionRequestId);
   const { getShare, isLoading: isIncomingShareInboxLoading } = useIncomingShare();
   const { projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
@@ -729,14 +731,31 @@ export function NewTaskDraftScreen(props: {
     const sendTarget = draftMissionTarget(draftKey, missionRequestId);
     const mark = missionDraftOf(sendTarget);
     const missionSend = readMissionDraftSend(mark?.intent, selectedProject.environmentId);
-    if (missionSend === "refused") {
+    if (missionSend.kind === "machine-refused") {
       Dialog.alert(
         gt("This draft's mission no longer allows that machine."),
         gt("Switch to one of the mission's machines, or send it as a plain thread."),
       );
       return null;
     }
-    if (missionSend === "drop") clearMissionDraft(sendTarget);
+    if (
+      mark !== undefined &&
+      (missionSend.kind === "offline" || missionSend.kind === "not-allowed")
+    ) {
+      Dialog.alert(
+        mark.intent.kind === "new"
+          ? gt("Could not start the mission")
+          : mark.intent.kind === "member"
+            ? gt("Could not add this thread to the mission")
+            : gt("Could not make this thread the lead"),
+        missionSend.kind === "offline"
+          ? gt("{host} is not connected.", {
+              host: savedConnectionsById[missionSend.host]?.environmentLabel ?? missionSend.host,
+            })
+          : gt("Not allowed here"),
+      );
+      return null;
+    }
 
     const message = flow.buildPendingTaskMessage(creationMetadata, {
       currentCheckoutBranch: queuesInsteadOfStarting ? null : flow.currentCheckoutBranchName,
@@ -756,7 +775,10 @@ export function NewTaskDraftScreen(props: {
       );
       return null;
     }
-    if (missionSend === "mission" && mark !== undefined) {
+    if (missionSend.kind === "turned-off" && mark !== undefined) {
+      clearMissionDraftIf(sendTarget, mark);
+    }
+    if (missionSend.kind === "mission" && mark !== undefined) {
       adoptMissionDraft(sendTarget, mark, {
         environmentId: message.environmentId,
         threadId: message.threadId,

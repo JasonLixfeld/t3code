@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { type MissionHost, missionsLiveKey } from "@t3tools/client-runtime/missions";
+import {
+  type MissionDraftIntent,
+  type MissionHost,
+  missionsLiveKey,
+} from "@t3tools/client-runtime/missions";
 import { AuthOrchestrationReadScope, type EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -25,9 +29,10 @@ const missionAdvertisersAtom = Atom.make((get) =>
   missionAdvertisers(get(connectedEnvironmentIdsAtom), get(environmentServerConfigsAtom)),
 ).pipe(Atom.withLabel("mobile-mission-advertisers"));
 
-const missionsOnAtom = Atom.make(
-  (get) => get(missionPreferencesAtom).enabled && get(missionAdvertisersAtom).length > 0,
-).pipe(Atom.withLabel("mobile-missions-on"));
+const missionsTurnedOffAtom = Atom.make((get) => {
+  const preferences = get(missionPreferencesAtom);
+  return preferences.loaded && !preferences.enabled;
+}).pipe(Atom.withLabel("mobile-missions-turned-off"));
 
 const missionHostsAtom = Atom.make((get) => {
   const configs = get(environmentServerConfigsAtom);
@@ -82,20 +87,27 @@ export function useMissionDraftMachines(
 ): ReadonlySet<EnvironmentId> | null {
   return missionDraftProjectMachines({
     intent: useMissionDraft(target)?.intent,
-    missionsOn: useAtomValue(missionsOnAtom),
+    missionsOff: useAtomValue(missionsTurnedOffAtom),
     hosts: useMissionHosts(),
     startMachines: useMissionStartMachines(),
   });
 }
 
+const missionCommandOf = (intent: MissionDraftIntent) =>
+  intent.kind === "new"
+    ? serverEnvironment.createMission
+    : intent.kind === "member"
+      ? serverEnvironment.addMissionMember
+      : serverEnvironment.setMissionLead;
+
 export const readMissionDraftSend = (
-  intent: Parameters<typeof missionDraftSend>[0]["intent"],
+  intent: MissionDraftIntent | undefined,
   environmentId: EnvironmentId,
 ) =>
   missionDraftSend({
     intent,
     environmentId,
-    missionsOn: appAtomRegistry.get(missionsOnAtom),
+    missionsOff: appAtomRegistry.get(missionsTurnedOffAtom),
     hosts: appAtomRegistry.get(missionHostsAtom),
-    startMachines: appAtomRegistry.get(missionStartMachinesAtom),
+    canRun: (marked, host) => appAtomRegistry.get(missionCommandOf(marked).permissionAtom(host)),
   });

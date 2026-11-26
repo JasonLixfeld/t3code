@@ -1,4 +1,4 @@
-import { EnvironmentId, type ExecutionEnvironmentCapabilities } from "@t3tools/contracts";
+import { EnvironmentId, type ExecutionEnvironmentCapabilities, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { type MissionHost, missionsLiveKey } from "@t3tools/client-runtime/missions";
@@ -81,7 +81,24 @@ describe("a new mission's machines", () => {
 
   const startMachines = new Set([DESK]);
   const machines = (intent: Parameters<typeof missionDraftProjectMachines>[0]["intent"]) =>
-    missionDraftProjectMachines({ intent, missionsOn: true, hosts, startMachines });
+    missionDraftProjectMachines({ intent, missionsOff: false, hosts, startMachines });
+  const lead = { ...member, kind: "lead", expectedLead: ThreadId.make("gone") } as const;
+  const send = (
+    environmentId: EnvironmentId,
+    input: {
+      intent?: Parameters<typeof missionDraftSend>[0]["intent"];
+      missionsOff?: boolean;
+      hosts?: ReadonlyArray<MissionHost>;
+      allowed?: boolean;
+    } = {},
+  ) =>
+    missionDraftSend({
+      intent: "intent" in input ? input.intent : member,
+      missionsOff: input.missionsOff ?? false,
+      hosts: input.hosts ?? hosts,
+      environmentId,
+      canRun: () => input.allowed ?? true,
+    }).kind;
 
   it("starts a new mission on a machine that may start one, and a member on its host or a full-access link", () => {
     expect(machines(undefined)).toBeNull();
@@ -89,37 +106,26 @@ describe("a new mission's machines", () => {
     expect(machines(member)).toEqual(new Set([DESK, LAPTOP]));
   });
 
-  it("drops a mark while Missions are off, and keeps a member to its host when links are hidden", () => {
-    const send = (
-      environmentId: EnvironmentId,
-      input: { missionsOn?: boolean; hosts?: ReadonlyArray<MissionHost> } = {},
-    ) =>
-      missionDraftSend({
-        intent: member,
-        missionsOn: input.missionsOn ?? true,
-        hosts: input.hosts ?? hosts,
-        startMachines,
-        environmentId,
-      });
-    expect(
-      missionDraftSend({
-        intent: undefined,
-        missionsOn: false,
-        hosts,
-        startMachines,
-        environmentId: PHONE,
-      }),
-    ).toBe("plain");
-    expect(send(PHONE, { missionsOn: false })).toBe("drop");
+  it("sends as a plain thread only when the user turned Missions off, and keeps a member to its host when links are hidden", () => {
+    expect(send(PHONE, { intent: undefined, missionsOff: true })).toBe("plain");
+    expect(send(PHONE, { missionsOff: true })).toBe("turned-off");
     expect(send(LAPTOP)).toBe("mission");
-    expect(send(PHONE)).toBe("refused");
+    expect(send(PHONE)).toBe("machine-refused");
 
     const hidden: ReadonlyArray<MissionHost> = hosts.map((host) => ({
       ...host,
       snapshot: { ...host.snapshot, links: [], linksHidden: true as const },
     }));
     expect(send(DESK, { hosts: hidden })).toBe("mission");
-    expect(send(LAPTOP, { hosts: hidden })).toBe("refused");
+    expect(send(LAPTOP, { hosts: hidden })).toBe("machine-refused");
+  });
+
+  it("refuses a send while the mission's machine is offline or loading, or the action is not allowed there", () => {
+    expect(send(DESK, { hosts: [] })).toBe("offline");
+    expect(send(DESK, { intent: { kind: "new" }, hosts: [] })).toBe("offline");
+    expect(send(DESK, { allowed: false })).toBe("not-allowed");
+    expect(send(DESK, { intent: lead, allowed: false })).toBe("not-allowed");
+    expect(send(DESK, { intent: lead })).toBe("mission");
   });
 
   it("offers New mission only where a start machine has a project or a No project home", () => {

@@ -28,28 +28,47 @@ export const missionAdvertisers = (
 
 export function missionDraftProjectMachines(input: {
   readonly intent: MissionDraftIntent | undefined;
-  readonly missionsOn: boolean;
+  readonly missionsOff: boolean;
   readonly hosts: ReadonlyArray<MissionHost>;
   readonly startMachines: ReadonlySet<EnvironmentId>;
 }): ReadonlySet<EnvironmentId> | null {
   const { intent } = input;
-  if (intent === undefined || !input.missionsOn) return null;
+  if (intent === undefined || input.missionsOff) return null;
   if (intent.kind === "new") return input.startMachines;
   // Links the operator cannot see cannot be checked, so only the mission's own machine is safe.
   return missionDraftMachines(intent, input.hosts) ?? new Set([intent.host]);
 }
 
-/** "drop": Missions are off, so the mark is cleared and the draft sends as a plain thread. */
-export function missionDraftSend(
-  input: Parameters<typeof missionDraftProjectMachines>[0] & {
-    readonly environmentId: EnvironmentId;
-  },
-): "plain" | "drop" | "mission" | "refused" {
-  if (input.intent === undefined) return "plain";
-  if (!input.missionsOn) return "drop";
-  return missionDraftProjectMachines(input)?.has(input.environmentId) === true
-    ? "mission"
-    : "refused";
+export type MissionDraftSend =
+  | { readonly kind: "plain" }
+  | { readonly kind: "turned-off" }
+  | { readonly kind: "mission" }
+  | { readonly kind: "machine-refused" }
+  | { readonly kind: "offline"; readonly host: EnvironmentId }
+  | { readonly kind: "not-allowed" };
+
+/** Only the user's own setting turns a mark off; a server that is offline or loading refuses. */
+export function missionDraftSend(input: {
+  readonly intent: MissionDraftIntent | undefined;
+  readonly missionsOff: boolean;
+  readonly hosts: ReadonlyArray<MissionHost>;
+  readonly environmentId: EnvironmentId;
+  readonly canRun: (intent: MissionDraftIntent, host: EnvironmentId) => boolean;
+}): MissionDraftSend {
+  const { intent, environmentId } = input;
+  if (intent === undefined) return { kind: "plain" };
+  if (input.missionsOff) return { kind: "turned-off" };
+  const host = intent.kind === "new" ? environmentId : intent.host;
+  if (!input.hosts.some((candidate) => candidate.environmentId === host)) {
+    return { kind: "offline", host };
+  }
+  if (
+    intent.kind !== "new" &&
+    !(missionDraftMachines(intent, input.hosts) ?? new Set([intent.host])).has(environmentId)
+  ) {
+    return { kind: "machine-refused" };
+  }
+  return input.canRun(intent, host) ? { kind: "mission" } : { kind: "not-allowed" };
 }
 
 export const missionDraftAllows = (

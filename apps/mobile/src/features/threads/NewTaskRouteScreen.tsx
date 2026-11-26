@@ -209,7 +209,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const serverConfigs = useServerConfigs();
   const requestId = route.params?.requestId;
   const missionMachines = useMissionDraftMachines(
-    requestId === undefined ? null : draftMissionTarget(draftKey, requestId),
+    requestId === undefined ? null : draftMissionTarget(routeDraftId ?? draftKey, requestId),
   );
   const listScopes = projectScopesOnMachines(
     pickableProjectGroups(projectScopes),
