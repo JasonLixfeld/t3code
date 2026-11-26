@@ -484,6 +484,30 @@ describe("CommandPalette open intents", () => {
     await expect.element(page.getByRole("option", { name: /api/ })).not.toBeInTheDocument();
   });
 
+  it("offers no New mission... when the only project that could start one is archived", async () => {
+    const archived = { ...makeProject("old"), archivedAt: "2026-03-02T00:00:00.000Z" };
+    setup({ projects: [archived] });
+    vi.mocked(useScratchProject).mockReturnValue({
+      scratchEnvironmentId: () => null,
+      scratchWorkspaceRootFor: () => null,
+      startScratchThread: vi.fn(),
+      openScratchProject: vi.fn(),
+    } as never);
+    onTestFinished(() => vi.mocked(useScratchProject).mockRestore());
+    vi.mocked(useMissionHosts).mockReturnValue([
+      { environmentId: archived.environmentId, snapshot: { missions: [], links: [], claims: [] } },
+    ]);
+    onTestFinished(() => vi.mocked(useMissionHosts).mockRestore());
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    openCommandPalette({});
+    await expect
+      .element(page.getByPlaceholder("Search commands, projects, and threads..."))
+      .toHaveFocus();
+    await expect
+      .element(page.getByRole("option", { name: /^New mission\.\.\./ }))
+      .not.toBeInTheDocument();
+  });
+
   it("marks the draft a mission's project pick makes, offering only the lead's machine", async () => {
     const local = makeProject("web");
     const remote = { ...makeProject("api"), environmentId: EnvironmentId.make("remote") };

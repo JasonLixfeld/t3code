@@ -1455,8 +1455,16 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  const missionStartProjects = buildSidebarProjectPickerEntries({
+    groups: pickableProjectGroups(projectGroups),
+    preferredProjectRef: contextualProjectRef,
+    environmentIds: missionStartMachines,
+  }).filter(
+    ({ targetProject }) =>
+      !isScratchProject(targetProject, scratchWorkspaceRootFor(targetProject.environmentId)),
+  );
   if (
-    projects.some((project) => missionStartMachines.has(project.environmentId)) ||
+    missionStartProjects.length > 0 ||
     missionScratchHome(
       missionStartMachines,
       scratchTargetEnvironmentId,
