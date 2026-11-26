@@ -12,6 +12,7 @@ import {
   missionNameFromTitle,
   type MissionsSnapshot,
   MISSION_WORKSPACES_PER_CALL,
+  normalizeMissionPrompt,
   type ScopedThreadRef,
   threadHasMessages,
   type ThreadId,
@@ -1433,7 +1434,10 @@ const make = Effect.gen(function* () {
     readonly missionId: string;
     readonly prompt: string;
   }) {
-    yield* store.setPrompt({ missionId: input.missionId, prompt: input.prompt.trim() });
+    yield* store.setPrompt({
+      missionId: input.missionId,
+      prompt: normalizeMissionPrompt(input.prompt),
+    });
   });
 
   const prompt = Effect.fn("Missions.prompt")(function* (missionId: string) {

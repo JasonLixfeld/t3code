@@ -12,6 +12,7 @@ import {
   type Mission,
   type MissionMember,
   MISSION_PROMPT_MAX_LENGTH,
+  normalizeMissionPrompt,
   type ScopedThreadRef,
   type ThreadId,
   threadHasMessages,
@@ -397,8 +398,7 @@ function MissionPromptForm(props: {
     props.mission;
   const loaded = props.promptsOmitted ? (read.data?.prompt ?? null) : (listed.prompt ?? "");
   const [draft, setDraft] = useState<string | null>(null);
-  // The server trims the prompt it saves.
-  const next = draft?.trim();
+  const next = draft === null ? undefined : normalizeMissionPrompt(draft);
   const changed = loaded !== null && next !== undefined && next !== loaded;
   const setPrompt = useAtomCommand(serverEnvironment.setMissionPrompt, "mission set prompt");
   return (

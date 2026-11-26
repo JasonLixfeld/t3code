@@ -47,16 +47,14 @@ export const MissionLink = Schema.Struct({
 export type MissionLink = typeof MissionLink.Type;
 
 /** A thread on this machine that a Mission holds, whichever machine leads it. */
-export const MissionClaimHere = Schema.Struct({
+const MissionClaimHere = Schema.Struct({
   threadId: ThreadId,
   missionId: Schema.String,
   name: Schema.String,
 });
-export type MissionClaimHere = typeof MissionClaimHere.Type;
 
 export const MissionsSnapshot = Schema.Struct({
   missions: Schema.Array(Mission),
-  /** Empty for a session that may not read access, as the peer-link list is kept from it. */
   links: Schema.Array(MissionLink),
   /** Set when `links` is empty because the session may not read them. */
   linksHidden: Schema.optional(Schema.Literal(true)),
@@ -71,9 +69,8 @@ export const MissionsSubscribeInput = Schema.Struct({
   omitPrompts: Schema.optional(Schema.Literal(true)),
 });
 
-/** Twelve hex digits. The id goes into each member's tag, where a colon ends it. */
+/** The id goes into each member's tag, where a colon ends it. */
 export const MissionId = Schema.String.check(Schema.isPattern(/^[0-9a-f]{12}$/));
-/** The name goes into each member's tag, so it follows the tag rules. */
 export const MissionName = ThreadTag;
 
 /** The Mission's name is its lead thread's title, so the client sends none. */
@@ -102,6 +99,8 @@ export const MissionSetLeadInput = Schema.Struct({
 export const MissionDeleteInput = Schema.Struct({ missionId: Schema.String });
 
 export const MISSION_PROMPT_MAX_LENGTH = 10_000;
+
+export const normalizeMissionPrompt = (prompt: string) => prompt.trim();
 
 /** Sets the Mission's own prompt for its lead. Empty text goes back to the Settings default. */
 export const MissionSetPromptInput = Schema.Struct({
@@ -153,7 +152,6 @@ const cut = (tag: string) => {
   return kept.trimEnd();
 };
 
-/** A Mission is named for its lead thread's title, kept to the tag rules. */
 export const missionNameFromTitle = (title: string) =>
   cut(title.replace(/\p{Cc}+/gu, " ").trim()) || "Mission";
 

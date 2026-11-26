@@ -53,13 +53,10 @@ export const MemberDetail = Schema.Struct({
   status: MemberStatus,
   title: Schema.String,
   project: Schema.String,
-  /** The latest run and its status. Absent from machines that predate it. */
   run: Schema.optional(Schema.Struct({ id: Schema.String, status: Schema.String })),
-  /** The requests and input cards it waits on. Absent from machines that predate it. */
   requests: Schema.optional(
     Schema.Array(Schema.Struct({ id: Schema.String, kind: Schema.String })),
   ),
-  /** Its checkouts, branches and pull requests, as data for the roster only. Absent from older machines. */
   workspace: Schema.optional(ListedWorkspace),
 });
 export type MemberDetail = typeof MemberDetail.Type;
@@ -88,7 +85,6 @@ export const MissionClaimResult = Schema.Struct({
       name: Schema.String,
       role: Schema.Literals(["lead", "member"]),
       generation: Schema.String,
-      /** Absent from machines that predate it. */
       detail: Schema.optional(MemberDetail),
     }),
   ),
