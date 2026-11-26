@@ -1,11 +1,11 @@
 import { threadHasMessages } from "@t3tools/contracts";
-import { msg } from "gt-react";
+import { msg, useMessages } from "gt-react";
 import { InfoIcon } from "lucide-react";
 import { useEffect } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
-import { m, type MessageResolver } from "../../i18n/messages";
+import { m } from "../../i18n/messages";
 import { useThreadShell } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -21,8 +21,8 @@ import { reportFailure, reportLeadOutcome, useMissionHosts } from "./MissionsSec
 /** The composer's line for a draft that starts, leads or joins a Mission, with a way to undo it. */
 export function useMissionDraftBanner(
   draftId: DraftId | null,
-  resolve: MessageResolver = m,
 ): ReadonlyArray<ComposerBannerStackItem> {
+  const resolve = useMessages();
   const draft = useMissionDrafts((state) =>
     draftId === null ? undefined : state.drafts.get(draftId),
   );
