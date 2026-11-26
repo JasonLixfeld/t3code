@@ -2304,9 +2304,7 @@ it.effect("the list a client watches stays small, however long a mission's promp
       const next = (
         matches: (snapshot: MissionsSnapshot) => boolean,
       ): Effect.Effect<MissionsSnapshot> =>
-        Effect.flatMap(Queue.take(seen), (snapshot) =>
-          matches(snapshot) ? Effect.succeed(snapshot) : next(matches),
-        );
+        Queue.take(seen).pipe(Effect.filterOrElse(matches, () => next(matches)));
       const first = yield* Queue.take(seen);
       yield* missions.setPrompt({
         missionId: mission.missionId,
