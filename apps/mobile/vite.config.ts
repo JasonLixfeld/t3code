@@ -61,6 +61,7 @@ const reactTests = [
   "src/features/threads/MissionDraftCoordinator.test.tsx",
   "src/features/threads/useThreadListV2.test.tsx",
   "src/features/home/home-list-options.test.tsx",
+  "src/features/home/usePendingTaskListActions.test.tsx",
   "src/features/home/home-route-visibility.test.tsx",
   "src/features/layout/workspace/useSearchScrollRestoration.test.tsx",
   "src/features/connection/useRetryEnvironment.test.tsx",

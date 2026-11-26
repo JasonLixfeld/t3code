@@ -11,7 +11,8 @@ import {
   clearMissionDraft,
   type MissionDraft,
   missionDraftsAtom,
-  setMissionDraftStep,
+  settleMissionDraftAttempt,
+  startMissionDraftAttempt,
 } from "../../state/mission-drafts";
 import { useMissionHosts } from "../../state/missions";
 import { serverEnvironment } from "../../state/server";
@@ -53,9 +54,11 @@ function MissionDraftWatch(props: {
           host.environmentId === intent.host &&
           !host.snapshot.missions.some((mission) => mission.missionId === draft.missionId),
       ));
-  const retry = () => setMissionDraftStep(thread, "waiting");
   const start = useEffectEvent(async () => {
-    setMissionDraftStep(thread, "trying");
+    const attempt = startMissionDraftAttempt(thread);
+    const settle = (outcome: "done" | "failed" | "retry") =>
+      settleMissionDraftAttempt(thread, attempt, outcome);
+    const retry = () => settle("retry");
     if (intent.kind === "lead") {
       const outcome = reportLeadOutcome(
         await setLead({
@@ -64,8 +67,7 @@ function MissionDraftWatch(props: {
         }),
         retry,
       );
-      if (outcome === "failed") setMissionDraftStep(thread, "failed");
-      else clearMissionDraft(thread);
+      settle(outcome === "failed" ? "failed" : "done");
       return;
     }
     const [title, result] =
@@ -84,15 +86,14 @@ function MissionDraftWatch(props: {
               input: { missionId: draft.missionId, leadThreadId: thread.threadId },
             }),
           ];
-    if (result._tag === "Success") return clearMissionDraft(thread);
-    setMissionDraftStep(thread, "failed");
+    if (result._tag === "Success") return settle("done");
+    settle("failed");
     reportMissionFailure(title, result, retry);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts, joins or leads the mission on the server once the thread's first message lands, and again after Try again
   useEffect(() => {
-    if (draft.step !== "waiting") return;
     if (done) clearMissionDraft(thread);
-    else if (sent) void start();
+    else if (draft.step === "waiting" && sent) void start();
   }, [draft.step, done, sent, thread]);
   return null;
 }

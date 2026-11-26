@@ -6,7 +6,12 @@ import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
 import { appAtomRegistry } from "../../state/atom-registry";
-import { markMissionDraft, missionDraftOf } from "../../state/mission-drafts";
+import {
+  markMissionDraft,
+  missionDraftOf,
+  settleMissionDraftAttempt,
+  startMissionDraftAttempt,
+} from "../../state/mission-drafts";
 import { environmentShell } from "../../state/shell";
 import { MissionDraftCoordinator } from "./MissionDraftCoordinator";
 
@@ -62,4 +67,32 @@ it("keeps a waiting mark while its thread is not delivered, and clears it once t
   );
   expect(missionDraftOf(thread)).toBeUndefined();
   expect(createMission).not.toHaveBeenCalled();
+});
+
+it("clears a failed mark once its thread is removed", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  using _globals = { [Symbol.dispose]: () => vi.unstubAllGlobals() };
+  const thread = { environmentId: EnvironmentId.make("env-laptop"), threadId: ThreadId.make("t2") };
+  markMissionDraft(thread, { kind: "new" }, () => "m2");
+  settleMissionDraftAttempt(thread, startMissionDraftAttempt(thread), "failed");
+  const root = createRoot(document.createElement("div"));
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  act(() =>
+    root.render(
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <MissionDraftCoordinator />
+      </RegistryContext.Provider>,
+    ),
+  );
+  expect(missionDraftOf(thread)?.step).toBe("failed");
+
+  act(() =>
+    appAtomRegistry.set(
+      environmentShell.stateValueAtom(thread.environmentId) as unknown as Atom.Writable<{
+        removedAt: ReadonlyMap<string, number>;
+      }>,
+      { removedAt: new Map([[thread.threadId, 3]]) },
+    ),
+  );
+  expect(missionDraftOf(thread)).toBeUndefined();
 });

@@ -9,6 +9,7 @@ import { removeThreadOutboxMessage } from "../../state/thread-outbox-removal";
 import { clearComposerDraftContent } from "../../state/use-composer-drafts";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { clearMissionDraft, clearSavedDraftMission } from "../../state/mission-drafts";
 import {
   editingQueuedMessageIdsAtom,
   holdEditingQueuedMessage,
@@ -53,6 +54,7 @@ export function usePendingTaskListActions(
             text: m(msg("Discard", { $context: "verb, discards a draft" })),
             style: "destructive",
             onPress: () => {
+              clearSavedDraftMission(pendingTask.draftKey);
               void withThreadDismissal(
                 pendingTask.key,
                 async () =>
@@ -96,9 +98,14 @@ export function usePendingTaskListActions(
                 ? remove()
                 : withThreadDismissal(pendingTask.key, remove, (removed) => removed)
             )
-              .then((removed) =>
-                removed ? releaseEditingQueuedMessage(messageId) : releaseUnlessEditing(),
-              )
+              .then((removed) => {
+                if (!removed) return releaseUnlessEditing();
+                releaseEditingQueuedMessage(messageId);
+                clearMissionDraft({
+                  environmentId: pendingTask.message.environmentId,
+                  threadId: pendingTask.message.threadId,
+                });
+              })
               .catch((error) => {
                 releaseUnlessEditing();
                 Dialog.alert(

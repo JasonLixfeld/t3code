@@ -16,7 +16,12 @@ import { AppBar } from "../../components/ui/AppBar";
 import { ThreadId } from "@t3tools/contracts";
 
 import * as Dialog from "../../components/ui/Dialog";
-import { adoptMissionDraft } from "../../state/mission-drafts";
+import {
+  adoptMissionDraft,
+  bindMissionDraft,
+  useMissionDraft,
+  useMissionDraftRequestId,
+} from "../../state/mission-drafts";
 import { useMissionDraftMachines } from "../../state/missions";
 import { missionDraftAllows } from "../../state/missions.logic";
 import { DraftHeroSentence, DraftMissionControl, useDraftMission } from "./DraftHeroMission";
@@ -184,7 +189,13 @@ export function NewTaskDraftScreen(props: {
   const goBack = useWorkspaceBackNavigation();
   const currentRoute = useRoute();
   const flowKey = newTaskFlowKey(currentRoute);
-  const missionRequestId = props.requestId ?? currentRoute.key;
+  const savedDraftMissionRequestId = useMissionDraftRequestId(props.draftId ?? null);
+  const missionRequestId = props.requestId ?? savedDraftMissionRequestId ?? currentRoute.key;
+  const marked = useMissionDraft(missionRequestId, null) !== undefined;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ties the route's mission mark to its saved draft, so reopening that draft from the pending list finds the mark
+  useEffect(() => {
+    if (marked && flow.draftKey !== null) bindMissionDraft(missionRequestId, flow.draftKey);
+  }, [marked, missionRequestId, flow.draftKey]);
   const { getShare, isLoading: isIncomingShareInboxLoading } = useIncomingShare();
   const { projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
   // selectedProject falls back to the environment's first project; remember only a chosen one.
