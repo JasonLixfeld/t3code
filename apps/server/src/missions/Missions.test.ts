@@ -458,9 +458,8 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
 
 const InTurn = Context.Reference<boolean>("test/InTurn", { defaultValue: () => false });
 const Watched = Context.Reference<boolean>("test/Watched", { defaultValue: () => false });
-/** Set on a `heardInWait` call, so the background fiber it starts hands back its own end. */
-const Marking = Context.Reference<Deferred.Deferred<Effect.Effect<void>> | undefined>(
-  "test/Marking",
+const WaitMarkingCompletion = Context.Reference<Deferred.Deferred<Effect.Effect<void>> | undefined>(
+  "test/WaitMarkingCompletion",
   { defaultValue: () => undefined },
 );
 
@@ -471,7 +470,9 @@ const startHeardInWait = Effect.fnUntraced(function* (
 ) {
   const missions = yield* Missions.Missions;
   const marking = yield* Deferred.make<Effect.Effect<void>>();
-  yield* missions.heardInWait(lead, member, runId).pipe(Effect.provideService(Marking, marking));
+  yield* missions
+    .heardInWait(lead, member, runId)
+    .pipe(Effect.provideService(WaitMarkingCompletion, marking));
   return marking;
 });
 const markingDone = (marking: Deferred.Deferred<Effect.Effect<void>>) =>
@@ -509,7 +510,7 @@ const withMissions = <A, E>(
             Effect.map(MissionStore.MissionStore, (real) =>
               MissionStore.MissionStore.of({
                 ...real,
-                missions: Effect.flatMap(Marking, (marking) =>
+                missions: Effect.flatMap(WaitMarkingCompletion, (marking) =>
                   marking === undefined
                     ? Effect.void
                     : Effect.withFiber((fiber) =>
@@ -4081,7 +4082,7 @@ it.effect("a wait answered as its lead handed over keeps the completion for the 
         event: "completed",
       });
       let reads = 0;
-      world.beforeMissionsRead = Effect.flatMap(Marking, (marking) =>
+      world.beforeMissionsRead = Effect.flatMap(WaitMarkingCompletion, (marking) =>
         marking !== undefined && ++reads === 2
           ? store
               .setLead({
