@@ -247,6 +247,7 @@ it.effect("upgrades a database an earlier build left, keeping a given-up add's m
             missionId: "m1",
             lead,
             machines: [],
+            owner: "env-a",
             checkedLocalMembers: [],
           });
           assert.deepEqual(
@@ -517,6 +518,7 @@ it.effect("deleting a mission removes the updates its lead heard another way", (
             missionId: "m1",
             lead,
             machines: [],
+            owner: "env-a",
             checkedLocalMembers: [],
           });
         }),
@@ -535,7 +537,13 @@ it.effect("ends a mission only with each member claim checked and no release wai
     usingStore(filename, (store) =>
       Effect.gen(function* () {
         const end = (checkedLocalMembers: ReadonlyArray<ThreadId>) =>
-          store.deleteMission({ missionId: "m1", lead, machines: [], checkedLocalMembers });
+          store.deleteMission({
+            missionId: "m1",
+            lead,
+            machines: [],
+            owner: "env-a",
+            checkedLocalMembers,
+          });
         const refusal = (checkedLocalMembers: ReadonlyArray<ThreadId>) =>
           end(checkedLocalMembers).pipe(
             Effect.flip,

@@ -20,6 +20,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -157,6 +158,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   const dispatched: Array<string> = [];
   const workspaces = new Map<string, MemberWorkspace | "pending">();
   const forgotten: Array<ThreadId> = [];
+  const failing = { settlements: (_threadIds: ReadonlyArray<ThreadId>): boolean => false };
   const workspacesLayer = Layer.mock(MemberWorkspaces)({
     cached: (shell) =>
       Effect.sync(
@@ -423,6 +425,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     beforeShellRead: (_threadId: ThreadId): Effect.Effect<void> => Effect.void,
     beforeThreadLock: (_threadId: ThreadId): Effect.Effect<void> => Effect.void,
     beforeMissionsRead: Effect.void as Effect.Effect<void>,
+    failing,
     beforeReleasesRead: Effect.void as Effect.Effect<void>,
     lineageReads: 0,
     numberings: 0,
@@ -440,19 +443,21 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       Layer.mock(ServerEnvironment.ServerEnvironment)({ getEnvironmentId: Effect.succeed(HERE) }),
       Layer.mock(ProjectionStore.ProjectionStoreV2)({
         getThreadSettlements: (threadIds) =>
-          Effect.sync(
-            () =>
-              new Map(
-                threadIds.flatMap((threadId) => {
-                  const shell = shellAt(HERE, threadId) as {
-                    readonly deletedAt: string | null;
-                    readonly settledOverride: string | null;
-                    readonly archivedAt: string | null;
-                  } | null;
-                  return shell === null || shell.deletedAt !== null ? [] : [[threadId, shell]];
-                }),
+          failing.settlements(threadIds)
+            ? Effect.fail(new ProjectionStore.ProjectionStoreReadError({ threadId: lead.threadId }))
+            : Effect.sync(
+                () =>
+                  new Map(
+                    threadIds.flatMap((threadId) => {
+                      const shell = shellAt(HERE, threadId) as {
+                        readonly deletedAt: string | null;
+                        readonly settledOverride: string | null;
+                        readonly archivedAt: string | null;
+                      } | null;
+                      return shell === null || shell.deletedAt !== null ? [] : [[threadId, shell]];
+                    }),
+                  ),
               ),
-          ),
         findThread: (threadId) =>
           Effect.sync(() => {
             world.lineageReads += 1;
@@ -544,19 +549,8 @@ const withMissions = <A, E>(
                   Effect.andThen(real.missions),
                 ),
                 knownClaims: real.knownClaims.pipe(Effect.tap(() => world.afterKnownClaimsRead)),
-                allClaims: Effect.flatMap(PauseAfterClaimsRead, (pause) =>
-                  pause === undefined
-                    ? real.allClaims
-                    : real.allClaims.pipe(
-                        Effect.tap(() =>
-                          ++pause.reads === pause.at
-                            ? Deferred.succeed(pause.paused, undefined).pipe(
-                                Effect.andThen(Deferred.await(pause.go)),
-                              )
-                            : Effect.void,
-                        ),
-                      ),
-                ),
+                allClaims: pausedAfter("allClaims", real.allClaims),
+                claimsOf: (owner) => pausedAfter("claimsOf", real.claimsOf(owner)),
                 pendingReleases: Effect.suspend(() => world.beforeReleasesRead).pipe(
                   Effect.andThen(real.pendingReleases),
                 ),
@@ -1036,13 +1030,14 @@ it.effect("each settled or archived member here is marked settled, and none else
       yield* followMemberThreads(
         Stream.make({ type: "thread.unsettled", threadId: localMember.threadId }),
         HERE,
+        missions.listStale,
       );
       yield* until((snapshot) => settledOf(snapshot)?.join() === "env-here/other");
     }),
   );
 });
 
-it.effect("each change that can settle or wake a member thread here refreshes the list", () => {
+it.effect("each change that can settle or wake a member here refreshes only the list", () => {
   const world = makeWorld([lead, localMember, otherMember]);
   return withMissions(
     world,
@@ -1053,11 +1048,17 @@ it.effect("each change that can settle or wake a member thread here refreshes th
       yield* missions.addMember({ missionId, member: localMember });
       const changes = yield* PubSub.subscribe(store.changes);
       const refreshes = (type: string, threadId: ThreadId) =>
-        PubSub.takeUpTo(changes, 100).pipe(
-          Effect.andThen(followMemberThreads(Stream.make({ type, threadId }), HERE)),
-          Effect.andThen(PubSub.takeUpTo(changes, 100)),
-          Effect.map((taken) => taken.length > 0),
-        );
+        Effect.gen(function* () {
+          let stale = 0;
+          yield* PubSub.takeUpTo(changes, 100);
+          yield* followMemberThreads(
+            Stream.make({ type, threadId }),
+            HERE,
+            Effect.sync(() => void stale++),
+          );
+          assert.deepEqual(yield* PubSub.takeUpTo(changes, 100), [], `${type} woke the store`);
+          return stale > 0;
+        });
       for (const type of [
         "thread.settled",
         "thread.unsettled",
@@ -1207,6 +1208,7 @@ it.effect(
 
 const PauseAfterClaimsRead = Context.Reference<
   | {
+      readonly read: "allClaims" | "claimsOf";
       readonly at: number;
       reads: number;
       readonly paused: Deferred.Deferred<void>;
@@ -1214,6 +1216,19 @@ const PauseAfterClaimsRead = Context.Reference<
     }
   | undefined
 >("test/PauseAfterClaimsRead", { defaultValue: () => undefined });
+
+const pausedAfter = <A>(read: "allClaims" | "claimsOf", effect: Effect.Effect<A>) =>
+  Effect.flatMap(PauseAfterClaimsRead, (pause) =>
+    pause === undefined || pause.read !== read
+      ? effect
+      : Effect.tap(effect, () =>
+          ++pause.reads === pause.at
+            ? Deferred.succeed(pause.paused, undefined).pipe(
+                Effect.andThen(Deferred.await(pause.go)),
+              )
+            : Effect.void,
+        ),
+  );
 
 it.effect("ending a mission and a fork onto a thread that joined it meanwhile both finish", () => {
   const source = ref(HERE, "b-source");
@@ -1255,6 +1270,146 @@ it.effect("ending a mission and a fork onto a thread that joined it meanwhile bo
   );
 });
 
+it.effect("ending a mission leaves a linked mission's claim that has the same id", () => {
+  const linked = ref(HERE, "linked");
+  const world = makeWorld([lead, localMember, linked]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const claims = yield* MissionClaims.MissionClaims;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: localMember });
+      yield* claims.join(MissionClaims.linkOwner("other-lead"), {
+        threadId: linked.threadId,
+        missionId,
+        name: "Theirs",
+      });
+      settle(world, localMember);
+      settle(world, linked);
+      yield* missions.deleteMission({ missionId });
+      assert.deepEqual(
+        (yield* listed).claims.map((claim) => claim.threadId),
+        [linked.threadId],
+      );
+      assert.deepEqual(world.tags(linked), ["mission:0123456789ab:Theirs"]);
+    }),
+  );
+});
+
+it.effect("ending a mission whose lead changed meanwhile ends it under its new lead", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: localMember });
+      const pause = {
+        read: "allClaims" as const,
+        at: 1,
+        reads: 0,
+        paused: yield* Deferred.make<void>(),
+        go: yield* Deferred.make<void>(),
+      };
+      const ending = yield* Effect.forkChild(
+        missions
+          .deleteMission({ missionId })
+          .pipe(Effect.provideService(PauseAfterClaimsRead, pause)),
+      );
+      yield* Deferred.await(pause.paused);
+      yield* missions.setLead({ missionId, lead: localMember, expectedLead: lead.threadId });
+      yield* missions.addMember({ missionId, member: lead });
+      settle(world, lead);
+      yield* Deferred.succeed(pause.go, undefined);
+      yield* Fiber.join(ending);
+      assert.deepEqual((yield* listed).claims, []);
+    }),
+  );
+});
+
+it.effect("ending a mission refuses once its threads stay busy past the wait", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: localMember });
+      settle(world, localMember);
+      const busyFor = Effect.fnUntraced(function* (waited: Duration.Duration) {
+        const holding = yield* Deferred.make<void>();
+        const free = yield* Deferred.make<void>();
+        const holder = yield* Effect.forkChild(
+          threadCommands.withLock(
+            localMember.threadId,
+            Deferred.succeed(holding, undefined).pipe(Effect.andThen(Deferred.await(free))),
+          ),
+        );
+        yield* Deferred.await(holding);
+        const waits = yield* Deferred.make<void>();
+        world.beforeThreadLock = (threadId) =>
+          threadId === localMember.threadId ? Deferred.succeed(waits, undefined) : Effect.void;
+        const ending = yield* Effect.forkChild(
+          missions.deleteMission({ missionId }).pipe(Effect.exit),
+        );
+        yield* Deferred.await(waits);
+        world.beforeThreadLock = () => Effect.void;
+        yield* TestClock.adjust(waited);
+        yield* Deferred.succeed(free, undefined);
+        yield* Fiber.join(holder);
+        return yield* Fiber.join(ending);
+      });
+      const refused = yield* busyFor(MissionClaims.END_WAIT);
+      assert.include(
+        Exit.isFailure(refused) ? String(Cause.squash(refused.cause)) : "",
+        "stayed busy",
+      );
+      assert.equal((yield* listed).missions.length, 1);
+      const almost = Duration.subtract(MissionClaims.END_WAIT, Duration.millis(1));
+      assert.isTrue(Exit.isSuccess(yield* busyFor(almost)));
+      assert.deepEqual((yield* listed).missions, []);
+    }),
+  );
+});
+
+it.effect(
+  "a failed settlement read leaves every mission's flags out, without reading again",
+  () => {
+    const leadB = ref(HERE, "lead-b");
+    const world = makeWorld([lead, localMember, leadB, otherMember]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const { missionId } = yield* createOne;
+        const second = yield* missions.create({
+          missionId: "ba9876543210",
+          leadThreadId: leadB.threadId,
+        });
+        yield* missions.addMember({ missionId, member: localMember });
+        yield* missions.addMember({ missionId: second.missionId, member: otherMember });
+        settle(world, localMember);
+        settle(world, otherMember);
+        world.failing.settlements = (threadIds) =>
+          threadIds.includes(lead.threadId) && threadIds.includes(leadB.threadId);
+        const snapshot = yield* listed;
+        assert.deepEqual(
+          snapshot.missions.flatMap((mission) =>
+            mission.members.filter((member) => member.settled),
+          ),
+          [],
+        );
+        assert.deepEqual(
+          snapshot.claims.filter((claim) => claim.settled),
+          [],
+        );
+      }),
+    );
+  },
+);
+
 it.effect(
   "a member that leaves while its mission ends neither holds the end back nor is checked",
   () => {
@@ -1268,7 +1423,8 @@ it.effect(
         yield* missions.addMember({ missionId, member: otherMember });
         settle(world, localMember);
         const pause = {
-          at: 2,
+          read: "claimsOf" as const,
+          at: 1,
           reads: 0,
           paused: yield* Deferred.make<void>(),
           go: yield* Deferred.make<void>(),
@@ -1643,6 +1799,7 @@ it.effect(
             { type: "thread.deleted", threadId: lead.threadId },
           ),
           HERE,
+          missions.listStale,
         );
         assert.deepEqual(
           (yield* listed).claims.map((claim) => claim.threadId),

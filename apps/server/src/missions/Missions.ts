@@ -156,6 +156,8 @@ export class Missions extends Context.Service<
     ) => Effect.Effect<"joined" | "pending" | undefined, MissionError>;
     readonly leadChanges: Stream.Stream<string>;
     readonly joinedWithPriorWork: Stream.Stream<string>;
+    /** Rebuilds the list without telling anything that follows the store's changes. */
+    readonly listStale: Effect.Effect<void>;
     readonly withLead: <A, E, R>(
       missionId: string,
       use: (mission: MissionRecord) => Effect.Effect<A, E, R>,
@@ -325,11 +327,17 @@ const make = Effect.gen(function* () {
     }
   });
 
-  /** Undefined when the read failed, so no thread reads as gone or settled. */
+  /** "unknown" when the read failed: no thread then reads as gone or settled. */
   const readSettlements = (threadIds: ReadonlyArray<ThreadId>) =>
     projections
       .getThreadSettlements([...new Set(threadIds)])
-      .pipe(Effect.orElseSucceed(() => undefined));
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Mission threads' settlement was not read", error).pipe(
+            Effect.as("unknown" as const),
+          ),
+        ),
+      );
   type Settlements = Effect.Success<ReturnType<typeof readSettlements>>;
 
   const missionView = Effect.fn("Missions.view")(function* (
@@ -338,12 +346,15 @@ const make = Effect.gen(function* () {
     waiting: Waiting,
     given?: Settlements,
   ) {
-    const settlements =
+    const read =
       given ??
       (yield* readSettlements([
         mission.leadThreadId,
-        ...(held.get(here)?.claims ?? []).map((claim) => claim.threadId),
+        ...(held.get(here)?.claims ?? []).flatMap((claim) =>
+          claim.missionId === mission.missionId ? [claim.threadId] : [],
+        ),
       ]));
+    const settlements = read === "unknown" ? undefined : read;
     const gone = (threadId: ThreadId) => settlements !== undefined && !settlements.has(threadId);
     const settled = (threadId: ThreadId) => {
       const thread = settlements?.get(threadId);
@@ -437,7 +448,8 @@ const make = Effect.gen(function* () {
       missions: views,
       links: yield* missionLinks,
       claims: claimsHere.map(({ threadId, missionId, name, role }) => {
-        const thread = role === "member" ? settlements?.get(threadId) : undefined;
+        const thread =
+          role === "member" && settlements !== "unknown" ? settlements.get(threadId) : undefined;
         return {
           threadId,
           missionId,
@@ -465,11 +477,14 @@ const make = Effect.gen(function* () {
   const storeChanged = PubSub.publish(store.changes, undefined);
   const storeChanges = yield* PubSub.subscribe(store.changes);
   // Changes that land while a list is built, as from an archive's side chats, share the next one.
+  const stale = yield* Queue.sliding<void>(1);
+  const listStale = Queue.offer(stale, undefined).pipe(Effect.asVoid);
   yield* PubSub.takeAll(storeChanges).pipe(
-    Effect.andThen(publish),
+    Effect.andThen(listStale),
     Effect.forever,
     Effect.forkIn(background),
   );
+  yield* Queue.take(stale).pipe(Effect.andThen(publish), Effect.forever, Effect.forkIn(background));
 
   const linkTo = Effect.fn("Missions.linkTo")(function* (
     environmentId: EnvironmentId,
@@ -1022,7 +1037,13 @@ const make = Effect.gen(function* () {
       .map((link) => link.environmentId);
     yield* missionLocks.withLock(
       mission.missionId,
-      claims.deleteMission({ missionId: mission.missionId, lead: mission.leadThreadId, machines }),
+      Effect.flatMap(missionNamed(mission.missionId), (current) =>
+        claims.deleteMission(here, {
+          missionId: current.missionId,
+          lead: current.leadThreadId,
+          machines,
+        }),
+      ),
     );
   });
 
@@ -1567,6 +1588,7 @@ const make = Effect.gen(function* () {
   return Missions.of({
     joinStarted,
     withLead,
+    listStale,
     leadChanges: Stream.fromPubSub(leadChanged),
     joinedWithPriorWork: Stream.fromPubSub(joined),
     ledBy,
