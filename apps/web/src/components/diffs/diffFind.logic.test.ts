@@ -8,6 +8,7 @@ import {
   DIFF_FIND_SNIPPET_LENGTH,
   type DiffFindMatch,
   groupDiffFindMatches,
+  presentDiffFindLines,
 } from "./diffFind.logic";
 
 function addedFile(lines: ReadonlyArray<string>): FileDiffMetadata {
@@ -38,8 +39,7 @@ it("caps the lines listed per file and bounds a long line's snippet and highligh
   const [file] = groupDiffFindMatches(matches, () => fileDiff);
   expect(file?.matchCount).toBe(matches.length);
   expect(file?.lines).toHaveLength(DIFF_FIND_LINES_PER_FILE);
-  expect(file?.hiddenLineCount).toBe(5);
-  expect(file?.firstHiddenMatchIndex).toBe(matches.length - 5);
+  expect(file?.lineStarts).toHaveLength(lines.length);
   const first = file!.lines[0]!;
   expect(first.kind).toBe("addition");
   expect(first.text.length).toBeLessThanOrEqual(DIFF_FIND_SNIPPET_LENGTH + 2);
@@ -62,6 +62,18 @@ it("keeps every file's count exact and reachable after the total line cap", () =
   expect(files.reduce((shown, file) => shown + file.lines.length, 0)).toBe(DIFF_FIND_MAX_LINES);
   const cut = files.at(-1)!;
   expect(cut.lines).toHaveLength(0);
-  expect(cut.hiddenLineCount).toBe(DIFF_FIND_LINES_PER_FILE);
-  expect(matches[cut.firstHiddenMatchIndex!]?.itemId).toBe(cut.itemId);
+  const expanded = presentDiffFindLines(cut, matches, DIFF_FIND_MAX_LINES);
+  expect(expanded.map((line) => line.lineNumber)).toEqual(lines.map((_, index) => index + 1));
+  expect(expanded.every((line) => matches[line.firstMatchIndex]?.itemId === cut.itemId)).toBe(true);
+});
+
+it("keeps a match that starts inside the indentation", () => {
+  const lines = ["      indented"];
+  const [file] = groupDiffFindMatches(matchesOf("a", lines, "  "), () => addedFile(lines));
+  const line = file!.lines[0]!;
+  expect(line.ranges.length).toBeGreaterThan(0);
+  for (const range of line.ranges) {
+    expect(range.start).toBeGreaterThanOrEqual(0);
+    expect(line.text.slice(range.start, range.end)).toBe("  ");
+  }
 });

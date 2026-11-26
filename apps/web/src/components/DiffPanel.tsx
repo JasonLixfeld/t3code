@@ -28,11 +28,12 @@ import {
   ChevronsUpDownIcon,
 } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { type MouseEvent, useEffect, useRef, useState } from "react";
+import { type MouseEvent, useEffect, useEffectEvent, useRef, useState } from "react";
 import { serverEnvironment } from "../state/server";
 import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
 import { DiffFindToggle } from "./diffs/DiffFindToggle";
-import { useDiffFind, useFindShortcut } from "./diffs/useDiffFind";
+import { useDiffFind } from "./diffs/useDiffFind";
+import { subscribePreviewAction } from "./preview/previewActionBus";
 import { useCodeViewScrollRestore } from "./diffs/useCodeViewScrollRestore";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import { useOpenInPreferredEditor } from "../editorPreferences";
@@ -812,7 +813,12 @@ export default function DiffPanel({
     codeViewReveal.attach(handle);
     diffFind.attach(handle);
   });
-  const findShortcut = useFindShortcut();
+  const answerFind = useEffectEvent(() => diffFind.find.open());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- answers the right panel's find shortcut, which the tab bar sends to the visible surface
+  useEffect(() => {
+    if (!visible) return;
+    return subscribePreviewAction((action) => action === "find" && answerFind());
+  }, [visible]);
   const flushCodeView = useStableCallback(() => {
     codeViewScroll.flush();
     codeViewReveal.flush();
@@ -1581,17 +1587,7 @@ export default function DiffPanel({
   );
 
   return (
-    <DiffPanelShell
-      mode={mode}
-      header={headerRow}
-      onKeyDown={(event) => {
-        // Pierre's code area and the Files list claim the binding first. The dispatcher would
-        // refuse it to a client without preview access.
-        if (event.defaultPrevented || !findShortcut.matches(event.nativeEvent)) return;
-        event.preventDefault();
-        diffFind.find.open();
-      }}
-    >
+    <DiffPanelShell mode={mode} header={headerRow}>
       {!activeThread ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           <T>Select a thread to inspect turn diffs.</T>
@@ -1797,7 +1793,7 @@ export default function DiffPanel({
                       themeType: resolvedTheme as DiffThemeType,
                       stickyHeaders: true,
                       onPostRender: flushCodeView,
-                      onSearchStateChange: diffFind.onSearchStateChange,
+                      ...diffFind.codeViewOptions,
                       ...(currentLoadDiffFiles ? { loadDiffFiles } : {}),
                     }}
                   />

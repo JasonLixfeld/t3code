@@ -72,7 +72,17 @@ vi.mock("~/state/vcs", () => ({
       input.refKind === "local" ? state.localRefs : state.remoteRefs,
   },
 }));
+// A client without preview:operate, which the chat route's browser find requires.
+vi.mock("~/state/session", async (original) => ({
+  ...(await original<typeof import("~/state/session")>()),
+  readEnvironmentScope: () => false,
+}));
 vi.mock("~/state/entities", () => ({
+  useProjects: () => [],
+  useServerConfigs: () => new Map(),
+  useThreadShells: () => [],
+  readProjects: () => [],
+  readThreadShell: () => null,
   useQuietThreadShell: () => state.thread,
   useProject: () => state.project,
   useThreadCheckpointSummaries: () => state.checkpoints,
@@ -121,7 +131,11 @@ vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null 
 import DiffPanel from "./DiffPanel";
 import { useDiffPanelSessionStore, useDiffPanelStore } from "~/diffPanelStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
-import { registerCommands } from "~/shortcuts/dispatcher";
+import { subscribePreviewAction } from "./preview/previewActionBus";
+import { installChatRouteCommands } from "~/shortcuts/chatRouteCommands";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import type { AnyRouter } from "@tanstack/react-router";
+import { RightPanelTabs } from "./RightPanelTabs";
 
 const cwd = "/project-worktree";
 const errorMessage = "Could not find a common commit between 'origin/orphan' and HEAD.";
@@ -559,11 +573,8 @@ const findInput = () => page.getByPlaceholder("Search", { exact: true });
 const findHasFocus = () =>
   expect(document.activeElement?.shadowRoot?.activeElement).toBe(findInput().element());
 
-it("opens find in the diff from its toolbar button and from mod+f on any toolbar button", async () => {
+it("opens and closes find in the diff from its toolbar button", async () => {
   using context = setup("origin/orphan");
-  // The chat route's panel find, which a client without preview access declines.
-  const panelFind = vi.fn(() => false);
-  using _scope = { [Symbol.dispose]: registerCommands({ "preview.find": panelFind }) };
   await using screen = await renderFindDiff(context.threadRef, context.registry);
   const findToggle = screen.getByRole("button", { name: "Find in diff" });
   await userEvent.click(findToggle);
@@ -572,10 +583,6 @@ it("opens find in the diff from its toolbar button and from mod+f on any toolbar
   await userEvent.keyboard("{Escape}");
   await expect.element(findInput()).not.toBeInTheDocument();
   await expect.element(findToggle).toHaveAttribute("aria-pressed", "false");
-  screen.getByRole("button", { name: "Collapse all files" }).element().focus();
-  await pressFind();
-  await vi.waitFor(findHasFocus);
-  expect(panelFind).not.toHaveBeenCalled();
 });
 
 it("filters the Files list by the typed name and closes on Escape from its controls", async () => {
@@ -597,7 +604,16 @@ it("filters the Files list by the typed name and closes on Escape from its contr
   await userEvent.type(search, "My File");
   await expect.element(search).toHaveValue("My File");
   await expect.element(otherFile).not.toBeInTheDocument();
-  await expect.element(screen.getByRole("treeitem", { name: /My File\.md/ })).toBeVisible();
+  const filteredRow = screen.getByRole("treeitem", { name: /My File\.md/ });
+  await expect.element(filteredRow).toBeVisible();
+  // Pierre's tree clears its own filter on Escape from a row and stops the key there.
+  (filteredRow.element() as HTMLElement).focus();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(search).not.toBeInTheDocument();
+  await expect.element(screen.getByText("No matching files.")).not.toBeInTheDocument();
+  await expect.element(screen.getByRole("treeitem", { name: /b\.ts/ })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Search files" }));
+  await userEvent.type(search, "My File");
   screen.getByRole("button", { name: "Name" }).element().focus();
   reachedDocument.mockClear();
   await userEvent.keyboard("{Escape}");
@@ -614,10 +630,9 @@ it("lists the diff find's matches by file in Contents mode and jumps to a clicke
   await userEvent.click(screen.getByRole("button", { name: "Show file tree" }));
   await userEvent.click(screen.getByRole("button", { name: "Search files" }));
   await userEvent.click(screen.getByRole("button", { name: "Contents" }));
-  await userEvent.type(
-    screen.getByRole("searchbox", { name: "Search lines in the diff" }),
-    "retry",
-  );
+  const contents = screen.getByRole("searchbox", { name: "Search lines in the diff" });
+  await userEvent.type(contents, "retry");
+  await expect.element(contents).toHaveFocus();
   // The stacked diff shows the context line once: 1 context, 1 removed and 2 added in a.ts.
   await expect.element(findInput()).toHaveValue("retry");
   await expect.element(page.getByText("1 of 5", { exact: true })).toBeInTheDocument();
@@ -656,4 +671,107 @@ it("shows the diff find's query when the Files search switches to Contents", asy
     .toHaveValue("retry");
   await expect.element(findInput()).toHaveValue("retry");
   await expect.element(screen.getByRole("region", { name: "src/a.ts" })).toBeVisible();
+});
+
+it("opens find in the diff from the right panel's tab bar without preview access", async () => {
+  using context = setup("origin/orphan");
+  const router = {
+    state: {
+      matches: [
+        { routeId: "/_chat", pathname: "/", params: {} },
+        {
+          routeId: "/_chat/$environmentId/$threadId",
+          pathname: "/environment/thread",
+          params: { environmentId: "environment", threadId: "thread" },
+        },
+      ],
+    },
+  } as unknown as AnyRouter;
+  using _commands = { [Symbol.dispose]: installChatRouteCommands(router) };
+  const diffSurface = { id: "diff", kind: "diff" } as const;
+  const noop = () => {};
+  state.checkpoints = [
+    {
+      runId: "run",
+      checkpointTurnCount: 1,
+      checkpointRef: "ref",
+      status: "ready",
+      files: [],
+      assistantMessageId: null,
+      completedAt: "2026-01-01T00:00:00Z",
+    },
+  ];
+  state.checkpointDiff = { diff: FIND_DIFF };
+  useDiffPanelStore.getState().selectTurn(context.threadRef, RunId.make("run"));
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+        <RightPanelTabs
+          mode="embedded"
+          keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
+          getShortcutContext={() => ({
+            terminalFocus: false,
+            terminalOpen: false,
+            previewFocus: true,
+            previewOpen: false,
+            isWeb: true,
+            isDesktop: false,
+          })}
+          surfaces={[diffSurface]}
+          environmentId={context.threadRef.environmentId}
+          activeSurfaceId={diffSurface.id}
+          pendingSurfaceIds={new Set()}
+          previewSessions={{}}
+          desktopByTabId={{}}
+          terminalLabelsById={new Map()}
+          onActivate={noop}
+          onCloseSurface={noop}
+          onCloseOtherSurfaces={noop}
+          onCloseSurfacesToRight={noop}
+          onCloseAllSurfaces={noop}
+          onCopyFilePath={noop}
+          onAddBrowser={noop}
+          onAddBrowserInProfile={noop}
+          onAddTerminal={noop}
+          onAddDiff={noop}
+          onAddFiles={noop}
+          onAddPullRequest={noop}
+          onAddPullRequests={noop}
+          onAddDevice={noop}
+          browserAvailable={false}
+          terminalAvailable={false}
+          diffAvailable
+          filesAvailable={false}
+          pullRequestAvailable={false}
+          pullRequestsAvailable={false}
+          deviceAvailable={false}
+        >
+          <DiffPanel
+            mode="embedded"
+            composerDraftTarget={context.threadRef}
+            workspaceMutationId={null}
+            visible
+          />
+        </RightPanelTabs>
+      </div>
+    </RegistryContext.Provider>,
+  );
+  await expect.element(screen.getByText("new retry retry", { exact: true })).toBeVisible();
+  const finds = vi.fn();
+  using _finds = {
+    [Symbol.dispose]: subscribePreviewAction((action) => {
+      if (action === "find") finds();
+    }),
+  };
+  const tab = screen.container.querySelector<HTMLElement>("[data-active-tab='true'] button")!;
+  tab.focus();
+  expect(document.activeElement).toBe(tab);
+  await pressFind();
+  await vi.waitFor(findHasFocus);
+  await userEvent.keyboard("{Escape}");
+  await expect.element(findInput()).not.toBeInTheDocument();
+  screen.getByRole("button", { name: "Collapse all files" }).element().focus();
+  await pressFind();
+  await vi.waitFor(findHasFocus);
+  expect(finds).toHaveBeenCalledTimes(2);
 });

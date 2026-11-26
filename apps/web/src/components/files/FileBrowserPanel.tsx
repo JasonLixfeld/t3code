@@ -374,7 +374,9 @@ export default function FileBrowserPanel({
   };
   const onPanelAction = useEffectEvent((action: PreviewAction) => {
     // Hidden panel tabs stay mounted; only the visible Files tab answers.
-    if (action === "find" && searchInputRef.current?.getClientRects().length) focusSearch();
+    if (action !== "find" || !searchInputRef.current?.getClientRects().length) return false;
+    focusSearch();
+    return true;
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the panel find command, which fires while focus is anywhere in the right panel
   useEffect(() => {

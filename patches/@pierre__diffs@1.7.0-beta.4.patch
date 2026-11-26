@@ -1,5 +1,5 @@
 diff --git a/dist/components/CodeView.d.ts b/dist/components/CodeView.d.ts
-index b10df4452e4b2e3dbbb7e949f59939e66d5326f1..f1dc07745dfcd8b928d3e98fb7e3738954dcc783 100644
+index b10df4452e4b2e3dbbb7e949f59939e66d5326f1..b4edd8d88e9d477002e03051d8b7091cb912a463 100644
 --- a/dist/components/CodeView.d.ts
 +++ b/dist/components/CodeView.d.ts
 @@ -1,4 +1,5 @@
@@ -8,7 +8,16 @@ index b10df4452e4b2e3dbbb7e949f59939e66d5326f1..f1dc07745dfcd8b928d3e98fb7e37389
  import { CodeViewDiffItem, CodeViewFileItem, CodeViewItem, CodeViewLayout, CodeViewScrollBehavior, CodeViewScrollTarget, HunkSeparators, ScrollRequestResult, SelectedLineRange, SmoothScrollSettings, VirtualFileMetrics, VirtualWindowSpecs } from "../types.js";
  import { EditCompletionDecision, EditorChangeEvent, EditorType, FileDiffEditCompleteEvent, FileEditCompleteEvent } from "../editor/types.js";
  import { SelectionWriteOptions } from "../managers/InteractionManager.js";
-@@ -385,6 +386,10 @@ declare class CodeView<LAnnotation = undefined, Caret = undefined> {
+@@ -33,6 +34,8 @@ interface CodeViewOpenSearchOptions {
+   scope?: CodeViewSearchScope;
+   /** Replaces the query. Omitted, an open panel keeps its query. */
+   query?: string;
++  /** Focus the panel's input. False leaves focus where it is. @default true */
++  focus?: boolean;
+ }
+ interface CodeViewSearchOptions {
+   /**
+@@ -385,6 +388,10 @@ declare class CodeView<LAnnotation = undefined, Caret = undefined> {
    isSearchOpen(): boolean;
    /** Steps the open panel to the next or previous match, like find-again. */
    navigateSearch(direction: 'next' | 'previous'): void;
@@ -20,10 +29,41 @@ index b10df4452e4b2e3dbbb7e949f59939e66d5326f1..f1dc07745dfcd8b928d3e98fb7e37389
    /**
     * Returns the editor while this item is being edited. Partial diffs get an
 diff --git a/dist/components/CodeView.js b/dist/components/CodeView.js
-index 0b14f541214c7319e259bc88b9747c543f295d5d..a506af6705f03af5a4bb16db8451bce71878f6d2 100644
+index 0b14f541214c7319e259bc88b9747c543f295d5d..387cadee3d00de2236e86de670fafd719732d0e0 100644
 --- a/dist/components/CodeView.js
 +++ b/dist/components/CodeView.js
-@@ -1188,6 +1188,14 @@ var CodeView = class CodeView {
+@@ -1103,11 +1103,12 @@ var CodeView = class CodeView {
+ 	openSearch(options) {
+ 		const { container } = this;
+ 		if (this.root == null || container == null) return;
+-		const { mode = "replace", scope = "focused", query } = options ?? {};
++		const { mode = "replace", scope = "focused", query, focus = true } = options ?? {};
+ 		this.setSearchScope(this.resolveSearchScope(scope));
+ 		let { searchPanel } = this;
+ 		if (searchPanel != null) {
+ 			if (query != null) searchPanel.setQuery(query);
++			if (!focus) return;
+ 			searchPanel.setMode(mode);
+ 			searchPanel.focus();
+ 			return;
+@@ -1119,6 +1120,7 @@ var CodeView = class CodeView {
+ 			defaultQuery: query ?? this.getSearchQueryFromScope(),
+ 			defaults: this.options.searchOptions?.defaults,
+ 			mode,
++			selectOnMount: focus,
+ 			replace: this.getSearchReplaceHandlers(),
+ 			onStateChange: (state) => {
+ 				if (this.searchMatchesDirty) return;
+@@ -1156,7 +1158,7 @@ var CodeView = class CodeView {
+ 		this.root?.ownerDocument.addEventListener("focusin", this.handleSearchFocusIn);
+ 		searchPanel.getHostElement().addEventListener("focusout", this.handleSearchPanelBlur);
+ 		searchPanel.getHostElement().dataset.searchPanelOverlay = "";
+-		searchPanel.focus();
++		if (focus) searchPanel.focus();
+ 	}
+ 	/** Closes the find/replace panel and clears its match highlights. */
+ 	closeSearch() {
+@@ -1188,6 +1190,14 @@ var CodeView = class CodeView {
  		this.flushSearchMatches();
  		this.searchPanel?.navigate(direction === "previous");
  	}
@@ -353,8 +393,21 @@ index 96d4fb137ea683b66381b1ce6e47e8708a89366c..13f2564897a5bf53a8f311300003b3ea
  	}
  	/**
  	* Re-measure the '0' character width against the font that is loaded right
+diff --git a/dist/search/SearchPanelWidget.d.ts b/dist/search/SearchPanelWidget.d.ts
+index d8744092ed298cb01466c06ffd4d8562a5cebcca..4d6d25717d44390680852f67ee18ac1b457a8397 100644
+--- a/dist/search/SearchPanelWidget.d.ts
++++ b/dist/search/SearchPanelWidget.d.ts
+@@ -14,6 +14,8 @@ interface SearchPanelOptions<TMatch = MatchRange> {
+   defaultQuery: string;
+   defaults?: SearchOptionDefaults;
+   mode?: SearchPanelMode;
++  /** Select the input when the panel mounts, which also focuses it. @default true */
++  selectOnMount?: boolean;
+   search: (searchParams: SearchParams) => SearchResult<TMatch>;
+   isSameMatch?: (a: TMatch, b: TMatch) => boolean;
+   scrollToMatch: (nextMatch: TMatch, retainFocus: boolean) => void;
 diff --git a/dist/search/SearchPanelWidget.js b/dist/search/SearchPanelWidget.js
-index 14970e0ba17385d19ae26ad01a4921f69ce1d2ff..2d909740a97c5e34360bfc2023ca5cf15f8e0188 100644
+index 14970e0ba17385d19ae26ad01a4921f69ce1d2ff..ef5feec20310949829cbf2b848498e9c70d928f6 100644
 --- a/dist/search/SearchPanelWidget.js
 +++ b/dist/search/SearchPanelWidget.js
 @@ -15,6 +15,7 @@ var SearchPanelWidget = class {
@@ -365,6 +418,15 @@ index 14970e0ba17385d19ae26ad01a4921f69ce1d2ff..2d909740a97c5e34360bfc2023ca5cf1
  	#applyMode;
  	#setReplaceHandlers;
  	#navigate;
+@@ -22,7 +23,7 @@ var SearchPanelWidget = class {
+ 	#hasReplaceHandlers;
+ 	#close;
+ 	constructor(options) {
+-		const { containerElement, unsafeCSS, defaultQuery, defaults, mode = "find", search, isSameMatch = Object.is, scrollToMatch, replace, onQueryChange, onUpdate, onStateChange, onClose } = options;
++		const { containerElement, unsafeCSS, defaultQuery, defaults, mode = "find", search, isSameMatch = Object.is, scrollToMatch, replace, onQueryChange, onUpdate, onStateChange, onClose, selectOnMount = true } = options;
+ 		let replaceHandlers = replace;
+ 		let requestedMode = mode;
+ 		const normalizeMode = (nextMode) => replaceHandlers != null ? nextMode : "find";
 @@ -114,6 +115,12 @@ var SearchPanelWidget = class {
  			emitState();
  		};
@@ -378,6 +440,15 @@ index 14970e0ba17385d19ae26ad01a4921f69ce1d2ff..2d909740a97c5e34360bfc2023ca5cf1
  		const replaceCurrentMatch = () => {
  			const replace = replaceHandlers;
  			if (replace === void 0 || searchParams.text === "" || matches.all.length === 0) return;
+@@ -361,7 +368,7 @@ var SearchPanelWidget = class {
+ 		};
+ 		this.#mount = () => {
+ 			containerElement.before(this.#host);
+-			this.#inputElement.select();
++			if (selectOnMount) this.#inputElement.select();
+ 			emitState();
+ 			queueRender(this.#initializeMatches);
+ 		};
 @@ -391,6 +398,10 @@ var SearchPanelWidget = class {
  	setQuery(text) {
  		this.#setQuery?.(text);

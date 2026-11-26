@@ -1,10 +1,16 @@
 import { splitSearchText } from "@t3tools/shared/paletteSearch";
 import { T, useGT } from "gt-react";
+import { useState } from "react";
 
 import { resolveFileDiffPath } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
 
-import type { DiffFindLine } from "./diffFind.logic";
+import {
+  DIFF_FIND_MAX_LINES,
+  type DiffFindLine,
+  type DiffFindMatch,
+  presentDiffFindLines,
+} from "./diffFind.logic";
 import type { DiffFind } from "./useDiffFind";
 
 const LINE_MARKERS: Record<DiffFindLine["kind"], string> = {
@@ -15,6 +21,10 @@ const LINE_MARKERS: Record<DiffFindLine["kind"], string> = {
 
 export function DiffFindResults({ find }: { readonly find: DiffFind }) {
   const gt = useGT();
+  const [expanded, setExpanded] = useState<{
+    readonly matches: ReadonlyArray<DiffFindMatch>;
+    readonly lineCounts: ReadonlyMap<string, number>;
+  } | null>(null);
   const state = find.state;
   if (!state?.query) {
     return (
@@ -31,12 +41,18 @@ export function DiffFindResults({ find }: { readonly find: DiffFind }) {
     );
   }
   const current = state.currentMatchIndex;
+  const lineCounts = expanded?.matches === state.matches ? expanded.lineCounts : undefined;
   return (
     <div className="min-h-0 flex-1 overflow-y-auto pb-2 text-xs" data-diff-find-results>
       {state.files.map((file) => {
         const path = resolveFileDiffPath(file.fileDiff);
         const slash = path.lastIndexOf("/");
-        const hiddenStart = file.firstHiddenMatchIndex;
+        const expandedCount = lineCounts?.get(file.itemId);
+        const lines =
+          expandedCount === undefined
+            ? file.lines
+            : presentDiffFindLines(file, state.matches, expandedCount);
+        const hiddenLineCount = file.lineStarts.length - lines.length;
         return (
           <section key={file.itemId} aria-label={path}>
             <button
@@ -55,7 +71,7 @@ export function DiffFindResults({ find }: { readonly find: DiffFind }) {
                 {file.matchCount}
               </span>
             </button>
-            {file.lines.map((line) => {
+            {lines.map((line) => {
               const isCurrent =
                 current !== undefined &&
                 current >= line.firstMatchIndex &&
@@ -98,14 +114,22 @@ export function DiffFindResults({ find }: { readonly find: DiffFind }) {
                 </button>
               );
             })}
-            {hiddenStart !== undefined ? (
+            {hiddenLineCount > 0 ? (
               <button
                 type="button"
                 className="flex h-6 w-full items-center ps-14 pe-2 text-left text-2xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                onClick={() => find.selectMatch(hiddenStart)}
+                onClick={() =>
+                  setExpanded({
+                    matches: state.matches,
+                    lineCounts: new Map(lineCounts).set(
+                      file.itemId,
+                      lines.length + DIFF_FIND_MAX_LINES,
+                    ),
+                  })
+                }
               >
                 {gt("{count, plural, one {{count} more line} other {{count} more lines}}", {
-                  count: file.hiddenLineCount,
+                  count: hiddenLineCount,
                 })}
               </button>
             ) : null}
