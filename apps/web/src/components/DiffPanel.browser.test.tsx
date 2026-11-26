@@ -133,10 +133,21 @@ import { useDiffPanelSessionStore, useDiffPanelStore } from "~/diffPanelStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { installChatRouteCommands } from "~/shortcuts/chatRouteCommands";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import {
+  compileResolvedKeybindingsConfig,
+  mergeWithDefaultKeybindings,
+} from "@t3tools/shared/keybindings";
 import type { AnyRouter } from "@tanstack/react-router";
 import { RightPanelTabs } from "./RightPanelTabs";
 
+const panelContext = () => ({
+  terminalFocus: false,
+  terminalOpen: false,
+  previewFocus: true,
+  previewOpen: false,
+  isWeb: true,
+  isDesktop: false,
+});
 const cwd = "/project-worktree";
 const errorMessage = "Could not find a common commit between 'origin/orphan' and HEAD.";
 
@@ -261,7 +272,12 @@ it.each([
     using context = setup(failedBaseRef);
     await using screen = await render(
       <RegistryContext.Provider value={context.registry}>
-        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+        <DiffPanel
+          composerDraftTarget={context.threadRef}
+          workspaceMutationId={null}
+          visible
+          getShortcutContext={panelContext}
+        />
       </RegistryContext.Provider>,
     );
     await expect.element(screen.getByText(errorMessage, { exact: true })).toBeVisible();
@@ -301,7 +317,12 @@ it("opens a repository-relative file from a nested project without a remote", as
   useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "main");
   await using screen = await render(
     <RegistryContext.Provider value={context.registry}>
-      <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+      <DiffPanel
+        composerDraftTarget={context.threadRef}
+        workspaceMutationId={null}
+        visible
+        getShortcutContext={panelContext}
+      />
     </RegistryContext.Provider>,
   );
   await userEvent.click(screen.getByText(path, { exact: true }));
@@ -326,7 +347,12 @@ it.each([false, true])(
     await using screen = await render(
       <RegistryContext.Provider value={context.registry}>
         <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
-          <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+          <DiffPanel
+            composerDraftTarget={context.threadRef}
+            workspaceMutationId={null}
+            visible
+            getShortcutContext={panelContext}
+          />
         </div>
       </RegistryContext.Provider>,
     );
@@ -370,7 +396,12 @@ it("says a turn diff cut off at the server's size limit is incomplete", async ()
   await using screen = await render(
     <RegistryContext.Provider value={context.registry}>
       <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
-        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+        <DiffPanel
+          composerDraftTarget={context.threadRef}
+          workspaceMutationId={null}
+          visible
+          getShortcutContext={panelContext}
+        />
       </div>
     </RegistryContext.Provider>,
   );
@@ -439,6 +470,7 @@ it("shows a turn's repositories in a folder that is not a Git repository", async
           composerDraftTarget={context.threadRef}
           workspaceMutationId={null}
           visible
+          getShortcutContext={panelContext}
         />
       </div>
     </RegistryContext.Provider>,
@@ -482,7 +514,12 @@ it.each([
   await using screen = await render(
     <RegistryContext.Provider value={context.registry}>
       <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
-        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+        <DiffPanel
+          composerDraftTarget={context.threadRef}
+          workspaceMutationId={null}
+          visible
+          getShortcutContext={panelContext}
+        />
       </div>
     </RegistryContext.Provider>,
   );
@@ -514,7 +551,12 @@ it("opens a file from a tool call's diff by the path its agent recorded", async 
   await using screen = await render(
     <RegistryContext.Provider value={context.registry}>
       <div className="flex h-[600px] flex-col">
-        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+        <DiffPanel
+          composerDraftTarget={context.threadRef}
+          workspaceMutationId={null}
+          visible
+          getShortcutContext={panelContext}
+        />
       </div>
     </RegistryContext.Provider>,
   );
@@ -554,7 +596,12 @@ async function renderFindDiff(threadRef: ScopedThreadRef, registry: AtomRegistry
           data-preview-panel-mode="embedded"
           style={{ height: 600, display: "flex", flexDirection: "column" }}
         >
-          <DiffPanel composerDraftTarget={threadRef} workspaceMutationId={null} visible />
+          <DiffPanel
+            composerDraftTarget={threadRef}
+            workspaceMutationId={null}
+            visible
+            getShortcutContext={panelContext}
+          />
         </div>
       </RegistryContext.Provider>,
     ),
@@ -708,7 +755,12 @@ it("opens find in the diff from the right panel's tab bar without preview access
       <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
         <RightPanelTabs
           mode="embedded"
-          keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
+          // A rule only the panel's own context can satisfy.
+          keybindings={mergeWithDefaultKeybindings(
+            compileResolvedKeybindingsConfig([
+              { key: "mod+f", command: "preview.find", when: "rightPanelOpen" },
+            ]),
+          )}
           getShortcutContext={() => ({
             terminalFocus: false,
             terminalOpen: false,
@@ -751,6 +803,7 @@ it("opens find in the diff from the right panel's tab bar without preview access
             composerDraftTarget={context.threadRef}
             workspaceMutationId={null}
             visible
+            getShortcutContext={panelContext}
           />
         </RightPanelTabs>
       </div>

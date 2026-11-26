@@ -29,7 +29,7 @@ index b10df4452e4b2e3dbbb7e949f59939e66d5326f1..b4edd8d88e9d477002e03051d8b7091c
    /**
     * Returns the editor while this item is being edited. Partial diffs get an
 diff --git a/dist/components/CodeView.js b/dist/components/CodeView.js
-index 0b14f541214c7319e259bc88b9747c543f295d5d..387cadee3d00de2236e86de670fafd719732d0e0 100644
+index 0b14f541214c7319e259bc88b9747c543f295d5d..731a1f57d9c3b8235b25bad65e62a9690bc48185 100644
 --- a/dist/components/CodeView.js
 +++ b/dist/components/CodeView.js
 @@ -1103,11 +1103,12 @@ var CodeView = class CodeView {
@@ -46,15 +46,16 @@ index 0b14f541214c7319e259bc88b9747c543f295d5d..387cadee3d00de2236e86de670fafd71
  			searchPanel.setMode(mode);
  			searchPanel.focus();
  			return;
-@@ -1119,6 +1120,7 @@ var CodeView = class CodeView {
+@@ -1119,6 +1120,8 @@ var CodeView = class CodeView {
  			defaultQuery: query ?? this.getSearchQueryFromScope(),
  			defaults: this.options.searchOptions?.defaults,
  			mode,
 +			selectOnMount: focus,
++			disableShortcuts: this.options.searchOptions?.disableShortcuts === true,
  			replace: this.getSearchReplaceHandlers(),
  			onStateChange: (state) => {
  				if (this.searchMatchesDirty) return;
-@@ -1156,7 +1158,7 @@ var CodeView = class CodeView {
+@@ -1156,7 +1159,7 @@ var CodeView = class CodeView {
  		this.root?.ownerDocument.addEventListener("focusin", this.handleSearchFocusIn);
  		searchPanel.getHostElement().addEventListener("focusout", this.handleSearchPanelBlur);
  		searchPanel.getHostElement().dataset.searchPanelOverlay = "";
@@ -63,7 +64,7 @@ index 0b14f541214c7319e259bc88b9747c543f295d5d..387cadee3d00de2236e86de670fafd71
  	}
  	/** Closes the find/replace panel and clears its match highlights. */
  	closeSearch() {
-@@ -1188,6 +1190,14 @@ var CodeView = class CodeView {
+@@ -1188,6 +1191,14 @@ var CodeView = class CodeView {
  		this.flushSearchMatches();
  		this.searchPanel?.navigate(direction === "previous");
  	}
@@ -394,20 +395,22 @@ index 96d4fb137ea683b66381b1ce6e47e8708a89366c..13f2564897a5bf53a8f311300003b3ea
  	/**
  	* Re-measure the '0' character width against the font that is loaded right
 diff --git a/dist/search/SearchPanelWidget.d.ts b/dist/search/SearchPanelWidget.d.ts
-index d8744092ed298cb01466c06ffd4d8562a5cebcca..4d6d25717d44390680852f67ee18ac1b457a8397 100644
+index d8744092ed298cb01466c06ffd4d8562a5cebcca..0a45579311bda4643835baa95cd6ee269d0ac497 100644
 --- a/dist/search/SearchPanelWidget.d.ts
 +++ b/dist/search/SearchPanelWidget.d.ts
-@@ -14,6 +14,8 @@ interface SearchPanelOptions<TMatch = MatchRange> {
+@@ -14,6 +14,10 @@ interface SearchPanelOptions<TMatch = MatchRange> {
    defaultQuery: string;
    defaults?: SearchOptionDefaults;
    mode?: SearchPanelMode;
 +  /** Select the input when the panel mounts, which also focuses it. @default true */
 +  selectOnMount?: boolean;
++  /** Leave cmd/ctrl+f and cmd/ctrl+alt+f in the input to the host. @default false */
++  disableShortcuts?: boolean;
    search: (searchParams: SearchParams) => SearchResult<TMatch>;
    isSameMatch?: (a: TMatch, b: TMatch) => boolean;
    scrollToMatch: (nextMatch: TMatch, retainFocus: boolean) => void;
 diff --git a/dist/search/SearchPanelWidget.js b/dist/search/SearchPanelWidget.js
-index 14970e0ba17385d19ae26ad01a4921f69ce1d2ff..ef5feec20310949829cbf2b848498e9c70d928f6 100644
+index 14970e0ba17385d19ae26ad01a4921f69ce1d2ff..a09a6f2fc5c21866e5b5116865392b37fac11889 100644
 --- a/dist/search/SearchPanelWidget.js
 +++ b/dist/search/SearchPanelWidget.js
 @@ -15,6 +15,7 @@ var SearchPanelWidget = class {
@@ -423,7 +426,7 @@ index 14970e0ba17385d19ae26ad01a4921f69ce1d2ff..ef5feec20310949829cbf2b848498e9c
  	#close;
  	constructor(options) {
 -		const { containerElement, unsafeCSS, defaultQuery, defaults, mode = "find", search, isSameMatch = Object.is, scrollToMatch, replace, onQueryChange, onUpdate, onStateChange, onClose } = options;
-+		const { containerElement, unsafeCSS, defaultQuery, defaults, mode = "find", search, isSameMatch = Object.is, scrollToMatch, replace, onQueryChange, onUpdate, onStateChange, onClose, selectOnMount = true } = options;
++		const { containerElement, unsafeCSS, defaultQuery, defaults, mode = "find", search, isSameMatch = Object.is, scrollToMatch, replace, onQueryChange, onUpdate, onStateChange, onClose, selectOnMount = true, disableShortcuts = false } = options;
  		let replaceHandlers = replace;
  		let requestedMode = mode;
  		const normalizeMode = (nextMode) => replaceHandlers != null ? nextMode : "find";
@@ -440,6 +443,15 @@ index 14970e0ba17385d19ae26ad01a4921f69ce1d2ff..ef5feec20310949829cbf2b848498e9c
  		const replaceCurrentMatch = () => {
  			const replace = replaceHandlers;
  			if (replace === void 0 || searchParams.text === "" || matches.all.length === 0) return;
+@@ -189,7 +196,7 @@ var SearchPanelWidget = class {
+ 				} else if (shortcut === "next" || shortcut === "previous") {
+ 					e.preventDefault();
+ 					findNextMatch(shortcut === "previous", true);
+-				} else if (shortcut != null) {
++				} else if (shortcut != null && !disableShortcuts) {
+ 					e.preventDefault();
+ 					applyMode(shortcut);
+ 				}
 @@ -361,7 +368,7 @@ var SearchPanelWidget = class {
  		};
  		this.#mount = () => {

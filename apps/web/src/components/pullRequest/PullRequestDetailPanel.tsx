@@ -119,7 +119,7 @@ import { SourceControlAppAccessNotice } from "../SourceControlAppAccessNotice";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
-import type { DiffFind } from "../diffs/useDiffFind";
+import { type DiffFind, isPanelFindKey, matchesFindShortcut } from "../diffs/useDiffFind";
 import { subscribePreviewAction } from "../preview/previewActionBus";
 import { openOnHostLabel } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
@@ -1613,7 +1613,15 @@ export function PullRequestDetailPanel({
   return (
     // One tooltip for the panel's many triggers; mounting one per trigger dominated opening it.
     <SharedTooltipProvider>
-      <div className="relative flex h-full min-h-0 w-full flex-col bg-background">
+      <div
+        className="relative flex h-full min-h-0 w-full flex-col bg-background"
+        // Inside a workspace panel this claims the key before its tab bar; Workflows has none.
+        onKeyDown={(event) => {
+          if (tab !== "code" || !isPanelFindKey(event)) return;
+          if (!matchesFindShortcut(event.nativeEvent, keybindings, getShortcutContext())) return;
+          if (codeFindRef.current?.open()) event.preventDefault();
+        }}
+      >
         {threadPickerOpen && detail ? (
           <PullRequestThreadLinks
             key={`${environmentId}:${detail.url}`}
@@ -2315,6 +2323,7 @@ export function PullRequestDetailPanel({
                       revealUrl={tab === "code" ? revealUrl : undefined}
                       onRevealSettled={settleReveal}
                       findRef={codeFindRef}
+                      getShortcutContext={getShortcutContext}
                     />
                   </Suspense>
                 </div>

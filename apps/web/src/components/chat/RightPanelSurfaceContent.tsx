@@ -122,6 +122,7 @@ export function RightPanelSurfaceContent(props: {
             composerDraftTarget={props.composerDraftTarget}
             workspaceMutationId={props.workspaceRevision}
             visible={visible}
+            getShortcutContext={props.getShortcutContext}
           />
         </Suspense>
       );

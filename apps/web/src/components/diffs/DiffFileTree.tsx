@@ -31,7 +31,7 @@ import {
 } from "./diffFileTree.logic";
 import { diffFileTreePositions } from "@t3tools/client-runtime/diff-file-order";
 import { DiffFindResults } from "./DiffFindResults";
-import { type DiffFind, useFindShortcut } from "./useDiffFind";
+import type { DiffFind } from "./useDiffFind";
 
 export type { DiffFileTreeEntry } from "./diffFileTree.logic";
 
@@ -64,7 +64,6 @@ export function DiffFileTree({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchMode, setSearchMode] = useState<SearchMode>("name");
   const [nameQuery, setNameQueryState] = useState("");
-  const findShortcut = useFindShortcut();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchButtonRef = useRef<HTMLButtonElement>(null);
   const contentsMode = searchOpen && searchMode === "contents" && find !== undefined;
@@ -258,7 +257,7 @@ export function DiffFileTree({
         searchButtonRef.current?.focus();
       }}
       onKeyDown={(event) => {
-        if (!findShortcut.matches(event.nativeEvent)) return;
+        if (!find?.matchesShortcut(event.nativeEvent)) return;
         event.preventDefault();
         focusSearch();
       }}

@@ -1,13 +1,16 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { CodeView, FileDiffMetadata, SearchPanelState } from "@pierre/diffs";
 import type { CodeViewHandle } from "@pierre/diffs/react";
-import { useRef, useState } from "react";
+import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { type KeyboardEvent, useRef, useState } from "react";
 
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
   type ShortcutEventLike,
+  type ShortcutMatchContext,
 } from "~/keybindings";
+import { isEditableFocused } from "~/lib/editableFocus";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 
 import { type DiffFindFile, type DiffFindMatch, groupDiffFindMatches } from "./diffFind.logic";
@@ -28,18 +31,46 @@ export interface DiffFind {
   readonly search: (query: string) => void;
   readonly selectMatch: (index: number) => void;
   readonly navigate: (direction: "next" | "previous") => void;
+  readonly shortcutLabel: string | null;
+  readonly matchesShortcut: (event: ShortcutEventLike) => boolean;
 }
 
-// The pull request page's workspace panel has no thread, but its Code tab uses the same binding.
-const FIND_CONTEXT = { previewFocus: true };
+export type ShortcutContextReader = () => Partial<ShortcutMatchContext>;
 
-export function useFindShortcut() {
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  return {
-    label: shortcutLabelForCommand(keybindings, "preview.find", { context: FIND_CONTEXT }),
-    matches: (event: ShortcutEventLike) =>
-      resolveShortcutCommand(event, keybindings, { context: FIND_CONTEXT }) === "preview.find",
-  };
+// A diff's find answers `preview.find` wherever it is shown, as content of a panel: hosts
+// such as the pull request page report no preview focus of their own.
+const findContext = (context: Partial<ShortcutMatchContext>) => ({
+  ...context,
+  previewFocus: true,
+});
+
+export function findShortcutLabel(
+  keybindings: ResolvedKeybindingsConfig,
+  context: Partial<ShortcutMatchContext>,
+) {
+  return shortcutLabelForCommand(keybindings, "preview.find", { context: findContext(context) });
+}
+
+export function matchesFindShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  context: Partial<ShortcutMatchContext>,
+) {
+  const printable = event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey;
+  // Text input wins over a binding that types a character.
+  if (printable && isEditableFocused(event.target ?? null)) return false;
+  return (
+    resolveShortcutCommand(event, keybindings, { context: findContext(context) }) === "preview.find"
+  );
+}
+
+/** Whether a panel should take this key as find: it came from inside the panel, not a text field. */
+export function isPanelFindKey(event: KeyboardEvent<HTMLElement>) {
+  const target = event.target;
+  // React bubbles a portal's keys through the panel that rendered it.
+  if (event.defaultPrevented || !(target instanceof Element)) return false;
+  if (!event.currentTarget.contains(target)) return false;
+  return !isEditableFocused(target) || target.closest("[data-search-panel-overlay]") !== null;
 }
 
 type FindableCodeView = Pick<
@@ -55,7 +86,8 @@ interface Grouped {
   readonly lines: ReadonlyArray<readonly [ReadonlyArray<string>, ReadonlyArray<string>]>;
 }
 
-export function useDiffFind() {
+export function useDiffFind(getShortcutContext: ShortcutContextReader) {
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const handleRef = useRef<FindableCodeView | null>(null);
   const groupedRef = useRef<Grouped | null>(null);
   const [state, setState] = useState<DiffFindState | null>(null);
@@ -128,6 +160,8 @@ export function useDiffFind() {
     },
     selectMatch: (index) => handleRef.current?.getInstance()?.selectSearchMatch(index),
     navigate: (direction) => handleRef.current?.navigateSearch(direction),
+    shortcutLabel: findShortcutLabel(keybindings, getShortcutContext()),
+    matchesShortcut: (event) => matchesFindShortcut(event, keybindings, getShortcutContext()),
   };
 
   return {

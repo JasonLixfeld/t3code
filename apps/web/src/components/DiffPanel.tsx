@@ -32,7 +32,7 @@ import { type MouseEvent, useEffect, useEffectEvent, useRef, useState } from "re
 import { serverEnvironment } from "../state/server";
 import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
 import { DiffFindToggle } from "./diffs/DiffFindToggle";
-import { useDiffFind } from "./diffs/useDiffFind";
+import { type ShortcutContextReader, useDiffFind } from "./diffs/useDiffFind";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { useCodeViewScrollRestore } from "./diffs/useCodeViewScrollRestore";
 import { useFilesystemReadAccess } from "~/state/filesystem";
@@ -232,6 +232,7 @@ interface DiffPanelProps {
   composerDraftTarget: ScopedThreadRef | DraftId;
   workspaceMutationId: string | null;
   visible: boolean;
+  getShortcutContext: ShortcutContextReader;
 }
 
 export default function DiffPanel({
@@ -239,6 +240,7 @@ export default function DiffPanel({
   composerDraftTarget,
   workspaceMutationId,
   visible,
+  getShortcutContext,
 }: DiffPanelProps) {
   const gt = useGT();
   const messages = useMessages();
@@ -807,7 +809,7 @@ export default function DiffPanel({
     !isRefreshingDiff && remainingFileCount === 0,
     remainingFileCount > 0 ? loadNextFiles : null,
   );
-  const diffFind = useDiffFind();
+  const diffFind = useDiffFind(getShortcutContext);
   const attachCodeView = useStableCallback((handle: AnnotatableCodeViewHandle | null) => {
     codeViewScroll.attach(handle);
     codeViewReveal.attach(handle);

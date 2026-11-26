@@ -121,7 +121,7 @@ import { FileExplorerPane } from "../files/FileExplorerPane";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { DiffFindToggle } from "../diffs/DiffFindToggle";
-import { type DiffFind, useDiffFind } from "../diffs/useDiffFind";
+import { type DiffFind, type ShortcutContextReader, useDiffFind } from "../diffs/useDiffFind";
 import { useHideTestFiles } from "../diffs/useHideTestFiles";
 import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
@@ -459,6 +459,7 @@ function PullRequestCodeTab({
   revealUrl,
   onRevealSettled,
   findRef,
+  getShortcutContext,
 }: {
   scrollerRef: (node: HTMLDivElement | null) => void;
   environmentId: EnvironmentId;
@@ -480,6 +481,7 @@ function PullRequestCodeTab({
   onRevealSettled?: ((revealUrl: string) => void) | undefined;
   revealRequest?: { readonly path: string; readonly nonce: number } | null;
   findRef?: Ref<Pick<DiffFind, "open">>;
+  getShortcutContext: ShortcutContextReader;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -693,7 +695,7 @@ function PullRequestCodeTab({
   }, [backgroundRefreshToken, refreshFirstDiffPage, refreshFilesViewed]);
 
   const codeViewReveal = useCodeViewFileReveal();
-  const diffFind = useDiffFind();
+  const diffFind = useDiffFind(getShortcutContext);
   useImperativeHandle(findRef, () => ({ open: diffFind.find.open }));
   const attachCodeView = useStableCallback(
     (handle: CodeViewHandle<ReviewAnnotationGroup, undefined> | null) => {

@@ -3,11 +3,11 @@ import { SearchIcon } from "lucide-react";
 
 import { Toggle } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { type DiffFind, useFindShortcut } from "./useDiffFind";
+import type { DiffFind } from "./useDiffFind";
 
 export function DiffFindToggle({ find }: { readonly find: DiffFind }) {
   const gt = useGT();
-  const shortcutLabel = useFindShortcut().label;
+  const shortcutLabel = find.shortcutLabel;
   return (
     <Tooltip>
       <TooltipTrigger
