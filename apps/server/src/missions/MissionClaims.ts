@@ -21,7 +21,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { DispatchModeLimit } from "../orchestration-v2/DispatchModeLimit.ts";
-import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as Project from "../project/ProjectService.ts";
@@ -128,26 +127,37 @@ export class MissionClaims extends Context.Service<
 
 const fail = (message: string) => Effect.fail(new MissionError({ message }));
 
-const LINEAGE_HOPS = 64;
-const LINEAGE_UNREAD =
-  "The threads of this mission could not be read in a safe order, so it was not ended. Try again.";
+const END_ATTEMPTS = 8;
+const END_BUSY = "Its threads stayed busy, so this mission was not ended. Try again.";
 
-// The orchestrator locks a thread's lineage parent (fork source, side chat parent or subagent
-// parent) before the thread, and side chats in id order. Locking threads with fewer lineage
-// hops first, each depth in id order, never crosses it.
 const withEachLock = <A, E, R>(
   lock: KeyedLock.KeyedLock<ThreadId>,
-  threads: ReadonlyArray<{ readonly threadId: ThreadId; readonly depth: number }>,
+  keys: ReadonlyArray<ThreadId>,
+  effect: Effect.Effect<A, E, R>,
+) => keys.toSorted().reduceRight((inner, key) => lock.withLock(key, inner), effect);
+
+type AllHeld<A> =
+  | { readonly held: true; readonly value: A }
+  | { readonly held: false; readonly busy: ThreadId };
+
+// Ending holds no thread lock while it waits for one, so it never closes a cycle with the
+// orchestrator, which can check a fork target is absent and then lock source, then target.
+const withAllLocksIfAvailable = <A, E, R>(
+  lock: KeyedLock.KeyedLock<ThreadId>,
+  keys: ReadonlyArray<ThreadId>,
   effect: Effect.Effect<A, E, R>,
 ) =>
-  threads
-    .toSorted((a, b) => a.depth - b.depth || (a.threadId < b.threadId ? -1 : 1))
-    .reduceRight((inner, { threadId }) => lock.withLock(threadId, inner), effect);
+  keys.reduceRight(
+    (inner: Effect.Effect<AllHeld<A>, E, R>, key) =>
+      lock
+        .withLockIfAvailable(key, inner)
+        .pipe(Effect.map(Option.getOrElse((): AllHeld<A> => ({ held: false, busy: key })))),
+    Effect.map(effect, (value): AllHeld<A> => ({ held: true, value })),
+  );
 
 const make = Effect.gen(function* () {
   const store = yield* MissionStore.MissionStore;
   const threads = yield* ThreadManagement.ThreadManagementService;
-  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const random = yield* SecureRandom.SecureRandom;
   const workspaces = yield* MemberWorkspaces;
   const locks = yield* KeyedLock.make<ThreadId>();
@@ -261,53 +271,44 @@ const make = Effect.gen(function* () {
     return yield* locks.withLock(first!, locks.withLock(second!, swap));
   });
 
-  // Lineage never changes, and a deleted thread keeps its row, so a parent deleted meanwhile still
-  // counts. An order this cannot read refuses the end rather than risk a deadlock.
-  const lockDepth = Effect.fn("MissionClaims.lockDepth")(function* (threadId: ThreadId) {
-    const unread = new MissionError({ message: LINEAGE_UNREAD });
-    const parentOf = (id: ThreadId) =>
-      projections.findThread(id).pipe(
-        Effect.map((thread) => thread?.lineage.parentThreadId ?? null),
-        Effect.mapError(() => unread),
-      );
-    const seen = new Set<ThreadId>([threadId]);
-    for (let parent = yield* parentOf(threadId); parent !== null;) {
-      if (seen.has(parent) || seen.size > LINEAGE_HOPS) return yield* unread;
-      seen.add(parent);
-      parent = yield* parentOf(parent);
-    }
-    return seen.size - 1;
-  });
-
   const deleteMission = Effect.fn("MissionClaims.deleteMission")(function* (input: {
     readonly missionId: string;
     readonly lead: ThreadId;
     readonly machines: ReadonlyArray<EnvironmentId>;
   }) {
-    const members = (yield* store.allClaims).flatMap((claim) =>
-      claim.missionId === input.missionId && claim.role === "member" ? [claim.threadId] : [],
+    const membersNow = Effect.map(store.allClaims, (all) =>
+      all.flatMap((claim) =>
+        claim.missionId === input.missionId && claim.role === "member" ? [claim.threadId] : [],
+      ),
     );
-    const held = [...new Set([input.lead, ...members])];
-    const byId = held.map((threadId) => ({ threadId, depth: 0 }));
-    const byDepth = yield* Effect.forEach(held, (threadId) =>
-      Effect.map(lockDepth(threadId), (depth) => ({ threadId, depth })),
-    );
-    const recheckAndReleaseSettledMembers = Effect.gen(function* () {
-      for (const threadId of members) {
-        const shell = yield* readThread(threadId);
-        if (shell !== null && shell.deletedAt === null && !isSettledMissionMember(shell)) {
-          return yield* fail(MissionStore.MISSION_NOT_ENDED);
-        }
-      }
-      yield* store.deleteMission({ ...input, checkedLocalMembers: members });
-    });
+    const claimed = [...new Set([input.lead, ...(yield* membersNow)])];
     yield* withEachLock(
       locks,
-      byId,
+      claimed,
       Effect.gen(function* () {
-        yield* withEachLock(threadCommands, byDepth, recheckAndReleaseSettledMembers);
+        const members = (yield* membersNow).filter((threadId) => claimed.includes(threadId));
+        const recheckAndReleaseSettledMembers = Effect.gen(function* () {
+          for (const threadId of members) {
+            const shell = yield* readThread(threadId);
+            if (shell !== null && shell.deletedAt === null && !isSettledMissionMember(shell)) {
+              return yield* fail(MissionStore.MISSION_NOT_ENDED);
+            }
+          }
+          yield* store.deleteMission({ ...input, checkedLocalMembers: members });
+        });
+        let ended = false;
+        for (let attempt = 0; attempt < END_ATTEMPTS && !ended; attempt++) {
+          const tried = yield* withAllLocksIfAvailable(
+            threadCommands,
+            [input.lead, ...members],
+            recheckAndReleaseSettledMembers,
+          );
+          if (tried.held) ended = true;
+          else yield* threadCommands.withLock(tried.busy, Effect.void);
+        }
+        if (!ended) return yield* fail(END_BUSY);
         for (const threadId of members) yield* workspaces.forget(threadId);
-        for (const threadId of held) yield* syncTags(threadId);
+        for (const threadId of [input.lead, ...members]) yield* syncTags(threadId);
       }),
     );
   });

@@ -111,7 +111,6 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
             Layer.mock(Project.ProjectService)({
               getShell: () => Effect.succeedSome(webProject),
             }),
-            Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
           ),
         ),
       );
@@ -204,7 +203,17 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
           Layer.mock(ServerEnvironment.ServerEnvironment)({
             getEnvironmentId: Effect.succeed(DESK),
           }),
-          Layer.mock(ProjectionStore.ProjectionStoreV2)({ findThread: () => Effect.succeed(null) }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            findThread: () => Effect.succeed(null),
+            getThreadSettlements: (threadIds) =>
+              Effect.succeed(
+                new Map(
+                  threadIds
+                    .filter((threadId) => deskTags.has(threadId))
+                    .map((threadId) => [threadId, { settledOverride: null, archivedAt: null }]),
+                ),
+              ),
+          }),
           Layer.succeedContext(settings),
           projects,
           MissionTurnContexts.layer,

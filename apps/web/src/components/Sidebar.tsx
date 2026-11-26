@@ -157,7 +157,7 @@ import {
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { liveShellEnvironmentIdsAtom } from "../state/shell";
+import { useLiveShellEnvironmentIds } from "../state/shell";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
@@ -481,7 +481,7 @@ function useSidebarThreads(input: {
     folderGroups,
     keepEmptyFolders: keepEmpty,
   } = input;
-  const liveEnvironmentIds = useAtomValue(liveShellEnvironmentIdsAtom);
+  const liveEnvironmentIds = useLiveShellEnvironmentIds();
   const {
     missions,
     threadKeys: missionThreadKeys,

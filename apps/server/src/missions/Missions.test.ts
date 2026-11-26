@@ -201,46 +201,45 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     followUps: [] as Array<ReadonlyArray<ThreadId>>,
     enforcesLimits: false,
   };
+  const shellAt = (environmentId: EnvironmentId, threadId: ThreadId) => {
+    const current = tags.get(keyOf(ref(environmentId, threadId)));
+    const key = keyOf(ref(environmentId, threadId));
+    return (
+      current === undefined
+        ? null
+        : {
+            id: threadId,
+            deletedAt: null,
+            archivedAt: archived.has(key) ? "2026-01-02T00:00:00.000Z" : null,
+            tags: [...current],
+            title: titles.get(key) ?? "One",
+            latestUserMessageAt: empty.has(key) ? null : "2026-01-01T00:00:00.000Z",
+            visibleItemCount: empty.has(key) ? 0 : 1,
+            projectId: "project-web",
+            worktreePath: worktreeOf(threadId),
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            status: "idle",
+            activeRunId: null,
+            latestRunId: null,
+            pendingRuntimeRequest: null,
+            hasActionableProposedPlan: false,
+            settledAt: null,
+            settledOverride: null,
+            lineage: {
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: threadId,
+            },
+            ...activity.get(key),
+          }
+    ) as never;
+  };
   const threadsOn = (environmentId: EnvironmentId) =>
     Layer.mock(ThreadManagement.ThreadManagementService)({
       getThreadShell: (threadId) =>
         Effect.suspend(() => world.beforeShellRead(threadId)).pipe(
-          Effect.andThen(
-            Effect.sync(() => {
-              const current = tags.get(keyOf(ref(environmentId, threadId)));
-              const key = keyOf(ref(environmentId, threadId));
-              return (
-                current === undefined
-                  ? null
-                  : {
-                      id: threadId,
-                      deletedAt: null,
-                      archivedAt: archived.has(key) ? "2026-01-02T00:00:00.000Z" : null,
-                      tags: [...current],
-                      title: titles.get(key) ?? "One",
-                      latestUserMessageAt: empty.has(key) ? null : "2026-01-01T00:00:00.000Z",
-                      visibleItemCount: empty.has(key) ? 0 : 1,
-                      projectId: "project-web",
-                      worktreePath: worktreeOf(threadId),
-                      runtimeMode: "full-access",
-                      interactionMode: "default",
-                      status: "idle",
-                      activeRunId: null,
-                      latestRunId: null,
-                      pendingRuntimeRequest: null,
-                      hasActionableProposedPlan: false,
-                      settledAt: null,
-                      settledOverride: null,
-                      lineage: {
-                        parentThreadId: null,
-                        relationshipToParent: null,
-                        rootThreadId: threadId,
-                      },
-                      ...activity.get(key),
-                    }
-              ) as never;
-            }),
-          ),
+          Effect.andThen(Effect.sync(() => shellAt(environmentId, threadId))),
         ),
       dispatch: (command) =>
         Effect.sync(() => {
@@ -423,16 +422,6 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     >,
     beforeShellRead: (_threadId: ThreadId): Effect.Effect<void> => Effect.void,
     beforeThreadLock: (_threadId: ThreadId): Effect.Effect<void> => Effect.void,
-    unreadableLineage: new Set<string>(),
-    /** A deleted thread keeps its row, so its lineage reads even without a shell. */
-    lineageOf: (environmentId: EnvironmentId, threadId: ThreadId) => {
-      const key = keyOf(ref(environmentId, threadId));
-      const lineage = activity.get(key)?.lineage;
-      if (lineage !== undefined) return lineage;
-      return tags.has(key)
-        ? { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId }
-        : null;
-    },
     beforeMissionsRead: Effect.void as Effect.Effect<void>,
     beforeReleasesRead: Effect.void as Effect.Effect<void>,
     lineageReads: 0,
@@ -450,6 +439,20 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       links,
       Layer.mock(ServerEnvironment.ServerEnvironment)({ getEnvironmentId: Effect.succeed(HERE) }),
       Layer.mock(ProjectionStore.ProjectionStoreV2)({
+        getThreadSettlements: (threadIds) =>
+          Effect.sync(
+            () =>
+              new Map(
+                threadIds.flatMap((threadId) => {
+                  const shell = shellAt(HERE, threadId) as {
+                    readonly deletedAt: string | null;
+                    readonly settledOverride: string | null;
+                    readonly archivedAt: string | null;
+                  } | null;
+                  return shell === null || shell.deletedAt !== null ? [] : [[threadId, shell]];
+                }),
+              ),
+          ),
         findThread: (threadId) =>
           Effect.sync(() => {
             world.lineageReads += 1;
@@ -541,6 +544,19 @@ const withMissions = <A, E>(
                   Effect.andThen(real.missions),
                 ),
                 knownClaims: real.knownClaims.pipe(Effect.tap(() => world.afterKnownClaimsRead)),
+                allClaims: Effect.flatMap(PauseAfterClaimsRead, (pause) =>
+                  pause === undefined
+                    ? real.allClaims
+                    : real.allClaims.pipe(
+                        Effect.tap(() =>
+                          ++pause.reads === pause.at
+                            ? Deferred.succeed(pause.paused, undefined).pipe(
+                                Effect.andThen(Deferred.await(pause.go)),
+                              )
+                            : Effect.void,
+                        ),
+                      ),
+                ),
                 pendingReleases: Effect.suspend(() => world.beforeReleasesRead).pipe(
                   Effect.andThen(real.pendingReleases),
                 ),
@@ -570,17 +586,6 @@ const withMissions = <A, E>(
         Layer.provide(
           Layer.mergeAll(
             world.threadsOn(environmentId),
-            Layer.mock(ProjectionStore.ProjectionStoreV2)({
-              findThread: (threadId) =>
-                world.unreadableLineage.has(threadId)
-                  ? Effect.fail(
-                      new ProjectionStore.ProjectionStoreReadError({ threadId, cause: "" }),
-                    )
-                  : Effect.sync(() => {
-                      const lineage = world.lineageOf(environmentId, threadId);
-                      return lineage === null ? null : ({ id: threadId, lineage } as never);
-                    }),
-            }),
             NodeCrypto.layer,
             world.workspacesLayer,
             Layer.mock(Project.ProjectService)({
@@ -1105,6 +1110,7 @@ it.effect("a mission whose members here are all settled ends, and frees them as 
       );
       const store = yield* MissionStore.MissionStore;
       assert.isUndefined(yield* store.claim(localMember.threadId));
+      assert.deepEqual(world.forgotten.toSorted(), [localMember.threadId, otherMember.threadId]);
     }),
   );
 });
@@ -1199,76 +1205,89 @@ it.effect(
   },
 );
 
-const childOf = (thread: ScopedThreadRef, relationship: "fork" | "side chat" | "subagent") => ({
-  parentThreadId: thread.threadId,
-  relationshipToParent: relationship === "subagent" ? "subagent" : "fork",
-  rootThreadId: thread.threadId,
-  ...(relationship === "side chat" ? { sideChat: true } : {}),
-});
+const PauseAfterClaimsRead = Context.Reference<
+  | {
+      readonly at: number;
+      reads: number;
+      readonly paused: Deferred.Deferred<void>;
+      readonly go: Deferred.Deferred<void>;
+    }
+  | undefined
+>("test/PauseAfterClaimsRead", { defaultValue: () => undefined });
 
-it.effect("ending a mission locks each thread after every thread up its lineage", () => {
-  const parent = ref(HERE, "b-parent");
-  const sideChat = ref(HERE, "a-side");
-  const subagent = ref(HERE, "a-sub");
-  const fork = ref(HERE, "a-fork");
-  const gone = ref(HERE, "gone");
-  const grandchild = ref(HERE, "a-grandchild");
-  const members = [parent, sideChat, subagent, fork, grandchild];
-  const world = makeWorld([lead, ...members, gone]);
+it.effect("ending a mission and a fork onto a thread that joined it meanwhile both finish", () => {
+  const source = ref(HERE, "b-source");
+  const target = ref(HERE, "a-target");
+  const world = makeWorld([lead, source, target]);
   return withMissions(
     world,
     Effect.gen(function* () {
       const missions = yield* Missions.Missions;
+      const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
       const { missionId } = yield* createOne;
-      for (const member of members) {
-        yield* missions.addMember({ missionId, member });
-        settle(world, member);
-      }
-      world.shell(sideChat, { lineage: childOf(parent, "side chat") });
-      world.shell(subagent, { lineage: childOf(lead, "subagent") });
-      world.shell(fork, { lineage: childOf(parent, "fork") });
-      world.shell(gone, { lineage: childOf(lead, "subagent") });
-      world.shell(grandchild, { lineage: childOf(gone, "subagent") });
-      world.remove(gone);
-      const locked: Array<string> = [];
-      world.beforeThreadLock = (threadId) => Effect.sync(() => locked.push(threadId));
-      yield* missions.deleteMission({ missionId });
-      assert.deepEqual(locked, ["b-parent", "lead", "a-fork", "a-side", "a-sub", "a-grandchild"]);
-      assert.deepEqual((yield* listed).missions, []);
-    }),
-  );
-});
-
-it.effect("a lineage it cannot read or that loops keeps its mission from ending", () => {
-  const [a, b] = [ref(HERE, "a"), ref(HERE, "b")];
-  const world = makeWorld([lead, a, b]);
-  return withMissions(
-    world,
-    Effect.gen(function* () {
-      const missions = yield* Missions.Missions;
-      const { missionId } = yield* createOne;
-      for (const member of [a, b]) {
-        yield* missions.addMember({ missionId, member });
-        settle(world, member);
-      }
-      world.shell(a, { lineage: childOf(b, "fork") });
-      world.shell(b, { lineage: childOf(a, "fork") });
-      const refusal = yield* deleteRefusal(missionId);
-      assert.include(refusal, "could not be read in a safe order");
-      world.shell(b, { lineage: childOf(lead, "fork") });
-      world.unreadableLineage.add(b.threadId);
-      assert.equal(yield* deleteRefusal(missionId), refusal);
-      assert.deepEqual(
-        (yield* listed).claims.map((claim) => claim.threadId),
-        [lead.threadId, a.threadId, b.threadId],
+      yield* missions.addMember({ missionId, member: source });
+      settle(world, source);
+      // As a fork does once it has seen its target absent: source first, then target.
+      const sourceHeld = yield* Deferred.make<void>();
+      const lockTarget = yield* Deferred.make<void>();
+      const forking = yield* Effect.forkChild(
+        threadCommands.withLock(
+          source.threadId,
+          Deferred.succeed(sourceHeld, undefined).pipe(
+            Effect.andThen(Deferred.await(lockTarget)),
+            Effect.andThen(threadCommands.withLock(target.threadId, Effect.void)),
+          ),
+        ),
       );
-      assert.deepEqual(world.forgotten, []);
-      world.unreadableLineage.clear();
-      yield* missions.deleteMission({ missionId });
-      assert.deepEqual(world.forgotten.toSorted(), [a.threadId, b.threadId]);
+      yield* Deferred.await(sourceHeld);
+      yield* missions.addMember({ missionId, member: target });
+      settle(world, target);
+      const endWaitsForSource = yield* Deferred.make<void>();
+      world.beforeThreadLock = (threadId) =>
+        threadId === source.threadId ? Deferred.succeed(endWaitsForSource, undefined) : Effect.void;
+      const ending = yield* Effect.forkChild(missions.deleteMission({ missionId }));
+      yield* Deferred.await(endWaitsForSource);
+      yield* Deferred.succeed(lockTarget, undefined);
+      yield* Fiber.join(forking);
+      yield* Fiber.join(ending);
+      assert.deepEqual((yield* listed).claims, []);
     }),
   );
 });
+
+it.effect(
+  "a member that leaves while its mission ends neither holds the end back nor is checked",
+  () => {
+    const world = makeWorld([lead, localMember, otherMember]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const { missionId } = yield* createOne;
+        yield* missions.addMember({ missionId, member: localMember });
+        yield* missions.addMember({ missionId, member: otherMember });
+        settle(world, localMember);
+        const pause = {
+          at: 2,
+          reads: 0,
+          paused: yield* Deferred.make<void>(),
+          go: yield* Deferred.make<void>(),
+        };
+        const ending = yield* Effect.forkChild(
+          missions
+            .deleteMission({ missionId })
+            .pipe(Effect.provideService(PauseAfterClaimsRead, pause)),
+        );
+        yield* Deferred.await(pause.paused);
+        yield* missions.leaveHere(otherMember.threadId, missionId);
+        yield* Deferred.succeed(pause.go, undefined);
+        yield* Fiber.join(ending);
+        assert.deepEqual((yield* listed).claims, []);
+        assert.deepEqual(world.forgotten.toSorted(), [localMember.threadId, otherMember.threadId]);
+      }),
+    );
+  },
+);
 
 it.effect(
   "a mission with an active member is not ended; once released, its lead stays a thread",

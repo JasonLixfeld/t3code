@@ -448,9 +448,9 @@ const shouldHideSettledMissionMember = (
   syncedEnvironments: ReadonlySet<EnvironmentId>,
 ) =>
   member.state === "active" &&
+  syncedEnvironments.has(member.ref.environmentId) &&
   (thread === null
-    ? (member.settled === true || settledOnItsMachine) &&
-      syncedEnvironments.has(member.ref.environmentId)
+    ? member.settled === true || settledOnItsMachine
     : isSettledMissionMember(thread));
 
 export function groupSidebarMissions<T extends ListedThread>(

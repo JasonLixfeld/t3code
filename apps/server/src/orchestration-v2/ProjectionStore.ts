@@ -699,6 +699,16 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadTitles: (
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<Record<ThreadId, string>, ProjectionStoreV2Error>;
+  /** The fields `isSettledMissionMember` reads, for each live thread among `threadIds`. */
+  readonly getThreadSettlements: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<
+    ReadonlyMap<
+      ThreadId,
+      { readonly settledOverride: string | null; readonly archivedAt: string | null }
+    >,
+    ProjectionStoreV2Error
+  >;
   readonly getThreadWorktreePaths: (options?: {
     readonly includeArchived?: boolean;
   }) => Effect.Effect<
@@ -9805,6 +9815,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return Object.fromEntries(rows.map((row) => [row.thread_id, row.title]));
     }, Effect.mapError(shellSnapshotReadError));
 
+    const getThreadSettlements = Effect.fn("ProjectionStore.getThreadSettlements")(function* (
+      threadIds: ReadonlyArray<ThreadId>,
+    ) {
+      if (threadIds.length === 0) return new Map();
+      const rows = yield* sql<{
+        readonly thread_id: ThreadId;
+        readonly settled_override: string | null;
+        readonly archived_at: string | null;
+      }>`
+        SELECT thread_id, archived_at,
+          json_extract(payload_json, '$.settledOverride') AS settled_override
+        FROM orchestration_v2_projection_threads
+        WHERE deleted_at IS NULL AND thread_id IN ${sql.in(threadIds)}
+      `;
+      return new Map(
+        rows.map((row) => [
+          row.thread_id,
+          { settledOverride: row.settled_override, archivedAt: row.archived_at },
+        ]),
+      );
+    }, Effect.mapError(shellSnapshotReadError));
+
     const findGuestShareThreadId = Effect.fn("ProjectionStore.findGuestShareThreadId")(function* (
       shareId: GuestShareId,
     ) {
@@ -9976,6 +10008,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getSettlementCandidates: readOnReader(getSettlementCandidates),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
       getThreadTitles: readOnReader(getThreadTitles),
+      getThreadSettlements: readOnReader(getThreadSettlements),
       getThreadLinkMetadata: readOnReader(getThreadLinkMetadata),
       getThreadWorktreePaths: readOnReader(getThreadWorktreePaths),
       getOpenRemoteDelegatedTasks: getOpenRemoteDelegatedTasks.pipe(NodeSqliteClient.readOnly),

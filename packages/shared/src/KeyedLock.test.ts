@@ -3,6 +3,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -10,6 +11,33 @@ import * as Scope from "effect/Scope";
 import * as KeyedLock from "./KeyedLock.ts";
 
 describe("KeyedLock", () => {
+  it.effect("runs a try-lock only while the key is free, and leaves no entry behind", () =>
+    Effect.gen(function* () {
+      const lock = yield* KeyedLock.make<string>();
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const holder = yield* lock
+        .withLock(
+          "key",
+          Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(entered);
+      assert.isTrue(Option.isNone(yield* lock.withLockIfAvailable("key", Effect.succeed(1))));
+      assert.deepStrictEqual(
+        yield* lock.withLockIfAvailable("other", Effect.succeed(2)),
+        Option.some(2),
+      );
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(holder);
+      assert.deepStrictEqual(
+        yield* lock.withLockIfAvailable("key", Effect.succeed(3)),
+        Option.some(3),
+      );
+      assert.deepStrictEqual(yield* lock.activeKeys, []);
+    }),
+  );
+
   it.effect("runs one holder of a key at a time, waiters in the order they queued", () =>
     Effect.gen(function* () {
       const lock = yield* KeyedLock.make<string>();
