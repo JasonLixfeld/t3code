@@ -6,7 +6,9 @@ import {
   type MissionLink,
   type MissionMember,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  MISSION_QUIET_REPLY,
   type OrchestrationV2TurnItem,
   ProjectId,
   RunId,
@@ -29,6 +31,7 @@ import {
   type MissionHost,
   missionsLiveKey,
   parseMissionTarget,
+  quietMissionUpdateRunIds,
   withoutQuietMissionUpdates,
 } from "./missions.ts";
 
@@ -768,6 +771,7 @@ describe("withoutQuietMissionUpdates", () => {
   const at = DateTime.makeUnsafe("2026-11-26T00:00:00.000Z");
   const LEAD = ThreadId.make("lead");
   type Item = OrchestrationV2TurnItem;
+  const wakeId = (run: string) => `turn-item:message:message%3Amission-update%3Am1%3A${run}`;
   const base = (run: string, id: string) => ({
     id: TurnItemId.make(`${run}:${id}`),
     threadId: LEAD,
@@ -784,12 +788,13 @@ describe("withoutQuietMissionUpdates", () => {
     completedAt: at,
     updatedAt: at,
   });
-  const wake = (run: string): Item => ({
+  const wake = (run: string, id = wakeId(run), summary = "Mission update"): Item => ({
     ...base(run, "wake"),
+    id: TurnItemId.make(id),
     type: "notification",
     source: { kind: "system" },
     outcome: "updated",
-    summary: "Mission update",
+    summary,
     detail: "Mission update: member 1 is awaiting input.",
   });
   const tool = (run: string, toolName: string, status: Item["status"] = "completed"): Item => ({
@@ -811,10 +816,15 @@ describe("withoutQuietMissionUpdates", () => {
     `const r = await t.t3_thread_read({threadId: "mcp:launch:member", limit: 2, runLimit: 1, maxCharsPerItem: 3000});`,
     "return {status: r.thread.status, items: r.items.map(i => i.text)};",
   ].join("\n");
+  const MULTI_READ_SCRIPT = [
+    'const ns = tools["t3-code-5f32a1"]; const out={};',
+    'for (const id of ["mcp:a","mcp:b"]) { const r = await ns.t3_thread_read({threadId:id, limit:2}); out[id]=(r.items||[]).map(x=>`[${x.type}] ${x.text||""}`);}',
+    "return out;",
+  ].join("\n");
   const reply = (run: string, text: string): Item => ({
-    ...base(run, "reply"),
+    ...base(run, `reply-${text}`),
     type: "assistant_message",
-    messageId: MessageId.make(`${run}:reply`),
+    messageId: MessageId.make(`${run}:reply-${text}`),
     text,
     streaming: false,
   });
@@ -849,15 +859,28 @@ describe("withoutQuietMissionUpdates", () => {
       sourceItemId: item.id,
       item,
     }));
-  const attempt = (
-    run: string,
-    status: OrchestrationV2RunAttempt["status"],
-    attemptOrdinal = 1,
-  ): Pick<OrchestrationV2RunAttempt, "runId" | "attemptOrdinal" | "status"> => ({
+  type RunStatus = OrchestrationV2Run["status"];
+  type AttemptStatus = OrchestrationV2RunAttempt["status"];
+  const runOf = (run: string, status: RunStatus) => ({ id: RunId.make(run), status });
+  const attempt = (run: string, status: AttemptStatus, attemptOrdinal = 1) => ({
     runId: RunId.make(run),
     attemptOrdinal,
     status,
   });
+  const finished = (...runIds: ReadonlyArray<string>) => ({
+    runs: runIds.map((run) => runOf(run, "completed")),
+    attempts: runIds.map((run) => attempt(run, "completed")),
+  });
+  const hide = (
+    items: ReadonlyArray<Item>,
+    status: {
+      readonly runs?: ReadonlyArray<ReturnType<typeof runOf>>;
+      readonly attempts?: ReadonlyArray<ReturnType<typeof attempt>>;
+    } = {},
+  ) => {
+    const thread = rows(items);
+    return { thread, shown: withoutQuietMissionUpdates(thread, status.runs, status.attempts) };
+  };
   const quietRun = (run: string) => [
     wake(run),
     thought(run),
@@ -867,89 +890,140 @@ describe("withoutQuietMissionUpdates", () => {
   ];
 
   it("hides finished wakes that only read and wrote nothing, and keeps the turns around them", () => {
-    const thread = rows([
-      user("asked"),
-      reply("asked", "Started the mission."),
-      ...quietRun("quiet-1"),
-      wake("quiet-2"),
-      ...quietRun("quiet-3"),
-      wake("spoke"),
-      reply("spoke", "Member 1 needs your answer."),
-    ]);
-    const shown = withoutQuietMissionUpdates(thread, [
-      attempt("asked", "completed"),
-      attempt("quiet-1", "completed"),
-      attempt("quiet-2", "completed"),
-      attempt("quiet-3", "failed"),
-      attempt("quiet-3", "completed", 2),
-      attempt("spoke", "completed"),
-    ]);
+    const { runs, attempts } = finished("asked", "quiet-1", "quiet-2", "quiet-3", "spoke");
+    const { shown } = hide(
+      [
+        user("asked"),
+        reply("asked", "Started the mission."),
+        ...quietRun("quiet-1"),
+        wake("quiet-2"),
+        ...quietRun("quiet-3"),
+        wake("spoke"),
+        reply("spoke", "Member 1 needs your answer."),
+      ],
+      { runs, attempts: [...attempts, attempt("quiet-3", "failed", 0)] },
+    );
     expect(shown.map(({ item }) => item.id)).toEqual([
       "asked:user-turn_start",
-      "asked:reply",
-      "spoke:wake",
-      "spoke:reply",
+      "asked:reply-Started the mission.",
+      wakeId("spoke"),
+      "spoke:reply-Member 1 needs your answer.",
     ]);
   });
 
   it.each([
-    ["it wrote a reply", [wake("run"), reply("run", "Nothing needs you.")], "completed"],
-    ["it acted", [wake("run"), tool("run", "mcp__t3-code__t3_thread_send")], "completed"],
-    ["it ran a tool it cannot name", [wake("run"), tool("run", "Shell")], "completed"],
-    ["a read failed", [wake("run"), tool("run", "t3_thread_read", "failed")], "completed"],
-    ["it asks a question", [wake("run"), question("run")], "completed"],
-    ["the user steered it", [wake("run"), user("run", "steer")], "completed"],
-    ["it is running", [wake("run")], "running"],
-    ["it failed", [wake("run")], "failed"],
-    ["it was interrupted", [wake("run")], "interrupted"],
-    ["its attempts are unknown", [wake("run")], null],
-    ["it was no wake", [user("run")], "completed"],
+    ["wrote nothing", [wake("q"), reply("q", "")]],
+    ["replied with the quiet marker", [wake("q"), reply("q", ` ${MISSION_QUIET_REPLY}\n`)]],
+    ["ran a Code Mode script that read", [wake("q"), script("q", READ_SCRIPT)]],
+    ["ran a Code Mode script that read in a loop", [wake("q"), script("q", MULTI_READ_SCRIPT)]],
+  ] as const)("hides a finished wake that %s", (_case, items) => {
+    expect(hide(items, finished("q")).shown).toEqual([]);
+  });
+
+  const DONE = finished("run");
+  it.each([
+    ["it wrote a reply", [wake("run"), reply("run", "Nothing needs you.")], DONE],
+    [
+      "its reply adds to the marker",
+      [wake("run"), reply("run", "No change. Member 1 waits.")],
+      DONE,
+    ],
+    ["its marker has the wrong case", [wake("run"), reply("run", "no change.")], DONE],
+    [
+      "one of its replies is not the marker",
+      [wake("run"), reply("run", ""), reply("run", "Hi")],
+      DONE,
+    ],
+    ["it acted", [wake("run"), tool("run", "mcp__t3-code__t3_thread_send")], DONE],
+    ["it ran a tool it cannot name", [wake("run"), tool("run", "Shell")], DONE],
+    ["a read failed", [wake("run"), tool("run", "t3_thread_read", "failed")], DONE],
+    ["it asks a question", [wake("run"), question("run")], DONE],
+    ["the user steered it", [wake("run"), user("run", "steer")], DONE],
+    [
+      "it is running",
+      [wake("run")],
+      { runs: [runOf("run", "running")], attempts: [attempt("run", "running")] },
+    ],
+    [
+      "its run is still open after its attempt completed",
+      [wake("run")],
+      { runs: [runOf("run", "running")], attempts: [attempt("run", "completed")] },
+    ],
+    [
+      "it failed",
+      [wake("run")],
+      { runs: [runOf("run", "failed")], attempts: [attempt("run", "failed")] },
+    ],
+    [
+      "it was interrupted",
+      [wake("run")],
+      { runs: [runOf("run", "interrupted")], attempts: [attempt("run", "interrupted")] },
+    ],
+    ["its run is unknown", [wake("run")], { attempts: DONE.attempts }],
+    ["its attempts are unknown", [wake("run")], { runs: DONE.runs }],
+    ["it was no wake", [user("run")], DONE],
+    ["its notification is not a mission wake", [wake("run", "turn-item:message:other")], DONE],
+    ["it was a resumed thread", [wake("run", wakeId("run"), "Resumed thread")], DONE],
     [
       "its script sends",
       [
         wake("run"),
         script("run", `await ${NAMESPACE}.t3_thread_send({threadId: "m", text: "go"});`),
       ],
-      "completed",
+      DONE,
     ],
     [
       "its script reads and launches",
       [wake("run"), script("run", `${READ_SCRIPT}\nawait t.t3_thread_launch({});`)],
-      "completed",
+      DONE,
+    ],
+    [
+      "its script reads and sends feedback",
+      [wake("run"), script("run", `${READ_SCRIPT}\nawait t.t3_feedback({});`)],
+      DONE,
+    ],
+    [
+      "its script destructures a tool",
+      [wake("run"), script("run", `${READ_SCRIPT}\nconst { t3_thread_send } = t;`)],
+      DONE,
+    ],
+    [
+      "its script hands the namespace to a function",
+      [wake("run"), script("run", `${READ_SCRIPT}\nawait helper(t);`)],
+      DONE,
+    ],
+    [
+      "its script builds a tool name after a read",
+      [wake("run"), script("run", `${READ_SCRIPT}\nawait t["t3_thread_" + "send"]({});`)],
+      DONE,
     ],
     [
       "its script reaches OpenCode",
       [wake("run"), script("run", `${READ_SCRIPT}\nawait tools.opencode.worktree_list();`)],
-      "completed",
+      DONE,
     ],
     [
       "its script picks a tool by a computed key",
       [wake("run"), script("run", `const k = "t3-code-x";\nawait tools[k].t3_thread_read({});`)],
-      "completed",
+      DONE,
     ],
     [
       "its script fetches",
       [wake("run"), script("run", `${READ_SCRIPT}\nawait fetch("https://example.com");`)],
-      "completed",
+      DONE,
     ],
-    ["its script calls no T3 tool", [wake("run"), script("run", "return 1 + 1;")], "completed"],
+    ["its script calls no T3 tool", [wake("run"), script("run", "return 1 + 1;")], DONE],
   ] as const)("shows a mission update when %s", (_case, items, status) => {
-    const thread = rows(items);
-    expect(
-      withoutQuietMissionUpdates(thread, status === null ? undefined : [attempt("run", status)]),
-    ).toBe(thread);
-  });
-
-  it("hides a wake whose only tool was an OpenCode Code Mode script that read", () => {
-    const thread = rows([wake("quiet"), script("quiet", READ_SCRIPT), reply("quiet", "")]);
-    expect(withoutQuietMissionUpdates(thread, [attempt("quiet", "completed")])).toEqual([]);
+    const { thread, shown } = hide(items, status);
+    expect(shown).toBe(thread);
   });
 
   it("returns the same rows for the same inputs, so a render does not loop", () => {
     const thread = rows(quietRun("quiet"));
-    const attempts = [attempt("quiet", "completed")];
-    const shown = withoutQuietMissionUpdates(thread, attempts);
+    const { runs, attempts } = finished("quiet");
+    const shown = withoutQuietMissionUpdates(thread, runs, attempts);
     expect(shown).toEqual([]);
-    expect(withoutQuietMissionUpdates(thread, attempts)).toBe(shown);
+    expect(withoutQuietMissionUpdates(thread, runs, attempts)).toBe(shown);
+    expect(quietMissionUpdateRunIds(thread, runs, attempts)).toEqual(new Set(["quiet"]));
   });
 });

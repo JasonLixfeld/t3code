@@ -4,7 +4,7 @@ import {
   deriveThreadActivityRun,
   deriveThreadStructureRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
-import { withoutQuietMissionUpdates } from "@t3tools/client-runtime/missions";
+import { quietMissionUpdateRunIds } from "@t3tools/client-runtime/missions";
 import { createQuestionHistoryProjector } from "@t3tools/client-runtime/state/thread-requests";
 import {
   EnvironmentId,
@@ -63,7 +63,7 @@ export function ReadOnlyThreadTimeline(props: {
   const [projectQuestionHistory] = useState(() => createQuestionHistoryProjector());
   const items = projectQuestionHistory(projection);
   const entries = useIncrementalTimelineEntries(threadKey, {
-    visibleTurnItems: withoutQuietMissionUpdates(items, projection.attempts),
+    visibleTurnItems: items,
     optimisticMessages: NO_OPTIMISTIC_MESSAGES,
     attachmentUrlById: props.attachmentUrls(items),
     attempts: projection.attempts,
@@ -99,6 +99,7 @@ export function ReadOnlyThreadTimeline(props: {
           <MessagesTimeline
             listRef={listRef}
             timelineEntries={entries}
+            hiddenRunIds={quietMissionUpdateRunIds(items, projection.runs, projection.attempts)}
             isWorking={isWorking}
             activeTurnStartedAt={workStartedAt}
             latestRun={activityRun}

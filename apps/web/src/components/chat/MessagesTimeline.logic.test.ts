@@ -1,4 +1,4 @@
-import { withoutQuietMissionUpdates } from "@t3tools/client-runtime/missions";
+import { quietMissionUpdateRunIds } from "@t3tools/client-runtime/missions";
 import { ThreadId, type WorktreeSetupSnapshot } from "@t3tools/contracts";
 import {
   CheckpointRef,
@@ -5284,8 +5284,19 @@ describe("quiet mission updates", () => {
     completedAt: at(second),
     updatedAt: at(second),
   });
+  const user = (run: string, second: number): OrchestrationV2TurnItem => ({
+    ...item(run, "user", second),
+    type: "user_message",
+    messageId: MessageId.make(`${run}:user`),
+    createdBy: "user",
+    creationSource: "web",
+    inputIntent: "turn_start",
+    text: "How is the mission going?",
+    attachments: [],
+  });
   const wake = (run: string, second: number): OrchestrationV2TurnItem => ({
     ...item(run, "wake", second),
+    id: TurnItemId.make(`turn-item:message:message%3Amission-update%3Am1%3A${run}`),
     type: "notification",
     source: { kind: "system" },
     outcome: "updated",
@@ -5304,13 +5315,18 @@ describe("quiet mission updates", () => {
     text,
     streaming: false,
   });
+  const RUNS = ["asked", "spoke", "quiet", "next"] as const;
   const turnItems: OrchestrationV2ProjectedTurnItem[] = [
-    wake("spoke", 1),
-    read("spoke", 2),
-    reply("spoke", 3, "Member 1 needs your answer."),
-    wake("quiet", 4),
-    read("quiet", 5),
-    reply("quiet", 6, ""),
+    user("asked", 1),
+    reply("asked", 2, "Started the mission."),
+    wake("spoke", 3),
+    read("spoke", 4),
+    reply("spoke", 5, "Member 1 needs your answer."),
+    wake("quiet", 6),
+    read("quiet", 7),
+    reply("quiet", 8, ""),
+    user("next", 9),
+    reply("next", 10, "Answered."),
   ].map((turnItem, position) => ({
     position,
     visibility: "local",
@@ -5318,7 +5334,8 @@ describe("quiet mission updates", () => {
     sourceItemId: turnItem.id,
     item: turnItem,
   }));
-  const attempts = ["spoke", "quiet"].map((run) => ({
+  const runs = RUNS.map((run) => ({ id: RunId.make(run), status: "completed" as const }));
+  const attempts = RUNS.map((run) => ({
     id: RunAttemptId.make(`attempt:${run}`),
     runId: RunId.make(run),
     attemptOrdinal: 1,
@@ -5329,24 +5346,46 @@ describe("quiet mission updates", () => {
     reason: "initial" as const,
     status: "completed" as const,
     startedAt: at(0),
-    completedAt: at(9),
+    completedAt: at(20),
   }));
-  const rowIds = (visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>) =>
+  const checkpoints = RUNS.map((run, index) => ({
+    runId: RunId.make(run),
+    completedAt: "2026-11-26T00:00:20Z",
+    assistantMessageId: MessageId.make(`${run}:reply`),
+    checkpointTurnCount: index + 1,
+    checkpointRef: `checkpoint-${run}` as never,
+    status: "ready" as const,
+    files: [],
+  }));
+  // The same path as ThreadTimeline: every entry, with the quiet runs hidden at display.
+  const timelineRows = (visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>) =>
     deriveMessagesTimelineRows({
       timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
         visibleTurnItems,
         optimisticMessages: [],
         attempts,
       }),
+      hiddenRunIds: quietMissionUpdateRunIds(visibleTurnItems, runs, attempts),
       isWorking: false,
-      turnDiffSummaries: [],
-      supportsConversationRollback: false,
-    }).map((row) => row.id);
+      turnDiffSummaries: checkpoints,
+      supportsConversationRollback: true,
+      threadStartCheckpointAvailable: true,
+    });
 
-  it("leaves out a finished wake that only read, and the turn before it keeps its rows", () => {
-    const shown = rowIds(withoutQuietMissionUpdates(turnItems, attempts));
-    expect(shown).toEqual(rowIds(turnItems.slice(0, 3)));
-    expect(shown).toContain("spoke:wake");
+  it("leaves out a finished wake that only read, and the turns around it keep their rows", () => {
+    const shown = timelineRows(turnItems).map((row) => row.id);
+    expect(shown).toContain(`turn-item:message:message%3Amission-update%3Am1%3Aspoke`);
     expect(shown.some((id) => id.includes("quiet"))).toBe(false);
+    expect(shown).toEqual(
+      timelineRows(turnItems.filter(({ item }) => item.runId !== "quiet")).map((row) => row.id),
+    );
+  });
+
+  it("rewinds the message after a hidden wake to the hidden wake's checkpoint", () => {
+    const next = timelineRows(turnItems).find(
+      (row): row is Extract<MessagesTimelineRow, { kind: "message" }> =>
+        row.kind === "message" && row.message.id === "next:user",
+    );
+    expect(next?.revertTurnCount).toBe(3);
   });
 });

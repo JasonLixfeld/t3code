@@ -459,7 +459,7 @@ describe("buildThreadFeed", () => {
       projected(assistantMessage(), 1),
       projected(
         {
-          ...quiet("item-wake", 3),
+          ...quiet("turn-item:message:message%3Amission-update%3Am1%3A1", 3),
           type: "notification",
           source: { kind: "system" },
           outcome: "updated",
@@ -494,7 +494,8 @@ describe("buildThreadFeed", () => {
             : [],
       );
 
-    expect(itemIds(buildThreadFeed(items, { attempts }))).toEqual([
+    const runs = [runId, quietRunId].map((id) => ({ id, status: "completed" as const }));
+    expect(itemIds(buildThreadFeed(items, { runs, attempts }))).toEqual([
       "message-user",
       "message-assistant",
     ]);

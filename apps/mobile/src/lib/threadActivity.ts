@@ -52,6 +52,7 @@ import type {
   OrchestrationV2ExecutionNode,
   OrchestrationMessageContext,
   OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2Run,
   OrchestrationV2RunAttempt,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItem,
@@ -2508,6 +2509,7 @@ export function buildThreadFeed(
   turnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
   options?: {
     readonly anchoredMessages?: ReadonlyArray<LocalThreadMessage>;
+    readonly runs?: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status">>;
     readonly attempts?: ReadonlyArray<OrchestrationV2RunAttempt>;
     readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
     readonly cache?: ThreadFeedCache;
@@ -2516,7 +2518,7 @@ export function buildThreadFeed(
     readonly locale?: string;
   },
 ): ThreadFeedEntry[] {
-  const visibleTurnItems = withoutQuietMissionUpdates(turnItems, options?.attempts);
+  const visibleTurnItems = withoutQuietMissionUpdates(turnItems, options?.runs, options?.attempts);
   const anchoredMessages = options?.anchoredMessages ?? [];
   const resolve = options?.resolve ?? m;
   const locale = options?.locale;

@@ -1535,10 +1535,23 @@ function runningSubagentsAtRunTail(entries: ReadonlyArray<TimelineEntry>, runId:
   return running;
 }
 
+/** Leaves out the entries of runs the timeline hides, such as quiet mission updates. */
+export function withoutHiddenRunEntries(
+  entries: ReadonlyArray<TimelineEntry>,
+  hiddenRunIds: ReadonlySet<RunId> | undefined,
+): ReadonlyArray<TimelineEntry> {
+  if (hiddenRunIds === undefined || hiddenRunIds.size === 0) return entries;
+  return entries.filter((entry) => {
+    const runId = timelineEntryRunId(entry);
+    return runId === null || !hiddenRunIds.has(runId);
+  });
+}
+
 function timelineRowEntries(
   input: Pick<
     MessagesTimelineRowsInput,
     | "timelineEntries"
+    | "hiddenRunIds"
     | "toolCallVisibility"
     | "revealedMessageId"
     | "isWorking"
@@ -1548,7 +1561,7 @@ function timelineRowEntries(
   >,
 ) {
   const visibility = input.toolCallVisibility ?? "showAll";
-  const entries = input.timelineEntries;
+  const entries = withoutHiddenRunEntries(input.timelineEntries, input.hiddenRunIds);
   let shown = entries;
   if (visibility === "zen") {
     const answering = input.isWorking && input.latestRun?.turnEnded !== true;
@@ -1618,7 +1631,10 @@ function deriveTimelineTurnFolds(
 
 export function deriveMessagesTimelineRows(
   input: {
+    /** Every entry; rewind targets count hidden runs too. */
     timelineEntries: ReadonlyArray<TimelineEntry>;
+    /** Runs whose entries get no rows. */
+    hiddenRunIds?: ReadonlySet<RunId> | undefined;
     pendingApprovalRequestIds?: ReadonlySet<RuntimeRequestId>;
     latestRun?: TimelineLatestRun | null;
     /** The usage-limited run whose failure row the recovery notice replaces. */

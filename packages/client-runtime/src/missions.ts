@@ -7,7 +7,9 @@ import {
   type MissionsSnapshot,
   isSettledMissionMember,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  MISSION_QUIET_REPLY,
   type OrchestrationV2TurnItem,
   type RunId,
   type ThreadId,
@@ -565,8 +567,12 @@ export function missionScratchHome(
   return [...machines].find((environmentId) => scratchRootFor(environmentId) !== null) ?? null;
 }
 
+// The wake's turn item id is derived from its `message:mission-update:` message id.
+const MISSION_UPDATE_ITEM_ID_PREFIX = "turn-item:message:message%3Amission-update%3A";
+
 const isMissionUpdateNotification = (item: OrchestrationV2TurnItem) =>
   item.type === "notification" &&
+  item.id.startsWith(MISSION_UPDATE_ITEM_ID_PREFIX) &&
   item.source.kind === "system" &&
   item.summary === "Mission update";
 
@@ -574,12 +580,36 @@ const MISSION_READ_TOOLS: ReadonlySet<string> = new Set(["t3_thread_read", "t3_m
 
 const CODE_MODE_ESCAPE =
   /\b(?:fetch|eval|globalThis|this|Reflect|Object)\b|\b(?:search|Function|import)\s*\(/;
-const NON_T3_TOOLS_ACCESS = /\btools\b(?!\s*\[\s*(["'])t3-code[^"'\n]*\1\s*\]|\s*\.\s*t3[\w$]*)/;
-// A computed key could build a tool name the name scan cannot see.
-const COMPUTED_KEY = /[\w$)\]]\[(?!\s*\d+\s*\]|\s*(["'])t3-code[^"'\n]*\1\s*\])/;
+const NON_T3_TOOLS_ACCESS =
+  /\btools\b(?!\s*\[\s*(?:"t3-code[^"\n]*"|'t3-code[^'\n]*')\s*\]|\s*\.\s*t3[\w$]*)/;
+const NAMESPACE_USE =
+  /(\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*)?\btools\s*(?:\[\s*(?:"t3-code[^"\n]*"|'t3-code[^'\n]*')\s*\]|\.\s*t3[\w$]*)(\s*\.\s*([A-Za-z_$][\w$]*))?/g;
+const MEMBER = /^\s*\.\s*([A-Za-z_$][\w$]*)/;
+const STATEMENT_END = /^\s*(?:;|\n|$)/;
+const COMPUTED_KEY_OPEN = /[\w$)\]]\[/g;
 const IDENTIFIER = /[A-Za-z_$][\w$]*/g;
 
-/** An OpenCode Code Mode script reads only when every T3 tool it names is a mission read. */
+/**
+ * Whether a computed key is an index, the T3 namespace, or a plain assignment target such as
+ * `out[id] = …`. Any other computed key could build a tool name the name scan cannot see.
+ */
+function computedKeysAreSafe(code: string): boolean {
+  for (const match of code.matchAll(COMPUTED_KEY_OPEN)) {
+    const rest = code.slice(match.index + 2);
+    const safe =
+      /^\s*\d+\s*\]/.test(rest) ||
+      (/^\s*(?:"t3-code[^"\n]*"|'t3-code[^'\n]*')\s*\]/.test(rest) &&
+        /\btools\s*$/.test(code.slice(0, match.index + 1))) ||
+      /^[^[\]\n]*\]\s*=(?!=)/.test(rest);
+    if (!safe) return false;
+  }
+  return true;
+}
+
+/**
+ * An OpenCode Code Mode script reads only when each use of the T3 namespace, directly or through
+ * a `const` alias, calls a mission read, and it names no other T3 tool.
+ */
 function codeModeOnlyReads(input: unknown): boolean {
   const code =
     typeof input === "object" && input !== null && "code" in input ? input.code : undefined;
@@ -587,19 +617,57 @@ function codeModeOnlyReads(input: unknown): boolean {
     typeof code !== "string" ||
     CODE_MODE_ESCAPE.test(code) ||
     NON_T3_TOOLS_ACCESS.test(code) ||
-    COMPUTED_KEY.test(code)
+    !computedKeysAreSafe(code)
   ) {
     return false;
   }
-  const named = (code.match(IDENTIFIER) ?? []).filter((name) => T3_MCP_TOOL_NAMES.has(name));
-  return named.length > 0 && named.every((name) => MISSION_READ_TOOLS.has(name));
+  const names = code.match(IDENTIFIER) ?? [];
+  if (
+    names.some(
+      (name) =>
+        (name.startsWith("t3_") || T3_MCP_TOOL_NAMES.has(name)) && !MISSION_READ_TOOLS.has(name),
+    )
+  ) {
+    return false;
+  }
+  let reads = 0;
+  const aliases: Array<{ readonly name: string; readonly declaredAt: number }> = [];
+  for (const use of code.matchAll(NAMESPACE_USE)) {
+    const [whole, declaration, alias, member, accessed] = use;
+    if (declaration !== undefined && alias !== undefined && member === undefined) {
+      if (!STATEMENT_END.test(code.slice(use.index + whole.length))) return false;
+      const keyword = /^(?:const|let|var)\s+/.exec(declaration)?.[0].length ?? 0;
+      aliases.push({ name: alias, declaredAt: use.index + keyword });
+    } else if (declaration === undefined && accessed !== undefined) {
+      if (!MISSION_READ_TOOLS.has(accessed)) return false;
+      reads += 1;
+    } else {
+      return false;
+    }
+  }
+  for (const { name, declaredAt } of aliases) {
+    const occurrence = new RegExp(`(^|[^\\w$.])${name.replaceAll("$", "\\$")}(?![\\w$])`, "g");
+    for (const found of code.matchAll(occurrence)) {
+      const at = found.index + (found[1]?.length ?? 0);
+      if (at === declaredAt) continue;
+      const accessed = MEMBER.exec(code.slice(at + name.length))?.[1];
+      if (accessed === undefined || !MISSION_READ_TOOLS.has(accessed)) return false;
+      reads += 1;
+    }
+  }
+  return reads > 0;
 }
 
-function changesNothing(item: OrchestrationV2TurnItem): boolean {
+const isQuietReply = (text: string) => {
+  const trimmed = text.trim();
+  return trimmed === "" || trimmed === MISSION_QUIET_REPLY;
+};
+
+function classifyChangesNothing(item: OrchestrationV2TurnItem): boolean {
   if (item.status !== "completed" || item.deferredWork !== undefined) return false;
   switch (item.type) {
     case "assistant_message":
-      return !item.streaming && item.textOmitted !== true && item.text.trim() === "";
+      return !item.streaming && item.textOmitted !== true && isQuietReply(item.text);
     case "reasoning":
       return !item.streaming;
     case "checkpoint":
@@ -613,27 +681,44 @@ function changesNothing(item: OrchestrationV2TurnItem): boolean {
   }
 }
 
+const changesNothingByItem = new WeakMap<OrchestrationV2TurnItem, boolean>();
+
+function changesNothing(item: OrchestrationV2TurnItem): boolean {
+  let known = changesNothingByItem.get(item);
+  if (known === undefined) {
+    known = classifyChangesNothing(item);
+    changesNothingByItem.set(item, known);
+  }
+  return known;
+}
+
+type RunStatus = Pick<OrchestrationV2Run, "id" | "status">;
 type AttemptStatus = Pick<OrchestrationV2RunAttempt, "runId" | "attemptOrdinal" | "status">;
+
+const NO_QUIET_RUNS: ReadonlySet<RunId> = new Set();
+
+interface QuietMissionUpdates {
+  readonly runs: ReadonlyArray<RunStatus> | undefined;
+  readonly attempts: ReadonlyArray<AttemptStatus> | undefined;
+  readonly runIds: ReadonlySet<RunId>;
+  shown?: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
+}
 
 const quietMissionUpdates = new WeakMap<
   ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
-  {
-    readonly attempts: ReadonlyArray<AttemptStatus> | undefined;
-    readonly rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
-  }
+  QuietMissionUpdates
 >();
 
-/**
- * Drops each finished mission-update run in which the lead wrote nothing and only read.
- * Returns `rows` itself when nothing is dropped, and the same array as the previous call while
- * `rows` and `attempts` are the same references as in that call.
- */
-export function withoutQuietMissionUpdates(
+function quietMissionUpdateEntry(
   rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  runs: ReadonlyArray<RunStatus> | undefined,
   attempts: ReadonlyArray<AttemptStatus> | undefined,
-): ReadonlyArray<OrchestrationV2ProjectedTurnItem> {
+): QuietMissionUpdates {
   const cached = quietMissionUpdates.get(rows);
-  if (cached !== undefined && cached.attempts === attempts) return cached.rows;
+  if (cached !== undefined && cached.runs === runs && cached.attempts === attempts) return cached;
+  const completedRuns = new Set(
+    (runs ?? []).flatMap((run) => (run.status === "completed" ? [run.id] : [])),
+  );
   const latestAttempts = new Map<RunId, AttemptStatus>();
   for (const attempt of attempts ?? []) {
     const latest = latestAttempts.get(attempt.runId);
@@ -648,17 +733,51 @@ export function withoutQuietMissionUpdates(
     if (known === undefined) {
       quiet.set(
         item.runId,
-        isMissionUpdateNotification(item) && latestAttempts.get(item.runId)?.status === "completed",
+        isMissionUpdateNotification(item) &&
+          completedRuns.has(item.runId) &&
+          latestAttempts.get(item.runId)?.status === "completed",
       );
     } else if (known && !changesNothing(item)) {
       quiet.set(item.runId, false);
     }
   }
-  const shown = [...quiet.values()].includes(true)
-    ? rows.filter(({ item }) => item.runId === null || quiet.get(item.runId) !== true)
-    : rows;
-  quietMissionUpdates.set(rows, { attempts, rows: shown });
-  return shown;
+  const runIds = new Set([...quiet].flatMap(([runId, isQuiet]) => (isQuiet ? [runId] : [])));
+  const entry: QuietMissionUpdates = {
+    runs,
+    attempts,
+    runIds: runIds.size === 0 ? NO_QUIET_RUNS : runIds,
+  };
+  quietMissionUpdates.set(rows, entry);
+  return entry;
+}
+
+/**
+ * The finished mission-update runs in which the lead only read and wrote nothing new. Returns the
+ * same set as the previous call while `rows`, `runs` and `attempts` are the same references.
+ */
+export function quietMissionUpdateRunIds(
+  rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  runs: ReadonlyArray<RunStatus> | undefined,
+  attempts: ReadonlyArray<AttemptStatus> | undefined,
+): ReadonlySet<RunId> {
+  return quietMissionUpdateEntry(rows, runs, attempts).runIds;
+}
+
+/**
+ * `rows` without the items of `quietMissionUpdateRunIds`. Returns `rows` itself when nothing is
+ * dropped, and the same array as the previous call while the three references match.
+ */
+export function withoutQuietMissionUpdates(
+  rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  runs: ReadonlyArray<RunStatus> | undefined,
+  attempts: ReadonlyArray<AttemptStatus> | undefined,
+): ReadonlyArray<OrchestrationV2ProjectedTurnItem> {
+  const entry = quietMissionUpdateEntry(rows, runs, attempts);
+  entry.shown ??=
+    entry.runIds.size === 0
+      ? rows
+      : rows.filter(({ item }) => item.runId === null || !entry.runIds.has(item.runId));
+  return entry.shown;
 }
 
 export function missionLeadCandidates<

@@ -1,4 +1,4 @@
-import { withoutQuietMissionUpdates } from "@t3tools/client-runtime/missions";
+import { quietMissionUpdateRunIds } from "@t3tools/client-runtime/missions";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { type ComponentProps, useLayoutEffect } from "react";
 import { useIncrementalTimelineEntries } from "../../hooks/useIncrementalTimelineEntries";
@@ -26,7 +26,7 @@ export function ThreadTimeline({
   syncing,
   detailLoading,
   ...timelineProps
-}: Omit<ComponentProps<typeof MessagesTimeline>, "timelineEntries"> & {
+}: Omit<ComponentProps<typeof MessagesTimeline>, "timelineEntries" | "hiddenRunIds"> & {
   /** Null until the thread's detail may load; see resolveThreadDetailRef. */
   threadDetailRef: ScopedThreadRef | null;
   entriesInput: Omit<TimelineEntriesInput, "visibleTurnItems">;
@@ -39,7 +39,7 @@ export function ThreadTimeline({
   const visibleTurnItems = useTimelineVisibleTurnItems(threadDetailRef);
   const serverEntries = useIncrementalTimelineEntries(activeThreadKey, {
     ...entriesInput,
-    visibleTurnItems: withoutQuietMissionUpdates(visibleTurnItems, entriesInput.attempts),
+    visibleTurnItems,
   });
   const entries = draftEntries ?? serverEntries;
   const displayedEntries = resolveThreadSwitchTimeline({
@@ -56,6 +56,15 @@ export function ThreadTimeline({
     rememberReadyThreadTimeline({ threadKey: activeThreadKey, entries });
   }, [activeThreadKey, detailLoading, entries]);
   return (
-    <MessagesTimeline {...timelineProps} syncing={syncing} timelineEntries={displayedEntries} />
+    <MessagesTimeline
+      {...timelineProps}
+      syncing={syncing}
+      timelineEntries={displayedEntries}
+      hiddenRunIds={quietMissionUpdateRunIds(
+        visibleTurnItems,
+        timelineProps.runs,
+        entriesInput.attempts,
+      )}
+    />
   );
 }

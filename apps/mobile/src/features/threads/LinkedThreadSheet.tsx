@@ -277,6 +277,7 @@ export function LinkedThreadView(props: {
     projection === null
       ? []
       : buildThreadFeed(projection.visibleTurnItems, {
+          runs: projection.runs,
           attempts: projection.attempts,
           nodes: projection.nodes,
           cache: feedCache,
