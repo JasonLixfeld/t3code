@@ -521,6 +521,26 @@ it.effect.each(["interrupted", "completed"] as const)(
   },
 );
 
+it.effect("a run owed behind a queued run is told once that run is parked out of sight", () => {
+  const world = makeWorld();
+  return withWakes(
+    world,
+    Effect.gen(function* () {
+      world.set(first, { status: "queued", latestRunId: "f2" });
+      yield* world.runThenWaitForMemberShellRead(
+        first,
+        world.event(first, "run.updated", { id: "f1", status: "completed" }),
+      );
+      world.set(first, { status: "completed", latestRunId: "f1" });
+      yield* world.event(first, "run.updated", { id: "f2", status: "queued", queueHeld: true });
+      assert.equal(
+        yield* nextText(world),
+        told(["member 1 on this machine finished its turn and is idle."]),
+      );
+    }),
+  );
+});
+
 it.effect.each(["completed", "interrupted"] as const)(
   "a completion handled after the next run is already %s is told once",
   (next) => {
