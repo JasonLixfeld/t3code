@@ -565,8 +565,7 @@ export function missionScratchHome(
   return [...machines].find((environmentId) => scratchRootFor(environmentId) !== null) ?? null;
 }
 
-// The wake keeps the server's own summary; its message id does not reach clients.
-const isMissionWake = (item: OrchestrationV2TurnItem) =>
+const isMissionUpdateNotification = (item: OrchestrationV2TurnItem) =>
   item.type === "notification" &&
   item.source.kind === "system" &&
   item.summary === "Mission update";
@@ -601,7 +600,8 @@ const quietMissionUpdates = new WeakMap<
 
 /**
  * Drops each finished mission-update run in which the lead wrote nothing and only read.
- * Returns `rows` itself when nothing is dropped, and the same array for the same inputs.
+ * Returns `rows` itself when nothing is dropped, and the same array as the previous call while
+ * `rows` and `attempts` are the same references as in that call.
  */
 export function withoutQuietMissionUpdates(
   rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
@@ -623,7 +623,7 @@ export function withoutQuietMissionUpdates(
     if (known === undefined) {
       quiet.set(
         item.runId,
-        isMissionWake(item) && latestAttempts.get(item.runId)?.status === "completed",
+        isMissionUpdateNotification(item) && latestAttempts.get(item.runId)?.status === "completed",
       );
     } else if (known && !changesNothing(item)) {
       quiet.set(item.runId, false);
