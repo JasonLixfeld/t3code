@@ -538,4 +538,12 @@ describe("missionDraftMachines", () => {
       new Set([DESK, LAPTOP]),
     );
   });
+
+  it("leaves a member any machine when this session may not see the links", () => {
+    const hidden: ReadonlyArray<MissionHost> = hosts.map((host) => ({
+      ...host,
+      snapshot: { ...host.snapshot, links: [], linksHidden: true },
+    }));
+    expect(missionDraftMachines({ kind: "member", ...joins }, hidden)).toBeNull();
+  });
 });

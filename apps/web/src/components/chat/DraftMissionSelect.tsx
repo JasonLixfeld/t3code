@@ -42,7 +42,8 @@ export function useDraftProjectMachines(draftId: DraftId | null) {
   );
   if (marked === undefined) return null;
   const pinned = new Set([marked.thread.environmentId]);
-  return enabled ? (missionDraftMachines(marked.intent, hosts) ?? pinned) : pinned;
+  if (!enabled || marked.intent.kind === "new") return pinned;
+  return missionDraftMachines(marked.intent, hosts);
 }
 
 export interface DraftMissionChoice {

@@ -465,12 +465,12 @@ export function missionDraftMachines(
   hosts: ReadonlyArray<MissionHost>,
 ): ReadonlySet<EnvironmentId> | null {
   if (intent.kind === "new") return null;
+  const host = hosts.find((candidate) => candidate.environmentId === intent.host);
+  if (intent.kind === "member" && host?.snapshot.linksHidden === true) return null;
   const links =
     intent.kind === "member"
-      ? (hosts
-          .find((host) => host.environmentId === intent.host)
-          ?.snapshot.links.filter((link) => link.fullAccess)
-          .map((link) => link.environmentId) ?? [])
+      ? (host?.snapshot.links.filter((link) => link.fullAccess).map((link) => link.environmentId) ??
+        [])
       : [];
   return new Set([intent.host, ...links]);
 }
