@@ -38,11 +38,12 @@ export function MissionPromptSettings() {
       targets,
       planMobileScopedSettingsPatch(targets, false, { missionDefaultPrompt }),
     );
-  const draft = useRef<{ text: string; over: string | null } | null>(null);
+  const targetsKey = environments.map((target) => target.environmentId).join(",");
+  const draft = useRef<{ text: string; over: string | null; targetsKey: string } | null>(null);
   const saveDraft = () => {
     const typed = draft.current;
     draft.current = null;
-    if (typed === null || typed.over !== saved) return;
+    if (typed === null || typed.over !== saved || typed.targetsKey !== targetsKey) return;
     const value = typed.text.trim();
     if (saved === null || value !== saved) save(value);
   };
@@ -62,10 +63,10 @@ export function MissionPromptSettings() {
       >
         <View className="px-4 py-3">
           <AppTextInput
-            key={saved}
+            key={`${targetsKey}:${saved}`}
             accessibilityLabel={gt("Mission prompt")}
             onChangeText={(text) => {
-              draft.current = { text, over: saved };
+              draft.current = { text, over: saved, targetsKey };
             }}
             defaultValue={saved ?? ""}
             placeholder={

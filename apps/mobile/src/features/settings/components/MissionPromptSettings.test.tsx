@@ -121,6 +121,19 @@ describe("MissionPromptSettings", () => {
     );
   });
 
+  it("drops an edit when a server joins before it saves", () => {
+    mocks.targets = [target("desk", true)];
+    render();
+    mocks.input?.onChangeText("Check the tests.");
+    mocks.targets = [target("desk", true), target("laptop", true)];
+    render();
+    expect(mocks.input?.defaultValue).toBe("");
+    mocks.input?.onEndEditing();
+    act(() => root.unmount());
+    root = createRoot(document.createElement("div"));
+    expect(mocks.write).not.toHaveBeenCalled();
+  });
+
   it("is read-only without the right to operate, and hidden where no machine serves Missions", () => {
     mocks.targets = [target("desk", true, "Ship it.")];
     mocks.operable = false;
