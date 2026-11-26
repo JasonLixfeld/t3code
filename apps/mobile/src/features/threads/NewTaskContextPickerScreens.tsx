@@ -18,7 +18,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Haptics from "expo-haptics";
-import { useNavigation } from "@react-navigation/native";
+import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import { T, useGT, useMessages, Var } from "gt-react-native";
 import { m } from "../../i18n/messages";
 import { useRef, useState, type ReactNode } from "react";
@@ -33,6 +33,8 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
+import { useMissionDraftMachines } from "../../state/missions";
+import { missionDraftAllows } from "../../state/missions.logic";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
@@ -188,11 +190,17 @@ function PickerSurface(props: { readonly children: ReactNode }) {
   );
 }
 
-export function NewTaskEnvironmentPickerRouteScreen() {
+export function NewTaskEnvironmentPickerRouteScreen({
+  route,
+}: StaticScreenProps<{ readonly requestId?: string } | undefined>) {
   const gt = useGT();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const missionMachines = useMissionDraftMachines(route.params?.requestId ?? null);
+  const environments = flow.environments.filter((environment) =>
+    missionDraftAllows(missionMachines, environment.environmentId),
+  );
   return (
     <View className="flex-1 bg-sheet" collapsable={false}>
       <AppBar title={gt("Environment")} hideBottomBorder onBack={() => navigation.goBack()} />
@@ -207,11 +215,11 @@ export function NewTaskEnvironmentPickerRouteScreen() {
           showsVerticalScrollIndicator={false}
         >
           <PickerSurface>
-            {flow.environments.map((environment, index) => (
+            {environments.map((environment, index) => (
               <EnvironmentPickerRow
                 key={String(environment.environmentId)}
                 environmentId={environment.environmentId}
-                isLast={index === flow.environments.length - 1}
+                isLast={index === environments.length - 1}
                 disabled={flow.switchingToEnvironmentId !== null}
                 onPress={() => {
                   void Haptics.selectionAsync();

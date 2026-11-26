@@ -17,6 +17,8 @@ import { ThreadId } from "@t3tools/contracts";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { adoptMissionDraft } from "../../state/mission-drafts";
+import { useMissionDraftMachines } from "../../state/missions";
+import { missionDraftAllows } from "../../state/missions.logic";
 import { DraftHeroSentence, DraftMissionControl, useDraftMission } from "./DraftHeroMission";
 import { draftHeroTokens } from "./draftMission.logic";
 import { useAtomValue } from "@effect/atom-react";
@@ -401,7 +403,11 @@ export function NewTaskDraftScreen(props: {
   const isImportingContext = flow.draftKey ? contextImports[flow.draftKey] === true : false;
   const isComposerInteractionLocked =
     isIncomingShareTransferPending || flow.submitting || isImportingContext;
-  const { environments, selectedEnvironmentId, switchEnvironment, switchingToEnvironmentId } = flow;
+  const { selectedEnvironmentId, switchEnvironment, switchingToEnvironmentId } = flow;
+  const missionMachines = useMissionDraftMachines(missionRequestId);
+  const environments = flow.environments.filter((environment) =>
+    missionDraftAllows(missionMachines, environment.environmentId),
+  );
   const cycleEnvironment = () => {
     if (isComposerInteractionLocked) return true;
     const next = nextEnvironmentId(environments, switchingToEnvironmentId ?? selectedEnvironmentId);
@@ -714,6 +720,11 @@ export function NewTaskDraftScreen(props: {
       return null;
     }
 
+    if (!missionDraftAllows(missionMachines, selectedProject.environmentId)) {
+      Dialog.alert(gt("This draft's mission no longer allows that machine."));
+      return null;
+    }
+
     const message = flow.buildPendingTaskMessage(creationMetadata, {
       currentCheckoutBranch: queuesInsteadOfStarting ? null : flow.currentCheckoutBranchName,
     });
@@ -803,7 +814,9 @@ export function NewTaskDraftScreen(props: {
     }
     promptInputRef.current?.blur();
     void KeyboardController.dismiss({ animated: true });
-    navigation.navigate(routeName);
+    if (routeName === "NewTaskEnvironment") {
+      navigation.navigate(routeName, { requestId: missionRequestId });
+    } else navigation.navigate(routeName);
   };
 
   const environmentControl = (

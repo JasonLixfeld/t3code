@@ -6,6 +6,7 @@ import { type MissionHost, missionsLiveKey } from "@t3tools/client-runtime/missi
 import {
   canStartMission,
   missionAdvertisers,
+  missionDraftAllows,
   missionDraftProjectMachines,
   resolveMissionPreferences,
 } from "./missions.logic";
@@ -97,5 +98,15 @@ describe("a new mission's machines", () => {
       ),
     ).toBe(false);
     expect(canStartMission(new Set([DESK]), [], () => "/scratch")).toBe(true);
+  });
+});
+
+describe("missionDraftAllows", () => {
+  it("keeps a marked draft's environments and its send to the machines its mission allows", () => {
+    const environments = [DESK, LAPTOP];
+    const machines = new Set([DESK]);
+    expect(environments.filter((id) => missionDraftAllows(machines, id))).toEqual([DESK]);
+    expect(missionDraftAllows(machines, LAPTOP)).toBe(false);
+    expect(environments.filter((id) => missionDraftAllows(null, id))).toEqual(environments);
   });
 });

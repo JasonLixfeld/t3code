@@ -35,6 +35,11 @@ export function missionDraftProjectMachines(
   return intent.kind === "new" ? startMachines : missionDraftMachines(intent, hosts);
 }
 
+export const missionDraftAllows = (
+  machines: ReadonlySet<EnvironmentId> | null,
+  environmentId: EnvironmentId,
+) => machines === null || machines.has(environmentId);
+
 export function canStartMission(
   startMachines: ReadonlySet<EnvironmentId>,
   projects: ReadonlyArray<
