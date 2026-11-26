@@ -3967,3 +3967,46 @@ it.effect(
       }),
     ),
 );
+
+it.effect("a wait answered as its lead handed over keeps the completion for the new lead", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const store = yield* MissionStore.MissionStore;
+      const { missionId } = yield* createOne;
+      const next = ref(HERE, "next");
+      yield* store.addMissionUpdate({
+        missionId,
+        ...localMember,
+        source: "run:r1",
+        event: "completed",
+      });
+      // The second read is the one under the lock, after the lead was looked up.
+      let reads = 0;
+      world.beforeMissionsRead = Effect.suspend(() =>
+        ++reads === 2
+          ? store
+              .setLead({
+                missionId,
+                name: "One",
+                owner: HERE,
+                generation: "g-next",
+                threadId: next.threadId,
+                previous: lead.threadId,
+              })
+              .pipe(Effect.orDie, Effect.asVoid)
+          : Effect.void,
+      );
+      yield* missions.heardInWait(lead.threadId, localMember, "r1");
+      world.beforeMissionsRead = Effect.void;
+      assert.equal(reads, 2);
+      const { updates } = yield* store.takeMissionUpdates(missionId, next.threadId);
+      assert.deepEqual(
+        updates.map((update) => update.source),
+        ["run:r1"],
+      );
+    }),
+  );
+});

@@ -130,7 +130,10 @@ const makeMissions = () => {
       );
     });
   const layer = Layer.mock(Missions.Missions)({
-    heardInWait: (lead, member, runId) => Effect.sync(() => void heard.push([lead, member, runId])),
+    heardInWait: (lead, member, runId) =>
+      runId === "broken"
+        ? Effect.die("The mission store is unreadable.")
+        : Effect.sync(() => void heard.push([lead, member, runId])),
     joinStarted: (input, asLead) =>
       Effect.suspend(() => {
         const key = `${input.member.environmentId}/${input.member.threadId}`;
@@ -534,12 +537,18 @@ it.effect("a thread offered the lead tools that no longer leads is refused, not 
 );
 
 it.effect(
-  "a wait that returns a run completed tells Missions what it saw, here or on a linked machine",
+  "a wait that returns a run completed with its output tells Missions what it saw, here or on a linked machine",
   () =>
     Effect.gen(function* () {
       const missions = makeMissions();
       const member = ThreadId.make("member-thread");
-      const answer = { threadId: member, runId: "run-1", status: "completed", timedOut: false };
+      const answer = {
+        threadId: member,
+        runId: "run-1",
+        status: "completed",
+        timedOut: false,
+        output: { brief: "Done." },
+      };
       const wait = (
         scope: McpInvocationContext.McpInvocationScope,
         waited: object,
@@ -557,7 +566,10 @@ it.effect(
       yield* wait(notLead, {});
       yield* wait(lead, { timedOut: true });
       yield* wait(lead, { status: "failed" });
-      yield* wait(lead, { runId: null, status: "idle" });
+      yield* wait(lead, { runId: null });
+      yield* wait(lead, { output: undefined });
+      // A wake it cannot drop stays, and the lead still gets its answer.
+      assert.deepEqual(yield* wait(lead, { runId: "broken" }), { ...answer, runId: "broken" });
       assert.deepEqual(missions.heard, [
         [lead.thread.threadId, { environmentId: HERE, threadId: member }, "run-1"],
         [lead.thread.threadId, { environmentId: LAPTOP, threadId: member }, "run-1"],
