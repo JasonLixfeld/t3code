@@ -12,6 +12,8 @@ import { MissionStore } from "./MissionStore.ts";
 const MISSION_SETTLEMENT_INVALIDATION_EVENTS: ReadonlySet<string> = new Set([
   "thread.settled",
   "thread.unsettled",
+  "thread.pinned",
+  "thread.guest-share-updated",
   "thread.archived",
   "thread.unarchived",
 ]);

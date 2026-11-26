@@ -18,6 +18,7 @@ import {
   missionDraftMachines,
   missionLeadCandidates,
   missionLeaveId,
+  missionRowItems,
   type MissionHost,
   missionsLiveKey,
   parseMissionTarget,
@@ -592,6 +593,69 @@ describe("groupSidebarMissions", () => {
       new Set([environmentId]),
     );
     expect(result.missions[0]!.lead).toMatchObject({ member: { role: "lead" }, thread: null });
+  });
+
+  it("waits for the member's own machine to finish syncing, not any machine", () => {
+    const trimmed = mission("dddddddddddd", [
+      member("lead", "active", "lead"),
+      { ...member("trimmed", "active"), settled: true },
+    ]);
+    const shown = groupSidebarMissions(hostOf(trimmed), [], null, new Set(), new Set([laptop]));
+    expect(rowsOf(shown)[0]![2]).toEqual(["trimmed"]);
+  });
+
+  it("keeps an offline or refused-release row even when its loaded thread is settled", () => {
+    const stuck = mission("eeeeeeeeeeee", [
+      member("lead", "active", "lead"),
+      member("away", "offline"),
+      member("stuck", "release-refused"),
+    ]);
+    const shells = [
+      shell("lead"),
+      shell("away", { settled: true }),
+      shell("stuck", { archived: true }),
+    ];
+    const result = groupSidebarMissions(
+      hostOf(stuck),
+      shells,
+      null,
+      new Set(),
+      new Set([environmentId]),
+    );
+    expect(rowsOf(result)[0]![2]).toEqual(["away", "stuck"]);
+  });
+
+  it("hides a trimmed member another machine marks settled, while it still blocks ending", () => {
+    const remote = member("remote", "active", "member", laptop);
+    const led = mission("ffffffffffff", [member("lead", "active", "lead"), remote]);
+    const hosts = (claim: { readonly missionId: string; readonly settled?: true }) => [
+      ...hostOf(led),
+      {
+        environmentId: laptop,
+        snapshot: {
+          links: [],
+          missions: [],
+          claims: [{ threadId: ThreadId.make("remote"), name: "x", ...claim }],
+        },
+      },
+    ];
+    const members = (
+      claim: Parameters<typeof hosts>[0],
+      synced: ReadonlySet<EnvironmentId> = new Set([environmentId, laptop]),
+    ) => rowsOf(groupSidebarMissions(hosts(claim), [], null, new Set(), synced))[0]![2];
+    expect(members({ missionId: "ffffffffffff", settled: true })).toEqual([]);
+    expect(members({ missionId: "ffffffffffff" })).toEqual(["remote"]);
+    expect(members({ missionId: "aaaaaaaaaaaa", settled: true })).toEqual(["remote"]);
+    expect(members({ missionId: "ffffffffffff", settled: true }, new Set([environmentId]))).toEqual(
+      ["remote"],
+    );
+    const end = missionRowItems({
+      host: environmentId,
+      mission: led,
+      leadGone: false,
+      canChange: true,
+    }).at(-1);
+    expect(end).toMatchObject({ disabled: true, detail: "Has threads on another machine" });
   });
 
   it("leaves every thread to the other lists when no mission is listed", () => {

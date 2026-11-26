@@ -1091,6 +1091,70 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
       }),
   );
 
+  it.effect("archiving a parent locks it, then its side chats in id order", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const projectId = ProjectId.make("runtime-side-chat-order");
+      const parentId = ThreadId.make("runtime-side-chat-order-parent");
+      const sideChatIds = ["runtime-side-chat-order-a", "runtime-side-chat-order-b"].map((id) =>
+        ThreadId.make(id),
+      );
+      yield* projects.create({
+        commandId: CommandId.make("runtime-side-chat-order-project"),
+        projectId,
+        title: "Side chat order",
+        workspaceRoot: "/work/side-chat-order",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("runtime-side-chat-order-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId: parentId,
+        projectId,
+        title: "Parent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      for (const sideChatId of sideChatIds) {
+        yield* orchestrator.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make(`${sideChatId}-fork`),
+          sourceThreadId: parentId,
+          targetThreadId: sideChatId,
+          sourcePoint: { type: "latest_stable" },
+          sideChat: true,
+          createdBy: "user",
+          creationSource: "web",
+        });
+      }
+      const locked: Array<string> = [];
+      const withLock = executor.withLock;
+      const recordLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"] = (
+        key,
+        effect,
+      ) =>
+        withLock(
+          key,
+          Effect.suspend(() => (locked.push(key), effect)),
+        );
+      const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(recordLock);
+      yield* orchestrator
+        .dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("runtime-side-chat-order-archive"),
+          threadId: parentId,
+        })
+        .pipe(Effect.ensuring(Effect.sync(() => lockSpy.mockRestore())));
+      assert.deepEqual(locked, [parentId, ...sideChatIds.toSorted()]);
+    }),
+  );
+
   // A fork from a side chat onto its parent used to lock the side chat, then the parent: the
   // reverse of the parent delete's order.
   it.effect("a parent delete and a fork from its side chat onto the parent do not deadlock", () =>

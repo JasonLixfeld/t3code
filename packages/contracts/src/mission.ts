@@ -61,6 +61,8 @@ const MissionClaimHere = Schema.Struct({
   threadId: ThreadId,
   missionId: Schema.String,
   name: Schema.String,
+  /** A member thread `isSettledMissionMember` holds for. Only lists read it, to hide its row. */
+  settled: Schema.optional(Schema.Literal(true)),
 });
 
 export const MissionsSnapshot = Schema.Struct({

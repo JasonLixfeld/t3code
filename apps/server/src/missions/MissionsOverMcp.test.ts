@@ -111,6 +111,7 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
             Layer.mock(Project.ProjectService)({
               getShell: () => Effect.succeedSome(webProject),
             }),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
           ),
         ),
       );

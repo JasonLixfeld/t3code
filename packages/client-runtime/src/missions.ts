@@ -444,13 +444,14 @@ function missionIndex(hosts: ReadonlyArray<MissionHost>) {
 const shouldHideSettledMissionMember = (
   member: MissionMember,
   thread: Pick<ListedThread, "settledOverride" | "archivedAt"> | null,
+  settledOnItsMachine: boolean,
   syncedEnvironments: ReadonlySet<EnvironmentId>,
 ) =>
-  thread === null
-    ? member.state === "active" &&
-      member.settled === true &&
+  member.state === "active" &&
+  (thread === null
+    ? (member.settled === true || settledOnItsMachine) &&
       syncedEnvironments.has(member.ref.environmentId)
-    : isJoined(member) && isSettledMissionMember(thread);
+    : isSettledMissionMember(thread));
 
 export function groupSidebarMissions<T extends ListedThread>(
   hosts: ReadonlyArray<MissionHost>,
@@ -475,7 +476,7 @@ export function groupSidebarMissions<T extends ListedThread>(
       mission,
     })),
   );
-  const { holders } = missionIndex(hosts);
+  const { holders, claims } = missionIndex(hosts);
   const threadKeys = new Set<string>();
   const leads: Array<SidebarMissionEntry<T>> = [];
   const missions = listed.flatMap(({ key, host, mission }): Array<SidebarMission<T>> => {
@@ -491,9 +492,11 @@ export function groupSidebarMissions<T extends ListedThread>(
       const claimed = member.state !== "deleted" && member.state !== "add-refused";
       if (claimed && holders.get(threadKey)?.key !== key) return [];
       const thread = claimed ? (threadByKey.get(threadKey) ?? null) : null;
+      const claim = claims.get(threadKey);
+      const settledOnItsMachine = claim?.missionId === mission.missionId && claim.settled === true;
       if (
         member.role === "member" &&
-        shouldHideSettledMissionMember(member, thread, syncedEnvironments)
+        shouldHideSettledMissionMember(member, thread, settledOnItsMachine, syncedEnvironments)
       ) {
         return [];
       }
