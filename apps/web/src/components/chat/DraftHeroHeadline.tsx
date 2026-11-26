@@ -485,6 +485,17 @@ export function DraftHeroHeadline({
   ].join("");
   const prose = (text: string) =>
     text ? <span className="[@media(max-height:28rem)]:sr-only">{text}</span> : null;
+  // The word or punctuation right after a control stays on its line, so "?" never wraps alone.
+  const glue = (text: string): [string, string] => {
+    const at = text.search(/\s/);
+    return at === -1 ? [text, ""] : [text.slice(0, at), text.slice(at)];
+  };
+  const [afterProjectGlue, afterProjectRest] = isScratchDraft
+    ? ["", beforeMission]
+    : glue(beforeMission);
+  const [afterMissionGlue, afterMissionRest] = missionInSentence
+    ? glue(afterMission)
+    : ["", afterMission];
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col items-center [@media(max-height:28rem)]:flex-row [@media(max-height:28rem)]:justify-center [@media(max-height:28rem)]:gap-3">
       <h1
@@ -493,21 +504,25 @@ export function DraftHeroHeadline({
       >
         {prose(beforeProject)}
         {isScratchDraft ? null : (
-          <span className="min-w-0 [@media(max-height:28rem)]:max-w-1/2">{projectSelector}</span>
+          <span className="min-w-0 whitespace-nowrap [@media(max-height:28rem)]:max-w-1/2">
+            {projectSelector}
+            {prose(afterProjectGlue)}
+          </span>
         )}
-        {prose(beforeMission)}
+        {prose(afterProjectRest)}
         {mission === null ? null : (
           <span
             className={
               missionInSentence
-                ? "min-w-0 [@media(max-height:28rem)]:max-w-1/2"
+                ? "min-w-0 whitespace-nowrap [@media(max-height:28rem)]:max-w-1/2"
                 : "mt-2 flex min-w-0 justify-center text-sm tracking-normal [@media(max-height:28rem)]:mt-0 [@media(max-height:28rem)]:max-w-1/2"
             }
           >
             {missionInSentence ? mission.inSentence : mission.standalone}
+            {prose(afterMissionGlue)}
           </span>
         )}
-        {prose(afterMission)}
+        {prose(afterMissionRest)}
       </h1>
       {isScratchDraft ? (
         <p className="mt-2 flex min-h-6 w-full min-w-0 items-center justify-center text-sm [@media(max-height:28rem)]:order-first [@media(max-height:28rem)]:mt-0 [@media(max-height:28rem)]:w-auto [@media(max-height:28rem)]:max-w-1/2">

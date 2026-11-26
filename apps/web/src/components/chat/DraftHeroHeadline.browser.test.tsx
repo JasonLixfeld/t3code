@@ -404,12 +404,18 @@ it("a new thread's Mission choice marks its draft to join that mission, or none"
   await expect.element(page.getByRole("button", { name: "Add to a mission" })).toHaveFocus();
 
   // A new mission it leads fixes the choice.
-  await userEvent.click(trigger);
-  await page.getByRole("menuitemradio", { name: "New mission (this thread leads)" }).click();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByRole("menuitemradio", { name: "None" })).toBeVisible();
+  await userEvent.keyboard("{End}");
+  await expect
+    .element(page.getByRole("menuitemradio", { name: "New mission (this thread leads)" }))
+    .toHaveFocus();
+  await userEvent.keyboard("{Enter}");
   expect(missionDraftOf(draftId)).toMatchObject({
     intent: { kind: "new" },
     thread: { environmentId: ENVIRONMENT_ID, threadId },
   });
+  await expect.element(page.getByRole("button", { name: "New mission" })).toHaveFocus();
   await expect.element(trigger).toMatchTextContent(/a new mission$/);
   await expect
     .element(page.getByRole("heading", { level: 1 }))
@@ -747,6 +753,32 @@ it("leaving No project by keyboard keeps focus on the project picker", async () 
 });
 
 it.each([
+  [
+    "member",
+    {
+      kind: "member",
+      host: ENVIRONMENT_ID,
+      missionId: shipV2.missionId,
+      name: "Ship v2",
+    } as const,
+    "What should we work on in mission Ship v2?",
+  ],
+  ["lead", leadIntent, "What should we work on as the new lead for Old work?"],
+] as const)(
+  "a No project draft with a %s mission reads as one sentence",
+  async (_, intent, sentence) => {
+    renderIsNoProject();
+    using _environment = installFakeEnvironment([]);
+    listMissions([hostWith(ENVIRONMENT_ID)]);
+    await using _app = await openDraft(`draft-scratch-${intent.kind}`, intent);
+    const heading = page.getByRole("heading", { level: 1 });
+    await expect.element(heading).toHaveTextContent(sentence);
+    await expect.element(heading).toHaveAccessibleName(sentence);
+    await expect.element(page.getByRole("combobox", { name: "Project: No project" })).toBeVisible();
+  },
+);
+
+it.each([
   ["a lead draft", "lead"],
   ["a draft with no mission", "none"],
   ["a No project draft", "scratch"],
@@ -797,6 +829,10 @@ it.each([
     const [first, second] = controls.toSorted((a, b) => a.box.left - b.box.left);
     expect(Math.abs(first!.box.top - second!.box.top)).toBeLessThan(2);
     expect(first!.box.right).toBeLessThanOrEqual(second!.box.left);
+    // The short headline is one row, with its words hidden.
+    expect(
+      document.querySelector("h1")!.parentElement!.getBoundingClientRect().height,
+    ).toBeLessThan(40);
     for (const { box, words } of controls) {
       expect(box.left).toBeGreaterThanOrEqual(0);
       expect(box.right).toBeLessThanOrEqual(360);
@@ -1158,4 +1194,30 @@ it("applies No project from a machine that is still allowed after the usual home
     ),
   );
   expect(document.body.textContent).not.toContain("no longer allows that machine");
+});
+
+it("entering No project by keyboard keeps focus on the project picker", async () => {
+  const { finish } = holdScratch([ENVIRONMENT_ID]);
+  scratch.root = "/workspace/alpha";
+  onTestFinished(() => {
+    scratch.root = "/scratch";
+  });
+  using _environment = installFakeEnvironment([], {
+    extraProjects: [{ id: alphaProject.id, title: "alpha" }],
+  });
+  await using app = await openDraft("draft-enter-scratch");
+  await act(() => useComposerDraftStore.getState().setPrompt(app.draftId, "Plan the launch"));
+  const picker = page.getByRole("combobox", { name: "Project: render" });
+  (picker.element() as HTMLElement).focus();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByRole("option", { name: "No project" })).toBeVisible();
+  await userEvent.keyboard("No project");
+  await userEvent.keyboard("{Enter}");
+  await finish();
+  await vi.waitFor(() =>
+    expect(useComposerDraftStore.getState().getDraftSession(app.draftId)?.projectId).toBe(
+      alphaProject.id,
+    ),
+  );
+  await expect.element(page.getByRole("combobox", { name: "Project: No project" })).toHaveFocus();
 });
