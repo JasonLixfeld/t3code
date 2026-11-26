@@ -678,49 +678,25 @@ it.effect(
   },
 );
 
-it.effect(
-  "a run that ends with a fresh plan wakes once as awaiting input, and later runs wake as usual",
-  () => {
-    const world = makeWorld();
-    return withWakes(
-      world,
-      Effect.gen(function* () {
-        world.set(first, { hasActionableProposedPlan: true });
-        yield* world.run(first, "f1", "completed");
-        assert.equal(yield* nextText(world), told(["member 1 on this machine is awaiting input."]));
-        yield* world.leadRead;
-        yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
-        yield* world.run(first, "f2", "running");
-        yield* world.run(first, "f2", "completed");
-        assert.equal(
-          yield* nextText(world),
-          told(["member 1 on this machine finished its turn and is idle."]),
-        );
-        yield* world.leadRead;
-        yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
-        yield* world.run(second, "s1", "failed");
-        assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
-        assert.equal(world.sent.length, 3);
-      }),
-    );
-  },
-);
-
-it.effect("a plan ready while a pull request watch holds wakes the lead for the plan only", () => {
+it.effect("a run that ends with a plan ready is told at once, though a watch would hold it", () => {
   const world = makeWorld();
+  const watch = { taskId: "pull-request-watch:github.com/acme/app#42", kind: "monitor" };
   return withWakes(
     world,
     Effect.gen(function* () {
       world.set(first, {
         hasActionableProposedPlan: true,
-        pendingBackgroundTasks: [
-          { taskId: "pull-request-watch:github.com/acme/app#42", kind: "monitor", awaited: true },
-        ],
+        pendingBackgroundTasks: [{ ...watch, awaited: true }],
       });
       yield* world.run(first, "f1", "completed");
-      assert.equal(yield* nextText(world), told(["member 1 on this machine is awaiting input."]));
+      assert.equal(
+        yield* nextText(world),
+        told(["member 1 on this machine finished its turn and is idle."]),
+      );
       yield* world.leadRead;
       yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+      world.set(first, { pendingBackgroundTasks: [watch] });
+      yield* world.event(first, "thread.pull-request-synced", {});
       yield* world.run(second, "s1", "failed");
       assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
       assert.equal(world.sent.length, 2);
