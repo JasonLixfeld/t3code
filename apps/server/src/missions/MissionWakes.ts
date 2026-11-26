@@ -34,7 +34,6 @@ import {
 } from "./missionStatus.ts";
 
 export const WAKE_INTERVAL = Duration.seconds(30);
-export const HELD_WORK_SETTLE = Duration.seconds(5);
 
 export const missionWakeCommand = (input: {
   readonly missionId: string;
@@ -134,20 +133,6 @@ export const layer = Layer.effectDiscard(
         "{}",
       );
 
-    const settling = new Set<string>();
-    const recheckAfterContinuationGracePeriod = (missionId: string, ref: ScopedThreadRef) => {
-      const key = numberKey(ref);
-      if (settling.has(key)) return Effect.void;
-      settling.add(key);
-      return Effect.sleep(HELD_WORK_SETTLE).pipe(
-        Effect.andThen(Effect.sync(() => settling.delete(key))),
-        Effect.andThen(observeRunWithoutRequests(missionId, ref)),
-        logged("A held member was not looked at again"),
-        Effect.forkIn(scope, { startImmediately: true }),
-        Effect.asVoid,
-      );
-    };
-
     const seeLocalMembers = Effect.gen(function* () {
       const led = new Set((yield* store.missions).map((mission) => mission.missionId));
       for (const claim of yield* store.claimsOf(here)) {
@@ -199,8 +184,7 @@ export const layer = Layer.effectDiscard(
       if (update !== undefined) return yield* record(claim.missionId, ref, [update]);
       const mark = yield* store.memberMark(ref);
       if (mark === undefined || !wasCompletionHeld(mark)) return;
-      if (run) return yield* observeRunWithoutRequests(claim.missionId, ref);
-      yield* recheckAfterContinuationGracePeriod(claim.missionId, ref);
+      yield* observeRunWithoutRequests(claim.missionId, ref);
     });
 
     const dropUpdates = (missionId: string, lead: ThreadId): Effect.Effect<void> =>

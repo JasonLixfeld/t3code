@@ -80,7 +80,10 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Tool } from "effect/ai";
 import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  backgroundWorkHoldsCompletion,
+  hasPendingBackgroundSubagent,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
@@ -20528,6 +20531,126 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     ),
+  );
+
+  it.effect.each(["starts", "never starts"] as const)(
+    "keeps a finished background subagent's wake held until its continuation %s",
+    (ending) =>
+      Effect.gen(function* () {
+        const TASK_ID = "task-owed-subagent-wake";
+        const TOOL_USE_ID = "toolu-owed-subagent-wake";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-owed-subagent-1"),
+            text: "Review in the background.",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          makeSubagentTaskStartedFrame({
+            taskId: TASK_ID,
+            toolUseId: TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000971",
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000972",
+            result: "Reviewing in the background.",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* harness.awaitTerminal(1);
+        const afterTurn = harness.events.length;
+        const rosters = () =>
+          harness.events
+            .slice(afterTurn)
+            .flatMap((event, index) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.id === harness.providerThread.id
+                ? [{ index, tasks: event.providerThread.pendingBackgroundTasks ?? [] }]
+                : [],
+            );
+        const subagentEnded = () =>
+          harness.events
+            .slice(afterTurn)
+            .findIndex(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "subagent" &&
+                event.turnItem.nativeItemRef?.nativeId === TASK_ID &&
+                event.turnItem.status === "completed",
+            );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeSubagentNotificationFrame({
+            taskId: TASK_ID,
+            toolUseId: TOOL_USE_ID,
+            summary: "The review found nothing.",
+            uuid: "00000000-0000-4000-8000-000000000973",
+          }),
+        );
+        yield* harness.awaitContinuation(1);
+        yield* harness.until(() => subagentEnded() !== -1);
+
+        const owed = rosters().find((roster) =>
+          roster.tasks.some((task) => task.taskId === TASK_ID),
+        );
+        assert.isDefined(owed);
+        assert.isBelow(owed!.index, subagentEnded());
+        assert.isTrue(backgroundWorkHoldsCompletion(rosters().at(-1)!.tasks));
+        assert.isFalse(
+          hasPendingBackgroundSubagent(
+            rosters().at(-1)!.tasks,
+            harness.providerThread.providerInstanceId,
+          ),
+        );
+
+        if (ending === "starts") {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000974",
+              result: "The reviewer finished.",
+            }),
+          );
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-owed-subagent-2"),
+              text: "Background task completed.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          yield* harness.awaitTerminal(2);
+        } else {
+          yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
+        }
+        yield* harness.until(
+          () =>
+            !rosters()
+              .at(-1)!
+              .tasks.some((task) => task.taskId === TASK_ID),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
   );
 
   it.effect("keeps a background subagent's card on the turn that launched it", () =>

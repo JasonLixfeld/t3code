@@ -6416,6 +6416,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const opaqueBackgroundTaskReplayTombstonesByNativeThread = yield* Ref.make(
           new Map<string, Set<string>>(),
         );
+        // A subagent that ends while the root is idle has no roster entry, so its owed wake is
+        // published as a background task until the wake's continuation starts or is retired.
+        const owedSubagentWakesByNativeThread = yield* Ref.make(
+          new Map<string, ReadonlyMap<string, OrchestrationV2PendingBackgroundTask>>(),
+        );
+        const owedSubagentWakesFor = (nativeThreadId: string | null) =>
+          Ref.get(owedSubagentWakesByNativeThread).pipe(
+            Effect.map((all) => [
+              ...(nativeThreadId === null ? [] : (all.get(nativeThreadId)?.values() ?? [])),
+            ]),
+          );
+        const keepOwedSubagentWakes = (nativeThreadId: string, kept: (taskId: string) => boolean) =>
+          Ref.modify(owedSubagentWakesByNativeThread, (current) => {
+            const owed = current.get(nativeThreadId);
+            if (owed === undefined) return [false, current] as const;
+            const next = new Map([...owed].filter(([taskId]) => kept(taskId)));
+            if (next.size === owed.size) return [false, current] as const;
+            const updated = new Map(current);
+            if (next.size === 0) updated.delete(nativeThreadId);
+            else updated.set(nativeThreadId, next);
+            return [true, updated] as const;
+          });
         const lastProviderThreadByNativeThread = yield* Ref.make(
           new Map<string, OrchestrationV2ProviderThread>(),
         );
@@ -7182,7 +7204,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* Ref.get(awaitedBackgroundTasksByNativeThread),
             input.nativeThreadId,
           );
-          const owedWakeTasks = yield* owedWakeTasksForNativeThread(input.nativeThreadId);
+          const owedWakeTasks = [
+            ...(yield* owedWakeTasksForNativeThread(input.nativeThreadId)),
+            ...(yield* owedSubagentWakesFor(input.nativeThreadId)),
+          ];
           const now = yield* DateTime.now;
           const providerThread: OrchestrationV2ProviderThread = {
             ...input.providerThread,
@@ -7482,6 +7507,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* clearNativeThreadTaskIdSet(
             opaqueBackgroundTaskReplayTombstonesByNativeThread,
             nativeThreadId,
+          );
+          yield* keepOwedSubagentWakes(nativeThreadId, (taskId) =>
+            bufferedTaskNotificationIds.has(taskId),
           );
           if (preservedOpaqueTombstones.length > 0) {
             yield* addTaskIdsToNativeThreadSet(
@@ -10194,6 +10222,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       opaqueBackgroundTaskReplayTombstonesByNativeThread,
                       nativeThreadId,
                     );
+                    yield* keepOwedSubagentWakes(nativeThreadId, () => false);
                   }
                 }
                 const roster =
@@ -10213,7 +10242,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 const owedWakeTasks =
                   nativeThreadId === null
                     ? []
-                    : yield* owedWakeTasksForNativeThread(nativeThreadId);
+                    : [
+                        ...(yield* owedWakeTasksForNativeThread(nativeThreadId)),
+                        ...(yield* owedSubagentWakesFor(nativeThreadId)),
+                      ];
                 // A stopped turn that wrote to the transcript moved past the pinned head.
                 const clearConversationHead =
                   (input.status === "completed" || input.context.nativeMessageCursor !== null) &&
@@ -10607,6 +10639,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
           } else if (isPendingSubagentNotification) {
             const registered = (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id);
+            const title = registered?.task.title;
+            yield* Ref.update(owedSubagentWakesByNativeThread, (current) =>
+              new Map(current).set(
+                wakeInput.nativeThreadId,
+                new Map(current.get(wakeInput.nativeThreadId)).set(message.task_id, {
+                  taskId: message.task_id,
+                  kind: "background_task",
+                  ...(title ? { description: title } : {}),
+                }),
+              ),
+            );
+            const providerThread = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
+              wakeInput.nativeThreadId,
+            );
+            if (providerThread !== undefined) {
+              yield* emitProviderThreadRoster({
+                nativeThreadId: wakeInput.nativeThreadId,
+                providerThread,
+              });
+            }
             const started = bufferedMessages.find(
               (entry) =>
                 entry.type === "system" &&
@@ -10782,6 +10834,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
             yield* clearOpaqueBackgroundTaskReplayTombstone(nativeThreadId, taskId);
           }
+          yield* keepOwedSubagentWakes(nativeThreadId, (taskId) => !retiredTaskIds.has(taskId));
           yield* endClaudeMonitorTasks((taskId) => retiredTaskIds.has(taskId));
           const providerThread = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
             nativeThreadId,
@@ -14404,6 +14457,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     else next.set(nativeThreadId, { ...buffered, messages });
                     return next;
                   });
+                }
+                const drainedTaskIds = new Set(
+                  drained.flatMap((entry) =>
+                    entry.type === "system" && entry.subtype === "task_notification"
+                      ? [entry.task_id]
+                      : [],
+                  ),
+                );
+                if (
+                  yield* keepOwedSubagentWakes(
+                    nativeThreadId,
+                    (taskId) => !drainedTaskIds.has(taskId),
+                  )
+                ) {
+                  const providerThread = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
+                    nativeThreadId,
+                  );
+                  if (providerThread !== undefined)
+                    yield* emitProviderThreadRoster({ nativeThreadId, providerThread });
                 }
                 if (lastResult !== undefined && !emptyTurnBeforeNextTurn) {
                   yield* handleSdkMessage({ query: querySession.query, message: lastResult });
