@@ -844,6 +844,14 @@ describe("withoutQuietMissionUpdates", () => {
     text: "How is it going?",
     attachments: [],
   });
+  const approval = (run: string, status: Item["status"]): Item => ({
+    ...base(run, "approval"),
+    status,
+    type: "approval_request",
+    requestId: "approval" as never,
+    requestKind: "command",
+    prompt: "Allow the command?",
+  });
   const question = (run: string): Item => ({
     ...base(run, "question"),
     status: "waiting",
@@ -974,10 +982,27 @@ describe("withoutQuietMissionUpdates", () => {
     ["its run is unknown", [wake("run")], { attempts: DONE.attempts }],
     ["its attempts are unknown", [wake("run")], { runs: DONE.runs }],
     ["it was no wake", [user("run")], DONE],
-    ["only its conversation items are loaded", [wake("run"), reply("run", "")], DONE],
     [
-      "only its conversation items are loaded and it said the marker",
-      [wake("run"), reply("run", MISSION_QUIET_REPLY)],
+      "it waits on an approval",
+      [wake("run"), approval("run", "waiting")],
+      { runs: [runOf("run", "waiting")], attempts: [attempt("run", "running")] },
+    ],
+    [
+      "its run finished with an approval left open",
+      [wake("run"), approval("run", "waiting")],
+      DONE,
+    ],
+    [
+      "its script reads a computed key that is not an assignment target",
+      [wake("run"), script("run", `${READ_SCRIPT}\nconst f = obj[k];`)],
+      DONE,
+    ],
+    [
+      "its script keeps the namespace in an expression",
+      [
+        wake("run"),
+        script("run", `const t = ${NAMESPACE} || backup;\nawait t.t3_thread_read({});`),
+      ],
       DONE,
     ],
     [
@@ -1050,7 +1075,20 @@ describe("withoutQuietMissionUpdates", () => {
     ],
     ["its script calls no T3 tool", [wake("run"), script("run", "return 1 + 1;")], DONE],
   ] as const)("shows a mission update when %s", (_case, items, status) => {
-    const { thread, shown } = hide(items, status);
+    // A loaded work item keeps the completeness rule from showing the run on its own.
+    const [first, ...rest] = items;
+    const { thread, shown } = hide([first!, thought("run"), ...rest], status);
+    expect(shown).toBe(thread);
+  });
+
+  it.each([
+    ["shows a wake with only conversation items loaded", reply("run", "")],
+    [
+      "shows a wake with only conversation items loaded that said the marker",
+      reply("run", MISSION_QUIET_REPLY),
+    ],
+  ] as const)("%s", (_case, item) => {
+    const { thread, shown } = hide([wake("run"), item], DONE);
     expect(shown).toBe(thread);
   });
 
