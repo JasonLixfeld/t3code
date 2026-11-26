@@ -177,7 +177,6 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     modelSelection: ModelSelection,
     runId: Schema.NullOr(RunId),
     status: Schema.NullOr(OrchestrationV2RunStatus),
-    /** Set when a mission's lead launched it. */
     mission: Schema.optional(MissionJoinOutcome),
   }),
   dependencies: [

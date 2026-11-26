@@ -450,7 +450,6 @@ export const layer = McpToolAccess.toLayer(
   ThreadToolkit,
   Effect.map(Effect.serviceOption(Missions.Missions), (missions) => ({
     ...handlers,
-    // A fork is a new top-level thread, so a lead's fork joins its Mission as a launch does.
     t3_thread_transfer: McpToolAccess.followedBy(
       handlers.t3_thread_transfer,
       (input, result, environmentId) =>

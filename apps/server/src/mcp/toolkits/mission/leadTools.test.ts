@@ -94,13 +94,11 @@ const row = (index: number, status: RosterMember["status"]): RosterMember => ({
   title: `Title ${index}`,
 });
 
-/** The lead's Missions: it leads one Mission, and the rules its add and release follow. */
 const makeMissions = () => {
   const calls: Array<{
     readonly kind: string;
     readonly missionId: string;
     readonly member: ScopedThreadRef;
-    /** The lead thread whose reach every lead call must be read from. */
     readonly asLead: ThreadId | undefined;
   }> = [];
   const started = new Set<string>();
@@ -156,7 +154,6 @@ const makeMissions = () => {
         ),
       ),
     addMember: add,
-    // A fresh thread "here-thread" has none; every other one has messages.
     hasPriorWork: (_mission, member) => Effect.succeed(member.threadId !== "here-thread"),
     releaseMember: (input, asLead) =>
       Effect.suspend(() => {
@@ -236,7 +233,6 @@ it.effect("the roster pages the caller's own mission, and marks who needs the le
       [true, false],
     );
     assert.equal(page.members[0]?.title, "Title 0");
-    // The numbers the status and wakes use map to the ids, as data.
     assert.deepEqual(
       [page.members[0]?.member, page.members[0]?.place, page.members[0]?.threadRef],
       ["member 1", "machine 2", { environmentId: LAPTOP, threadId: ThreadId.make("t0") }],
@@ -268,12 +264,10 @@ it.effect("add and release act on the caller's own mission, by the UI's rules", 
     assert.deepEqual((yield* add({ threadId: "t1", environmentId: LAPTOP })).structured, {
       state: "pending",
     });
-    // A machine linked below full access keeps its threads out, as in the UI.
     assert.include(
       (yield* add({ threadId: "t2", environmentId: FENCED })).text,
       "relink Fenced box with full access",
     );
-    // A thread of another mission is not this lead's to release.
     const released = yield* callLeadTool(missions, lead, "t3_mission_release", {
       threadRef: { threadId: "elsewhere" },
     });
@@ -288,7 +282,6 @@ it.effect("add and release act on the caller's own mission, by the UI's rules", 
         ["release", MISSION, HERE],
       ],
     );
-    // Each goes as the calling lead, whose reach is read when it is sent, never as the UI.
     for (const call of missions.calls) assert.equal(call.asLead, lead.thread.threadId);
   }),
 );
@@ -386,7 +379,6 @@ it.effect(
         ],
       );
 
-      // The same call again, as a retry that returns the threads it made: none joins again.
       const replayed = (yield* callOrchestratorTool(missions, lead, "create_threads", {
         threads: [{ title: "One" }, { title: "Two" }],
       })) as { readonly threads: ReadonlyArray<{ readonly mission?: unknown }> };
@@ -452,8 +444,6 @@ it.effect(
           return results.at(-1)?.result as { readonly mission?: unknown };
         });
       assert.deepEqual((yield* launch(LAPTOP)).mission, { state: "pending" });
-      // The same launch again, as a retry with its clientRequestId returns the thread it made,
-      // after the lead released it: the thread does not join again.
       assert.notProperty(yield* launch(LAPTOP), "mission");
       assert.deepEqual((yield* launch(FENCED)).mission, {
         state: "refused",
@@ -567,7 +557,6 @@ it.effect(
       yield* wait(lead, { output: undefined });
       yield* wait(lead, {}, undefined, { runId: "run-1" });
       yield* wait(lead, {}, undefined, { untilOutput: true });
-      // A wake it cannot drop stays, and the lead still gets its answer.
       assert.deepEqual(yield* wait(lead, { runId: "broken" }), { ...answer, runId: "broken" });
       assert.deepEqual(missions.heard, [
         [lead.thread.threadId, { environmentId: HERE, threadId: member }, "run-1"],

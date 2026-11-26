@@ -57,11 +57,6 @@ const byRepository = (rows: ReadonlyArray<RosterMember>) => {
   return [...groups].map(([repository, members]) => ({ repository, members }));
 };
 
-/**
- * A top-level thread a mission's lead started joins its Mission, with the lead's own reach. A
- * refused join leaves the thread as it is, and says why. A replayed start, and any other caller's
- * threads, join nothing.
- */
 export const joinCallersMission = Effect.fn("MissionHandlers.joinCallersMission")(function* (
   missions: Option.Option<MissionsService>,
   member: ScopedThreadRef,
@@ -83,15 +78,10 @@ export const joinCallersMission = Effect.fn("MissionHandlers.joinCallersMission"
     );
 });
 
-// Only a linked environment's session can call t3_mission_tag (see `shownOnlyToLinks`).
-// `writesThreads` holds a link below full access to the threads it started, and the claim code
-// makes that check again under the thread's lock. A release drops only a claim its own caller
-// holds. The lead tools act only on the Mission the calling thread leads.
 export const layer = McpToolAccess.toLayer(
   MissionToolkit,
   Effect.gen(function* () {
     const missions = yield* Effect.serviceOption(Missions.Missions);
-    /** The caller's own Mission, never one named in the input. */
     const callersMission = Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const caller = yield* McpInvocationContext.requireThreadScope(scope, "This mission tool");
@@ -108,7 +98,6 @@ export const layer = McpToolAccess.toLayer(
         missions: missions.value,
         mission,
         environmentId: scope.environmentId,
-        // The lead's reach is read from this thread under the Mission's lock, not from the call.
         lead: caller.thread.threadId,
       };
     });
@@ -120,17 +109,14 @@ export const layer = McpToolAccess.toLayer(
             const scope = yield* McpInvocationContext.McpInvocationContext;
             const claims = yield* MissionClaims;
             const mayChange = yield* McpToolAccess.threadWriteAccess;
-            // The owner comes from the authenticated caller, never from the input.
             const owner =
               scope.client === undefined ? scope.environmentId : linkOwner(scope.client.sessionId);
-            // Each claim says what its thread is doing, so the lead can tell when it needs it.
             const withDetail = Effect.fn("MissionHandlers.withDetail")(function* (
               wanted: ReadonlyArray<MissionClaim>,
             ) {
               const read = yield* Effect.forEach(wanted, (claim) =>
                 Effect.map(memberDetail(claim.threadId), (detail) => ({ claim, detail })),
               );
-              // A claim may have changed hands while its thread was read.
               const held = yield* claims.list(owner);
               return withinWorkspaceRoom(
                 read.map(({ claim, detail }) =>
@@ -155,8 +141,6 @@ export const layer = McpToolAccess.toLayer(
                 ),
               );
             }
-            // Renames only claims this caller holds, each checked as a join is; a thread the caller
-            // may no longer change keeps the old name.
             if (input.kind === "rename") {
               return yield* claims.rename(
                 owner,
@@ -254,7 +238,6 @@ export const layer = McpToolAccess.toLayer(
             environmentId: input.threadRef.environmentId ?? environmentId,
             threadId: input.threadRef.threadId,
           };
-          // A thread already in keeps its claim: nothing joined, so there is no brief to get.
           const already = (yield* missions.memberStatuses(mission.missionId)).some(
             (row) =>
               row.ref.environmentId === member.environmentId &&

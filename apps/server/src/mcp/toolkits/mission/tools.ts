@@ -23,7 +23,6 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import * as Project from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
-/** Listed only to a linked environment's session: agents never see or call it. */
 const shownOnlyToLinks = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope =
@@ -31,11 +30,6 @@ const shownOnlyToLinks = (): boolean => {
   return scope?.client?.linked === true;
 };
 
-/**
- * `join` needs threadId, missionId and name; `release` threadId, missionId and generation;
- * `rename` missionId and name; `workspaces` members. A join may name its add with intentId. It
- * answers with no claim when that add's claim was dropped.
- */
 const MissionTagInput = Schema.Struct({
   kind: MissionClaimKind,
   threadId: Schema.optional(ThreadId),
@@ -43,7 +37,6 @@ const MissionTagInput = Schema.Struct({
   name: Schema.optional(MissionName),
   generation: Schema.optional(Schema.String),
   intentId: Schema.optional(Schema.String),
-  /** The caller's claims whose workspaces a list left out. */
   members: Schema.optional(
     Schema.Array(Schema.Struct({ threadId: ThreadId, generation: Schema.String })).check(
       Schema.isMaxLength(WORKSPACES_PER_CALL),

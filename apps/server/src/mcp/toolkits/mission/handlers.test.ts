@@ -63,7 +63,6 @@ const appProject: OrchestrationProjectShell = {
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
-/** The real workspace reads, on a machine where every repository probe hangs. */
 const hungWorkspaces = memberWorkspacesLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -119,13 +118,8 @@ const mcpClient = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 
-/**
- * Calls the tool once on a machine whose one user thread starts with `tags`. With `startedByLink`,
- * that thread was started by the calling link, so the link's fence lets it through.
- */
 const callOnce = (
   scope: McpInvocationContext.McpInvocationScope,
-  /** Built from the claim `before` made, when the call has to name it. */
   args:
     | Record<string, unknown>
     | ((before: MissionClaim | "intent-spent" | undefined) => Record<string, unknown>),
@@ -134,13 +128,10 @@ const callOnce = (
     readonly before?: (
       claims: MissionClaims.MissionClaims["Service"],
     ) => Effect.Effect<MissionClaim | "intent-spent", MissionError>;
-    /** Tag writes fail while `before` runs, so it leaves a thread whose tags are behind its claim. */
     readonly tagWritesFailBefore?: boolean;
-    /** The user raises the thread to full access right after the tool's first look at it. */
     readonly modeRisesAfterFirstLook?: boolean;
     readonly runtimeMode?: "auto" | "full-access";
     readonly workspaces?: Layer.Layer<MemberWorkspaces>;
-    /** Runs on the machine's first workspace read, as a slow list reads it. */
     readonly duringFirstWorkspaceRead?: (
       claims: MissionClaims.MissionClaims["Service"],
     ) => Effect.Effect<void, MissionError>;
@@ -238,7 +229,6 @@ const callOnce = (
     return {
       answer: content.map((part) => (part.type === "text" ? part.text : "")).join(""),
       tags,
-      // Read before the machine's database closes.
       held: yield* Context.get(member, MissionStore.MissionStore).allClaims,
     };
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
@@ -413,7 +403,6 @@ it.effect(
       Effect.gen(function* () {
         const leads = new Set<string>([leadHere.thread.threadId]);
         const settingsContext = yield* Layer.build(ServerSettings.layerTest());
-        // On, as on any machine that links: the tool must still stay away from agents.
         yield* Context.get(settingsContext, ServerSettings.ServerSettingsService).updateSettings({
           linkedEnvironmentsEnabled: true,
         });
@@ -492,7 +481,6 @@ it.effect(
           };
           readonly error?: unknown;
         };
-        /** One MCP session, initialized once, that every later request reuses. */
         const session = Effect.fn(function* (token: string) {
           const headers = {
             accept: "application/json, text/event-stream",
@@ -568,14 +556,12 @@ it.effect(
           }
         }
 
-        // The agent is listed the lead tools before it leads, and refused them.
         assert.includeMembers(yield* agent.listed, LEAD_TOOLS);
         const refused = yield* agent.rpc("tools/call", {
           name: "t3_mission_roster",
           arguments: {},
         });
         assert.include(JSON.stringify(refused), "This thread leads no mission.");
-        // Made the lead, the same session calls each with no new list.
         leads.add(agentHere.thread.threadId);
         for (const [name, args] of leadCalls) {
           const answer = yield* agent.rpc("tools/call", { name, arguments: args });
@@ -640,7 +626,6 @@ it.effect(
     }),
 );
 
-/** A workspace of about 30 KB, so one list answer has room for only one. */
 const largeWorkspace = {
   ...emptyWorkspace,
   otherPullRequests: Array.from({ length: 300 }, (_, number) => ({

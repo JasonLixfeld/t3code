@@ -255,10 +255,6 @@ export const writesThreads = <P, A, E, R>(
     () => writingCaller,
   );
 
-/**
- * The check `writesThreads` makes on each target, for a handler that changes a thread outside the
- * orchestrator to make again under its own lock: the modes can rise while it waits for that lock.
- */
 export const threadWriteAccess = Effect.map(
   writingCaller,
   (caller) => (target: OrchestrationV2ThreadShell) =>
@@ -355,7 +351,6 @@ export const afterForwarding = <P, A, E, R, E2, R2>(
     forwarded,
   );
 
-/** Runs `after` on the tool's result, whether it ran here or in the linked environment named. */
 export const followedBy = <P, A, E, R, E2, R2>(
   declaration: Declaration<(params: P) => Effect.Effect<A, E, R>>,
   after: (

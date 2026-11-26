@@ -181,7 +181,6 @@ const ThreadTransferTool = Tool.make("t3_thread_transfer", {
     Schema.Struct({
       sequence: NonNegativeInt,
       targetThreadId: ThreadId,
-      /** A lead's fork joins its mission. */
       mission: Schema.optional(MissionJoinOutcome),
     }),
     Schema.Struct({

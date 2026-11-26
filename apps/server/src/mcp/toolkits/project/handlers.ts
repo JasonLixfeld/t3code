@@ -655,7 +655,6 @@ export const layer = McpToolAccess.toLayer(
   ProjectToolkit,
   Effect.map(Effect.serviceOption(Missions.Missions), (missions) => ({
     ...handlers,
-    // Here or on the linked machine it was launched on, the thread joins its lead's Mission.
     t3_thread_launch: McpToolAccess.followedBy(
       handlers.t3_thread_launch,
       (_input, launched, environmentId) =>
