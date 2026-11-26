@@ -79,9 +79,10 @@ describe("buildMissionMenuItems", () => {
       detail: "No link from Desk",
     });
     // A session that may not read access is told no links, so the host decides on the add.
-    const unlisted: ReadonlyArray<MissionHost> = hosts.map(
-      ({ snapshot: { links: _links, ...snapshot }, ...host }) => ({ ...host, snapshot }),
-    );
+    const unlisted: ReadonlyArray<MissionHost> = hosts.map((host) => ({
+      ...host,
+      snapshot: { ...host.snapshot, links: [], linksHidden: true },
+    }));
     for (const environmentId of [BOX, OTHER]) {
       expect(
         buildMissionMenuItems([thread(environmentId)], unlisted, label, allowed).find(

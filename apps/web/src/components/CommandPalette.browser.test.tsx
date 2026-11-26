@@ -441,7 +441,7 @@ describe("CommandPalette open intents", () => {
         ? [
             {
               environmentId: EnvironmentId.make("local"),
-              snapshot: { missions: [], claims: [] },
+              snapshot: { missions: [], links: [], claims: [] },
             },
           ]
         : [],

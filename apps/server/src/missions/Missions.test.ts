@@ -612,7 +612,7 @@ const withMissions = <A, E>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 const listed = Effect.flatMap(Missions.Missions, (missions) =>
-  missions.watch({ links: true }).pipe(
+  missions.watch({ links: true, prompts: true }).pipe(
     Stream.runHead,
     Effect.map((snapshot) => Option.getOrThrow(snapshot)),
   ),
@@ -628,7 +628,9 @@ const createOne = Effect.flatMap(Missions.Missions, (missions) =>
 /** Waits for a snapshot that matches, starting with the one a new client gets at once. */
 const eventually = (matches: (snapshot: MissionsSnapshot) => boolean) =>
   Effect.flatMap(Missions.Missions, (missions) =>
-    missions.watch({ links: true }).pipe(Stream.filter(matches), Stream.runHead, Effect.asVoid),
+    missions
+      .watch({ links: true, prompts: true })
+      .pipe(Stream.filter(matches), Stream.runHead, Effect.asVoid),
   );
 
 /**
@@ -638,7 +640,7 @@ const eventually = (matches: (snapshot: MissionsSnapshot) => boolean) =>
 const openSidebar = Effect.gen(function* () {
   const missions = yield* Missions.Missions;
   const seen = yield* Queue.unbounded<MissionsSnapshot>();
-  yield* missions.watch({ links: true }).pipe(
+  yield* missions.watch({ links: true, prompts: true }).pipe(
     Stream.runForEach((snapshot) => Queue.offer(seen, snapshot)),
     Effect.forkScoped,
   );
@@ -672,18 +674,23 @@ it.effect(
           ["env-laptop/laptop", "active"],
         ]);
         assert.deepEqual(
-          snapshot.links?.map((link) => [link.label, link.fullAccess]),
+          snapshot.links.map((link) => [link.label, link.fullAccess]),
           [
             ["Laptop", true],
             ["Fenced box", false],
           ],
         );
         // A session that may not read access sees the same Missions, without the links.
-        const unlinked = yield* missions.watch({ links: false }).pipe(
+        const unlinked = yield* missions.watch({ links: false, prompts: true }).pipe(
           Stream.runHead,
           Effect.map((first) => Option.getOrThrow(first)),
         );
-        assert.deepEqual(unlinked, { missions: snapshot.missions, claims: snapshot.claims });
+        assert.deepEqual(unlinked, {
+          missions: snapshot.missions,
+          links: [],
+          linksHidden: true,
+          claims: snapshot.claims,
+        });
       }),
     );
   },
@@ -1898,7 +1905,7 @@ it.effect("a new watcher never gets an older snapshot after a newer one", () => 
       // A member leaves while that snapshot is open, and a client starts watching.
       yield* missions.leaveHere(b.threadId);
       const seen = yield* Queue.unbounded<ReturnType<typeof membersOf>>();
-      yield* missions.watch({ links: true }).pipe(
+      yield* missions.watch({ links: true, prompts: true }).pipe(
         Stream.runForEach((snapshot) => Queue.offer(seen, membersOf(snapshot.missions[0]))),
         Effect.forkChild({ startImmediately: true }),
       );
@@ -2288,21 +2295,31 @@ it.effect("the list a client watches stays small, however long a mission's promp
     Effect.gen(function* () {
       const missions = yield* Missions.Missions;
       const mission = yield* createOne;
-      const sidebar = yield* openSidebar;
-      const first = yield* listed;
+      // A client that asks for the list without prompts, as this build's clients do.
+      const seen = yield* Queue.unbounded<MissionsSnapshot>();
+      yield* missions.watch({ links: true, prompts: false }).pipe(
+        Stream.runForEach((snapshot) => Queue.offer(seen, snapshot)),
+        Effect.forkScoped,
+      );
+      const next = (
+        matches: (snapshot: MissionsSnapshot) => boolean,
+      ): Effect.Effect<MissionsSnapshot> =>
+        Effect.flatMap(Queue.take(seen), (snapshot) =>
+          matches(snapshot) ? Effect.succeed(snapshot) : next(matches),
+        );
+      const first = yield* Queue.take(seen);
       yield* missions.setPrompt({
         missionId: mission.missionId,
         prompt: "x".repeat(MISSION_PROMPT_MAX_LENGTH),
       });
       yield* missions.addMember({ missionId: mission.missionId, member: localMember });
-      let update: MissionsSnapshot | undefined;
-      yield* sidebar((snapshot) => {
-        update = snapshot;
-        return snapshot.missions[0]?.members.length === 2;
-      });
+      const update = yield* next((snapshot) => snapshot.missions[0]?.members.length === 2);
       assert.isBelow(wireBytes(first), 600);
-      assert.isBelow(wireBytes(update!), 800);
+      assert.isBelow(wireBytes(update), 800);
+      assert.isUndefined(update.missions[0]?.prompt);
       assert.equal((yield* missions.prompt(mission.missionId)).prompt.length, 10_000);
+      // A client that does not ask, as an older one, still reads each prompt from the list.
+      assert.equal((yield* listed).missions[0]?.prompt?.length, MISSION_PROMPT_MAX_LENGTH);
     }),
   );
 });

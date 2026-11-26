@@ -1506,7 +1506,7 @@ export function createServerEnvironmentAtoms<R, E>(
   const missionsLiveAcross = Atom.family((environmentIdsKey: string) => {
     const sources = (JSON.parse(environmentIdsKey) as EnvironmentId[]).map((environmentId) => ({
       environmentId,
-      atom: missionsLive({ environmentId, input: {} }),
+      atom: missionsLive({ environmentId, input: { omitPrompts: true } }),
     }));
     return Atom.make((get) =>
       sources.flatMap(({ environmentId, atom }) => {

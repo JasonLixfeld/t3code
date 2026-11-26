@@ -2446,8 +2446,11 @@ export const layerWsRpc = (
         [WS_METHODS.workflowsSaveDefinition]: (input) =>
           workflowDefinitions.save(input.name, input.source),
         [WS_METHODS.workflowsDeleteDefinition]: (input) => workflowDefinitions.remove(input.name),
-        [WS_METHODS.missionsSubscribe]: (_input) =>
-          missions.watch({ links: currentSession.scopes.includes(AuthAccessReadScope) }),
+        [WS_METHODS.missionsSubscribe]: (input) =>
+          missions.watch({
+            links: currentSession.scopes.includes(AuthAccessReadScope),
+            prompts: input.omitPrompts !== true,
+          }),
         [WS_METHODS.missionsCreate]: (input) => missions.create(input),
         [WS_METHODS.missionsAddMember]: (input) => Effect.asVoid(missions.addMember(input)),
         [WS_METHODS.missionsReleaseMember]: (input) => Effect.asVoid(missions.releaseMember(input)),

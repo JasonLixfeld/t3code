@@ -86,9 +86,13 @@ export class Missions extends Context.Service<
   {
     /**
      * The Missions here, now and after each change. With `links`, also the links that can reach
-     * member threads, which only a session that may read access gets.
+     * member threads, which only a session that may read access gets. With `prompts`, also each
+     * Mission's prompt, which older clients read from the list.
      */
-    readonly watch: (options: { readonly links: boolean }) => Stream.Stream<MissionsSnapshot>;
+    readonly watch: (options: {
+      readonly links: boolean;
+      readonly prompts: boolean;
+    }) => Stream.Stream<MissionsSnapshot>;
     /**
      * Starts a Mission led by a thread here, named for its title. Refuses a thread with no
      * messages. Asking again with the same id returns that Mission.
@@ -468,6 +472,7 @@ const make = Effect.gen(function* () {
       name: mission.name,
       createdAt: mission.createdAt,
       members: [...members.values()],
+      ...(mission.prompt === "" ? {} : { prompt: mission.prompt }),
     } satisfies Mission;
   });
 
@@ -1395,11 +1400,17 @@ const make = Effect.gen(function* () {
       );
     }),
   );
-  const watch = (options: { readonly links: boolean }) =>
-    options.links
+  const watch = (options: { readonly links: boolean; readonly prompts: boolean }) =>
+    options.links && options.prompts
       ? watchAll
       : watchAll.pipe(
-          Stream.map(({ links: _links, ...snapshot }): MissionsSnapshot => snapshot),
+          Stream.map((snapshot): MissionsSnapshot => ({
+            missions: options.prompts
+              ? snapshot.missions
+              : snapshot.missions.map(({ prompt: _prompt, ...mission }) => mission),
+            ...(options.links ? { links: snapshot.links } : { links: [], linksHidden: true }),
+            claims: snapshot.claims,
+          })),
           Stream.changesWith(sameSnapshot),
         );
 

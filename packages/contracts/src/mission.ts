@@ -32,6 +32,11 @@ export const Mission = Schema.Struct({
   name: Schema.String,
   createdAt: Schema.String,
   members: Schema.Array(MissionMember),
+  /**
+   * This Mission's own prompt for its lead. Empty or absent: the lead gets the Settings default.
+   * A list asked for with `omitPrompts` leaves it out.
+   */
+  prompt: Schema.optional(Schema.String),
 });
 export type Mission = typeof Mission.Type;
 
@@ -53,13 +58,18 @@ export type MissionClaimHere = typeof MissionClaimHere.Type;
 
 export const MissionsSnapshot = Schema.Struct({
   missions: Schema.Array(Mission),
-  /** Absent for a session that may not read access, as the peer-link list is kept from it. */
-  links: Schema.optional(Schema.Array(MissionLink)),
+  /** Empty for a session that may not read access, as the peer-link list is kept from it. */
+  links: Schema.Array(MissionLink),
+  /** Set when `links` is empty because the session may not read them. */
+  linksHidden: Schema.optional(Schema.Literal(true)),
   claims: Schema.Array(MissionClaimHere),
 });
 export type MissionsSnapshot = typeof MissionsSnapshot.Type;
 
-export const MissionsSubscribeInput = Schema.Struct({});
+export const MissionsSubscribeInput = Schema.Struct({
+  /** Leaves each Mission's prompt out of the list; its editor reads it with `missions.getPrompt`. */
+  omitPrompts: Schema.optional(Schema.Literal(true)),
+});
 
 /** Twelve hex digits. The id goes into each member's tag, where a colon ends it. */
 export const MissionId = Schema.String.check(Schema.isPattern(/^[0-9a-f]{12}$/));
