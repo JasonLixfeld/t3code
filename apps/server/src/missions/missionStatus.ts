@@ -150,7 +150,9 @@ export const memberUpdates = (
   listedAt: number,
 ): { readonly updates: ReadonlyArray<SourcedUpdate>; readonly mark: string } => {
   const unchanged = (updates: ReadonlyArray<SourcedUpdate>) => ({ updates, mark: markOf(detail) });
-  if (before === undefined && !needsAttention(detail.status)) return unchanged([]);
+  const heldCompletion = detail.run?.status === "completed" && isHeld(detail);
+  if (before === undefined && !needsAttention(detail.status) && !heldCompletion)
+    return unchanged([]);
   const mark: Partial<Mark> = before === undefined ? {} : (JSON.parse(before) as Mark);
   if (detail.run === undefined && detail.requests === undefined) {
     const event =
@@ -168,8 +170,8 @@ export const memberUpdates = (
   if (run?.status === "failed") {
     if (fresh) told(run.id, "failed");
     unreportedCompletionRunId = undefined;
-  } else if (run?.status === "completed" && isHeld(detail)) {
-    unreportedCompletionRunId = run.id;
+  } else if (run?.status === "completed" && heldCompletion) {
+    if (fresh) unreportedCompletionRunId = run.id;
   } else if (run?.status === "completed") {
     if (fresh || unreportedCompletionRunId === run.id) told(run.id, "completed");
     unreportedCompletionRunId = undefined;
