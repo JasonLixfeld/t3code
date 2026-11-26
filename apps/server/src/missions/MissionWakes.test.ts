@@ -520,6 +520,33 @@ it.effect.each(["interrupted", "completed"] as const)(
   },
 );
 
+it.effect.each(["completed", "interrupted"] as const)(
+  "a completion handled after the next run is already %s is told once",
+  (next) => {
+    const world = makeWorld();
+    return withWakes(
+      world,
+      Effect.gen(function* () {
+        world.set(first, { status: next, latestRunId: "f2" });
+        yield* world.runThenWaitForMemberShellRead(
+          first,
+          world.event(first, "run.updated", { id: "f1", status: "completed" }),
+        );
+        yield* world.run(first, "f2", next);
+        assert.equal(
+          yield* nextText(world),
+          told(["member 1 on this machine finished its turn and is idle."]),
+        );
+        yield* world.leadRead;
+        yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+        yield* world.run(second, "s1", "failed");
+        assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
+        assert.equal(world.sent.length, 2);
+      }),
+    );
+  },
+);
+
 it.effect("a failure ends an owed completion, so a later stopped run does not revive it", () => {
   const world = makeWorld();
   return withWakes(

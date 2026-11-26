@@ -193,7 +193,7 @@ export const memberUpdates = (
   };
 };
 
-/** With `run`, the detail is about that run, which a newer run in progress also holds. */
+/** With `run`, the detail is about that run, which any newer run holds: its own outcome decides. */
 export const shellDetail = (
   shell: StatusFields & Pick<OrchestrationV2ThreadShell, "latestRunId">,
   run?: { readonly id: string; readonly status: string },
@@ -202,7 +202,7 @@ export const shellDetail = (
   const latest =
     shell.latestRunId === null ? undefined : { id: shell.latestRunId, status: shell.status };
   const observed = run ?? latest;
-  const newerRuns = run !== undefined && run.id !== shell.latestRunId && WORKING.has(shell.status);
+  const newerRuns = run !== undefined && latest !== undefined && run.id !== latest.id;
   return {
     status: memberStatusOf(shell),
     title: "",
