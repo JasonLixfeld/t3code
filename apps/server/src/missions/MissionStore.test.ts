@@ -243,14 +243,14 @@ it.effect("upgrades a database an earlier build left, keeping a given-up add's m
               missionId: "m1",
             });
           }
-          yield* store.deleteMission({ missionId: "m1", lead, machines: [] });
+          yield* store.deleteMission({ missionId: "m1", lead, machines: [], settledMembers: [] });
           assert.deepEqual(
             (yield* store.tombstoneChecks).map((check) => check.environmentId).toSorted(),
             ["env-box", "env-desk", "env-laptop"],
           );
           assert.isTrue((yield* store.deletedMissionIds).has("m1"));
           const again = yield* store.createMission(claimFor(lead, "m1", "g2")).pipe(Effect.flip);
-          assert.include(again.message, "was deleted");
+          assert.include(again.message, "has ended");
         }),
       );
     }),
@@ -508,7 +508,7 @@ it.effect("deleting a mission removes the updates its lead heard another way", (
             source: "run:r1",
             event: "completed",
           });
-          yield* store.deleteMission({ missionId: "m1", lead, machines: [] });
+          yield* store.deleteMission({ missionId: "m1", lead, machines: [], settledMembers: [] });
         }),
       );
       const rows = yield* Effect.provide(

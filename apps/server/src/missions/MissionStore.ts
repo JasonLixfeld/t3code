@@ -356,6 +356,9 @@ const heldElsewhere = (held: ClaimRow) =>
     `This thread is already in the mission "${held.mission_name}". It must leave that mission first.`,
   );
 
+export const MISSION_NOT_ENDED =
+  "Its active threads must leave this mission, and its pending adds must be cleared, before you end it.";
+
 const now = Effect.map(DateTime.now, DateTime.formatIso);
 
 /** Claim writes run only under MissionClaims' per-thread lock. */
@@ -368,10 +371,15 @@ export class MissionStore extends Context.Service<
     readonly setLead: (
       lead: ClaimInput & { readonly previous: ThreadId },
     ) => Effect.Effect<MissionRecord, MissionError>;
+    /**
+     * Releases the member claims here with the Mission, only when each is one of
+     * `settledMembers`. Their callers hold every member's claim and thread lock.
+     */
     readonly deleteMission: (input: {
       readonly missionId: string;
       readonly lead: ThreadId;
       readonly machines: ReadonlyArray<EnvironmentId>;
+      readonly settledMembers: ReadonlyArray<ThreadId>;
     }) => Effect.Effect<void, MissionError>;
     readonly join: (
       input: ClaimInput,
@@ -548,7 +556,7 @@ const make = Effect.gen(function* () {
         const [deleted] = yield* sql`
           SELECT 1 FROM deleted_missions WHERE mission_id = ${lead.missionId}
         `;
-        if (deleted !== undefined) return refuse("That mission was deleted.");
+        if (deleted !== undefined) return refuse("That mission has ended.");
         const existing = yield* sql<MissionRow>`
           SELECT mission_id, name, lead_thread_id, created_at, prompt FROM missions
           WHERE mission_id = ${lead.missionId}
@@ -581,6 +589,7 @@ const make = Effect.gen(function* () {
     readonly missionId: string;
     readonly lead: ThreadId;
     readonly machines: ReadonlyArray<EnvironmentId>;
+    readonly settledMembers: ReadonlyArray<ThreadId>;
   }) {
     const asked = DateTime.toEpochMillis(yield* DateTime.now);
     return yield* change(
@@ -597,18 +606,25 @@ const make = Effect.gen(function* () {
           });
         }
         const [held] = yield* sql<{ readonly found: number }>`
-          SELECT 1 AS found FROM claims WHERE mission_id = ${input.missionId} AND role = 'member'
-          UNION ALL SELECT 1 FROM known_claims WHERE mission_id = ${input.missionId}
+          SELECT 1 AS found FROM known_claims WHERE mission_id = ${input.missionId}
           UNION ALL SELECT 1 FROM pending_adds
             WHERE mission_id = ${input.missionId} AND refusal IS NULL
           UNION ALL SELECT 1 FROM pending_releases
             WHERE mission_id = ${input.missionId} AND refusal IS NULL
           LIMIT 1
         `;
-        if (held !== undefined) {
-          return refuse(
-            "Its threads must leave this mission, and its pending adds must be cleared, before you delete it.",
-          );
+        const members = yield* sql<ClaimRow>`
+          SELECT thread_id, mission_id, mission_name, role, owner, generation, intent_id FROM claims
+          WHERE mission_id = ${input.missionId} AND role = 'member'
+        `;
+        const settled = new Set<string>(input.settledMembers);
+        if (held !== undefined || members.some((member) => !settled.has(member.thread_id))) {
+          return refuse(MISSION_NOT_ENDED);
+        }
+        for (const member of members) {
+          yield* spendIntent(member);
+          yield* sql`DELETE FROM claims WHERE thread_id = ${member.thread_id}`;
+          yield* markUnsynced(ThreadId.make(member.thread_id));
         }
         yield* sql`DELETE FROM pending_adds WHERE mission_id = ${input.missionId}`;
         yield* sql`DELETE FROM pending_releases WHERE mission_id = ${input.missionId}`;

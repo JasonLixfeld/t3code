@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   isMissionTag,
+  isSettledMissionMember,
   linkOriginIsFenced,
   type MemberDetail,
   type Mission,
@@ -349,18 +350,27 @@ const make = Effect.gen(function* () {
     for (const [environmentId, machine] of held) {
       for (const claim of machine.claims) {
         if (claim.missionId !== mission.missionId || claim.role === "lead") continue;
-        if (environmentId === here && (yield* threadGone(claim.threadId))) continue;
+        const shell =
+          environmentId === here
+            ? yield* threads
+                .getThreadShell(claim.threadId)
+                .pipe(Effect.orElseSucceed(() => undefined))
+            : undefined;
+        if (shell === null || (shell !== undefined && shell.deletedAt !== null)) continue;
         const ref = { environmentId, threadId: claim.threadId };
         const sameClaim = (release: PendingRelease) =>
           memberKey(release) === memberKey(ref) && release.generation === claim.generation;
         const refusedRelease = refusedReleases.find(sameClaim);
+        const member: MissionMember = releasing.some(sameClaim)
+          ? { ref, role: "member", state: "release-pending" }
+          : refusedRelease !== undefined
+            ? { ref, role: "member", state: "release-refused", detail: refusedRelease.refusal! }
+            : { ref, role: "member", state: machine.reachable ? "active" : "offline" };
         members.set(
           memberKey(ref),
-          releasing.some(sameClaim)
-            ? { ref, role: "member", state: "release-pending" }
-            : refusedRelease !== undefined
-              ? { ref, role: "member", state: "release-refused", detail: refusedRelease.refusal! }
-              : { ref, role: "member", state: machine.reachable ? "active" : "offline" },
+          shell !== undefined && isSettledMissionMember(shell)
+            ? { ...member, settled: true }
+            : member,
         );
       }
     }

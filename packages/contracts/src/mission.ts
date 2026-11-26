@@ -21,8 +21,19 @@ export const MissionMember = Schema.Struct({
     "add-refused",
   ]),
   detail: Schema.optional(Schema.String),
+  /**
+   * Set when the Mission's machine holds this member's thread and `isSettledMissionMember`
+   * holds for it. Absent for a member on another machine.
+   */
+  settled: Schema.optional(Schema.Literal(true)),
 });
 export type MissionMember = typeof MissionMember.Type;
+
+/** A settled or archived member: the sidebar hides it, and ending its Mission releases it. */
+export const isSettledMissionMember = (thread: {
+  readonly settledOverride: string | null;
+  readonly archivedAt: unknown;
+}) => thread.settledOverride === "settled" || thread.archivedAt != null;
 
 /** A Mission lives on its lead thread's machine. `members` lists the lead first. */
 export const Mission = Schema.Struct({
@@ -95,7 +106,10 @@ export const MissionSetLeadInput = Schema.Struct({
   expectedLead: ThreadId,
 });
 
-/** Ends a Mission with no members. Its lead stays a thread of its own. */
+/**
+ * Ends a Mission whose members on its own machine are all settled, and releases them. Its lead
+ * stays a thread of its own.
+ */
 export const MissionDeleteInput = Schema.Struct({ missionId: Schema.String });
 
 export const MISSION_PROMPT_MAX_LENGTH = 10_000;
