@@ -106,7 +106,7 @@ import { useFabScroll } from "./FabScrollContext";
 import { holdLaunchSplashForHomeRows, settleLaunchSplashHomeRows } from "./home-launch-splash";
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { ThreadListFilters } from "./ThreadListFilters";
-import { deriveHomeEmptyState } from "./home-empty-state";
+import { deriveHomeEmptyState, homeHasRows } from "./home-empty-state";
 
 interface HomeScreenProps {
   /** Whether this list is the one on screen; see `useHomeRouteVisible`. */
@@ -648,10 +648,12 @@ export function HomeScreen(props: HomeScreenProps) {
     workingShelfEnabled,
   };
 
-  const hasAnyThreads =
-    props.threads.some((thread) => thread.archivedAt === null) ||
-    props.pendingTasks.length > 0 ||
-    threadListV2Layout.settledCount > 0;
+  const hasAnyThreads = homeHasRows({
+    threads: props.threads,
+    pendingTaskCount: props.pendingTasks.length,
+    settledCount: threadListV2Layout.settledCount,
+    missionCount: threadListV2Layout.missions.length,
+  });
   // A hidden list gets no layout, so it never reports its rows as laid out.
   const hasRowsToLayOut = props.visible && hasAnyThreads && threadListV2Items.length > 0;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the native launch splash, which is outside React, until the rows are gone or this list unmounts; a layout effect runs before the splash hides in this commit

@@ -2,7 +2,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
-import { deriveHomeEmptyState } from "./home-empty-state";
+import { deriveHomeEmptyState, homeHasRows } from "./home-empty-state";
 
 function connectingEnvironment(
   connectionState: "connecting" | "reconnecting",
@@ -100,5 +100,16 @@ describe("home empty state", () => {
   ] as const)("%s", (_name, state, projectCount, expected) => {
     const { title, loading, showsAddEnvironment } = deriveHomeEmptyState(state, projectCount);
     expect({ title, loading, showsAddEnvironment }).toEqual(expected);
+  });
+});
+
+describe("homeHasRows", () => {
+  it("keeps the list for a mission whose only row is its deleted lead", () => {
+    const none = { threads: [], pendingTaskCount: 0, settledCount: 0, missionCount: 0 };
+    expect(homeHasRows(none)).toBe(false);
+    expect(homeHasRows({ ...none, missionCount: 1 })).toBe(true);
+    expect(homeHasRows({ ...none, threads: [{ archivedAt: "2026-11-26T00:00:00.000Z" }] })).toBe(
+      false,
+    );
   });
 });

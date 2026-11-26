@@ -10,6 +10,17 @@ export interface HomeEmptyState {
   readonly showsAddEnvironment: boolean;
 }
 
+export const homeHasRows = (input: {
+  readonly threads: ReadonlyArray<{ readonly archivedAt: string | null }>;
+  readonly pendingTaskCount: number;
+  readonly settledCount: number;
+  readonly missionCount: number;
+}) =>
+  input.threads.some((thread) => thread.archivedAt === null) ||
+  input.pendingTaskCount > 0 ||
+  input.settledCount > 0 ||
+  input.missionCount > 0;
+
 export function deriveHomeEmptyState(
   catalogState: WorkspaceState,
   projectCount: number,
