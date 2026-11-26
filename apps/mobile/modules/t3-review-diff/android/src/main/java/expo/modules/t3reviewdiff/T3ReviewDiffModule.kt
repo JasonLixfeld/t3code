@@ -37,6 +37,9 @@ class T3ReviewDiffModule : Module() {
       Prop("collapsedCommentIdsJson") { view: T3ReviewDiffView, collapsedCommentIdsJson: String ->
         view.setCollapsedCommentIdsJson(collapsedCommentIdsJson)
       }
+      Prop("searchHighlightsJson") { view: T3ReviewDiffView, searchHighlightsJson: String ->
+        view.setSearchHighlightsJson(searchHighlightsJson)
+      }
       Prop("appearanceScheme") { view: T3ReviewDiffView, appearanceScheme: String ->
         view.setAppearanceScheme(appearanceScheme)
       }
@@ -71,6 +74,15 @@ class T3ReviewDiffModule : Module() {
       }
       AsyncFunction("scrollToTop") { view: T3ReviewDiffView, animated: Boolean ->
         view.scrollToTop(animated)
+      }
+      AsyncFunction("scrollToMatch") {
+          view: T3ReviewDiffView,
+          rowId: String,
+          start: Int,
+          end: Int,
+          animated: Boolean
+        ->
+        view.scrollToMatch(rowId, start, end, animated)
       }
       AsyncFunction("setRowsJson") { view: T3ReviewDiffView, rowsJson: String, resetKey: String ->
         view.setContentResetKey(resetKey)

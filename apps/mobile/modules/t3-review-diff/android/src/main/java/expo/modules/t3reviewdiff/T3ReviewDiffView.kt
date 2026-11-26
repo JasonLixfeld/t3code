@@ -43,6 +43,8 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   private var pendingInitialScroll = false
   private var initialFileId: String? = null
   private var pendingScrollFileId: String? = null
+  private var pendingMatch: SearchMatch? = null
+  private var pendingMatchAnimated = false
   private var lastVisibleFileId: String? = null
   private var tokensResetKey = ""
   private var contentResetKey = ""
@@ -73,7 +75,10 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     }
     canvasView.onVerticalAnchorRestored = { verticalScroller.forceFinished(true) }
     canvasView.onRowTap = { row, gesture, target -> handleRowTap(row, gesture, target) }
-    canvasView.onViewportSizeChanged = { applyPendingInitialScroll() }
+    canvasView.onViewportSizeChanged = {
+      applyPendingInitialScroll()
+      applyPendingMatch()
+    }
     canvasView.onVisibleRowsChanged = { first, last ->
       onDebug(
         mapOf(
@@ -114,6 +119,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     lastVisibleFileId = null
     pendingInitialScroll = true
     pendingScrollFileId = initialFileId
+    pendingMatch = null
     canvasView.setVerticalOffset(0)
     canvasView.resetHorizontalOffsets()
     applyPendingInitialScroll()
@@ -133,6 +139,34 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   fun setSelectedRowIdsJson(value: String) {
     selectedRowIds = parseStringSet(value)
     canvasView.selectedRowIds = selectedRowIds
+  }
+
+  fun setSearchHighlightsJson(value: String) {
+    val (ranges, active) = parseSearchHighlights(value)
+    canvasView.setSearchHighlights(ranges, active)
+  }
+
+  /** Waits for the row to be decoded and its file open, since JS opens a fold just before this. */
+  fun scrollToMatch(rowId: String, start: Int, end: Int, animated: Boolean) {
+    if (start < 0 || end <= start) return
+    pendingScrollFileId = null
+    pendingMatch = SearchMatch(rowId, start, end)
+    pendingMatchAnimated = animated
+    applyPendingMatch()
+  }
+
+  @Suppress("ReturnCount")
+  private fun applyPendingMatch() {
+    val match = pendingMatch ?: return
+    if (canvasView.width <= 0 || canvasView.height <= 0) return
+    val (top, bottom) = canvasView.revealMatch(match) ?: return
+    pendingMatch = null
+    val header = canvasView.style.fileHeaderHeightPx.toInt()
+    val viewportTop = canvasView.verticalOffset()
+    val visibleHeight = canvasView.height - canvasView.paddingBottom
+    if (top >= viewportTop + header && bottom <= viewportTop + visibleHeight) return
+    val screenY = max(header, ((visibleHeight - (bottom - top)) * 0.3f).toInt())
+    scrollToY(top - screenY, pendingMatchAnimated)
   }
 
   fun setCollapsedCommentIdsJson(value: String) {
@@ -250,6 +284,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   }
 
   fun scrollToFile(fileId: String, animated: Boolean) {
+    pendingMatch = null
     val index = visibleRows.indexOfFirst { it.kind == "file" && it.resolvedFileId == fileId }
     if (index < 0) return
     scrollToY(canvasView.rowTop(index), animated)
@@ -264,6 +299,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   }
 
   fun scrollToTop(animated: Boolean) {
+    pendingMatch = null
     scrollToY(0, animated)
   }
 
@@ -271,6 +307,8 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
     when (event.actionMasked) {
       MotionEvent.ACTION_DOWN -> {
+        // A touch takes over from a match jump still waiting for its row.
+        pendingMatch = null
         verticalScroller.forceFinished(true)
         horizontalScroller.forceFinished(true)
         dragAxis = null
@@ -420,6 +458,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     canvasView.viewedFileIds = viewedFileIds
     canvasView.selectedRowIds = selectedRowIds
     applyPendingInitialScroll()
+    applyPendingMatch()
   }
 
   private fun handleRowTap(row: DiffRow, gesture: String, target: RowTapTarget) {
@@ -554,6 +593,44 @@ internal data class DiffWordDiffRange(
   val start: Int,
   val end: Int
 )
+
+internal data class SearchMatch(
+  val rowId: String,
+  val start: Int,
+  val end: Int
+)
+
+private val SEARCH_MATCH_COLOR = Color.argb(89, 255, 204, 0)
+private val ACTIVE_SEARCH_MATCH_COLOR = Color.argb(166, 255, 149, 0)
+
+private fun parseSearchHighlights(
+  value: String
+): Pair<Map<String, List<DiffWordDiffRange>>, SearchMatch?> = try {
+  if (value.isEmpty()) {
+    emptyMap<String, List<DiffWordDiffRange>>() to null
+  } else {
+    val payload = JSONObject(value)
+    val rangesJson = payload.optJSONObject("ranges") ?: JSONObject()
+    val ranges = HashMap<String, List<DiffWordDiffRange>>()
+    for (rowId in rangesJson.keys()) {
+      val pairs = rangesJson.optJSONArray(rowId) ?: continue
+      ranges[rowId] = (0 until pairs.length()).mapNotNull { index ->
+        val pair = pairs.optJSONArray(index) ?: return@mapNotNull null
+        val start = pair.optInt(0, -1)
+        val end = pair.optInt(1, -1)
+        if (start >= 0 && end > start) DiffWordDiffRange(start, end) else null
+      }
+    }
+    val active = payload.optJSONObject("active")?.let {
+      val start = it.optInt("start", -1)
+      val end = it.optInt("end", -1)
+      if (start >= 0 && end > start) SearchMatch(it.optString("rowId"), start, end) else null
+    }
+    ranges to active
+  }
+} catch (_: Exception) {
+  emptyMap<String, List<DiffWordDiffRange>>() to null
+}
 
 internal data class DiffToken(
   val content: String,
@@ -844,6 +921,39 @@ private class DiffCanvasView(context: Context) : View(context) {
       field = value
       invalidate()
     }
+  private var searchRangesByRowId: Map<String, List<DiffWordDiffRange>> = emptyMap()
+  private var activeSearchMatch: SearchMatch? = null
+
+  /** Paint-only: row geometry does not depend on search highlights. */
+  fun setSearchHighlights(ranges: Map<String, List<DiffWordDiffRange>>, active: SearchMatch?) {
+    searchRangesByRowId = ranges
+    activeSearchMatch = active
+    invalidate()
+  }
+
+  /**
+   * Scrolls the match horizontally into view and returns its top and bottom in content
+   * coordinates, or null while its row is not laid out, as when its file is folded.
+   */
+  fun revealMatch(match: SearchMatch): Pair<Int, Int>? {
+    val index = rows.indexOfFirst { it.id == match.rowId }
+    if (index < 0 || width <= 0) return null
+    val row = rows[index]
+    val lines = codeWrap.lines(row)
+    val line = lines.lineForOffset(match.start)
+    val top = rowOffsets[index] + lines.lineTop(line)
+    val bottom = top + if (line == 0) lines.firstHeight(style.rowHeightPx.toInt()) else lines.height
+    if (!codeWrap.enabled) {
+      val left = drawing.codeOffsetX(row, lines, match.start, style).toInt()
+      val right = drawing.codeOffsetX(row, lines, match.end, style).toInt()
+      val visibleWidth = width - (style.changeBarWidthPx + style.gutterWidthPx + style.codePaddingPx * 2f).toInt()
+      if (left < horizontalOffset || right > horizontalOffset + visibleWidth) {
+        setHorizontalOffset(left - visibleWidth / 3)
+      }
+    }
+    return top to bottom
+  }
+
   var theme: DiffTheme = DiffTheme.fallback("light")
     set(value) {
       field = value
@@ -1333,6 +1443,18 @@ private class DiffCanvasView(context: Context) : View(context) {
       val baseline = lines.baseline(top, firstLineBottom, textPaint)
       val tokens = tokensByRowId[row.id]
       drawing.drawWordDiffRanges(canvas, row, tokens, codeX, top, firstLineBottom, lines, style)
+      searchRangesByRowId[row.id]?.let { ranges ->
+        drawing.drawSearchRanges(
+          canvas, row, tokens, codeX, top, firstLineBottom, baseline, lines, style, ranges,
+          SEARCH_MATCH_COLOR,
+        )
+      }
+      activeSearchMatch?.takeIf { it.rowId == row.id }?.let { active ->
+        drawing.drawSearchRanges(
+          canvas, row, tokens, codeX, top, firstLineBottom, baseline, lines, style,
+          listOf(DiffWordDiffRange(active.start, active.end)), ACTIVE_SEARCH_MATCH_COLOR,
+        )
+      }
       drawing.drawCode(canvas, row, tokens, codeX, baseline, style, lines)
     }
 
