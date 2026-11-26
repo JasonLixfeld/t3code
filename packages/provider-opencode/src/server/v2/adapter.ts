@@ -4503,10 +4503,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ),
         );
       if (known === "unknown") {
-        if (!(yield* add)) {
-          state.mcp = undefined;
-          return { mcpSession, mcp: "failed" as const };
-        }
+        if (!(yield* add)) return { mcpSession, mcp: "failed" as const };
       } else {
         const attempt = add.pipe(
           Effect.flatMap((added) => (added ? mcpStatus(wanted) : Effect.succeed("not added"))),
@@ -4553,12 +4550,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       });
     });
 
-    const prepareTurn = Effect.fnUntraced(function* (
-      sessionId: string,
+    const writeInstructions = Effect.fnUntraced(function* (
       state: ThreadState,
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+      { mcpSession, mcp }: Effect.Success<ReturnType<typeof ensureMcp>>,
     ) {
-      const { mcpSession, mcp } = yield* ensureMcp(state, turnInput);
       const mcpAvailable = mcp === "ready";
       const instructions = [
         buildRuntimeInstructions({
@@ -4581,13 +4577,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         .join("\n\n");
       if (instructions !== state.instructions) {
         yield* client.session.instructions.entry.put({
-          sessionID: Session.ID.make(sessionId),
+          sessionID: Session.ID.make(state.sessionId),
           key: INSTRUCTIONS_KEY,
           value: instructions,
         });
         state.instructions = instructions;
       }
-      return mcp === "failed";
+    });
+
+    const prepareTurn = Effect.fnUntraced(function* (
+      state: ThreadState,
+      turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+    ) {
+      const ensured = yield* ensureMcp(state, turnInput);
+      yield* writeInstructions(state, turnInput, ensured);
+      return ensured.mcp === "failed";
     });
 
     const markBefore = (sessionId: string, before: string | null) =>
@@ -4704,7 +4708,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       state: ThreadState,
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
     ) {
-      const { mcp } = yield* ensureMcp(state, turnInput);
+      const ensured = yield* ensureMcp(state, turnInput);
+      if (ensured.mcp === "failed") yield* writeInstructions(state, turnInput, ensured);
       yield* beginTurn(state, turnInput, false);
       yield* lock.withPermit(
         Effect.gen(function* () {
@@ -4723,7 +4728,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             turn.providerTurn = { ...turn.providerTurn, nativeTurnRef: ref(wake.first, "weak") };
           }
           if (wake.running) state.unsettled = false;
-          if (mcp === "failed" && turn !== undefined) yield* emitMcpUnavailable(state, turn);
+          if (ensured.mcp === "failed" && turn !== undefined)
+            yield* emitMcpUnavailable(state, turn);
           yield* replay(wake);
           for (const session of sessionsOf(state).toReversed()) yield* syncRoster(session);
           yield* syncRosterAncestors(state);
@@ -5189,7 +5195,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               // Old undelivered steers would run first; failed rollback stages would commit on this prompt.
               yield* cancelStrandedSteers(state);
               if (stagedReverts.has(sessionId)) yield* clearRevert(sessionId);
-              const mcpFailed = yield* prepareTurn(sessionId, state, turnInput);
+              const mcpFailed = yield* prepareTurn(state, turnInput);
               const turn = yield* begin;
               if (mcpFailed) yield* emitMcpUnavailable(state, turn);
               turn.unsent = true;

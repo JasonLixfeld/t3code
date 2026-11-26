@@ -5952,6 +5952,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   );
 
   const mcpFailed = mcpListed({ status: "failed", error: "connection refused" });
+  const putInstructions = [
+    out("session.instructions.entry.put", { sessionID: SESSION, key: "t3-code", value: "<any>" }),
+    reply("session.instructions.entry.put", null),
+  ];
   const offerTo = (
     offers: Array<ProviderContinuationRequests.ProviderContinuationRequest>,
     ...signals: ReadonlyArray<Deferred.Deferred<void>>
@@ -5991,6 +5995,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         yield* useThreadMcp;
         const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
         const offered = yield* Deferred.make<void>();
+        const instructions: Array<string> = [];
         const { runtime, thread } = yield* resumed(
           [
             ...mcpAdded,
@@ -6018,9 +6023,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                   ...mcpAdded,
                   ...mcpFailed,
                   ...mcpRemoved,
+                  ...putInstructions,
                 ]),
           ],
-          { version: "2.2.6" },
+          {
+            version: "2.2.6",
+            onInstructions: (input) =>
+              instructions.push((input as { readonly value: string }).value),
+          },
         ).pipe(offerTo(offers, offered));
         yield* turnEvents(runtime, runtime.startTurn(withLineage(thread)));
         yield* Deferred.await(offered);
@@ -6031,6 +6041,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         assert.deepEqual(
           noticesOf(woken),
           outcome === "connects" ? [] : [OPENCODE_2_MCP_UNAVAILABLE],
+        );
+        assert.deepEqual(
+          instructions.map((value) => value.includes("t3_background_wait")),
+          outcome === "connects" ? [true] : [true, false],
         );
       }),
   );
@@ -6153,6 +6167,30 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       entries: [...mcpAdded, ...mcpListed({ status: "pending" })],
     },
     {
+      name: "a cached server that is pending",
+      turns: 2,
+      ready: true,
+      entries: [...established, ...mcpListed({ status: "pending" })],
+    },
+    {
+      name: "a failed verify list",
+      turns: 1,
+      ready: true,
+      entries: [...mcpAdded, ...listFails],
+    },
+    ...(["needs_auth", "disabled"] as const).map((status) => ({
+      name: `${status} on the first check`,
+      turns: 1,
+      ready: true,
+      entries: [
+        ...mcpAdded,
+        ...mcpListed({ status, error: "refused" }),
+        ...mcpRemoved,
+        ...mcpAdded,
+        ...mcpConnected,
+      ],
+    })),
+    {
       name: "a failed list and an add",
       turns: 2,
       ready: true,
@@ -6162,17 +6200,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       name: "a failed list and a failed add",
       turns: 2,
       ready: false,
-      entries: [
-        ...established,
-        ...listFails,
-        ...addFails,
-        out("session.instructions.entry.put", {
-          sessionID: SESSION,
-          key: "t3-code",
-          value: "<any>",
-        }),
-        reply("session.instructions.entry.put", null),
-      ],
+      kept: true,
+      entries: [...established, ...listFails, ...addFails, ...putInstructions],
     },
     {
       name: "a retry that does not connect",
@@ -6182,12 +6211,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     },
   ])(
     "gives the turn T3 tools only when OpenCode has them, after $name",
-    ({ turns, ready, entries }) =>
+    ({ turns, ready, kept = ready, entries }) =>
       Effect.gen(function* () {
         yield* useThreadMcp;
         const instructions: Array<string> = [];
         const { runtime, thread } = yield* resumed(
-          [...entries, ...quickTurn, ...(ready ? mcpRemoved : [])],
+          [...entries, ...quickTurn, ...(kept ? mcpRemoved : [])],
           {
             version: "2.2.6",
             onInstructions: (input) =>
