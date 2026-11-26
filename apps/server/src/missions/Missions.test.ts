@@ -2378,6 +2378,27 @@ const memberScope = {
   },
 };
 
+it.effect("a thread in no mission starts one, and its lead tools work at once", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      leadRuns(world);
+      assert.include(yield* leadTool(world, "t3_mission_roster", {}), Missions.LEADS_NO_MISSION);
+      const { missionId } = JSON.parse(yield* leadTool(world, "t3_mission_start", {})) as {
+        readonly missionId: string;
+      };
+      assert.match(missionId, /^[0-9a-f]{12}$/);
+      const roster = JSON.parse(yield* leadTool(world, "t3_mission_roster", {}));
+      assert.equal(roster.missionId, missionId);
+      const added = yield* leadTool(world, "t3_mission_add", {
+        threadRef: { threadId: localMember.threadId },
+      });
+      assert.equal(JSON.parse(added).state, "joined");
+    }),
+  );
+});
+
 it.effect("a member with no messages cannot start a mission, and stays in its old one", () => {
   const world = makeWorld([lead, localMember]);
   return withMissions(
