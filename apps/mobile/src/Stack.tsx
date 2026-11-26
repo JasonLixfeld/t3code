@@ -40,6 +40,7 @@ import { PullRequestEditScreen } from "./features/pull-requests/PullRequestEditS
 import { PullRequestFilterSearchScreen } from "./features/pull-requests/PullRequestFilterSearchScreen";
 import { IssueAssigneesScreen } from "./features/issues/IssueAssigneesScreen";
 import { IssueEditScreen } from "./features/issues/IssueEditScreen";
+import { MissionPromptSheet } from "./features/threads/MissionPromptSheet";
 import { IssueLabelsScreen } from "./features/issues/IssueLabelsScreen";
 import { IssueFilterSearchScreen } from "./features/issues/IssueFilterSearchScreen";
 import { IssueRouteScreen } from "./features/issues/IssueRouteScreen";
@@ -640,6 +641,10 @@ const RootStackConfig = createWorkspaceStackNavigator({
     }),
     IssueEdit: createNativeStackScreen({
       screen: IssueEditScreen,
+      options: sheetRoute({ detent: 0.75, androidFit: true }),
+    }),
+    MissionPrompt: createNativeStackScreen({
+      screen: MissionPromptSheet,
       options: sheetRoute({ detent: 0.75, androidFit: true }),
     }),
     IssueLabels: createNativeStackScreen({

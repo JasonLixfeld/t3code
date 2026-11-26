@@ -131,7 +131,13 @@ describe("mission menus", () => {
 
   it("lets a gone lead's row pick a new lead from the machine's threads, newest first", () => {
     const rows = missingMemberMenuItems(place(lead), ctx());
-    expect(rows.map((row) => row.id)).not.toContain("mission-prompt:env-desk:m1");
+    const prompt = (rows: ReturnType<typeof missingMemberMenuItems>) =>
+      rows.find((row) => row.id === "mission-prompt:env-desk:m1");
+    expect(prompt(rows)?.disabled).toBe(false);
+    expect(prompt(missingMemberMenuItems(place(lead), ctx(false)))).toMatchObject({
+      disabled: true,
+      detail: "Not allowed here",
+    });
     expect(rows.find((row) => row.id === "mission-choose-lead")?.children).toEqual([
       { id: "mission-lead:newer", label: "newer" },
       { id: "mission-lead:older", label: "older" },

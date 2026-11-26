@@ -149,22 +149,17 @@ function memberStateItems(
   }
 }
 
-const withoutPromptEditor = (items: ReadonlyArray<ContextMenuItem>) =>
-  items.filter((item) => !item.id.startsWith("mission-prompt:"));
-
 export function threadMissionMenuItems(
   thread: MissionCandidate,
   place: ThreadListV2MissionPlace | null,
   ctx: MissionMenuContext,
 ): ContextMenuItem[] {
-  const items = withoutPromptEditor(
-    buildMissionMenuItems(
-      [thread],
-      ctx.hosts,
-      ctx.machineLabel,
-      (environmentId) => ctx.can("change", environmentId),
-      ctx.resolve,
-    ),
+  const items = buildMissionMenuItems(
+    [thread],
+    ctx.hosts,
+    ctx.machineLabel,
+    (environmentId) => ctx.can("change", environmentId),
+    ctx.resolve,
   );
   const state =
     place === null ||
@@ -175,7 +170,7 @@ export function threadMissionMenuItems(
       ? []
       : memberStateItems(place, ctx);
   return state.length === 0
-    ? items
+    ? [...items]
     : [...items, { ...state[0]!, separatorBefore: true }, ...state.slice(1)];
 }
 
@@ -193,16 +188,14 @@ export function missingMemberMenuItems(
     { host: place.host, missionId: place.missionId },
     ctx.hosts,
   ).slice(0, LEAD_CHOICES);
-  return withoutPromptEditor(
-    missionRowItems(
-      {
-        host: place.host,
-        mission,
-        leadGone: ctx.can("lead", place.host),
-        canChange: ctx.can("change", place.host),
-      },
-      ctx.resolve,
-    ),
+  return missionRowItems(
+    {
+      host: place.host,
+      mission,
+      leadGone: ctx.can("lead", place.host),
+      canChange: ctx.can("change", place.host),
+    },
+    ctx.resolve,
   ).map((item) =>
     item.id !== "mission-choose-lead"
       ? item

@@ -21,6 +21,7 @@ import {
   threadHasMessages,
 } from "@t3tools/contracts";
 import { msg, useGT, useMessages } from "gt-react-native";
+import { useNavigation } from "@react-navigation/native";
 import { Platform } from "react-native";
 import { useMemo } from "react";
 
@@ -188,6 +189,7 @@ export function useMissionActions() {
   const resolve = useMessages();
   const liveKey = useMissionsLiveKey();
   const selectDetail = useSelectWorkspaceDetail();
+  const navigation = useNavigation();
   const create = useAtomCommand(serverEnvironment.createMission, "mission create");
   const add = useAtomCommand(serverEnvironment.addMissionMember, "mission add member");
   const leave = useAtomCommand(serverEnvironment.leaveMission, "mission leave");
@@ -404,6 +406,12 @@ export function useMissionActions() {
         return;
       }
       case "prompt":
+        if (mission !== undefined) {
+          navigation.navigate("MissionPrompt", {
+            environmentId: target.environmentId,
+            missionId: target.missionId,
+          });
+        }
         return;
     }
   };
