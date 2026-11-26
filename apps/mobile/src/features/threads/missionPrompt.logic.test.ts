@@ -6,7 +6,7 @@ const form = (input: Partial<Parameters<typeof missionPromptForm>[0]>) =>
   missionPromptForm({
     promptsOmitted: false,
     listed: "Ship it",
-    read: null,
+    fetchedPrompt: null,
     draft: null,
     canSave: true,
     ...input,
@@ -27,7 +27,7 @@ describe("missionPromptForm", () => {
       editable: false,
       changed: false,
     });
-    expect(form({ promptsOmitted: true, read: "Read prompt" })).toMatchObject({
+    expect(form({ promptsOmitted: true, fetchedPrompt: "Read prompt" })).toMatchObject({
       value: "Read prompt",
       editable: true,
     });

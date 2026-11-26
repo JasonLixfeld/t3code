@@ -20,7 +20,6 @@ export function useMissionPreferences() {
   return resolveMissionPreferences(AsyncResult.isSuccess(preferences) ? preferences.value : null);
 }
 
-/** The key of `missionsLiveAcross` for this client: stable while the mission lists tick. */
 export function useMissionsLiveKey(): string {
   const { enabled } = useMissionPreferences();
   const connected = useAtomValue(connectedEnvironmentIdsAtom);
@@ -37,12 +36,10 @@ export function useMissionsLiveKey(): string {
   });
 }
 
-/** The connected servers' Missions lists. Empty while Missions are off or no server serves them. */
 export function useMissionHosts(): ReadonlyArray<MissionHost> {
   return useAtomValue(serverEnvironment.missionsLiveAcross(useMissionsLiveKey()));
 }
 
-/** Whether Settings offers Missions: some connected server says it serves them. */
 export function useMissionsAdvertised(): boolean {
   return missionsAdvertised(useAtomValue(connectedEnvironmentIdsAtom), useServerConfigs());
 }
@@ -59,7 +56,6 @@ const missionCreatePermissionsAtom = Atom.family((key: string) =>
   ).pipe(Atom.withLabel(`mobile-mission-create-permissions:${key}`)),
 );
 
-/** The mission hosts where this client may start a mission. */
 export function useMissionStartMachines(
   hosts: ReadonlyArray<MissionHost>,
 ): ReadonlySet<EnvironmentId> {
@@ -71,7 +67,6 @@ export function useMissionStartMachines(
   );
 }
 
-/** The machines a draft route's projects may come from while its mission mark lasts. */
 export function useMissionDraftMachines(
   requestId: string | null,
 ): ReadonlySet<EnvironmentId> | null {

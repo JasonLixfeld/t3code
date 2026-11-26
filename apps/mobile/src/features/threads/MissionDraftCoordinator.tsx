@@ -19,8 +19,7 @@ import { environmentShell } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { reportLeadOutcome, reportMissionFailure } from "./useMissionActions";
 
-// The shell lists a thread deleted on any device until its next full snapshot.
-const threadRemovedAtom = Atom.family((key: string) =>
+const threadRemovedSinceSnapshotAtom = Atom.family((key: string) =>
   Atom.make((get) => {
     const ref = parseScopedThreadKey(key);
     return (
@@ -41,7 +40,7 @@ function MissionDraftWatch(props: {
   const createMission = useAtomCommand(serverEnvironment.createMission, "mission create");
   const setLead = useAtomCommand(serverEnvironment.setMissionLead, "mission set lead");
   const addMember = useAtomCommand(serverEnvironment.addMissionMember, "mission add member");
-  const removed = useAtomValue(threadRemovedAtom(scopedThreadKey(thread)));
+  const removed = useAtomValue(threadRemovedSinceSnapshotAtom(scopedThreadKey(thread)));
   const sent = shell !== null && threadHasMessages(shell);
   const { intent } = draft;
   const done =

@@ -21,7 +21,6 @@ import {
 
 const HERO_TEXT = "text-2xl font-t3-medium tracking-tight text-foreground";
 
-/** The draft route's mission choice, kept under its request until the first send. */
 export function useDraftMission(input: {
   readonly requestId: string;
   readonly thread: ScopedThreadRef | null;
@@ -81,7 +80,6 @@ export function DraftMissionMenu(props: {
   );
 }
 
-/** "Add to a mission" beside the sentence, while the draft is in none. */
 export function DraftMissionControl(props: {
   readonly choice: DraftMissionChoice;
   readonly disabled: boolean;
@@ -113,7 +111,6 @@ function ChoiceWord(props: { readonly label: string; readonly glue: string }) {
   );
 }
 
-/** The hero sentence with its mission in it: each choice is a word the user can tap. */
 export function DraftHeroSentence(props: {
   readonly tokens: ReadonlyArray<DraftHeroToken>;
   readonly projectLabel: string;

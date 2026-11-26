@@ -987,6 +987,56 @@ describe("buildThreadListV2ListItems", () => {
     ).toEqual(["lead", "member", "plain"]);
   });
 
+  it("filters a mission by its members' machines, not by the machine that hosts it", () => {
+    const laptop = EnvironmentId.make("environment-laptop");
+    const hosts: ReadonlyArray<MissionHost> = [
+      {
+        environmentId: laptop,
+        snapshot: {
+          links: [],
+          claims: [],
+          missions: [
+            {
+              missionId: "m1",
+              name: "Ship v2",
+              createdAt: NOW,
+              members: [
+                {
+                  ref: { environmentId: laptop, threadId: ThreadId.make("lead") },
+                  role: "lead",
+                  state: "active",
+                },
+                {
+                  ref: { environmentId, threadId: ThreadId.make("member") },
+                  role: "member",
+                  state: "active",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ];
+    const threads = [
+      makeThread({ environmentId: laptop, id: ThreadId.make("lead"), title: "lead" }),
+      makeThread({ id: ThreadId.make("member"), title: "member" }),
+    ];
+    const shown = (filter: EnvironmentId) =>
+      buildThreadListV2Items({
+        threads,
+        environmentId: filter,
+        searchQuery: "",
+        now: NOW,
+        missionHosts: hosts,
+      }).missions.map((group) => [
+        group.lead.place.member.ref.threadId,
+        ...group.members.map((entry) => entry.place.member.ref.threadId),
+      ]);
+
+    expect(shown(environmentId)).toEqual([["lead", "member"]]);
+    expect(shown(laptop)).toEqual([["lead"]]);
+  });
+
   it("places queued tasks above active rows and a collapsed snoozed shelf", () => {
     const snoozedLayout = buildThreadListV2Items({
       threads: [

@@ -9,12 +9,10 @@ import { appAtomRegistry } from "./atom-registry";
 export interface MissionDraft {
   readonly intent: MissionDraftIntent;
   readonly missionId: string;
-  /** Null while a new-thread draft has not sent yet. */
   readonly thread: ScopedThreadRef | null;
   readonly step: "waiting" | "trying" | "failed";
 }
 
-/** A draft route's request, before its first send, or the thread it became. */
 export type MissionDraftTarget = ScopedThreadRef | { readonly requestId: string };
 
 export const missionDraftsAtom = Atom.make<ReadonlyMap<string, MissionDraft>>(new Map()).pipe(
@@ -32,7 +30,6 @@ function update(change: (drafts: Map<string, MissionDraft>) => void) {
   appAtomRegistry.set(missionDraftsAtom, next);
 }
 
-/** `newMissionId` comes from the caller, so this store stays out of expo-crypto's import graph. */
 export function markMissionDraft(
   target: MissionDraftTarget,
   intent: MissionDraftIntent,
@@ -55,7 +52,6 @@ export function adoptMissionDraft(requestId: string, thread: ScopedThreadRef) {
 export const missionDraftOf = (target: MissionDraftTarget) =>
   appAtomRegistry.get(missionDraftsAtom).get(keyOf(target));
 
-/** The mark of a draft route: under its request before the first send, its thread after. */
 export function useMissionDraft(
   requestId: string | null,
   thread: ScopedThreadRef | null,

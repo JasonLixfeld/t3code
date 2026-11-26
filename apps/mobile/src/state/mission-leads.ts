@@ -52,7 +52,6 @@ export function useMissionLeadShells(
   );
   const leads = activeLeadKeys(hosts);
   const missing = leads.filter((key) => !listed.has(key));
-  // A lead stays held once loaded, or it would leave the list again.
   const [mounted, setMounted] = useState<ReadonlyArray<string>>([]);
   const wanted = leads.filter((key) => !listed.has(key) || mounted.includes(key));
   const wantedKey = JSON.stringify(wanted);

@@ -41,7 +41,7 @@ export function MissionPromptSheet({ route }: StaticScreenProps<MissionPromptPar
   const form = missionPromptForm({
     promptsOmitted,
     listed: mission?.prompt,
-    read: read.data?.prompt ?? null,
+    fetchedPrompt: read.data?.prompt ?? null,
     draft,
     canSave,
   });

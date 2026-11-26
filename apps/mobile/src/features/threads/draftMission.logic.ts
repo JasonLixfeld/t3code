@@ -15,15 +15,12 @@ export interface DraftMissionOption {
   readonly id: string;
   readonly label: string;
   readonly disabled: boolean;
-  /** Null sends the draft as a plain thread. */
   readonly intent: MissionDraftIntent | null;
 }
 
 export interface DraftMissionChoice {
   readonly kind: DraftMissionKind;
-  /** The mission's word in the sentence. */
   readonly word: string;
-  /** The control's name on its own, outside the sentence. */
   readonly label: string;
   readonly selected: string;
   /** A lead or a new mission cannot join another, so its only choice is to drop the mark. */
@@ -34,7 +31,6 @@ export interface DraftMissionChoice {
 const NO_MISSION = "none";
 const NEW_MISSION = "new";
 
-/** The web's draft mission menu: null hides every mission word. */
 export function draftMissionChoice(
   input: {
     readonly enabled: boolean;
@@ -121,12 +117,10 @@ type DraftHeroWord =
   | { readonly kind: "text"; readonly text: string }
   | { readonly kind: "project" | "mission"; readonly glue: string };
 
-/** A word or choice in the sentence, keyed by its offset: the same word can appear twice. */
 export type DraftHeroToken = DraftHeroWord & { readonly key: string };
 
 const words = (text: string) => text.match(/\s*\S+\s*/g) ?? [];
 
-/** Wraps as whole words, and keeps punctuation right after a choice on the choice's line. */
 function choiceThenWords(kind: "project" | "mission", text: string): DraftHeroWord[] {
   const [first = "", ...rest] = words(text);
   const glued = first.length > 0 && !/^\s/.test(first);
@@ -138,7 +132,6 @@ function choiceThenWords(kind: "project" | "mission", text: string): DraftHeroWo
   ];
 }
 
-/** The hero sentence with a mission in it, as words and the choices between them. */
 export function draftHeroTokens(
   input: { readonly scratch: boolean; readonly mission: Exclude<DraftMissionKind, "none"> },
   resolve: MessageResolver,

@@ -129,7 +129,6 @@ export function useMissionMenuContext(
   );
 }
 
-/** Puts each row's mission menu on its list item, so a row re-renders only when its menu changes. */
 export function useMissionListMenus(
   items: ReadonlyArray<ThreadListV2ListItem>,
   threads: ReadonlyArray<EnvironmentThreadShell>,
@@ -139,7 +138,7 @@ export function useMissionListMenus(
     if (ctx === null) return items;
     const menu = (rows: ReturnType<typeof threadMissionMenuItems>) => {
       const actions = missionMenuActions(rows, Platform.OS === "ios");
-      return actions.length === 0 ? null : { key: JSON.stringify(actions), actions };
+      return actions.length === 0 ? null : { actionsKey: JSON.stringify(actions), actions };
     };
     return items.map((item) =>
       item.type === "v2-thread"
@@ -154,7 +153,6 @@ export function useMissionListMenus(
   }, [items, ctx]);
 }
 
-/** Whether "New mission…" has somewhere to start: the web's command palette rule. */
 export function useCanStartMission(): boolean {
   const startMachines = useMissionStartMachines(useMissionHosts());
   const configs = useServerConfigs();
@@ -165,7 +163,6 @@ export function useCanStartMission(): boolean {
   );
 }
 
-/** Opens a draft without a project; its first send starts a new mission that it leads. */
 export function startNewMission(selectDetail: ReturnType<typeof useSelectWorkspaceDetail>) {
   const requestId = uuidv4();
   markMissionDraft({ requestId }, { kind: "new" }, newMissionId);
@@ -183,7 +180,6 @@ const shellOf = (ref: ScopedThreadRef) =>
     .find((shell) => shell.environmentId === ref.environmentId && shell.id === ref.threadId) ??
   null;
 
-/** Runs a mission menu row. Reads the mission lists when it runs, so it keeps its identity. */
 export function useMissionActions() {
   const gt = useGT();
   const resolve = useMessages();
@@ -214,7 +210,6 @@ export function useMissionActions() {
         )[0];
     const requestId = uuidv4();
     markMissionDraft({ requestId }, intent, newMissionId);
-    // The project is only a start: the sentence and the picker offer the mission's machines.
     selectDetail({
       name: "Thread",
       params: {

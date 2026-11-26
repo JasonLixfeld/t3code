@@ -182,7 +182,6 @@ export function NewTaskDraftScreen(props: {
   const goBack = useWorkspaceBackNavigation();
   const currentRoute = useRoute();
   const flowKey = newTaskFlowKey(currentRoute);
-  // A draft opened without a request still keeps its mission mark for as long as its route lives.
   const missionRequestId = props.requestId ?? currentRoute.key;
   const { getShare, isLoading: isIncomingShareInboxLoading } = useIncomingShare();
   const { projectScopes, selectedProject, selectedProjectKey, setProject } = flow;

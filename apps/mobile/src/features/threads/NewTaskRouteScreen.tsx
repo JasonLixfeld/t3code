@@ -54,7 +54,6 @@ type NewTaskRouteParams = {
   readonly incomingShareId?: string | string[];
   /** An existing draft whose project is gone; the chosen project takes it over. */
   readonly draftId?: string | string[];
-  /** The draft route's request, whose mission mark limits the machines. */
   readonly requestId?: string;
   readonly prompt?: string | string[];
   readonly repo?: string | string[];

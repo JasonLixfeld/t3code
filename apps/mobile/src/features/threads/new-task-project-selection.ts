@@ -106,7 +106,6 @@ export function resolveNewTaskScratchOption(input: {
   return environment ? { environmentId: environment.environmentId, ready: ready.length > 0 } : null;
 }
 
-/** Each scope's copies on the machines a mission draft allows; null allows every machine. */
 export function projectScopesOnMachines(
   scopes: ReadonlyArray<HomeProjectScope>,
   machines: ReadonlySet<EnvironmentId> | null,
@@ -127,7 +126,6 @@ export function projectScopesOnMachines(
   });
 }
 
-/** The "No project" home: the usual one, or one on the machines a mission draft allows. */
 export function resolveMissionScratchOption(
   input: Parameters<typeof resolveNewTaskScratchOption>[0] & {
     readonly machines: ReadonlySet<EnvironmentId> | null;

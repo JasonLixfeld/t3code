@@ -479,9 +479,8 @@ export interface ThreadListV2ThreadListItem {
   readonly missionMenu: ThreadListV2MissionMenu | null;
 }
 
-/** A row's mission menu; `key` stands for `actions` in item equality. */
 export interface ThreadListV2MissionMenu {
-  readonly key: string;
+  readonly actionsKey: string;
   readonly actions: ReadonlyArray<MenuAction>;
 }
 
@@ -593,7 +592,7 @@ export function threadListV2ListItemsAreEqual(
         previous.canMoveUp === item.canMoveUp &&
         previous.canMoveDown === item.canMoveDown &&
         missionPlacesAreEqual(previous.mission, item.mission) &&
-        previous.missionMenu?.key === item.missionMenu?.key
+        previous.missionMenu?.actionsKey === item.missionMenu?.actionsKey
       );
     case "v2-section":
       return previous.type === "v2-section" && previous.section === item.section;
@@ -602,7 +601,7 @@ export function threadListV2ListItemsAreEqual(
         previous.type === "v2-mission-member" &&
         previous.key === item.key &&
         missionPlacesAreEqual(previous.mission, item.mission) &&
-        previous.missionMenu?.key === item.missionMenu?.key
+        previous.missionMenu?.actionsKey === item.missionMenu?.actionsKey
       );
     case "v2-pending":
       return (
@@ -1119,7 +1118,6 @@ function groupThreadListV2Missions(
   projectKeys: ReadonlySet<string> | null,
 ) {
   const now = input.now;
-  // An environment filter scopes missions like a project filter: to that environment's projects.
   const scope =
     projectKeys ??
     (input.environmentId === null

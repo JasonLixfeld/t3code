@@ -9,7 +9,6 @@ import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
 
 import type { Preferences } from "../persistence/mobile-preferences";
 
-/** The web's sidebar Missions settings, which default to on. */
 export function resolveMissionPreferences(preferences: Preferences | null) {
   return {
     loaded: preferences !== null,
@@ -27,7 +26,6 @@ export const missionsAdvertised = (
     (environmentId) => configs.get(environmentId)?.environment.capabilities.missions === true,
   );
 
-/** The machines a mission draft may start on; null leaves every machine open. */
 export function missionDraftProjectMachines(
   intent: MissionDraftIntent | undefined,
   hosts: ReadonlyArray<MissionHost>,
@@ -37,7 +35,6 @@ export function missionDraftProjectMachines(
   return intent.kind === "new" ? startMachines : missionDraftMachines(intent, hosts);
 }
 
-/** The web's "New mission…" rule: a machine may start one and has a project or a "No project" home. */
 export function canStartMission(
   startMachines: ReadonlySet<EnvironmentId>,
   projects: ReadonlyArray<
