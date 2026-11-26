@@ -185,7 +185,8 @@ export function useMissionMenu() {
     items: (threads: ReadonlyArray<MissionCandidate>) =>
       enabled ? buildMissionMenuItems(threads, hosts, machineLabel, canChangeOn, resolve) : [],
     /** The menu of a Mission's own row where no thread row stands in for its lead. */
-    /** How this member leaves the Mission `heldBy` lists it under, or null when it cannot. */
+    rowItems: (host: EnvironmentId, mission: Mission, leadGone: boolean) =>
+      missionRowItems({ host, mission, leadGone, canChange: canChangeOn(host) }, resolve),
     leaveId: (ref: ScopedThreadRef, heldBy: Parameters<typeof missionLeaveId>[1]) =>
       missionLeaveId(
         { environmentId: ref.environmentId, id: ref.threadId },
@@ -193,8 +194,6 @@ export function useMissionMenu() {
         hosts,
         canChangeOn,
       ),
-    rowItems: (host: EnvironmentId, mission: Mission, leadGone: boolean) =>
-      missionRowItems({ host, mission, leadGone, canChange: canChangeOn(host) }, resolve),
     /** The threads that got where they were sent; the rest stay selected. */
     run: async (
       id: MissionMenuId,

@@ -96,10 +96,6 @@ export const claimHere = (thread: MissionThread, hosts: ReadonlyArray<MissionHos
     .find((host) => host.environmentId === thread.environmentId)
     ?.snapshot.claims.find((claim) => claim.threadId === thread.id);
 
-/**
- * How a member leaves its Mission: on its own machine, at once, when that machine may be changed,
- * else through its lead's machine. Null when neither may be changed.
- */
 export function missionLeaveId(
   thread: MissionThread,
   heldBy:

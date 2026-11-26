@@ -904,7 +904,6 @@ describe("CommandPalette mission thread actions", () => {
     const claims = [{ threadId: thread.id, missionId: "ba9876543210", name: "Ship v2" }];
     listMissions([]);
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
-    // With the claim, its own machine leaves at once; without it, the lead's machine asks.
     for (const [listed, id] of [
       [{ ...host, snapshot: { ...host.snapshot, claims } }, "mission-leave"],
       [host, "mission-release:local:ba9876543210"],
