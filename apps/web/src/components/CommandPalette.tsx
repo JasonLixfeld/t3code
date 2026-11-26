@@ -481,14 +481,15 @@ function OpenCommandPaletteDialog(props: {
       ? { query: "", views: [{ view, parentQuery: "" }] }
       : createCommandPaletteSearchState(initialSearch.query);
   });
-  const { query, views: viewStack } = searchState;
-  const setQuery = (query: string) => dispatchSearch({ type: "query", query });
-  const deferredQuery = useDeferredValue(query);
-  const isActionsOnly = deferredQuery.startsWith(">");
+  const { query: storedQuery, views: storedViews } = searchState;
+  const setQuery = (query: string) => {
+    dropGoneMissionAdd();
+    dispatchSearch({ type: "query", query });
+  };
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const resultListRef = useRef<LegendListRef | null>(null);
   // A pushed view drops the typed highlight until the user moves it again.
-  const highlightClearedRef = useRef(viewStack.length > 0);
+  const highlightClearedRef = useRef(storedViews.length > 0);
   // Entering or leaving browse mode remounts the input; carry the caret across it.
   const remountSelectionRef = useRef<PendingInputSelection | null>(null);
   function clearTypedHighlight(): void {
@@ -527,6 +528,36 @@ function OpenCommandPaletteDialog(props: {
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
+  const { projectByKey } = useProjectLookups();
+  const currentProjectEnvironmentId =
+    activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
+  const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
+  const currentProject = resolveCommandPaletteProject(
+    projectByKey,
+    currentProjectEnvironmentId,
+    currentProjectId,
+  );
+  const currentProjectCwd = currentProject?.workspaceRoot ?? null;
+  const currentThreadRef = activeThread
+    ? scopeThreadRef(activeThread.environmentId, activeThread.id)
+    : null;
+  const currentThreadActionItems = useCommandPaletteThreadActions({
+    threadRef: currentThreadRef,
+    projectCwd: currentProjectCwd,
+  });
+  // Add to mission shows only while its thread still offers it; the view under it shows after.
+  const storedTop = storedViews.at(-1);
+  const storedGroup = storedTop?.view.groups[0];
+  const missionAddGone =
+    storedGroup?.value.startsWith(MISSION_ADD_GROUP_PREFIX) === true &&
+    liveMissionAddGroups(storedGroup, currentThreadRef, currentThreadActionItems) === null;
+  const viewStack = missionAddGone ? storedViews.slice(0, -1) : storedViews;
+  const query = missionAddGone ? storedTop!.parentQuery : storedQuery;
+  const dropGoneMissionAdd = () => {
+    if (missionAddGone) dispatchSearch({ type: "back" });
+  };
+  const deferredQuery = useDeferredValue(query);
+  const isActionsOnly = deferredQuery.startsWith(">");
   const paletteRouteTarget = useThreadRouteTarget();
   const projects = useProjects();
   const referenceThreadRef =
@@ -756,8 +787,6 @@ function OpenCommandPaletteDialog(props: {
     return getAddProjectInitialQuery(environment?.serverConfig?.settings.addProjectBaseDirectory);
   };
 
-  const { projectByKey } = useProjectLookups();
-
   const activeThreadKey = activeThread
     ? scopedThreadKey(scopeThreadRef(activeThread.environmentId, activeThread.id))
     : null;
@@ -772,9 +801,6 @@ function OpenCommandPaletteDialog(props: {
   const supportsThreadFind =
     environments.find((environment) => environment.environmentId === activeThread?.environmentId)
       ?.serverConfig?.threadFind === true;
-  const currentProjectEnvironmentId =
-    activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
-  const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
   const scratchTargetEnvironmentId = scratchEnvironmentId(currentProjectEnvironmentId);
   // A new lead must be on its Mission's machine, so "No project" opens there or not at all.
   const noProjectEnvironmentId = missionScratchHome(
@@ -806,19 +832,6 @@ function OpenCommandPaletteDialog(props: {
   const canTriage =
     useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
     supportsTriage(triageEnvironmentId);
-  const currentProject = resolveCommandPaletteProject(
-    projectByKey,
-    currentProjectEnvironmentId,
-    currentProjectId,
-  );
-  const currentProjectCwd = currentProject?.workspaceRoot ?? null;
-  const currentThreadRef = activeThread
-    ? scopeThreadRef(activeThread.environmentId, activeThread.id)
-    : null;
-  const currentThreadActionItems = useCommandPaletteThreadActions({
-    threadRef: currentThreadRef,
-    projectCwd: currentProjectCwd,
-  });
   const currentProjectCwdForBrowse =
     browseEnvironmentId && currentProjectEnvironmentId === browseEnvironmentId
       ? currentProjectCwd
@@ -1050,6 +1063,7 @@ function OpenCommandPaletteDialog(props: {
 
   const pushPaletteView = useStableCallback((view: CommandPaletteView): void => {
     browseNavigation.invalidate();
+    dropGoneMissionAdd();
     dispatchSearch({ type: "push", view });
     highlightClearedRef.current = true;
     setHighlightedItemValue(null);
@@ -1064,6 +1078,7 @@ function OpenCommandPaletteDialog(props: {
     } else if (newProjectFlow?.sourcesEnvironmentId) {
       setAddProjectEnvironmentId(newProjectFlow.sourcesEnvironmentId);
     }
+    dropGoneMissionAdd();
     dispatchSearch({ type: "back" });
     setHighlightedItemValue(null);
   }
@@ -1981,12 +1996,6 @@ function OpenCommandPaletteDialog(props: {
     inMissionAddView && openGroup
       ? liveMissionAddGroups(openGroup, currentThreadRef, currentThreadActionItems)
       : undefined;
-  const missionAddGone = liveMissionAdd === null;
-  const popViewStable = useStableCallback(popView);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- leaves Add to mission once its thread no longer offers it, so stale missions are never shown
-  useEffect(() => {
-    if (missionAddGone) popViewStable();
-  }, [missionAddGone, popViewStable]);
 
   const activeGroups =
     addProjectEnvironmentId !== null &&
