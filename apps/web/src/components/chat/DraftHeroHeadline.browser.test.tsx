@@ -369,7 +369,7 @@ it("a new thread's Mission choice marks its draft to join that mission, or none"
   await expect.element(page.getByRole("combobox", { name: "Project: render" })).toBeVisible();
   await expect
     .element(page.getByRole("heading", { level: 1 }))
-    .toHaveTextContent("What should we build in render?");
+    .toMatchTextContent(/^What should we build in render\?/);
   // The trigger moves between the footer and the heading, and keyboard focus moves with it.
   (trigger.element() as HTMLElement).focus();
   await userEvent.keyboard("{Enter}");
@@ -676,15 +676,30 @@ it("keeps a chosen mission's control while the draft's project title loads", asy
     thread: { environmentId: ENVIRONMENT_ID, threadId },
   });
   onTestFinished(() => clearMissionDraft(draftId));
-  await using _screen = await render(
-    <DraftHeroHeadline draftId={draftId} activeProjectRef={projectRef} activeProjectTitle={null} />,
+  const headline = (title: string | null) => (
+    <DraftHeroHeadline draftId={draftId} activeProjectRef={projectRef} activeProjectTitle={title} />
   );
+  await using screen = await render(headline(null));
   await expect
     .element(page.getByRole("heading", { level: 1 }))
-    .toHaveTextContent("Choose a project to start");
+    .toMatchTextContent(/^Choose a project to start/);
+  const trigger = page.getByRole("button", { name: "Mission: Ship v2" });
+  await expect.element(trigger).toHaveTextContent("Mission: Ship v2");
+
+  // A menu opened before the title loads stays open, and its pick still lands.
+  (trigger.element() as HTMLElement).focus();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByRole("menuitemradio", { name: "None" })).toBeVisible();
+  await screen.rerender(headline("render"));
   await expect
-    .element(page.getByRole("button", { name: "Mission: Ship v2" }))
-    .toHaveTextContent("Mission: Ship v2");
+    .element(page.getByRole("heading", { level: 1 }))
+    .toHaveTextContent("What should we build in render, in mission Ship v2?");
+  await expect.element(page.getByRole("menuitemradio", { name: "None" })).toBeVisible();
+  await userEvent.keyboard("{Home}");
+  await expect.element(page.getByRole("menuitemradio", { name: "None" })).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
+  expect(missionDraftOf(draftId)).toBeUndefined();
+  await expect.element(page.getByRole("button", { name: "Add to a mission" })).toHaveFocus();
 });
 
 it("a Project pick retargets the draft as the headline link did", async () => {

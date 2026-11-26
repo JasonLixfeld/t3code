@@ -13058,96 +13058,16 @@
   "c5b456a231ea6b6d": "{status, select, inProgress {Fazendo uma thread sair da missão} completed {Uma thread saiu da missão} failed {Falha ao fazer uma thread sair da missão} declined {Recusou fazer uma thread sair da missão} stopped {Parou de fazer uma thread sair da missão} other {Fazendo uma thread sair da missão}}",
   "7c80cb764b3df506": "{status, select, inProgress {Marcando a missão de uma thread} completed {Marcou a missão de uma thread} failed {Falha ao marcar a missão de uma thread} declined {Recusou marcar a missão de uma thread} stopped {Parou de marcar a missão de uma thread} other {Marcando a missão de uma thread}}",
   "99f9a58a916a5c12": "Esta thread passou para outra missão.",
-  "2a6385e6e21dee74": [
-    "No que vamos trabalhar na missão ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "?"
-  ],
-  "75d3ca92759d7b2e": [
-    "No que vamos trabalhar em ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "?"
-  ],
-  "b8e0e89c83a639fa": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " para começar"
-  ],
-  "67ecb04d9ec1a324": [
-    "O que vamos construir em ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", na missão ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    },
-    "?"
-  ],
-  "588cd35eaad37a50": [
-    "O que vamos construir em ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", em ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    },
-    "?"
-  ],
-  "58a09ef6a22c1e6e": [
-    "O que vamos construir em ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "?"
-  ],
   "30b3991c046d1ab2": "uma nova missão",
   "16e888c38a7cda4e": "Adicionar a uma missão",
-  "cb010196f71a98c4": [
-    "No que vamos trabalhar como nova thread principal de ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "?"
-  ],
-  "214eefadc3233ef8": [
-    "O que vamos construir em ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", como nova thread principal de ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    },
-    "?"
-  ],
-  "93fb497fbfe34f9e": "Nova thread principal para {mission}"
+  "93fb497fbfe34f9e": "Nova thread principal para {mission}",
+  "0790c872a3739ba4": "No que vamos trabalhar na missão {mission}?",
+  "d3750723e9ce52fc": "No que vamos trabalhar em {mission}?",
+  "9bf6711411736c18": "No que vamos trabalhar como nova thread principal de {mission}?",
+  "e0a647dc59e6b8a5": "No que vamos trabalhar?",
+  "b2cc04a85a486de2": "{project} para começar",
+  "17f2d583094514ef": "O que vamos construir em {project}, na missão {mission}?",
+  "3f5959354b360f90": "O que vamos construir em {project}, em {mission}?",
+  "ba05bd1545ef3881": "O que vamos construir em {project}, como nova thread principal de {mission}?",
+  "06b6bb85f2e34802": "O que vamos construir em {project}?"
 }

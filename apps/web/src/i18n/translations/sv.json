@@ -13065,96 +13065,16 @@
   "c5b456a231ea6b6d": "{status, select, inProgress {Låter en tråd lämna uppdraget} completed {En tråd lämnade uppdraget} failed {Kunde inte låta en tråd lämna uppdraget} declined {Avböjde att låta en tråd lämna uppdraget} stopped {Slutade låta en tråd lämna uppdraget} other {Låter en tråd lämna uppdraget}}",
   "7c80cb764b3df506": "{status, select, inProgress {Markerar en tråds uppdrag} completed {Markerade en tråds uppdrag} failed {Kunde inte markera en tråds uppdrag} declined {Avböjde att markera en tråds uppdrag} stopped {Slutade markera en tråds uppdrag} other {Markerar en tråds uppdrag}}",
   "99f9a58a916a5c12": "Den här tråden flyttade till ett annat uppdrag.",
-  "2a6385e6e21dee74": [
-    "Vad ska vi jobba med i uppdraget ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "?"
-  ],
-  "75d3ca92759d7b2e": [
-    "Vad ska vi jobba med i ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "?"
-  ],
-  "b8e0e89c83a639fa": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " för att starta"
-  ],
-  "67ecb04d9ec1a324": [
-    "Vad ska vi bygga i ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", i uppdraget ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    },
-    "?"
-  ],
-  "588cd35eaad37a50": [
-    "Vad ska vi bygga i ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", i ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    },
-    "?"
-  ],
-  "58a09ef6a22c1e6e": [
-    "Vad ska vi bygga i ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "?"
-  ],
   "30b3991c046d1ab2": "ett nytt uppdrag",
   "16e888c38a7cda4e": "Lägg till i ett uppdrag",
-  "cb010196f71a98c4": [
-    "Vad ska vi jobba med som ny ledande tråd för ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "?"
-  ],
-  "214eefadc3233ef8": [
-    "Vad ska vi bygga i ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", som ny ledande tråd för ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    },
-    "?"
-  ],
-  "93fb497fbfe34f9e": "Ny ledande tråd för {mission}"
+  "93fb497fbfe34f9e": "Ny ledande tråd för {mission}",
+  "0790c872a3739ba4": "Vad ska vi jobba med i uppdraget {mission}?",
+  "d3750723e9ce52fc": "Vad ska vi jobba med i {mission}?",
+  "9bf6711411736c18": "Vad ska vi jobba med som ny ledande tråd för {mission}?",
+  "e0a647dc59e6b8a5": "Vad ska vi jobba med?",
+  "b2cc04a85a486de2": "{project} för att starta",
+  "17f2d583094514ef": "Vad ska vi bygga i {project}, i uppdraget {mission}?",
+  "3f5959354b360f90": "Vad ska vi bygga i {project}, i {mission}?",
+  "ba05bd1545ef3881": "Vad ska vi bygga i {project}, som ny ledande tråd för {mission}?",
+  "06b6bb85f2e34802": "Vad ska vi bygga i {project}?"
 }

@@ -13053,96 +13053,16 @@
   "c5b456a231ea6b6d": "{status, select, inProgress {Haciendo que un hilo salga de la misión} completed {Un hilo salió de la misión} failed {No se pudo hacer que un hilo saliera de la misión} declined {Se rechazó que un hilo saliera de la misión} stopped {Se dejó de hacer que un hilo saliera de la misión} other {Haciendo que un hilo salga de la misión}}",
   "7c80cb764b3df506": "{status, select, inProgress {Marcando la misión de un hilo} completed {Se marcó la misión de un hilo} failed {No se pudo marcar la misión de un hilo} declined {Se rechazó marcar la misión de un hilo} stopped {Se dejó de marcar la misión de un hilo} other {Marcando la misión de un hilo}}",
   "99f9a58a916a5c12": "Este hilo pasó a otra misión.",
-  "2a6385e6e21dee74": [
-    "¿En qué trabajamos en la misión ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "?"
-  ],
-  "75d3ca92759d7b2e": [
-    "¿En qué trabajamos en ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "?"
-  ],
-  "b8e0e89c83a639fa": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " para empezar"
-  ],
-  "67ecb04d9ec1a324": [
-    "¿Qué construimos en ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", en la misión ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    },
-    "?"
-  ],
-  "588cd35eaad37a50": [
-    "¿Qué construimos en ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", en ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    },
-    "?"
-  ],
-  "58a09ef6a22c1e6e": [
-    "¿Qué construimos en ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "?"
-  ],
   "30b3991c046d1ab2": "una misión nueva",
   "16e888c38a7cda4e": "Añadir a una misión",
-  "cb010196f71a98c4": [
-    "¿En qué trabajamos como nuevo hilo principal de ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "?"
-  ],
-  "214eefadc3233ef8": [
-    "¿Qué construimos en ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", como nuevo hilo principal de ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    },
-    "?"
-  ],
-  "93fb497fbfe34f9e": "Nuevo hilo principal para {mission}"
+  "93fb497fbfe34f9e": "Nuevo hilo principal para {mission}",
+  "0790c872a3739ba4": "¿En qué trabajamos en la misión {mission}?",
+  "d3750723e9ce52fc": "¿En qué trabajamos en {mission}?",
+  "9bf6711411736c18": "¿En qué trabajamos como nuevo hilo principal de {mission}?",
+  "e0a647dc59e6b8a5": "¿En qué trabajamos?",
+  "b2cc04a85a486de2": "{project} para empezar",
+  "17f2d583094514ef": "¿Qué construimos en {project}, en la misión {mission}?",
+  "3f5959354b360f90": "¿Qué construimos en {project}, en {mission}?",
+  "ba05bd1545ef3881": "¿Qué construimos en {project}, como nuevo hilo principal de {mission}?",
+  "06b6bb85f2e34802": "¿Qué construimos en {project}?"
 }

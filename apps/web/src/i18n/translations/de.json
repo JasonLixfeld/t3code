@@ -13058,96 +13058,16 @@
   "c5b456a231ea6b6d": "{status, select, inProgress {Thread verlässt die Mission} completed {Thread hat die Mission verlassen} failed {Thread konnte die Mission nicht verlassen} declined {Verlassen der Mission abgelehnt} stopped {Verlassen der Mission gestoppt} other {Thread verlässt die Mission}}",
   "7c80cb764b3df506": "{status, select, inProgress {Mission eines Threads wird markiert} completed {Mission eines Threads markiert} failed {Mission eines Threads konnte nicht markiert werden} declined {Markieren der Mission eines Threads abgelehnt} stopped {Markieren der Mission eines Threads gestoppt} other {Mission eines Threads wird markiert}}",
   "99f9a58a916a5c12": "Dieser Thread ist in eine andere Mission gewechselt.",
-  "2a6385e6e21dee74": [
-    "Woran sollen wir in der Mission ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " arbeiten?"
-  ],
-  "75d3ca92759d7b2e": [
-    "Woran sollen wir in ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " arbeiten?"
-  ],
-  "b8e0e89c83a639fa": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " zum Starten"
-  ],
-  "67ecb04d9ec1a324": [
-    "Was sollen wir in ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " bauen, in der Mission ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    },
-    "?"
-  ],
-  "588cd35eaad37a50": [
-    "Was sollen wir in ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " bauen, in ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    },
-    "?"
-  ],
-  "58a09ef6a22c1e6e": [
-    "Was sollen wir in ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " bauen?"
-  ],
   "30b3991c046d1ab2": "einer neuen Mission",
   "16e888c38a7cda4e": "Zu einer Mission hinzufügen",
-  "cb010196f71a98c4": [
-    "Woran sollen wir als neue Leitung für ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " arbeiten?"
-  ],
-  "214eefadc3233ef8": [
-    "Was sollen wir in ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " bauen, als neue Leitung für ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    },
-    "?"
-  ],
-  "93fb497fbfe34f9e": "Neue Leitung für {mission}"
+  "93fb497fbfe34f9e": "Neue Leitung für {mission}",
+  "0790c872a3739ba4": "Woran sollen wir in der Mission {mission} arbeiten?",
+  "d3750723e9ce52fc": "Woran sollen wir in {mission} arbeiten?",
+  "9bf6711411736c18": "Woran sollen wir als neue Leitung für {mission} arbeiten?",
+  "e0a647dc59e6b8a5": "Woran sollen wir arbeiten?",
+  "b2cc04a85a486de2": "{project} zum Starten",
+  "17f2d583094514ef": "Was sollen wir in {project} bauen, in der Mission {mission}?",
+  "3f5959354b360f90": "Was sollen wir in {project} bauen, in {mission}?",
+  "ba05bd1545ef3881": "Was sollen wir in {project} bauen, als neue Leitung für {mission}?",
+  "06b6bb85f2e34802": "Was sollen wir in {project} bauen?"
 }

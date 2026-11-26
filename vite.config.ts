@@ -570,8 +570,6 @@ export default defineConfig({
                 "underline-offset-[0.2em]",
                 "rounded-[25%]",
                 "text-[length:80cqh]",
-                // Short windows hide a sentence's words around its inline controls.
-                "[@media(max-height:28rem)]:text-[length:0]",
                 "bg-[Highlight]",
                 "fill-[#26251E]",
                 "fill-[#EDECEC]",

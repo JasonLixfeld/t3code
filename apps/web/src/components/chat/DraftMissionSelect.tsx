@@ -121,9 +121,9 @@ export function useDraftMissionChoice(
           node.focus();
         }}
         tone={kind === "none" ? "muted" : "picker"}
+        {...(fixed ? {} : { touchTarget: "padded" as const })}
         className={`min-w-0 max-w-full align-baseline ${fixed ? "pointer-events-none" : "pointer-events-auto"}`}
         data-draft-mission-trigger=""
-        data-draft-word=""
         {...(kind === "none" ? {} : { "aria-label": label })}
         // Fixed, it stays focusable; the pointer passes through it to the tooltip's wrapper.
         {...(fixed ? { "aria-disabled": true } : {})}
@@ -134,7 +134,9 @@ export function useDraftMissionChoice(
     if (fixed) {
       return (
         <Tooltip>
-          <TooltipTrigger render={<span className="pointer-events-auto inline-flex min-w-0" />}>
+          <TooltipTrigger
+            render={<span className="pointer-events-auto inline-flex min-w-0 max-w-full" />}
+          >
             {trigger}
           </TooltipTrigger>
           <TooltipPopup side="top">

@@ -13058,96 +13058,16 @@
   "c5b456a231ea6b6d": "{status, select, inProgress {Un fil quitte la mission} completed {Un fil a quitté la mission} failed {Échec du départ d’un fil de la mission} declined {Départ d’un fil de la mission refusé} stopped {Départ d’un fil de la mission arrêté} other {Un fil quitte la mission}}",
   "7c80cb764b3df506": "{status, select, inProgress {Marquage de la mission d’un fil} completed {Mission d’un fil marquée} failed {Échec du marquage de la mission d’un fil} declined {Marquage de la mission d’un fil refusé} stopped {Marquage de la mission d’un fil arrêté} other {Marquage de la mission d’un fil}}",
   "99f9a58a916a5c12": "Ce fil est passé à une autre mission.",
-  "2a6385e6e21dee74": [
-    "Sur quoi travaille-t-on dans la mission ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ?"
-  ],
-  "75d3ca92759d7b2e": [
-    "Sur quoi travaille-t-on dans ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ?"
-  ],
-  "b8e0e89c83a639fa": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " pour commencer"
-  ],
-  "67ecb04d9ec1a324": [
-    "Que devons-nous construire dans ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", dans la mission ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    },
-    " ?"
-  ],
-  "588cd35eaad37a50": [
-    "Que devons-nous construire dans ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", dans ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    },
-    " ?"
-  ],
-  "58a09ef6a22c1e6e": [
-    "Que devons-nous construire dans ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ?"
-  ],
   "30b3991c046d1ab2": "une nouvelle mission",
   "16e888c38a7cda4e": "Ajouter à une mission",
-  "cb010196f71a98c4": [
-    "Sur quoi travaille-t-on en tant que nouveau fil principal de ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ?"
-  ],
-  "214eefadc3233ef8": [
-    "Que devons-nous construire dans ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", en tant que nouveau fil principal de ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    },
-    " ?"
-  ],
-  "93fb497fbfe34f9e": "Nouveau fil principal pour {mission}"
+  "93fb497fbfe34f9e": "Nouveau fil principal pour {mission}",
+  "0790c872a3739ba4": "Sur quoi travaille-t-on dans la mission {mission} ?",
+  "d3750723e9ce52fc": "Sur quoi travaille-t-on dans {mission} ?",
+  "9bf6711411736c18": "Sur quoi travaille-t-on en tant que nouveau fil principal de {mission} ?",
+  "e0a647dc59e6b8a5": "Sur quoi travaille-t-on ?",
+  "b2cc04a85a486de2": "{project} pour commencer",
+  "17f2d583094514ef": "Que devons-nous construire dans {project}, dans la mission {mission} ?",
+  "3f5959354b360f90": "Que devons-nous construire dans {project}, dans {mission} ?",
+  "ba05bd1545ef3881": "Que devons-nous construire dans {project}, en tant que nouveau fil principal de {mission} ?",
+  "06b6bb85f2e34802": "Que devons-nous construire dans {project} ?"
 }

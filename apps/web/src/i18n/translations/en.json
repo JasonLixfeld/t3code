@@ -13067,98 +13067,16 @@
   "c5b456a231ea6b6d": "{status, select, inProgress {Making a thread leave the mission} completed {Made a thread leave the mission} failed {Failed to make a thread leave the mission} declined {Declined to make a thread leave the mission} stopped {Stopped making a thread leave the mission} other {Making a thread leave the mission}}",
   "7c80cb764b3df506": "{status, select, inProgress {Marking a thread's mission} completed {Marked a thread's mission} failed {Failed to mark a thread's mission} declined {Declined to mark a thread's mission} stopped {Stopped marking a thread's mission} other {Marking a thread's mission}}",
   "99f9a58a916a5c12": "This thread moved to another mission.",
-  "2a6385e6e21dee74": [
-    "What should we work on in mission ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "?"
-  ],
-  "75d3ca92759d7b2e": [
-    "What should we work on in ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "?"
-  ],
-  "b8e0e89c83a639fa": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " to start"
-  ],
-  "67ecb04d9ec1a324": [
-    "What should we build in ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", in mission",
-    " ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    },
-    "?"
-  ],
-  "588cd35eaad37a50": [
-    "What should we build in ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", in ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    },
-    "?"
-  ],
-  "58a09ef6a22c1e6e": [
-    "What should we build in ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "?"
-  ],
   "30b3991c046d1ab2": "a new mission",
   "16e888c38a7cda4e": "Add to a mission",
-  "cb010196f71a98c4": [
-    "What should we work on as the new lead for ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "?"
-  ],
-  "214eefadc3233ef8": [
-    "What should we build in ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", as the new lead for",
-    " ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    },
-    "?"
-  ],
-  "93fb497fbfe34f9e": "New lead for {mission}"
+  "93fb497fbfe34f9e": "New lead for {mission}",
+  "0790c872a3739ba4": "What should we work on in mission {mission}?",
+  "d3750723e9ce52fc": "What should we work on in {mission}?",
+  "9bf6711411736c18": "What should we work on as the new lead for {mission}?",
+  "e0a647dc59e6b8a5": "What should we work on?",
+  "b2cc04a85a486de2": "{project} to start",
+  "17f2d583094514ef": "What should we build in {project}, in mission {mission}?",
+  "3f5959354b360f90": "What should we build in {project}, in {mission}?",
+  "ba05bd1545ef3881": "What should we build in {project}, as the new lead for {mission}?",
+  "06b6bb85f2e34802": "What should we build in {project}?"
 }

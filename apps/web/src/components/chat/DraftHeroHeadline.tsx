@@ -8,7 +8,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { T, useGT, Var } from "gt-react";
+import { T, useGT } from "gt-react";
 import { FolderPlusIcon, MessageSquareDashedIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { use, useEffect, useRef, useState } from "react";
@@ -68,6 +68,8 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 
 const ADD_PROJECT_VALUE = "add-project";
 const NO_PROJECT_VALUE = "no-project";
+const PROJECT_SLOT = "\uE000";
+const MISSION_SLOT = "\uE001";
 
 interface PickerItem {
   readonly value: string;
@@ -343,10 +345,9 @@ export function DraftHeroHeadline({
         <TooltipTrigger
           render={
             <ComboboxTrigger
-              render={<InlineButton tone="picker" />}
+              render={<InlineButton tone="picker" touchTarget="padded" />}
               aria-label={gt("Project: {project}", { project: projectValue })}
               data-draft-project-trigger=""
-              data-draft-word=""
               disabled={preparingScratch}
               className="pointer-events-auto min-w-0 max-w-full align-baseline"
             />
@@ -436,59 +437,59 @@ export function DraftHeroHeadline({
     );
   }
 
-  const missionInHeading =
+  const missionInSentence =
     mission !== null && mission.kind !== "none" && (isScratchDraft || activeProjectTitle !== null);
-  const missionWord = mission?.inSentence;
-  const headingMission = missionInHeading ? mission.kind : "none";
-  const footerMission = mission !== null && !missionInHeading ? mission.standalone : null;
+  const sentenceMission = missionInSentence ? mission.kind : "none";
+  const slots = { project: PROJECT_SLOT, mission: MISSION_SLOT };
+  const sentence = isScratchDraft
+    ? sentenceMission === "member"
+      ? gt("What should we work on in mission {mission}?", slots)
+      : sentenceMission === "new"
+        ? gt("What should we work on in {mission}?", slots)
+        : sentenceMission === "lead"
+          ? gt("What should we work on as the new lead for {mission}?", slots)
+          : gt("What should we work on?")
+    : activeProjectTitle === null
+      ? gt("{project} to start", slots)
+      : sentenceMission === "member"
+        ? gt("What should we build in {project}, in mission {mission}?", slots)
+        : sentenceMission === "new"
+          ? gt("What should we build in {project}, in {mission}?", slots)
+          : sentenceMission === "lead"
+            ? gt("What should we build in {project}, as the new lead for {mission}?", slots)
+            : gt("What should we build in {project}?", slots);
+  // One string for translators; the controls sit at its placeholders, in slots that stay mounted
+  // whichever sentence shows, so a menu open on them survives the change.
+  const [beforeProject, afterProject] = sentence.includes(PROJECT_SLOT)
+    ? sentence.split(PROJECT_SLOT)
+    : ["", sentence];
+  const [beforeMission = "", afterMission = ""] = (afterProject ?? "").split(MISSION_SLOT);
+  const prose = (text: string) =>
+    text ? <span className="[@media(max-height:28rem)]:sr-only">{text}</span> : null;
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col items-center [@media(max-height:28rem)]:flex-row [@media(max-height:28rem)]:flex-wrap [@media(max-height:28rem)]:justify-center [@media(max-height:28rem)]:gap-x-3 [@media(max-height:28rem)]:[&_[data-draft-word]]:max-w-44 [@media(max-height:28rem)]:[&_[data-draft-word]]:text-sm">
-      {/* Short windows keep only the words, so the heading stays on one line above the composer. */}
-      <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl [@media(max-height:28rem)]:w-auto [@media(max-height:28rem)]:text-[length:0] [@media(max-height:28rem)]:[&_[data-draft-word]]:mx-1">
-        {isScratchDraft ? (
-          headingMission === "member" ? (
-            <T>
-              What should we work on in mission <Var>{missionWord}</Var>?
-            </T>
-          ) : headingMission === "new" ? (
-            <T>
-              What should we work on in <Var>{missionWord}</Var>?
-            </T>
-          ) : headingMission === "lead" ? (
-            <T>
-              What should we work on as the new lead for <Var>{missionWord}</Var>?
-            </T>
-          ) : (
-            <T>What should we work on?</T>
-          )
-        ) : activeProjectTitle === null ? (
-          <T>
-            <Var>{projectSelector}</Var> to start
-          </T>
-        ) : headingMission === "member" ? (
-          <T>
-            What should we build in <Var>{projectSelector}</Var>, in mission{" "}
-            <Var>{missionWord}</Var>?
-          </T>
-        ) : headingMission === "new" ? (
-          <T>
-            What should we build in <Var>{projectSelector}</Var>, in <Var>{missionWord}</Var>?
-          </T>
-        ) : headingMission === "lead" ? (
-          <T>
-            What should we build in <Var>{projectSelector}</Var>, as the new lead for{" "}
-            <Var>{missionWord}</Var>?
-          </T>
-        ) : (
-          <T>
-            What should we build in <Var>{projectSelector}</Var>?
-          </T>
+    <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
+      <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl [@media(max-height:28rem)]:flex [@media(max-height:28rem)]:items-center [@media(max-height:28rem)]:justify-center [@media(max-height:28rem)]:gap-3 [@media(max-height:28rem)]:text-sm">
+        {prose(beforeProject ?? "")}
+        {isScratchDraft ? null : (
+          <span className="min-w-0 [@media(max-height:28rem)]:max-w-1/2">{projectSelector}</span>
         )}
+        {prose(beforeMission)}
+        {mission === null ? null : (
+          <span
+            className={
+              missionInSentence
+                ? "min-w-0 [@media(max-height:28rem)]:max-w-1/2"
+                : "mt-2 flex min-w-0 justify-center text-sm tracking-normal [@media(max-height:28rem)]:mt-0 [@media(max-height:28rem)]:max-w-1/2"
+            }
+          >
+            {missionInSentence ? mission.inSentence : mission.standalone}
+          </span>
+        )}
+        {prose(afterMission)}
       </h1>
-      {isScratchDraft || footerMission !== null ? (
-        <p className="mt-2 flex h-6 w-full items-center justify-center gap-3 text-sm [@media(max-height:28rem)]:mt-0 [@media(max-height:28rem)]:w-auto">
-          {isScratchDraft ? projectSelector : null}
-          {footerMission}
+      {isScratchDraft ? (
+        <p className="mt-2 flex h-6 w-full items-center justify-center text-sm">
+          {projectSelector}
         </p>
       ) : null}
     </div>
