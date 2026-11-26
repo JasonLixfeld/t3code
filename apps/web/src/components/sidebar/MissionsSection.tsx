@@ -6,12 +6,13 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import type {
-  EnvironmentId,
-  Mission,
-  MissionMember,
-  ScopedThreadRef,
-  ThreadId,
+import {
+  type EnvironmentId,
+  type Mission,
+  type MissionMember,
+  MISSION_PROMPT_MAX_LENGTH,
+  type ScopedThreadRef,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon, RotateCcwIcon, XIcon } from "lucide-react";
@@ -47,6 +48,7 @@ import {
   useQuietThreadShell,
   useQuietThreadShells,
 } from "../../state/entities";
+import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { waitForAtomValue } from "../../state/waitForAtomValue";
@@ -306,54 +308,78 @@ const missionPromptTargetAtom = Atom.make<{
 
 /** Edits what a Mission's lead is told on each turn. Empty goes back to the Settings default. */
 export function MissionPromptDialog() {
-  const gt = useGT();
   const registry = useContext(RegistryContext);
   const target = useAtomValue(missionPromptTargetAtom);
-  const setPrompt = useAtomCommand(serverEnvironment.setMissionPrompt, "mission set prompt");
   const close = () => registry.set(missionPromptTargetAtom, null);
   return (
     <Dialog open={target !== null} onOpenChange={(open) => (open ? undefined : close())}>
       <DialogPopup className="max-w-xl">
         {target === null ? null : (
-          <form
-            onSubmit={async (event) => {
-              event.preventDefault();
-              const prompt = String(new FormData(event.currentTarget).get("prompt") ?? "");
-              const result = await setPrompt({
-                environmentId: target.host,
-                input: { missionId: target.mission.missionId, prompt },
-              });
-              reportFailure(gt("Could not save the mission prompt"), result);
-              if (result._tag === "Success") close();
-            }}
-          >
-            <DialogHeader>
-              <DialogTitle>{gt("Mission prompt")}</DialogTitle>
-              <DialogDescription>
-                {gt(
-                  'The lead of "{mission}" follows this on every turn. Leave it empty to use the default from Settings.',
-                  { mission: target.mission.name },
-                )}
-              </DialogDescription>
-            </DialogHeader>
-            <DialogPanel>
-              <Textarea
-                name="prompt"
-                aria-label={gt("Mission prompt")}
-                rows={8}
-                defaultValue={target.mission.prompt ?? ""}
-              />
-            </DialogPanel>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={close}>
-                {gt("Cancel")}
-              </Button>
-              <Button type="submit">{gt("Save")}</Button>
-            </DialogFooter>
-          </form>
+          <MissionPromptForm host={target.host} mission={target.mission} onClose={close} />
         )}
       </DialogPopup>
     </Dialog>
+  );
+}
+
+function MissionPromptForm(props: {
+  readonly host: EnvironmentId;
+  readonly mission: Mission;
+  readonly onClose: () => void;
+}) {
+  const gt = useGT();
+  const resolve = useMessages();
+  const saved = useEnvironmentQuery(
+    serverEnvironment.missionPrompt({
+      environmentId: props.host,
+      input: { missionId: props.mission.missionId },
+    }),
+    resolve,
+  );
+  const setPrompt = useAtomCommand(serverEnvironment.setMissionPrompt, "mission set prompt");
+  return (
+    <form
+      onSubmit={async (event) => {
+        event.preventDefault();
+        const prompt = String(new FormData(event.currentTarget).get("prompt") ?? "");
+        const result = await setPrompt({
+          environmentId: props.host,
+          input: { missionId: props.mission.missionId, prompt },
+        });
+        reportFailure(gt("Could not save the mission prompt"), result);
+        if (result._tag === "Success") props.onClose();
+      }}
+    >
+      <DialogHeader>
+        <DialogTitle>{gt("Mission prompt")}</DialogTitle>
+        <DialogDescription>
+          {saved.error ??
+            gt(
+              'The lead of "{mission}" follows this on every turn. Leave it empty to use the default from Settings.',
+              { mission: props.mission.name },
+            )}
+        </DialogDescription>
+      </DialogHeader>
+      <DialogPanel>
+        <Textarea
+          key={saved.data === null ? "reading" : "read"}
+          name="prompt"
+          aria-label={gt("Mission prompt")}
+          rows={8}
+          maxLength={MISSION_PROMPT_MAX_LENGTH}
+          disabled={saved.data === null}
+          defaultValue={saved.data?.prompt ?? ""}
+        />
+      </DialogPanel>
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={props.onClose}>
+          {gt("Cancel")}
+        </Button>
+        <Button type="submit" disabled={saved.data === null}>
+          {gt("Save")}
+        </Button>
+      </DialogFooter>
+    </form>
   );
 }
 

@@ -443,8 +443,10 @@ import {
   Mission,
   MissionCreateInput,
   MissionError,
+  MissionGetPromptInput,
   MissionLeaveInput,
   MissionMemberInput,
+  MissionPrompt,
   MissionSetLeadInput,
   MissionSetPromptInput,
   MissionDeleteInput,
@@ -669,6 +671,7 @@ export const WS_METHODS = {
   missionsSetLead: "missions.setLead",
   missionsDelete: "missions.delete",
   missionsSetPrompt: "missions.setPrompt",
+  missionsGetPrompt: "missions.getPrompt",
 
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
@@ -2453,6 +2456,12 @@ const WsMissionsSetPromptRpc = Rpc.make(WS_METHODS.missionsSetPrompt, {
   error: Schema.Union([MissionError, EnvironmentAuthorizationError]),
 });
 
+const WsMissionsGetPromptRpc = Rpc.make(WS_METHODS.missionsGetPrompt, {
+  payload: MissionGetPromptInput,
+  success: MissionPrompt,
+  error: Schema.Union([MissionError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -2646,6 +2655,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsMissionsSetLeadRpc,
   WsMissionsDeleteRpc,
   WsMissionsSetPromptRpc,
+  WsMissionsGetPromptRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,

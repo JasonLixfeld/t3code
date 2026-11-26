@@ -118,6 +118,8 @@ const listedClaims: Array<MissionHost["snapshot"]["claims"][number]> = [];
 const hosts: Array<MissionHost> = [
   { environmentId: LOCAL, snapshot: { missions: listedMissions, links: [], claims: listedClaims } },
 ];
+/** The prompts each mission keeps, read only by the prompt editor. */
+const savedPrompts = new Map<string, string>();
 /** The sidebar's mission lists, told when a test changes what the machines list mid-test. */
 const hostChanges = new Set<() => void>();
 const publishHosts = () =>
@@ -191,6 +193,8 @@ vi.mock(import("../../state/server"), async (original) => {
           get.addFinalizer(() => hostChanges.delete(update));
           return [...hosts];
         }),
+      missionPrompt: ({ input }: { input: { missionId: string } }) =>
+        Atom.make(AsyncResult.success({ prompt: savedPrompts.get(input.missionId) ?? "" })),
       // This client may change the missions every machine keeps, unless a test says otherwise.
       addMissionMember: Object.assign(actual.serverEnvironment.addMissionMember, {
         permissionAtom: (environmentId: EnvironmentId) => mayChange(environmentId),
@@ -740,10 +744,8 @@ describe("missions in the sidebar", () => {
   it("edits a mission's prompt from its menu, starting from the one it has", async () => {
     const show = vi.fn().mockResolvedValue("mission-prompt:local:0123456789ab");
     vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
-    listedMissions[0] = { ...ship, prompt: "Ship it." };
-    onTestFinished(() => {
-      listedMissions[0] = ship;
-    });
+    savedPrompts.set("0123456789ab", "Ship it.");
+    onTestFinished(() => savedPrompts.clear());
     await using screen = await renderSidebar();
     await userEvent.click(rowOf(screen.container, "Plan the v2 release"), { button: "right" });
     const prompt = page.getByRole("textbox", { name: "Mission prompt" });

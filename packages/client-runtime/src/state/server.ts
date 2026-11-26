@@ -2066,6 +2066,12 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:missions:set-prompt",
       tag: WS_METHODS.missionsSetPrompt,
     }),
+    // Read each time its editor opens: the Missions list leaves prompts out.
+    missionPrompt: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:missions:prompt",
+      tag: WS_METHODS.missionsGetPrompt,
+      idleTtlMs: 0,
+    }),
     createGuestShare: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:guest-share:create",
       tag: WS_METHODS.guestShareCreate,

@@ -179,6 +179,10 @@ export class Missions extends Context.Service<
       readonly missionId: string;
       readonly prompt: string;
     }) => Effect.Effect<void, MissionError>;
+    /** The Mission's own prompt, read where it is edited. The list a client watches leaves it out. */
+    readonly prompt: (
+      missionId: string,
+    ) => Effect.Effect<{ readonly prompt: string }, MissionError>;
     /** Members on other machines whose detail a sweep heard change, or heard for the first time. */
     readonly remoteChanges: Stream.Stream<{
       readonly missionId: string;
@@ -459,7 +463,6 @@ const make = Effect.gen(function* () {
       name: mission.name,
       createdAt: mission.createdAt,
       members: [...members.values()],
-      ...(mission.prompt === "" ? {} : { prompt: mission.prompt }),
     } satisfies Mission;
   });
 
@@ -1577,6 +1580,10 @@ const make = Effect.gen(function* () {
     yield* store.setPrompt({ missionId: input.missionId, prompt: input.prompt.trim() });
   });
 
+  const prompt = Effect.fn("Missions.prompt")(function* (missionId: string) {
+    return { prompt: (yield* missionNamed(missionId)).prompt };
+  });
+
   const withLead = <A, E, R>(
     missionId: string,
     use: (mission: MissionRecord) => Effect.Effect<A, E, R>,
@@ -1668,6 +1675,7 @@ const make = Effect.gen(function* () {
     roster,
     memberStatuses,
     setPrompt,
+    prompt,
     remoteChanges: Stream.fromPubSub(remoteChanged),
     watch,
     create,

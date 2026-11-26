@@ -32,8 +32,6 @@ export const Mission = Schema.Struct({
   name: Schema.String,
   createdAt: Schema.String,
   members: Schema.Array(MissionMember),
-  /** This Mission's own prompt for its lead. Empty or absent: the lead gets the Settings default. */
-  prompt: Schema.optional(Schema.String),
 });
 export type Mission = typeof Mission.Type;
 
@@ -93,11 +91,18 @@ export const MissionSetLeadInput = Schema.Struct({
 /** Ends a Mission with no members. Its lead stays a thread of its own. */
 export const MissionDeleteInput = Schema.Struct({ missionId: Schema.String });
 
+export const MISSION_PROMPT_MAX_LENGTH = 10_000;
+
 /** Sets the Mission's own prompt for its lead. Empty text goes back to the Settings default. */
 export const MissionSetPromptInput = Schema.Struct({
   missionId: Schema.String,
-  prompt: Schema.String,
+  prompt: Schema.String.check(Schema.isMaxLength(MISSION_PROMPT_MAX_LENGTH)),
 });
+
+/** Read only where it is edited: the Missions list leaves it out. */
+export const MissionGetPromptInput = Schema.Struct({ missionId: Schema.String });
+/** The Mission's own prompt for its lead. Empty: the lead gets the Settings default. */
+export const MissionPrompt = Schema.Struct({ prompt: Schema.String });
 
 /**
  * What became of a thread a mission's lead started: it joined the lead's Mission, it waits on

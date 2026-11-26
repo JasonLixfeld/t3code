@@ -2456,6 +2456,7 @@ export const layerWsRpc = (
         [WS_METHODS.missionsSetLead]: (input) => missions.setLead(input),
         [WS_METHODS.missionsDelete]: (input) => missions.deleteMission(input),
         [WS_METHODS.missionsSetPrompt]: (input) => missions.setPrompt(input),
+        [WS_METHODS.missionsGetPrompt]: (input) => missions.prompt(input.missionId),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),

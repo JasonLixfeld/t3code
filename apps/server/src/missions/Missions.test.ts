@@ -10,6 +10,7 @@ import {
   type OrchestrationV2ThreadShell,
   ProviderInstanceId,
   type MissionError,
+  MISSION_PROMPT_MAX_LENGTH,
   type MissionsSnapshot,
   OrchestratorMcpFailure,
   type ScopedThreadRef,
@@ -2213,6 +2214,40 @@ it.effect("only a session that may operate threads can leave a mission over the 
   }).pipe(Effect.scoped),
 );
 
+it.effect("a mission prompt longer than the bound is refused before it is saved", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RpcAuthorization.RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.missionsSetPrompt
+        > => tag !== WS_METHODS.missionsSetPrompt,
+      ),
+    );
+    const saved: Array<number> = [];
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.merge(
+          group.toLayerHandler(WS_METHODS.missionsSetPrompt, ({ prompt }) =>
+            Effect.sync(() => void saved.push(prompt.length)),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationOperateScope]),
+        ),
+      ),
+    );
+    const setPrompt = (length: number) =>
+      client[WS_METHODS.missionsSetPrompt]({
+        missionId: "0123456789ab",
+        prompt: "x".repeat(length),
+      }).pipe(Effect.exit);
+    assert.isTrue(Exit.isSuccess(yield* setPrompt(MISSION_PROMPT_MAX_LENGTH)));
+    assert.isTrue(Exit.isFailure(yield* setPrompt(MISSION_PROMPT_MAX_LENGTH + 1)));
+    assert.deepEqual(saved, [MISSION_PROMPT_MAX_LENGTH]);
+  }).pipe(Effect.scoped),
+);
+
 it.effect("a client cannot set or clear mission tags through the generic tag command", () =>
   Effect.gen(function* () {
     const setTag = (tag: string) =>
@@ -2228,6 +2263,36 @@ it.effect("a client cannot set or clear mission tags through the generic tag com
     assert.equal((yield* setTag("private"))._tag, "Success");
   }),
 );
+
+/** Bytes on the wire for one snapshot, as the socket sends it. */
+const wireBytes = (snapshot: MissionsSnapshot) =>
+  new TextEncoder().encode(JSON.stringify(snapshot)).length;
+
+it.effect("the list a client watches stays small, however long a mission's prompt is", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const mission = yield* createOne;
+      const sidebar = yield* openSidebar;
+      const first = yield* listed;
+      yield* missions.setPrompt({
+        missionId: mission.missionId,
+        prompt: "x".repeat(MISSION_PROMPT_MAX_LENGTH),
+      });
+      yield* missions.addMember({ missionId: mission.missionId, member: localMember });
+      let update: MissionsSnapshot | undefined;
+      yield* sidebar((snapshot) => {
+        update = snapshot;
+        return snapshot.missions[0]?.members.length === 2;
+      });
+      assert.isBelow(wireBytes(first), 600);
+      assert.isBelow(wireBytes(update!), 800);
+      assert.equal((yield* missions.prompt(mission.missionId)).prompt.length, 10_000);
+    }),
+  );
+});
 
 const HEADER = missionPromptText("0123456789ab", "");
 const turnContextOf = (thread: ScopedThreadRef) =>
@@ -2269,7 +2334,7 @@ it.effect(
 
         yield* missions.setPrompt({ missionId: mission.missionId, prompt: "  Ship it.  " });
         assert.deepInclude(yield* turnContextOf(lead), { prompt: `${HEADER}\n\nShip it.` });
-        assert.equal((yield* listed).missions[0]?.prompt, "Ship it.");
+        assert.deepEqual(yield* missions.prompt(mission.missionId), { prompt: "Ship it." });
         yield* missions.setPrompt({ missionId: mission.missionId, prompt: "" });
         assert.deepInclude(yield* turnContextOf(lead), {
           prompt: `${HEADER}\n\nReview every pull request.`,
