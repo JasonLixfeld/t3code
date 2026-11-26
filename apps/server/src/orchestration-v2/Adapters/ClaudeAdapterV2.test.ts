@@ -3898,7 +3898,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       });
       const changes = yield* makeChangeSignal;
       const offeredMessages: Array<SDKUserMessage> = [];
-      /** Each MCP reconnect, with how many messages were offered before it. */
       const reconnects: Array<{ readonly server: string; readonly offeredBefore: number }> = [];
       const permissionModeChanges: Array<string> = [];
       const renameCalls: Array<string> = [];
@@ -7815,7 +7814,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           status("Status: 1 member."),
           "Plan it",
         ]);
-        // It became the lead: T3's server is reconnected, so the lead tools are listed, first.
         assert.deepEqual(harness.reconnects, [{ server: "t3-code", offeredBefore: 1 }]);
         yield* finish(1);
         assert.deepEqual(yield* turn(2, "Next", lead("Status: 1 member.")), ["Next"]);
@@ -7858,7 +7856,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* finish(5);
         assert.deepEqual(yield* turn(6, "Hi", { role: "former-lead" }), [ended, "Hi"]);
         yield* finish(6);
-        // Once on becoming the lead, once on leaving it, and never while it stayed one.
         assert.deepEqual(
           harness.reconnects.map((reconnect) => reconnect.offeredBefore),
           [1, harness.offeredMessages.length - 1],

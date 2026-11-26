@@ -7016,8 +7016,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
         });
 
-        // The CLI lists T3's tools once per connection, and T3 cannot push it a change, so a
-        // thread that became or stopped being a mission lead reconnects T3 before its next turn.
         const listedAsLead = new WeakMap<ClaudeAgentSdkQuerySession, boolean>();
         const refreshLeadTools = Effect.fn("ClaudeAdapterV2.refreshLeadTools")(function* (
           query: ClaudeAgentSdkQuerySession,

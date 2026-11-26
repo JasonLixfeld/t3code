@@ -399,8 +399,7 @@ interface ThreadState {
         readonly name: string;
         readonly directory: string;
         readonly credential: string;
-        /** Whether its tools were listed for a mission lead. */
-        readonly lead: boolean;
+        readonly missionLeadAtAdd: boolean;
       }
     | undefined;
   instructions: string | undefined;
@@ -4462,16 +4461,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               name,
               directory,
               credential: mcpSession.authorizationHeader,
-              lead: turnInput.missionContext?.role === "lead",
+              missionLeadAtAdd: turnInput.missionContext?.role === "lead",
             };
-      // OpenCode lists a server's tools once per connection, and T3 cannot push it a change, so a
-      // thread that became or stopped being a mission lead connects again for its lead tools.
       if (
         state.mcp !== undefined &&
         (wanted === undefined ||
           state.mcp.directory !== wanted.directory ||
           state.mcp.credential !== wanted.credential ||
-          state.mcp.lead !== wanted.lead)
+          state.mcp.missionLeadAtAdd !== wanted.missionLeadAtAdd)
       ) {
         yield* removeMcp(state.mcp);
         state.mcp = undefined;
