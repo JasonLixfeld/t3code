@@ -61,6 +61,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Headers, HttpRouter, HttpServer } from "effect/http";
@@ -3167,6 +3168,87 @@ it.effect("workflow RPCs read a run and pass an answer, a resume and a cancel to
       { resume: "run-1" },
       { cancel: "run-1", reason: undefined },
       { cancel: "run-1", reason: "Wrong branch" },
+    ]);
+  }).pipe(Effect.provide(layerWorkflowRpcTest), Effect.scoped),
+);
+
+const missionTags = [WS_METHODS.missionsSubscribe, WS_METHODS.missionsAddMember] as const;
+const missionRpcs = WsRpcGroup.omit(
+  ...[...WsRpcGroup.requests.keys()].filter(
+    (
+      tag,
+    ): tag is Exclude<
+      keyof typeof RpcAuthorization.RPC_REQUIRED_SCOPES,
+      (typeof missionTags)[number]
+    > => !(missionTags as ReadonlyArray<string>).includes(tag),
+  ),
+);
+
+it.effect("the socket passes a session's access scope into mission lists and adds", () =>
+  Effect.gen(function* () {
+    const calls: Array<unknown> = [];
+    const listed = { missions: [], links: [], claims: [] };
+    const member = { environmentId: EnvironmentId.make("laptop"), threadId: ThreadId.make("t") };
+    const session = Effect.fn("test.missionSession")(function* (seesAccess: boolean) {
+      const scopes = [
+        AuthOrchestrationReadScope,
+        AuthOrchestrationOperateScope,
+        ...(seesAccess ? [AuthAccessReadScope] : []),
+      ];
+      const services = Layer.mergeAll(
+        layerUnusedConfigRpcServices,
+        Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+        Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+        Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+        Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+        Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+        Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+        Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+        Layer.mock(Missions.Missions)({
+          watch: (options) =>
+            Stream.make(listed).pipe(
+              Stream.tap(() => Effect.sync(() => calls.push({ watch: options }))),
+            ),
+          addMember: (_input, asLead, seesAccess) =>
+            Effect.sync(() => calls.push({ add: { asLead, seesAccess } })).pipe(
+              Effect.as("joined" as const),
+            ),
+        }),
+      );
+      const client = yield* RpcTest.makeClient(missionRpcs).pipe(
+        Effect.provide(
+          layerWsRpc(
+            {
+              sessionId: AuthSessionId.make("missions-test"),
+              subject: "missions-test",
+              method: "browser-session-cookie",
+              scopes,
+            },
+            {},
+            yield* ServerBrowser.ServerBrowser,
+            () => Effect.void,
+            { secretReferences: true },
+          ).pipe(Layer.provide(services), Layer.merge(RpcAuthorization.layer(scopes))),
+        ),
+      );
+      const subscribe = (input: { readonly omitPrompts?: boolean }) =>
+        client[WS_METHODS.missionsSubscribe](input).pipe(Stream.runHead);
+      assert.deepEqual(yield* subscribe({}), Option.some(listed));
+      yield* subscribe({ omitPrompts: true });
+      yield* client[WS_METHODS.missionsAddMember]({ missionId: "m", member });
+    });
+
+    yield* session(false);
+    yield* session(true);
+    assert.deepEqual(calls, [
+      { watch: { links: false, prompts: true } },
+      { watch: { links: false, prompts: false } },
+      { add: { asLead: undefined, seesAccess: false } },
+      { watch: { links: true, prompts: true } },
+      { watch: { links: true, prompts: false } },
+      { add: { asLead: undefined, seesAccess: true } },
     ]);
   }).pipe(Effect.provide(layerWorkflowRpcTest), Effect.scoped),
 );
