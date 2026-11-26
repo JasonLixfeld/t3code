@@ -19,8 +19,6 @@ const runtimeVersionPolicy =
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 
-// A fork build is signed by another Apple team, which cannot use T3's push, App Groups,
-// associated domains, Clerk, relay or EAS project.
 const forkBundleIdentifier = repoEnv.T3CODE_FORK_BUNDLE_ID?.trim();
 const isForkBuild = Boolean(forkBundleIdentifier);
 const forkTeamId = repoEnv.T3CODE_FORK_TEAM_ID?.trim();

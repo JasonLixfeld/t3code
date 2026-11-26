@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Archives a fork build of the iOS app and uploads it to TestFlight under your own Apple team.
-# Run through `vp run ios:fork:testflight` from apps/mobile so `expo` is on PATH.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -8,7 +6,7 @@ export T3CODE_FORK_BUNDLE_ID=${T3CODE_FORK_BUNDLE_ID:-io.github.jasonlixfeld.t3f
 export T3CODE_FORK_TEAM_ID=${T3CODE_FORK_TEAM_ID:-9V7672H2GA}
 export T3CODE_FORK_APP_NAME=${T3CODE_FORK_APP_NAME:-T3 Fork}
 export T3CODE_FORK_SCHEME=${T3CODE_FORK_SCHEME:-t3fork}
-export T3CODE_IOS_BUILD_NUMBER=${T3CODE_IOS_BUILD_NUMBER:-$(date -u +%Y%m%d%H%M)}
+export T3CODE_IOS_BUILD_NUMBER=${T3CODE_IOS_BUILD_NUMBER:-$(date -u +%Y%m%d.%H%M)}
 export APP_VARIANT=production EXPO_NO_GIT_STATUS=1
 
 : "${APPLE_ASC_KEY_ID:?Set APPLE_ASC_KEY_ID to your App Store Connect API key ID.}"
