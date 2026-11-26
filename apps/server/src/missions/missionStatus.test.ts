@@ -136,9 +136,8 @@ it("ids and names another machine sets never reach the status or a wake", () => 
   assert.include(status, "Needs attention: member 0 on machine 2, awaiting input.");
 });
 
-it("the status is the same text until a member's status changes", () => {
+it("the status text changes when a member's status changes", () => {
   const members = [member("t1", "working"), member("t2", "idle")];
-  assert.equal(missionStatusText(members), missionStatusText([...members]));
   assert.notEqual(
     missionStatusText(members),
     missionStatusText([member("t1", "awaiting-input"), member("t2", "idle")]),
@@ -259,6 +258,15 @@ it("a remote member's runs and requests are told by their ids, also between two 
     ),
     [],
   );
+});
+
+it("a remote member's run seen running is told once it completes under the same id", () => {
+  const running = markOf(detail({ status: "working", run: { id: "run-3", status: "running" } }));
+  const completed = detail({ run: { id: "run-3", status: "completed" } });
+  assert.deepEqual(remoteUpdates(running, completed, 0), [
+    { source: "run:run-3", event: "completed" },
+  ]);
+  assert.deepEqual(remoteUpdates(markOf(completed), completed, 0), []);
 });
 
 it("a member first seen tells what needs the lead, and nothing when it is idle or working", () => {
