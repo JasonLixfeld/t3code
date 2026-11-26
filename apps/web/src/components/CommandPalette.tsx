@@ -619,8 +619,18 @@ function OpenCommandPaletteDialog(props: {
   const missionCreatePermissions = useAtomValue(
     missionCreatePermissionsAtom(environmentIdsKey(missionHosts.map((host) => host.environmentId))),
   );
+  // A new Mission starts only where its first send can create it.
+  const missionStartMachines = new Set(
+    missionHosts.flatMap((host, index) =>
+      missionCreatePermissions[index] === true ? [host.environmentId] : [],
+    ),
+  );
   const missionMachines =
-    missionIntent === undefined ? null : missionDraftMachines(missionIntent, missionHosts);
+    missionIntent === undefined
+      ? null
+      : missionIntent.kind === "new"
+        ? missionStartMachines
+        : missionDraftMachines(missionIntent, missionHosts);
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
   const [browseGeneration, setBrowseGeneration] = useState(0);
   const [browseNavigation] = useState(createBrowseNavigationCoordinator);
@@ -1466,8 +1476,12 @@ function OpenCommandPaletteDialog(props: {
   }
 
   if (
-    missionCreatePermissions.includes(true) &&
-    (projects.length > 0 || scratchTargetEnvironmentId !== null)
+    projects.some((project) => missionStartMachines.has(project.environmentId)) ||
+    missionScratchHome(
+      missionStartMachines,
+      scratchTargetEnvironmentId,
+      scratchWorkspaceRootFor,
+    ) !== null
   ) {
     actionItems.push({
       kind: "action",

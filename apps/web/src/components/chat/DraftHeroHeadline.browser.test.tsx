@@ -272,6 +272,13 @@ it("a plain new thread in a New-lead draft's project gets its own draft", async 
 
 it("a new mission from a New-lead draft starts on a draft of its own", async () => {
   using _environment = installFakeEnvironment([]);
+  // A new mission starts only on a machine that keeps missions.
+  missionHosts.listed = [
+    { environmentId: ENVIRONMENT_ID, snapshot: { missions: [], links: [], claims: [] } },
+  ];
+  onTestFinished(() => {
+    missionHosts.listed = [];
+  });
   await using app = await openApp();
   const lead = await app.newThreadIn(leadIntent);
   const started = await app.newThreadIn({ kind: "new" });

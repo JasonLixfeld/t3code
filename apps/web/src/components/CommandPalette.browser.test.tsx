@@ -398,6 +398,10 @@ describe("CommandPalette open intents", () => {
       openScratchProject,
     } as never);
     onTestFinished(() => vi.mocked(useScratchProject).mockRestore());
+    vi.mocked(useMissionHosts).mockReturnValue([
+      { environmentId: local.environmentId, snapshot: { missions: [], links: [], claims: [] } },
+    ]);
+    onTestFinished(() => vi.mocked(useMissionHosts).mockRestore());
     const created = { draftId: DraftId.make("mission-draft"), threadId: ThreadId.make("t") };
     entities.handleNewThread.mockResolvedValueOnce(created as never);
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
@@ -468,6 +472,20 @@ describe("CommandPalette open intents", () => {
     await newMission.click();
     await expect.element(page.getByText("New mission", { exact: true })).toBeVisible();
     await expect.element(page.getByRole("option", { name: /No project/ })).toBeVisible();
+  });
+
+  it("offers a new mission only projects on machines that can start one", async () => {
+    const local = makeProject("web");
+    const remote = { ...makeProject("api"), environmentId: EnvironmentId.make("remote") };
+    setup({ projects: [local, remote] });
+    vi.mocked(useMissionHosts).mockReturnValue([
+      { environmentId: local.environmentId, snapshot: { missions: [], links: [], claims: [] } },
+    ]);
+    onTestFinished(() => vi.mocked(useMissionHosts).mockRestore());
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    openCommandPalette({ open: "new-thread-in", mission: { kind: "new" } });
+    await expect.element(page.getByRole("option", { name: /web/ })).toBeInTheDocument();
+    await expect.element(page.getByRole("option", { name: /api/ })).not.toBeInTheDocument();
   });
 
   it("marks the draft a mission's project pick makes, offering only the lead's machine", async () => {
