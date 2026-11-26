@@ -18,6 +18,7 @@ import {
   shellDetail,
   updateFor,
   updateFromEvent,
+  wasCompletionHeld,
   withinWorkspaceRoom,
 } from "./missionStatus.ts";
 
@@ -266,16 +267,24 @@ it("a held run first seen is owed once, and a run already told is not owed again
   assert.deepEqual(updatesOf(heldAgain.mark, detail({ held: false }), 0), []);
 });
 
-it("a plan ready is told once, and the finished run only once the plan is gone", () => {
+it("a run that ends with a fresh plan is told once as awaiting input, and a stale plan holds nothing", () => {
   const planned = memberUpdates(
     markOf(detail({ status: "working", run: { id: "run-8", status: "running" } })),
     detail({ status: "awaiting-input", run: { id: "run-8", status: "completed" }, plan: true }),
     0,
   );
   assert.deepEqual(planned.updates, [{ source: "plan:run-8", event: "awaiting-input" }]);
+  assert.isFalse(wasCompletionHeld(planned.mark));
+  const stale = { status: "awaiting-input" as const, plan: true };
+  const running = memberUpdates(
+    planned.mark,
+    detail({ ...stale, status: "working", run: { id: "run-9", status: "running" } }),
+    0,
+  );
+  assert.deepEqual(running.updates, []);
   assert.deepEqual(
-    updatesOf(planned.mark, detail({ run: { id: "run-8", status: "completed" }, plan: false }), 0),
-    [{ source: "run:run-8", event: "completed" }],
+    updatesOf(running.mark, detail({ ...stale, run: { id: "run-9", status: "completed" } }), 0),
+    [{ source: "run:run-9", event: "completed" }],
   );
 });
 
