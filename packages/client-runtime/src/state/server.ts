@@ -1502,7 +1502,6 @@ export function createServerEnvironmentAtoms<R, E>(
     label: "environment-data:server:missions:live",
     tag: WS_METHODS.missionsSubscribe,
   });
-  // Keyed by a JSON array of environment ids: every machine keeps the Missions its leads run.
   const missionsLiveAcross = Atom.family((environmentIdsKey: string) => {
     const sources = (JSON.parse(environmentIdsKey) as EnvironmentId[]).map((environmentId) => ({
       environmentId,
@@ -2066,7 +2065,6 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:missions:set-prompt",
       tag: WS_METHODS.missionsSetPrompt,
     }),
-    // Read each time its editor opens: the Missions list leaves prompts out.
     missionPrompt: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:missions:prompt",
       tag: WS_METHODS.missionsGetPrompt,

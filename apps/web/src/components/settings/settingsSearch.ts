@@ -516,7 +516,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "sidebar-missions-header",
     title: msg("Missions heading"),
     to: "/settings/general",
-    // Shown inside the Missions row only while it is on, so search lands on the parent.
     targetId: "sidebar-missions",
     searchTerms: [msg("missions heading title label sidebar section")],
   },

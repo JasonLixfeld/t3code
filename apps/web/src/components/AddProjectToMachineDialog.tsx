@@ -92,10 +92,6 @@ function close() {
   useRequest.setState({ request: null });
 }
 
-/**
- * The open draft that moves to the clone, if any: an unsent one on the source project. A Mission
- * draft stays on its Mission's machine, and the clone opens a draft of its own.
- */
 export function draftMovingToClone(
   draftId: DraftId | undefined,
   source: ScopedProjectRef,

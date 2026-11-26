@@ -577,7 +577,6 @@ export function resolvePromptInjectedEffort(
   return null;
 }
 
-/** Claude runs a slash command only when it opens the prompt; a name has no second slash. */
 export const isClaudeSlashCommand = (text: string): boolean => /^\/[^\s/]+(?:\s|$)/u.test(text);
 
 export function applyClaudePromptEffortPrefix(

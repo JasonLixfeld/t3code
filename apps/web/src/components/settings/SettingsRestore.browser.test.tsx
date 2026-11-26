@@ -34,7 +34,6 @@ function Probe() {
 }
 
 it("resets a mission prompt another selected environment set, only with both scopes", async () => {
-  // The representative environment has the default prompt; another selected one does not.
   state.mixedKeys = ["missionDefaultPrompt"];
   for (const operates of [true, false]) {
     state.operates = operates;

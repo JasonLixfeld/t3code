@@ -8,10 +8,8 @@ export const MissionMember = Schema.Struct({
   ref: ScopedThreadRef,
   role: Schema.Literals(["lead", "member"]),
   /**
-   * `offline`: its machine does not answer, so this is what it last said. `deleted`: the lead
-   * thread is gone. `release-pending`, `add-pending`: that machine has not answered the release
-   * or the add yet. `add-refused`, `release-refused`: the add or the release was turned down,
-   * and `detail` says why. A thread whose release was refused is still a member.
+   * `offline` is last known. A `release-refused` thread is still a member. `detail` explains
+   * refusals.
    */
   state: Schema.Literals([
     "active",
@@ -109,9 +107,7 @@ export const MissionSetPromptInput = Schema.Struct({
   prompt: Schema.String.check(Schema.isMaxLength(MISSION_PROMPT_MAX_LENGTH)),
 });
 
-/** Read only where it is edited: the Missions list leaves it out. */
 export const MissionGetPromptInput = Schema.Struct({ missionId: Schema.String });
-/** The Mission's own prompt for its lead. Empty: the lead gets the Settings default. */
 export const MissionPrompt = Schema.Struct({ prompt: Schema.String });
 
 /**
@@ -146,7 +142,6 @@ export const MISSION_TAG_PREFIX = "mission:";
 export const MISSION_WAS_TAG_PREFIX = "mission-was:";
 const THREAD_TAG_MAX_LENGTH = 64;
 
-/** Cuts whole code points, so an emoji is never split into a lone surrogate. */
 const cut = (tag: string) => {
   let kept = "";
   for (const codePoint of tag) {
@@ -175,6 +170,5 @@ export const missionTag = (missionId: string, name: string) =>
 export const missionWasTag = (missionId: string, name: string) =>
   cut(`${MISSION_WAS_TAG_PREFIX}${missionId}:${name}`);
 
-/** Mission tags mirror claims, so only the Missions code may write them. */
 export const isMissionTag = (tag: string) =>
   tag.startsWith(MISSION_TAG_PREFIX) || tag.startsWith(MISSION_WAS_TAG_PREFIX);
