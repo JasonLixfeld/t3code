@@ -130,6 +130,8 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   readonly viewedFileIdsJson?: string;
   readonly selectedRowIdsJson?: string;
   readonly collapsedCommentIdsJson?: string;
+  /** `{ ranges: { [rowId]: [start, end][] }, active: { rowId, start, end } }` in UTF-16 offsets, or "". */
+  readonly searchHighlightsJson?: string;
   readonly appearanceScheme: "light" | "dark";
   readonly themeJson: string;
   readonly styleJson?: string;
@@ -168,6 +170,13 @@ export interface NativeReviewDiffViewProps extends ViewProps {
 export interface NativeReviewDiffViewHandle {
   readonly scrollToFile: (fileId: string, animated?: boolean) => Promise<void>;
   readonly scrollToTop: (animated?: boolean) => Promise<void>;
+  /** Reveals a character range of a row once its file is open and laid out. */
+  readonly scrollToMatch: (
+    rowId: string,
+    start: number,
+    end: number,
+    animated?: boolean,
+  ) => Promise<void>;
 }
 
 export function isNativeReviewDiffDrawEvent(payload: Readonly<Record<string, unknown>>): boolean {
@@ -180,6 +189,12 @@ interface NativeReviewDiffViewRef {
   readonly setTokensPatchJson: (tokensPatchJson: string) => Promise<boolean>;
   readonly scrollToFile: (fileId: string, animated: boolean) => Promise<void>;
   readonly scrollToTop: (animated: boolean) => Promise<void>;
+  readonly scrollToMatch: (
+    rowId: string,
+    start: number,
+    end: number,
+    animated: boolean,
+  ) => Promise<void>;
 }
 
 type NativeReviewDiffRawViewProps = Omit<
@@ -396,6 +411,9 @@ function NativeReviewDiffContent(
       },
       scrollToTop: async (animated = true) => {
         await nativeRef.current?.scrollToTop(animated);
+      },
+      scrollToMatch: async (rowId, start, end, animated = true) => {
+        await nativeRef.current?.scrollToMatch(rowId, start, end, animated);
       },
     }),
     [],
