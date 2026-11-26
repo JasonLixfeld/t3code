@@ -753,7 +753,10 @@ it("shows an empty server thread's mission mark in its composer, and sends it pl
     createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
   );
   await router.load();
-  await using _app = await render(<AppRoot router={router} />, { router: false });
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
   await expect
     .element(page.getByText("Sending starts a new mission led by this thread"))
     .toBeVisible();
