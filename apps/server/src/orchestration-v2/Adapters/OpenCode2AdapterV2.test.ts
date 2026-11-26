@@ -42,7 +42,6 @@ import { TestClock } from "effect/testing";
 
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { htmlRenderFromToolItem, sentMessageFromToolItem } from "@t3tools/shared/toolOutput";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -5953,19 +5952,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   );
 
   const mcpFailed = mcpListed({ status: "failed", error: "connection refused" });
-  const locationShutdown: ProviderReplayEntry = {
-    type: "emit_inbound",
-    frame: {
-      type: "sdk.event",
-      event: {
-        id: "evt_locationshutdown0000",
-        created: 1,
-        type: "location.shutdown",
-        location: { directory: WORK },
-        data: {},
-      },
-    },
-  };
   const offerTo = (
     offers: Array<ProviderContinuationRequests.ProviderContinuationRequest>,
     ...signals: ReadonlyArray<Deferred.Deferred<void>>
@@ -5978,33 +5964,18 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         }).pipe(Effect.asVoid),
       take: Effect.never,
     });
-  const watchEvents = (runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime) =>
+  const turnEvents = <E>(
+    runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+    start: Effect.Effect<unknown, E>,
+  ) =>
     Effect.gen(function* () {
-      const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
-      let changed = yield* Deferred.make<void>();
-      yield* runtime.events.pipe(
-        Stream.tap((event) =>
-          Effect.suspend(() => {
-            seen.push(event);
-            return Deferred.succeed(changed, undefined);
-          }),
-        ),
-        Stream.runDrain,
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
         Effect.forkScoped,
       );
-      const until = (check: () => boolean): Effect.Effect<void> =>
-        Effect.suspend(() => {
-          if (check()) return Effect.void;
-          return Effect.gen(function* () {
-            changed = yield* Deferred.make<void>();
-            if (check()) return;
-            yield* Deferred.await(changed);
-            yield* until(check);
-          });
-        });
-      const terminals = (count: number) =>
-        until(() => seen.filter((event) => event.type === "turn.terminal").length >= count);
-      return { seen, until, terminals };
+      yield* start;
+      return yield* Fiber.join(events);
     });
   const noticesOf = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
     events.flatMap((event) =>
@@ -6051,13 +6022,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ],
           { version: "2.2.6" },
         ).pipe(offerTo(offers, offered));
-        const watch = yield* watchEvents(runtime);
-        yield* runtime.startTurn(withLineage(thread));
+        yield* turnEvents(runtime, runtime.startTurn(withLineage(thread)));
         yield* Deferred.await(offered);
-        yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
-        yield* watch.terminals(2);
+        const woken = yield* turnEvents(
+          runtime,
+          runtime.startTurn(continuationTurn(thread, offers[0]!)),
+        );
         assert.deepEqual(
-          noticesOf(watch.seen),
+          noticesOf(woken),
           outcome === "connects" ? [] : [OPENCODE_2_MCP_UNAVAILABLE],
         );
       }),
@@ -6134,153 +6106,100 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             path === "/api/mcp" && ++lists === 2 ? Deferred.await(bothOffered) : Effect.void,
         },
       ).pipe(offerTo(offers, firstOffered, bothOffered));
-      const watch = yield* watchEvents(runtime);
-      yield* runtime.startTurn(withLineage(thread));
-      yield* Deferred.await(firstOffered);
-      yield* runtime.startTurn(continuationTurn(thread, offers[0]!, "wake-a"));
-      yield* runtime.startTurn({
-        ...continuationTurn(thread, offers[1]!, "wake-b"),
-        runOrdinal: 3,
-        providerTurnOrdinal: 3,
-      });
-      yield* watch.terminals(3);
-      const ids = yield* IdAllocator.IdAllocatorV2;
-      const replies = (suffix: string) => {
-        const id = ids.derive.providerTurn({
-          driver: OPENCODE_PROVIDER,
-          nativeTurnId: `${SESSION}:attempt:attempt:opencode2-adapter:${suffix}`,
-        });
-        return watch.seen.flatMap((event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.type === "assistant_message" &&
-          event.turnItem.providerTurnId === id
+      const repliesOf = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+        events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
             ? [event.turnItem.text]
             : [],
         );
-      };
-      assert.deepEqual([replies("wake-a"), replies("wake-b")], [["REPLY_A"], ["REPLY_B"]]);
-    }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
-  );
-
-  it.effect("retries an MCP add OpenCode did not connect, then warns and drops T3 tools", () =>
-    Effect.gen(function* () {
-      yield* useThreadMcp;
-      const instructions: Array<unknown> = [];
-      const { runtime, thread } = yield* resumed(
-        [
-          ...mcpAdded,
-          ...mcpFailed,
-          ...mcpRemoved,
-          mcpAdd,
-          reply("mcp.add", { status: 500, body: { message: "MCP unavailable" } }),
-          ...mcpRemoved,
-          ...quickTurn,
-        ],
-        { onInstructions: (input) => instructions.push(input) },
+      yield* turnEvents(runtime, runtime.startTurn(withLineage(thread)));
+      yield* Deferred.await(firstOffered);
+      const first = yield* turnEvents(
+        runtime,
+        runtime.startTurn(continuationTurn(thread, offers[0]!, "wake-a")),
       );
-      const watch = yield* watchEvents(runtime);
-      yield* runtime.startTurn(turnInput(thread));
-      yield* watch.terminals(1);
-      assert.deepEqual(noticesOf(watch.seen), [OPENCODE_2_MCP_UNAVAILABLE]);
-      assert.deepEqual(
-        instructions.map((input) => (input as { readonly value: string }).value),
-        [buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model })],
+      const second = yield* turnEvents(
+        runtime,
+        runtime.startTurn({
+          ...continuationTurn(thread, offers[1]!, "wake-b"),
+          runOrdinal: 3,
+          providerTurnOrdinal: 3,
+        }),
       );
+      assert.deepEqual([repliesOf(first), repliesOf(second)], [["REPLY_A"], ["REPLY_B"]]);
     }),
   );
 
+  const established = [...mcpAdded, ...mcpConnected, ...quickTurn];
+  const listFails = [
+    out("mcp.list", { "location[directory]": WORK }),
+    reply("mcp.list", { status: 500, body: { message: "list failed" } }),
+  ];
+  const addFails = [
+    mcpAdd,
+    reply("mcp.add", { status: 500, body: { message: "MCP unavailable" } }),
+  ];
   it.effect.each([
     {
       name: "a retry that connects",
       turns: 1,
+      ready: true,
       entries: [...mcpAdded, ...mcpFailed, ...mcpRemoved, ...mcpAdded, ...mcpConnected],
     },
     {
       name: "a pending server",
       turns: 1,
+      ready: true,
       entries: [...mcpAdded, ...mcpListed({ status: "pending" })],
     },
     {
-      name: "a list that fails",
+      name: "a failed list and an add",
       turns: 2,
+      ready: true,
+      entries: [...established, ...listFails, ...mcpAdded],
+    },
+    {
+      name: "a failed list and a failed add",
+      turns: 2,
+      ready: false,
       entries: [
-        ...mcpAdded,
-        ...mcpConnected,
-        ...quickTurn,
-        out("mcp.list", { "location[directory]": WORK }),
-        reply("mcp.list", { status: 500, body: { message: "list failed" } }),
-        ...mcpAdded,
+        ...established,
+        ...listFails,
+        ...addFails,
+        out("session.instructions.entry.put", {
+          sessionID: SESSION,
+          key: "t3-code",
+          value: "<any>",
+        }),
+        reply("session.instructions.entry.put", null),
       ],
     },
-  ])("keeps T3 tools after $name", ({ turns, entries }) =>
-    Effect.gen(function* () {
-      yield* useThreadMcp;
-      const instructions: Array<string> = [];
-      const { runtime, thread } = yield* resumed([...entries, ...quickTurn, ...mcpRemoved], {
-        version: "2.2.6",
-        onInstructions: (input) => instructions.push((input as { readonly value: string }).value),
-      });
-      const watch = yield* watchEvents(runtime);
-      for (let index = 1; index <= turns; index++) {
-        yield* runtime.startTurn(turnInput(thread));
-        yield* watch.terminals(index);
-      }
-      assert.deepEqual(noticesOf(watch.seen), []);
-      assert.lengthOf(instructions, 1);
-      assert.include(instructions[0], "t3_background_wait");
-    }),
-  );
-
-  it.effect.each(["running", "idle"] as const)(
-    "repairs T3 MCP when OpenCode shuts down the Location of a thread that is %s",
-    (activity) =>
+    {
+      name: "a retry that does not connect",
+      turns: 1,
+      ready: false,
+      entries: [...mcpAdded, ...mcpFailed, ...mcpRemoved, ...addFails, ...mcpRemoved],
+    },
+  ])(
+    "gives the turn T3 tools only when OpenCode has them, after $name",
+    ({ turns, ready, entries }) =>
       Effect.gen(function* () {
         yield* useThreadMcp;
-        const thinking = { providerID: "opencode", id: "big-pickle", variant: "thinking" };
+        const instructions: Array<string> = [];
         const { runtime, thread } = yield* resumed(
-          [
-            ...mcpAdded,
-            ...mcpConnected,
-            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-            promptAccepted,
-            ...(activity === "running"
-              ? [
-                  locationShutdown,
-                  ...mcpAdded,
-                  ...mcpConnected,
-                  event("session.execution.succeeded", { sessionID: SESSION }),
-                  ...mcpConnected,
-                ]
-              : [
-                  event("session.execution.succeeded", { sessionID: SESSION }),
-                  locationShutdown,
-                  event("session.model.selected", { sessionID: SESSION, model: thinking }),
-                  out("session.switchModel", { sessionID: SESSION, model: "<any>" }),
-                  reply("session.switchModel", null),
-                  ...mcpAdded,
-                  ...mcpConnected,
-                ]),
-            ...quickTurn,
-            ...mcpRemoved,
-          ],
-          { version: "2.2.6" },
+          [...entries, ...quickTurn, ...(ready ? mcpRemoved : [])],
+          {
+            version: "2.2.6",
+            onInstructions: (input) =>
+              instructions.push((input as { readonly value: string }).value),
+          },
         );
-        const watch = yield* watchEvents(runtime);
-        yield* runtime.startTurn(turnInput(thread));
-        yield* watch.terminals(1);
-        // Events apply in order, so the model change shows the shutdown before it applied.
-        if (activity === "idle") {
-          yield* watch.until(() =>
-            watch.seen.some(
-              (event) =>
-                event.type === "provider_thread.updated" &&
-                event.providerThread.nativeMetadata?.modelSelection?.options?.[0]?.value ===
-                  "thinking",
-            ),
-          );
+        let last: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> = [];
+        for (let index = 0; index < turns; index++) {
+          last = yield* turnEvents(runtime, runtime.startTurn(turnInput(thread)));
         }
-        yield* runtime.startTurn(turnInput(thread));
-        yield* watch.terminals(2);
+        assert.deepEqual(noticesOf(last), ready ? [] : [OPENCODE_2_MCP_UNAVAILABLE]);
+        assert.equal(instructions.at(-1)?.includes("t3_background_wait"), ready);
       }),
   );
 

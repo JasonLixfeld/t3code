@@ -43,7 +43,6 @@ import {
   type ProviderInstanceId,
   type RunId,
   type RuntimeRequestId,
-  type ThreadId,
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -396,12 +395,7 @@ interface ThreadState {
   /** Prompts other clients queued while no T3 turn ran, shown once delivered; `leads` the next wake if no report preceded it. */
   readonly externalPrompts: Map<string, { readonly text: string; leads: boolean }>;
   mcp:
-    | {
-        readonly threadId: ThreadId;
-        readonly name: string;
-        readonly directory: string;
-        readonly credential: string;
-      }
+    | { readonly name: string; readonly directory: string; readonly credential: string }
     | undefined;
   instructions: string | undefined;
 }
@@ -3401,22 +3395,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     const handleEvent = Effect.fnUntraced(function* (event: OpenCode2Client.OpenCode2StreamEvent) {
-      if (event.type === "location.shutdown") {
-        for (const state of threads.values()) {
-          const mcp = state.mcp;
-          if (mcp === undefined || mcp.directory !== event.location?.directory) continue;
-          state.mcp = undefined;
-          // Idle eviction also shuts a Location down; an add would boot it again, so only
-          // threads with work still running re-add now.
-          if (state.active === undefined && !busy.has(state.sessionId) && !hasBackground(state))
-            continue;
-          yield* Effect.forkIn(
-            sessionGates.withLock(state.sessionId, ensureMcp(state, mcp.threadId, mcp.directory)),
-            sessionScope,
-          );
-        }
-        return;
-      }
       if (event.type === "shell.created") {
         const sessionId = stringField(event.data.info.metadata, "sessionID");
         if (sessionId !== undefined && ownerOf(sessionId) !== undefined) {
@@ -4482,16 +4460,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     // OpenCode stores runtime MCP registrations per Location, so reload and idle eviction can leave T3's cache stale.
     const ensureMcp = Effect.fnUntraced(function* (
       state: ThreadState,
-      threadId: ThreadId,
-      directory: string,
+      turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
     ) {
-      const mcpSession = yield* mcpSessions.read(threadId);
-      const name = yield* mcpServerNameFor(threadId);
+      const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+      const directory = directoryOf(turnInput.runtimePolicy.cwd);
+      const name = yield* mcpServerNameFor(turnInput.threadId);
       // An external server may not reach T3's MCP endpoint, as with 1.x.
       const wanted =
         mcpSession === undefined || connection.external
           ? undefined
-          : { threadId, name, directory, credential: mcpSession.authorizationHeader };
+          : { name, directory, credential: mcpSession.authorizationHeader };
       if (
         state.mcp !== undefined &&
         (wanted === undefined ||
@@ -4525,7 +4503,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ),
         );
       if (known === "unknown") {
-        yield* add;
+        if (!(yield* add)) {
+          state.mcp = undefined;
+          return { mcpSession, mcp: "failed" as const };
+        }
       } else {
         const attempt = add.pipe(
           Effect.flatMap((added) => (added ? mcpStatus(wanted) : Effect.succeed("not added"))),
@@ -4577,11 +4558,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       state: ThreadState,
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
     ) {
-      const { mcpSession, mcp } = yield* ensureMcp(
-        state,
-        turnInput.threadId,
-        directoryOf(turnInput.runtimePolicy.cwd),
-      );
+      const { mcpSession, mcp } = yield* ensureMcp(state, turnInput);
       const mcpAvailable = mcp === "ready";
       const instructions = [
         buildRuntimeInstructions({
@@ -4727,13 +4704,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       state: ThreadState,
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
     ) {
-      const { mcp } = yield* ensureMcp(
-        state,
-        turnInput.threadId,
-        directoryOf(turnInput.runtimePolicy.cwd),
-      );
-      const begun = yield* beginTurn(state, turnInput, false);
-      if (mcp === "failed") yield* emitMcpUnavailable(state, begun);
+      const { mcp } = yield* ensureMcp(state, turnInput);
+      yield* beginTurn(state, turnInput, false);
       yield* lock.withPermit(
         Effect.gen(function* () {
           const index = state.wakes.findIndex(
@@ -4751,6 +4723,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             turn.providerTurn = { ...turn.providerTurn, nativeTurnRef: ref(wake.first, "weak") };
           }
           if (wake.running) state.unsettled = false;
+          if (mcp === "failed" && turn !== undefined) yield* emitMcpUnavailable(state, turn);
           yield* replay(wake);
           for (const session of sessionsOf(state).toReversed()) yield* syncRoster(session);
           yield* syncRosterAncestors(state);
