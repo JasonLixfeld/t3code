@@ -98,6 +98,7 @@ const SETTINGS_SEARCH_TERMS = {
     msg("working section", { $context: "settings search keyword" }),
     msg("missions", { $context: "settings search keyword" }),
     msg("missions heading", { $context: "settings search keyword" }),
+    msg("mission prompt", { $context: "settings search keyword" }),
     msg("threads heading", { $context: "settings search keyword" }),
     msg("new threads", { $context: "settings search keyword" }),
     msg("last project", { $context: "settings search keyword" }),
