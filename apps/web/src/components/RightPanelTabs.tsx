@@ -75,6 +75,8 @@ import { cn } from "~/lib/utils";
 import { issueStatePresentation } from "~/components/issue/issuePresentation";
 import { issueEnvironment } from "~/state/issues";
 import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
+import { isEditableFocused } from "~/lib/editableFocus";
+import { useFindShortcut } from "./diffs/useDiffFind";
 import { readLocalApi } from "~/localApi";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
@@ -1126,6 +1128,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const gt = useGT();
   const messages = useMessages();
   const focusedSurface = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
+  const findShortcut = useFindShortcut();
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
@@ -1483,6 +1486,16 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           focusedSurface?.kind === "preview" ? dispatchPreviewAction : undefined,
         )
       }
+      onKeyDown={(event) => {
+        // A browser surface answers find through the chat route, which checks preview access.
+        if (event.defaultPrevented || !focusedSurface || focusedSurface.kind === "preview") return;
+        const target = event.target;
+        // React bubbles a portal's keys here; only keys from inside the panel find in it.
+        if (!(target instanceof Element) || !event.currentTarget.contains(target)) return;
+        if (isEditableFocused(target) && !target.closest("[data-search-panel-overlay]")) return;
+        if (!findShortcut.matches(event.nativeEvent)) return;
+        if (dispatchPreviewAction("find")) event.preventDefault();
+      }}
     >
       <div
         className={cn(

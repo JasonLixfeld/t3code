@@ -1259,7 +1259,7 @@ function PullRequestCodeTab({
     preferredHighlighter: PREFERRED_HIGHLIGHTER,
     themeType: resolvedTheme,
     stickyHeaders: true,
-    onSearchStateChange: diffFind.onSearchStateChange,
+    ...diffFind.codeViewOptions,
     // Full contents would not match the cut lines, and would bring back the lines just cut.
     loadDiffFiles: (fileDiff: FileDiffMetadata) =>
       cutFiles.has(fileDiff)

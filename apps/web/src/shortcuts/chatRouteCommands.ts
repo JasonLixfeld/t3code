@@ -186,10 +186,12 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       "preview.zoomIn": zoomCommand("zoom-in"),
       "preview.zoomOut": zoomCommand("zoom-out"),
       "preview.resetZoom": zoomCommand("reset-zoom"),
-      // Unclaimed, the browser's own find runs when no thread handles panel find.
+      // Other right panel surfaces answer find from the panel's tab bar, which needs no preview
+      // access. Unclaimed, the browser's own find runs.
       "preview.find": (event) => {
         const environmentId = readRouteEnvironmentId();
-        if (!environmentId || !canOperatePreview(environmentId)) return false;
+        if (!environmentId || !isBrowserSurfaceFocused()) return false;
+        if (!canOperatePreview(environmentId)) return false;
         claim(event);
         dispatchPreviewAction("find");
       },

@@ -239,7 +239,11 @@ describe("right panel thumb buttons", () => {
 
   it("go back and forward in the active browser tab instead of the app router", async () => {
     const actions: string[] = [];
-    using _subscription = { [Symbol.dispose]: subscribePreviewAction((a) => actions.push(a)) };
+    using _subscription = {
+      [Symbol.dispose]: subscribePreviewAction((a) => {
+        actions.push(a);
+      }),
+    };
     await using screen = await render(panel(BROWSER_SURFACE));
     const tabStrip = screen.container.querySelector("[data-right-panel-tabbar]")!;
     const content = screen.getByTestId("surface-content").element();

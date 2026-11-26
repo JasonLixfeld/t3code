@@ -119,7 +119,8 @@ import { SourceControlAppAccessNotice } from "../SourceControlAppAccessNotice";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
-import { type DiffFind, useFindShortcut } from "../diffs/useDiffFind";
+import type { DiffFind } from "../diffs/useDiffFind";
+import { subscribePreviewAction } from "../preview/previewActionBus";
 import { openOnHostLabel } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
 import { pullRequestMarkdownExtensions } from "./pullRequestMarkdown.logic";
@@ -618,8 +619,13 @@ export function PullRequestDetailPanel({
     handoffSummary?.provider ?? listEntry?.provider ?? repositoryIdentity?.provider,
   ).changeRequest;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const findShortcut = useFindShortcut();
   const codeFindRef = useRef<Pick<DiffFind, "open">>(null);
+  const answerFind = useEffectEvent(() => tab === "code" && (codeFindRef.current?.open() ?? false));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- answers the workspace panel's find shortcut, which its tab bar sends to the active surface
+  useEffect(() => {
+    if (!shortcutsEnabled) return;
+    return subscribePreviewAction((action) => action === "find" && answerFind());
+  }, [shortcutsEnabled]);
   const { copyToClipboard: copyReference } = useCopyToClipboard<string>({
     target: {
       target: `${terminology.singular} reference`,
@@ -1607,16 +1613,7 @@ export function PullRequestDetailPanel({
   return (
     // One tooltip for the panel's many triggers; mounting one per trigger dominated opening it.
     <SharedTooltipProvider>
-      <div
-        className="relative flex h-full min-h-0 w-full flex-col bg-background"
-        onKeyDown={(event) => {
-          // The selected Code tab button sits outside the tab's content.
-          if (tab !== "code" || event.defaultPrevented) return;
-          if (!findShortcut.matches(event.nativeEvent)) return;
-          event.preventDefault();
-          codeFindRef.current?.open();
-        }}
-      >
+      <div className="relative flex h-full min-h-0 w-full flex-col bg-background">
         {threadPickerOpen && detail ? (
           <PullRequestThreadLinks
             key={`${environmentId}:${detail.url}`}

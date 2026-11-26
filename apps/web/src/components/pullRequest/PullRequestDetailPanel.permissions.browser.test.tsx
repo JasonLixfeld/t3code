@@ -76,7 +76,16 @@ vi.mock(import("../diffs/useDiffFind"), async (original) => {
     ...actual,
     useDiffFind: () => {
       const diffFind = actual.useDiffFind();
-      return { ...diffFind, find: { ...diffFind.find, open: codeFind } };
+      return {
+        ...diffFind,
+        find: {
+          ...diffFind.find,
+          open: () => {
+            codeFind();
+            return true;
+          },
+        },
+      };
     },
   };
 });
@@ -87,6 +96,9 @@ vi.mock(import("~/state/use-atom-command"), async (original) => ({
 
 import { isMacPlatform } from "~/lib/utils";
 import { createWorkspaceFocusController, workspaceAreaProps } from "~/lib/workspaceFocus";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import type { PullRequestSurface } from "~/rightPanelStore";
+import { RightPanelTabs } from "../RightPanelTabs";
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 
 const detail: PullRequestDetailView = {
@@ -311,15 +323,84 @@ it("keeps a screen reader's place when scrolling the description condenses the h
   expect(moves).not.toHaveBeenCalled();
 });
 
-it("opens find in the Code tab on the find shortcut while its tab button has focus", async () => {
+it("opens find in the Code tab from the workspace panel's tab bar and the Code tab button", async () => {
   setup();
-  await using screen = await render(panel());
+  const surface: PullRequestSurface = {
+    id: "pull-request:project:owner/repo:1",
+    kind: "pull-request",
+    projectId: detail.projectId,
+    repository: detail.repository,
+    number: detail.number,
+  };
+  const noop = () => {};
+  await using screen = await render(
+    <RightPanelTabs
+      mode="embedded"
+      keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
+      getShortcutContext={() => ({
+        terminalFocus: false,
+        terminalOpen: false,
+        previewFocus: true,
+        previewOpen: false,
+        isWeb: true,
+        isDesktop: false,
+      })}
+      surfaces={[surface]}
+      environmentId={environmentId}
+      activeSurfaceId={surface.id}
+      pendingSurfaceIds={new Set()}
+      previewSessions={{}}
+      desktopByTabId={{}}
+      terminalLabelsById={new Map()}
+      onActivate={noop}
+      onCloseSurface={noop}
+      onCloseOtherSurfaces={noop}
+      onCloseSurfacesToRight={noop}
+      onCloseAllSurfaces={noop}
+      onCopyFilePath={noop}
+      onAddBrowser={noop}
+      onAddBrowserInProfile={noop}
+      onAddTerminal={noop}
+      onAddDiff={noop}
+      onAddFiles={noop}
+      onAddPullRequest={noop}
+      onAddPullRequests={noop}
+      onAddDevice={noop}
+      browserAvailable={false}
+      terminalAvailable={false}
+      diffAvailable={false}
+      filesAvailable={false}
+      pullRequestAvailable
+      pullRequestsAvailable={false}
+      deviceAvailable={false}
+    >
+      <PullRequestDetailPanel
+        environmentId={environmentId}
+        reference={detail}
+        context="page"
+        shortcutsEnabled
+        getShortcutContext={() => ({
+          terminalFocus: false,
+          terminalOpen: false,
+          previewFocus: true,
+          previewOpen: false,
+          isWeb: true,
+          isDesktop: false,
+        })}
+      />
+    </RightPanelTabs>,
+  );
+  const pressFind = () =>
+    userEvent.keyboard(
+      isMacPlatform(navigator.platform) ? "{Meta>}f{/Meta}" : "{Control>}f{/Control}",
+    );
   const code = screen.getByRole("button", { name: "Code", exact: true });
   await userEvent.click(code);
   await expect.element(screen.getByRole("button", { name: "Diff options" })).toBeInTheDocument();
   await expect.element(code).toHaveFocus();
-  await userEvent.keyboard(
-    isMacPlatform(navigator.platform) ? "{Meta>}f{/Meta}" : "{Control>}f{/Control}",
-  );
-  await vi.waitFor(() => expect(codeFind).toHaveBeenCalledOnce());
+  await pressFind();
+  await vi.waitFor(() => expect(codeFind).toHaveBeenCalledTimes(1));
+  screen.container.querySelector<HTMLElement>("[data-active-tab='true'] button")!.focus();
+  await pressFind();
+  await vi.waitFor(() => expect(codeFind).toHaveBeenCalledTimes(2));
 });

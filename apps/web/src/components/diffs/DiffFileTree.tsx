@@ -151,7 +151,7 @@ export function DiffFileTree({
     } else {
       const query = nameQuery;
       setNameQuery("");
-      if (query !== "") find.search(query, searchInputRef.current);
+      if (query.trim() !== "") find.search(query);
     }
     searchInputRef.current?.focus();
   };
@@ -248,17 +248,19 @@ export function DiffFileTree({
   return (
     <div
       className={cn("flex min-h-0 flex-1 flex-col bg-background", className)}
-      onKeyDown={(event) => {
+      // Capture: Pierre's tree handles Escape on a filtered row itself and stops it there.
+      onKeyDownCapture={(event) => {
+        if (event.key !== "Escape" || !searchOpen) return;
         if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-        if (event.key === "Escape" && searchOpen) {
-          event.preventDefault();
-          event.stopPropagation();
-          closeSearch();
-          searchButtonRef.current?.focus();
-        } else if (findShortcut.matches(event.nativeEvent)) {
-          event.preventDefault();
-          focusSearch();
-        }
+        event.preventDefault();
+        event.stopPropagation();
+        closeSearch();
+        searchButtonRef.current?.focus();
+      }}
+      onKeyDown={(event) => {
+        if (!findShortcut.matches(event.nativeEvent)) return;
+        event.preventDefault();
+        focusSearch();
       }}
     >
       <div
@@ -336,9 +338,7 @@ export function DiffFileTree({
                 }
                 value={contentsMode ? (find.state?.query ?? "") : nameQuery}
                 onChange={(event) =>
-                  contentsMode
-                    ? find.search(event.target.value, event.currentTarget)
-                    : setNameQuery(event.target.value)
+                  contentsMode ? find.search(event.target.value) : setNameQuery(event.target.value)
                 }
                 onKeyDown={(event) => {
                   if (event.nativeEvent.isComposing || event.keyCode === 229) return;

@@ -2,6 +2,7 @@ import { useGT } from "gt-react";
 import {
   type CSSProperties,
   type FocusEvent,
+  type KeyboardEventHandler,
   type MouseEventHandler,
   type ReactNode,
   useLayoutEffect,
@@ -33,6 +34,7 @@ interface PreviewPanelShellProps {
   defaultWidth?: number;
   onMouseDown?: MouseEventHandler<HTMLDivElement>;
   onMouseUp?: MouseEventHandler<HTMLDivElement>;
+  onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
   children: ReactNode;
 }
 
@@ -160,6 +162,7 @@ function PreviewPanelShellFrame(
       data-workspace-unavailable={collapsible && !open ? "true" : undefined}
       onMouseDown={props.onMouseDown}
       onMouseUp={props.onMouseUp}
+      onKeyDown={props.onKeyDown}
       className={cn(
         "relative flex h-full min-h-0 min-w-0 max-w-full flex-col self-stretch bg-background",
         isInline
