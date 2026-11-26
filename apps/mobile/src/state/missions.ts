@@ -78,6 +78,8 @@ export function useMissionsAdvertised(): boolean {
   return useAtomValue(missionAdvertisersAtom).length > 0;
 }
 
+export const readMissionAdvertisers = () => appAtomRegistry.get(missionAdvertisersAtom);
+
 export function useMissionsTurnedOff(): boolean {
   return useAtomValue(missionsTurnedOffAtom);
 }

@@ -5,6 +5,7 @@ import { View } from "react-native";
 
 import { Button } from "../../../components/ui/Button";
 import { AppTextInput } from "../../../components/ui/AppText";
+import { readMissionAdvertisers } from "../../../state/missions";
 import { useEnvironmentsWithScope } from "../../../state/session";
 import { useSettingsEnvironmentFilter } from "../settings-environment-filter";
 import {
@@ -38,18 +39,25 @@ export function MissionPromptSettings() {
       targets,
       planMobileScopedSettingsPatch(targets, false, { missionDefaultPrompt }),
     );
-  const targetsKey = environments.map((target) => target.environmentId).join(",");
-  // Each change of servers starts a new generation, so an edit never outlives one, even A, B, A.
-  const [targetsGeneration, setTargetsGeneration] = useState({ key: targetsKey, count: 0 });
-  if (targetsGeneration.key !== targetsKey) {
-    setTargetsGeneration({ key: targetsKey, count: targetsGeneration.count + 1 });
+  const editKey = JSON.stringify([environments.map((target) => target.environmentId), saved]);
+  // Each change of servers or saved prompt starts a new generation, so an edit never outlives one.
+  const [editGeneration, setEditGeneration] = useState({ key: editKey, count: 0 });
+  if (editGeneration.key !== editKey) {
+    setEditGeneration({ key: editKey, count: editGeneration.count + 1 });
   }
-  const generation = targetsGeneration.count;
-  const draft = useRef<{ text: string; over: string | null; generation: number } | null>(null);
+  const generation = editGeneration.count;
+  const draft = useRef<{ text: string; generation: number } | null>(null);
+  const stillServesMissions = () => {
+    const live = readMissionAdvertisers();
+    return (
+      live.length === environments.length &&
+      environments.every((target) => live.includes(target.environmentId))
+    );
+  };
   const saveDraft = () => {
     const typed = draft.current;
     draft.current = null;
-    if (typed === null || typed.over !== saved || typed.generation !== generation) return;
+    if (typed === null || typed.generation !== generation || !stillServesMissions()) return;
     const value = typed.text.trim();
     if (saved === null || value !== saved) save(value);
   };
@@ -69,10 +77,10 @@ export function MissionPromptSettings() {
       >
         <View className="px-4 py-3">
           <AppTextInput
-            key={`${generation}:${saved}`}
+            key={generation}
             accessibilityLabel={gt("Mission prompt")}
             onChangeText={(text) => {
-              draft.current = { text, over: saved, generation };
+              draft.current = { text, generation };
             }}
             defaultValue={saved ?? ""}
             placeholder={

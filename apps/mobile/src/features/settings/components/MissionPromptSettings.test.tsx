@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   reset: null as (() => void) | null,
   targets: [] as ReadonlyArray<unknown>,
   operable: true,
+  advertised: null as ReadonlyArray<string> | null,
   write: vi.fn(),
 }));
 
@@ -48,6 +49,13 @@ vi.mock("../settings-environment-filter", () => ({
   useSettingsEnvironmentFilter: () => ({ availableTargets: mocks.targets }),
 }));
 vi.mock("../useSettingsWriter", () => ({ useSettingsWriter: () => mocks.write }));
+vi.mock("../../../state/missions", () => ({
+  readMissionAdvertisers: () =>
+    mocks.advertised ??
+    (mocks.targets as ReadonlyArray<SettingsTarget>)
+      .filter((target) => target.serverConfig.environment.capabilities.missions === true)
+      .map((target) => target.environmentId),
+}));
 vi.mock("../../../state/session", () => ({
   useEnvironmentsWithScope: (
     environments: ReadonlyArray<{ environmentId: EnvironmentId }>,
@@ -82,6 +90,7 @@ beforeEach(() => {
   mocks.input = null;
   mocks.reset = null;
   mocks.operable = true;
+  mocks.advertised = null;
   mocks.write.mockClear();
 });
 
@@ -142,6 +151,29 @@ describe("MissionPromptSettings", () => {
     render();
     mocks.targets = [target("desk", true)];
     render();
+    act(() => root.unmount());
+    root = createRoot(document.createElement("div"));
+    expect(mocks.write).not.toHaveBeenCalled();
+  });
+
+  it("drops an edit once the saved prompt changes, even if it changes back", () => {
+    mocks.targets = [target("desk", true, "A")];
+    render();
+    mocks.input?.onChangeText("Mine");
+    mocks.targets = [target("desk", true, "B")];
+    render();
+    mocks.targets = [target("desk", true, "A")];
+    render();
+    act(() => root.unmount());
+    root = createRoot(document.createElement("div"));
+    expect(mocks.write).not.toHaveBeenCalled();
+  });
+
+  it("saves nothing on leaving once the last server offering Missions is gone", () => {
+    mocks.targets = [target("desk", true)];
+    render();
+    mocks.input?.onChangeText("Mine");
+    mocks.advertised = [];
     act(() => root.unmount());
     root = createRoot(document.createElement("div"));
     expect(mocks.write).not.toHaveBeenCalled();
