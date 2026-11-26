@@ -528,6 +528,8 @@ export class MissionStore extends Context.Service<
     }) => Effect.Effect<void, MissionError>;
     /** Each untold update once: one already recorded from the same source is not added again. */
     readonly addMissionUpdate: (update: MissionUpdate) => Effect.Effect<void>;
+    /** Drops one update not told yet. One a wake already took stays with that wake. */
+    readonly dropMissionUpdate: (update: MissionUpdate) => Effect.Effect<void>;
     /** The Missions with updates not told yet. */
     readonly missionsWithUpdates: Effect.Effect<ReadonlyArray<string>>;
     /**
@@ -1269,6 +1271,14 @@ const make = Effect.gen(function* () {
         ${update.event})
     `.pipe(Effect.asVoid, Effect.orDie);
 
+  const dropMissionUpdate = (update: MissionUpdate) =>
+    sql`
+      DELETE FROM mission_updates
+      WHERE mission_id = ${update.missionId} AND environment_id = ${update.environmentId}
+        AND thread_id = ${update.threadId} AND source = ${update.source}
+        AND event = ${update.event} AND delivery_key IS NULL
+    `.pipe(Effect.asVoid, Effect.orDie);
+
   const missionsWithUpdates = sql<{ readonly mission_id: string }>`
     SELECT DISTINCT mission_id FROM mission_updates
   `.pipe(
@@ -1468,6 +1478,7 @@ const make = Effect.gen(function* () {
   return MissionStore.of({
     setPrompt,
     addMissionUpdate,
+    dropMissionUpdate,
     missionsWithUpdates,
     takeMissionUpdates,
     clearMissionUpdates,

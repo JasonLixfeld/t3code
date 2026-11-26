@@ -105,6 +105,7 @@ const makeMissions = () => {
     readonly asLead: ThreadId | undefined;
   }> = [];
   const started = new Set<string>();
+  const heard: Array<readonly [ThreadId, ScopedThreadRef, string]> = [];
   const add = (
     input: { readonly missionId: string; readonly member: ScopedThreadRef },
     asLead: ThreadId | undefined,
@@ -129,6 +130,7 @@ const makeMissions = () => {
       );
     });
   const layer = Layer.mock(Missions.Missions)({
+    heardInWait: (lead, member, runId) => Effect.sync(() => void heard.push([lead, member, runId])),
     joinStarted: (input, asLead) =>
       Effect.suspend(() => {
         const key = `${input.member.environmentId}/${input.member.threadId}`;
@@ -160,7 +162,7 @@ const makeMissions = () => {
           : Effect.succeed("released" as const);
       }),
   });
-  return { calls, layer };
+  return { calls, heard, layer };
 };
 
 const mcpClient = McpSchema.McpServerClient.of({
@@ -327,8 +329,9 @@ const delegated = {
 const callOrchestratorTool = (
   missions: ReturnType<typeof makeMissions>,
   scope: McpInvocationContext.McpInvocationScope,
-  name: "create_threads" | "delegate_task",
+  name: "create_threads" | "delegate_task" | "t3_thread_wait",
   input: Record<string, unknown>,
+  waited?: object,
 ) =>
   Effect.gen(function* () {
     const dependencies = Layer.mergeAll(
@@ -338,9 +341,10 @@ const callOrchestratorTool = (
       Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({
         createThreads: () => Effect.succeed({ threads: [created("new-1"), created("taken")] }),
         delegateTask: () => Effect.succeed(delegated),
+        waitForThread: () => Effect.succeed(waited as never),
       }),
       Layer.mock(ThreadMetadataMcpService.ThreadMetadataMcpService)({}),
-      Layer.mock(PeerForwarding.PeerForwarding)({}),
+      Layer.mock(PeerForwarding.PeerForwarding)({ call: () => Effect.succeed(waited as never) }),
       Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
       Layer.mock(PeerLinks.PeerLinks)({}),
       Layer.mock(RemoteDelegation.RemoteDelegation)({}),
@@ -526,5 +530,85 @@ it.effect("a thread offered the lead tools that no longer leads is refused, not 
       assert.include(answer.text, "invalid_request");
     }
     assert.deepEqual(missions.calls, []);
+  }),
+);
+
+it.effect(
+  "a wait that returns a run completed tells Missions what it saw, here or on a linked machine",
+  () =>
+    Effect.gen(function* () {
+      const missions = makeMissions();
+      const member = ThreadId.make("member-thread");
+      const answer = { threadId: member, runId: "run-1", status: "completed", timedOut: false };
+      const wait = (
+        scope: McpInvocationContext.McpInvocationScope,
+        waited: object,
+        environmentId?: EnvironmentId,
+      ) =>
+        callOrchestratorTool(
+          missions,
+          scope,
+          "t3_thread_wait",
+          { threadId: member, ...(environmentId === undefined ? {} : { environmentId }) },
+          { ...answer, ...waited },
+        );
+      assert.deepEqual(yield* wait(lead, {}), answer);
+      yield* wait(lead, {}, LAPTOP);
+      yield* wait(notLead, {});
+      yield* wait(lead, { timedOut: true });
+      yield* wait(lead, { status: "failed" });
+      yield* wait(lead, { runId: null, status: "idle" });
+      assert.deepEqual(missions.heard, [
+        [lead.thread.threadId, { environmentId: HERE, threadId: member }, "run-1"],
+        [lead.thread.threadId, { environmentId: LAPTOP, threadId: member }, "run-1"],
+        [notLead.thread.threadId, { environmentId: HERE, threadId: member }, "run-1"],
+      ]);
+    }),
+);
+
+it.effect("a roster member with a huge project or machine label is cut to fit 30,000 bytes", () =>
+  Effect.gen(function* () {
+    const rows = [
+      { ...row(0, "idle"), project: "p".repeat(40_000) },
+      { ...row(1, "idle"), machine: "m".repeat(40_000) },
+      row(2, "idle"),
+    ];
+    const missions = {
+      ...makeMissions(),
+      layer: Layer.mock(Missions.Missions)({
+        ledBy: () =>
+          Effect.succeed({
+            missionId: MISSION,
+            name: "Ship",
+            leadThreadId: lead.thread.threadId,
+            createdAt: "",
+            prompt: "",
+          }),
+        roster: () => Effect.succeed(rows),
+      }),
+    };
+    const seen: Array<string> = [];
+    let cursor: number | null = 0;
+    while (cursor !== null) {
+      const { text, structured } = yield* callLeadTool(missions, lead, "t3_mission_roster", {
+        cursor,
+      });
+      assert.isAtMost(Buffer.byteLength(text, "utf8"), 30_000);
+      const page = structured as {
+        readonly members: ReadonlyArray<{
+          readonly threadRef: ScopedThreadRef;
+          readonly project: string;
+          readonly machine: string;
+        }>;
+        readonly nextCursor: number | null;
+      };
+      for (const member of page.members) {
+        seen.push(
+          `${member.threadRef.threadId} ${member.project.length < 40_000} ${member.machine.length < 40_000}`,
+        );
+      }
+      cursor = page.nextCursor;
+    }
+    assert.deepEqual(seen, ["t0 true true", "t1 true true", "t2 true true"]);
   }),
 );

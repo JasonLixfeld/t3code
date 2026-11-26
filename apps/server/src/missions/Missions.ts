@@ -146,6 +146,15 @@ export class Missions extends Context.Service<
     /** The Mission a thread here leads, if it leads one. */
     readonly ledBy: (threadId: ThreadId) => Effect.Effect<MissionRecord | undefined>;
     /**
+     * A lead's t3_thread_wait returned a member's run as completed, so the wake for that run would
+     * tell it again. Drops that update unless a wake already took it.
+     */
+    readonly heardInWait: (
+      lead: ThreadId,
+      member: ScopedThreadRef,
+      runId: string,
+    ) => Effect.Effect<void>;
+    /**
      * The Mission's members, without the lead, as this machine last knew them. Asks no other
      * machine: those on other machines are as the last sweep heard them.
      */
@@ -1568,6 +1577,25 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const heardInWait = Effect.fn("Missions.heardInWait")(function* (
+    lead: ThreadId,
+    member: ScopedThreadRef,
+    runId: string,
+  ) {
+    const mission = yield* ledBy(lead);
+    if (mission === undefined) return;
+    yield* withLead(mission.missionId, (now) =>
+      now.leadThreadId === lead
+        ? store.dropMissionUpdate({
+            missionId: now.missionId,
+            ...member,
+            source: `run:${runId}`,
+            event: "completed",
+          })
+        : Effect.void,
+    );
+  });
+
   const joinStarted = Effect.fn("Missions.joinStarted")(function* (
     input: { readonly missionId: string; readonly member: ScopedThreadRef },
     asLead: ThreadId,
@@ -1617,6 +1645,7 @@ const make = Effect.gen(function* () {
     joinedWithPriorWork: Stream.fromPubSub(joined),
     hasPriorWork,
     ledBy,
+    heardInWait,
     roster,
     memberStatuses,
     setPrompt,

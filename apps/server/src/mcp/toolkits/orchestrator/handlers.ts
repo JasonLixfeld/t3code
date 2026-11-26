@@ -1,6 +1,7 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import * as Missions from "../../../missions/Missions.ts";
 import { joinCallersMission } from "../mission/handlers.ts";
@@ -257,6 +258,25 @@ export const layer = McpToolAccess.toLayer(
             ),
           ),
         };
+      }),
+    ),
+    t3_thread_wait: McpToolAccess.followedBy(handlers.t3_thread_wait, (input, result, there) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        if (
+          Option.isSome(missions) &&
+          scope.thread !== undefined &&
+          !result.timedOut &&
+          result.runId !== null &&
+          result.status === "completed"
+        ) {
+          yield* missions.value.heardInWait(
+            scope.thread.threadId,
+            { environmentId: there ?? scope.environmentId, threadId: input.threadId },
+            result.runId,
+          );
+        }
+        return result;
       }),
     ),
   })),

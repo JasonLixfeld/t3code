@@ -3932,3 +3932,38 @@ it.effect(
     );
   },
 );
+
+it.effect(
+  "a lead's wait that saw a member's run complete drops that run's untold completion, and nothing else",
+  () =>
+    withMissions(
+      makeWorld([lead, localMember, laptopMember]),
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const store = yield* MissionStore.MissionStore;
+        const { missionId } = yield* createOne;
+        const other = ref(HERE, "other");
+        const update = (member: ScopedThreadRef, run: string, event: "completed" | "failed") =>
+          store.addMissionUpdate({ missionId, ...member, source: `run:${run}`, event });
+        yield* update(localMember, "r1", "completed");
+        yield* update(localMember, "r2", "failed");
+        yield* update(laptopMember, "r3", "completed");
+        yield* update(localMember, "r4", "completed");
+        yield* update(other, "r7", "completed");
+        yield* missions.heardInWait(lead.threadId, localMember, "r1");
+        yield* missions.heardInWait(lead.threadId, localMember, "r2");
+        yield* missions.heardInWait(lead.threadId, laptopMember, "r3");
+        yield* missions.heardInWait(lead.threadId, localMember, "r9");
+        yield* missions.heardInWait(lead.threadId, localMember, "r7");
+        yield* missions.heardInWait(localMember.threadId, localMember, "r4");
+        const left = ["local run:r2", "local run:r4", "other run:r7"];
+        const told = Effect.map(store.takeMissionUpdates(missionId, lead.threadId), ({ updates }) =>
+          updates.map((row) => `${row.threadId} ${row.source}`),
+        );
+        assert.deepEqual(yield* told, left);
+        // A wake that took it already tells it.
+        yield* missions.heardInWait(lead.threadId, localMember, "r4");
+        assert.deepEqual(yield* told, left);
+      }),
+    ),
+);

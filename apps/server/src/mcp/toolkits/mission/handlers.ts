@@ -231,7 +231,7 @@ export const layer = McpToolAccess.toLayer(
               ...alone,
               workspace: typeof alone.workspace === "object" ? "tooLarge" : alone.workspace,
             });
-            for (const field of ["title", "project"] as const) {
+            for (const field of ["title", "project", "machine"] as const) {
               let over = jsonBytes(page(end)) - ROSTER_MAX_BYTES;
               while (over > 0 && rows[cursor]![field] !== "") {
                 const text = rows[cursor]![field];

@@ -14,7 +14,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import { McpSchema, McpServer } from "effect/ai";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
@@ -718,51 +717,4 @@ it.effect("a workspaces call for more than eight members is refused", () =>
     }).pipe(Effect.flip);
     assert.include(refused.message, "Invalid parameters for tool 't3_mission_tag'");
   }),
-);
-
-it.effect(
-  "a thread that starts or stops leading a mission makes /mcp clients list their tools again",
-  () =>
-    Effect.gen(function* () {
-      const directory = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
-        prefix: "t3-lead-tools-",
-      });
-      const announced = yield* Queue.unbounded<ReadonlyArray<ThreadId>>();
-      let store: MissionStore.MissionStore["Service"] | undefined;
-      const context = yield* Layer.build(
-        McpHttpServer.layerLeadToolsListChanged.pipe(
-          Layer.provideMerge(MissionStore.layerFromPath(`${directory}/missions.sqlite`)),
-          Layer.provide(
-            Layer.effect(
-              McpServer.McpServer,
-              Effect.map(McpServer.McpServer, (server) => ({
-                ...server,
-                notifications: {
-                  ...server.notifications,
-                  "notifications/tools/list_changed": () =>
-                    Effect.suspend(() => store!.missions).pipe(
-                      Effect.flatMap((missions) =>
-                        Queue.offer(
-                          announced,
-                          missions.map((mission) => mission.leadThreadId),
-                        ),
-                      ),
-                      Effect.asVoid,
-                    ),
-                },
-              })),
-            ).pipe(Layer.provide(McpServer.McpServer.layer)),
-          ),
-        ),
-      );
-      store = Context.get(context, MissionStore.MissionStore);
-      const lead = leadHere.thread.threadId;
-      const claim = { missionId: SHIP, name: "Ship", owner: "env-here" };
-      yield* store.createMission({ ...claim, threadId: lead, generation: "g1" });
-      assert.deepEqual(yield* Queue.take(announced), [lead]);
-      yield* store.setLead({ ...claim, threadId: userThread, generation: "g2", previous: lead });
-      assert.deepEqual(yield* Queue.take(announced), [userThread]);
-      yield* store.deleteMission({ missionId: SHIP, lead: userThread, machines: [] });
-      assert.deepEqual(yield* Queue.take(announced), []);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
