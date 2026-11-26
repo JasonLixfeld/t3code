@@ -556,6 +556,38 @@ it.effect(
   },
 );
 
+it.effect("a member held by its pull request watch is told once it is settled or archived", () => {
+  const world = makeWorld();
+  const watching = (id: ThreadId) => ({
+    pendingBackgroundTasks: [
+      { taskId: `pull-request-watch:github.com/acme/app#${id}`, kind: "monitor", awaited: true },
+    ],
+  });
+  return withWakes(
+    world,
+    Effect.gen(function* () {
+      for (const [member, runId, parked, type, line] of [
+        [first, "f1", { settledAt: "2026-01-02" }, "thread.settled", "member 1"],
+        [second, "s1", { archivedAt: "2026-01-02" }, "thread.archived", "member 2"],
+      ] as const) {
+        world.set(member, watching(member));
+        yield* world.read(member, world.run(member, runId, "completed"));
+        world.set(member, { ...parked, pendingBackgroundTasks: [] });
+        yield* world.event(member, type, {});
+        yield* world.drained;
+        yield* TestClock.adjust(MissionWakes.HELD_WORK_SETTLE);
+        assert.equal(
+          yield* nextText(world),
+          told([`${line} on this machine finished its turn and is idle.`]),
+        );
+        yield* world.leadRead;
+        yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+      }
+      assert.equal(world.sent.length, 2);
+    }),
+  );
+});
+
 it.effect("a member held by its pull request watch is told once the watch stops holding", () => {
   const world = makeWorld();
   const watch = { taskId: "pull-request-watch:github.com/acme/app#42", kind: "monitor" };
