@@ -1,13 +1,14 @@
-import type {
-  ListedWorkspace,
-  MemberDetail,
-  MemberStatus,
-  OrchestrationV2Run,
-  OrchestrationV2RuntimeRequest,
-  OrchestrationV2ThreadShell,
-  OrchestrationV2TurnItem,
-  ScopedThreadRef,
-  ThreadId,
+import {
+  MISSION_QUIET_REPLY,
+  type ListedWorkspace,
+  type MemberDetail,
+  type MemberStatus,
+  type OrchestrationV2Run,
+  type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2ThreadShell,
+  type OrchestrationV2TurnItem,
+  type ScopedThreadRef,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Effect from "effect/Effect";
@@ -273,8 +274,6 @@ export const cutToBytes = (text: string, max: number) => {
   return kept;
 };
 
-const QUIET_UPDATE_REPLY = "No change.";
-
 const MISSION_LEAD_GUIDANCE = [
   "The mission has no branch or checkout of its own: each repository's work is done in its members' threads.",
   "- Changes to several repositories that must land together: one member, in a multi-repository project.",
@@ -283,7 +282,7 @@ const MISSION_LEAD_GUIDANCE = [
   "- Drive each repository to a pull request. Track which repositories need changes, need none, or are blocked; t3_mission_roster lists them by repository.",
   "- Never pull, push, merge or switch branches only because a thread joined or finished.",
   "- When a member joins with prior work, get its brief before giving it new work.",
-  `- If an update needs nothing from the user and changes no milestone, reply exactly: ${QUIET_UPDATE_REPLY} Milestones are a pull request opened, merged or live, a member blocked or failed, and a question for the user.`,
+  `- If an update needs nothing from the user and changes no milestone, reply exactly: ${MISSION_QUIET_REPLY} Milestones are a pull request opened, merged or live, a member blocked or failed, and a question for the user.`,
   "- Make every question to the user stand on its own. Link the member thread. Say in plain words what it is working on, what must be decided and why now, and what each option changes. Recommend one option. Do not rely on earlier messages.",
 ];
 
