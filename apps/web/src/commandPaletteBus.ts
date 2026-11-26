@@ -12,7 +12,6 @@ export interface CommandPaletteOpenDetail {
   readonly open?: "add-project" | "new-thread-in";
   readonly query?: string;
   readonly linkedThreads?: CommandPaletteLinkedThreads;
-  /** With `new-thread-in`: the draft starts or leads a Mission when it is sent. */
   readonly mission?: MissionDraftIntent;
 }
 

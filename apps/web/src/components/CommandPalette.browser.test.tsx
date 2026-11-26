@@ -47,7 +47,6 @@ vi.mock("../state/server", async (original) => {
   return {
     ...actual,
     primaryServerKeybindingsAtom: Atom.make(jumpBindings),
-    // The machines' mission lists the real mission menu reads, and the right to change them.
     serverEnvironment: {
       ...actual.serverEnvironment,
       missionsLiveAcross: () => Atom.make(realMissionMenu.hosts),
@@ -60,7 +59,6 @@ vi.mock("../state/server", async (original) => {
     },
   };
 });
-// The commands the real mission menu sends, by the label it sends them under.
 const realMissionMenu = vi.hoisted(() => ({
   hosts: [] as ReadonlyArray<unknown>,
   commands: new Map<string, ReturnType<typeof vi.fn>>(),
@@ -387,7 +385,6 @@ describe("CommandPalette open intents", () => {
     const local = makeProject("web");
     setup({ projects: [local] });
     vi.mocked(markMissionDraft).mockClear();
-    // Only the local machine has a home for threads without a project.
     const scratch = { ...makeProject("scratch"), workspaceRoot: "/scratch/home" };
     const openScratchProject = vi.fn().mockResolvedValue(scratch);
     vi.mocked(useScratchProject).mockReturnValue({
@@ -417,7 +414,6 @@ describe("CommandPalette open intents", () => {
     );
     expect(openScratchProject).toHaveBeenCalledWith(local.environmentId);
 
-    // A lead on a machine with no such home is not offered one.
     const lead = {
       kind: "lead",
       host: EnvironmentId.make("remote"),
@@ -732,7 +728,6 @@ describe("CommandPalette mission thread actions", () => {
     onTestFinished(() => vi.mocked(useMissionMenu).mockRestore());
     return itemsOn(hosts);
   };
-  /** The machine's list changes, as a mission made or deleted elsewhere changes it. */
   const relistMissions = (hosts: ReadonlyArray<MissionHost>) =>
     act(() => {
       listed.hosts = hosts;
@@ -808,7 +803,6 @@ describe("CommandPalette mission thread actions", () => {
     openCommandPalette();
     await page.getByRole("option", { name: /Add to mission/ }).click();
     await expect.element(page.getByRole("option", { name: /Billing cleanup/ })).toBeVisible();
-    // Billing cleanup is deleted and Launch week is made while the view is open.
     await relistMissions([hostWith(["Ship v2", "Launch week"], ["ba9876543210", "ba9876543212"])]);
     await expect.element(page.getByRole("option", { name: /Launch week/ })).toBeVisible();
     expect(page.getByText("Billing cleanup").elements()).toHaveLength(0);
@@ -831,7 +825,6 @@ describe("CommandPalette mission thread actions", () => {
     await expect.element(page.getByText("No missions yet")).toBeVisible();
     await expect.element(page.getByText("Backspace", { exact: true })).toBeVisible();
     expect(page.getByRole("option", { name: /Ship v2/ }).elements()).toHaveLength(0);
-    // The thread now leads a mission, so it has no Add to mission at all.
     const lead = { ref: { environmentId: LOCAL, threadId: thread.id }, role: "lead" as const };
     await relistMissions([hostWith(["Ship v2"], undefined, [{ ...lead, state: "active" }])]);
     await expect.element(page.getByRole("option", { name: "Copy", exact: true })).toBeVisible();
@@ -904,7 +897,6 @@ describe("CommandPalette mission thread actions", () => {
     await expect.element(page.getByText("Backspace", { exact: true })).not.toBeInTheDocument();
   });
 
-  /** A connected machine, where a path-shaped query would otherwise browse its folders. */
   const connectMachine = async () => {
     const actual =
       await vi.importActual<typeof import("../state/environments")>("../state/environments");

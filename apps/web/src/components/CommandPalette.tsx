@@ -606,7 +606,6 @@ function OpenCommandPaletteDialog(props: {
     query: deferredQuery,
   });
   const currentView = viewStack.at(-1)?.view ?? null;
-  // A draft made from this view starts or leads a Mission once it is sent.
   const missionIntent = currentView?.mission;
   const missionHosts = useMissionHosts();
   const missionStartMachines = useMissionStartMachines(missionHosts);
@@ -649,7 +648,6 @@ function OpenCommandPaletteDialog(props: {
   const projectPickerEntries = buildSidebarProjectPickerEntries({
     groups: pickableProjectGroups(projectGroups),
     preferredProjectRef: contextualProjectRef,
-    // A Mission's lead lives on its machine, so only that machine's copies can give one.
     environmentIds: missionMachines,
   });
   const pickerProjects = projectPickerEntries.map(({ group, targetProject }) => ({
@@ -765,7 +763,6 @@ function OpenCommandPaletteDialog(props: {
           addProjectCloneFlow.repository?.nameWithOwner ?? addProjectCloneFlow.remoteUrl,
         )
       : "";
-  // Add to mission searches only its missions, whose names may look like paths.
   const inMissionAddView =
     currentView?.groups[0]?.value.startsWith(MISSION_ADD_GROUP_PREFIX) === true;
   const canBrowsePaths =
@@ -797,13 +794,11 @@ function OpenCommandPaletteDialog(props: {
     environments.find((environment) => environment.environmentId === activeThread?.environmentId)
       ?.serverConfig?.threadFind === true;
   const scratchTargetEnvironmentId = scratchEnvironmentId(currentProjectEnvironmentId);
-  // A new lead must be on its Mission's machine, so "No project" opens there or not at all.
   const noProjectEnvironmentId = missionScratchHome(
     missionMachines,
     scratchTargetEnvironmentId,
     scratchWorkspaceRootFor,
   );
-  // A draft opened from this view starts, leads or joins a Mission once it is sent.
   const openDraftIn = async (projectRef: ScopedProjectRef) => {
     const created = await handleNewThread(projectRef);
     if (created !== null && missionIntent !== undefined) {
@@ -1989,7 +1984,6 @@ function OpenCommandPaletteDialog(props: {
   }));
   const sourceSelectionViewValue =
     addProjectEnvironmentId === null ? null : `sources:${addProjectEnvironmentId}`;
-  // Undefined outside Add to mission; null once its thread no longer offers it.
   const openGroup = currentView?.groups[0];
   const liveMissionAdd =
     inMissionAddView && openGroup
@@ -2037,7 +2031,6 @@ function OpenCommandPaletteDialog(props: {
       activeGroups,
       query: deferredQuery,
       isInSubmenu: currentView !== null,
-      // Add to mission never falls back to searching beyond itself.
       ...(deferredQuery.trim().length > 0 && liveMissionAdd === undefined
         ? {
             allOptions: {
@@ -2077,7 +2070,6 @@ function OpenCommandPaletteDialog(props: {
     },
     messages,
   );
-  // Add to mission's reason row explains its empty view whatever is typed.
   const searchedGroups =
     liveMissionAdd && isMissionAddReason(liveMissionAdd) ? [...liveMissionAdd] : searchResults;
   // Jump shortcuts number the project rows as shown, so a pin cannot move a number to another row.

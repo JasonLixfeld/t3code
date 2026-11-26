@@ -66,14 +66,12 @@ const SHORTCUTS: Partial<Record<ThreadActionMenuId, KeybindingCommand>> = {
 };
 
 const MISSION_ADD_VALUE = "thread-action:mission-add";
-/** Add to mission's view is read from the thread's live rows, so its group names the thread. */
 export const MISSION_ADD_GROUP_PREFIX = `${MISSION_ADD_VALUE}@`;
 
 function missionAddGroupValue(threadRef: ScopedThreadRef): string {
   return `${MISSION_ADD_GROUP_PREFIX}${JSON.stringify([threadRef.environmentId, threadRef.threadId])}`;
 }
 
-/** The open view holds only Add to mission's own disabled row, which explains why it is empty. */
 export function isMissionAddReason(groups: ReadonlyArray<CommandPaletteGroup>): boolean {
   return (
     groups.length === 1 &&
@@ -82,10 +80,6 @@ export function isMissionAddReason(groups: ReadonlyArray<CommandPaletteGroup>): 
   );
 }
 
-/**
- * The open Add to mission view as the thread's rows show it now: its missions, or the disabled
- * row with its reason once none can be picked. Null once the thread has no such row.
- */
 export function liveMissionAddGroups(
   openGroup: CommandPaletteGroup,
   threadRef: ScopedThreadRef | null,
