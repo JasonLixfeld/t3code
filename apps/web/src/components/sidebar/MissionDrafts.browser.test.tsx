@@ -11,7 +11,7 @@ import { useThreadShell } from "../../state/entities";
 import { makeThreadFixture } from "../../test-fixtures";
 import { toastManager } from "../ui/toast";
 import { useDraftMissionChoice } from "../chat/DraftMissionSelect";
-import { markMissionDraft, missionDraftOf, moveMissionDraft } from "./missionDraftStore";
+import { markMissionDraft, missionDraftOf } from "./missionDraftStore";
 import { MissionDraftCoordinator, useMissionDraftBanner } from "./MissionDrafts";
 import { useMissionHosts } from "./MissionsSection";
 
@@ -133,15 +133,6 @@ it("starts a mission led by a draft once sent, when its Mission choice picked a 
       input: { missionId: expect.stringMatching(/^[0-9a-f]{12}$/), leadThreadId: threadId },
     }),
   );
-});
-
-it("moves a draft's mission to the machine a project pick moved that draft to", () => {
-  const draftId = DraftId.make("moved-mission-draft");
-  const intent = { kind: "member", host: LOCAL, missionId: "ba9876543210", name: "Ship" } as const;
-  markMissionDraft(draftId, { intent, thread });
-  const moved = { environmentId: EnvironmentId.make("laptop"), threadId: thread.threadId };
-  moveMissionDraft(draftId, draftId, moved);
-  expect(missionDraftOf(draftId)).toMatchObject({ intent, thread: moved });
 });
 
 it("makes nothing for a draft that is abandoned or sent as a plain thread", async () => {

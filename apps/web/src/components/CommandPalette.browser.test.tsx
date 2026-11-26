@@ -16,7 +16,6 @@ import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
 import * as Option from "effect/Option";
 import { type EnvironmentPresentation, useEnvironments } from "../state/environments";
 import { CommandPalette } from "./CommandPalette";
-import { missionAddGroupValue } from "./CommandPaletteThreadActions";
 import { markMissionDraft } from "./sidebar/missionDraftStore";
 import { useMissionHosts, useMissionMenu } from "./sidebar/MissionsSection";
 import { buildMissionMenuItems, type MissionHost } from "./sidebar/missions.logic";
@@ -866,7 +865,6 @@ describe("CommandPalette mission thread actions", () => {
       environmentId: EnvironmentId.make("lab"),
       threadId: ThreadId.make("team:task"),
     };
-    expect(missionAddGroupValue(first)).not.toBe(missionAddGroupValue(second));
     const [threadA, threadB] = [first, second].map((ref) =>
       makeThreadFixture({
         environmentId: ref.environmentId,

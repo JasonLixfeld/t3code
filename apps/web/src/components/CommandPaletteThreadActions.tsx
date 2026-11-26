@@ -69,7 +69,7 @@ const MISSION_ADD_VALUE = "thread-action:mission-add";
 /** Add to mission's view is read from the thread's live rows, so its group names the thread. */
 export const MISSION_ADD_GROUP_PREFIX = `${MISSION_ADD_VALUE}@`;
 
-export function missionAddGroupValue(threadRef: ScopedThreadRef): string {
+function missionAddGroupValue(threadRef: ScopedThreadRef): string {
   return `${MISSION_ADD_GROUP_PREFIX}${JSON.stringify([threadRef.environmentId, threadRef.threadId])}`;
 }
 
