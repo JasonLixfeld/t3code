@@ -253,6 +253,8 @@ export interface ThreadDetailScreenProps {
   readonly feedbackSubmissions: ReadonlyArray<CodexFeedbackSubmission>;
   readonly onDismissFeedback: (id: MessageId) => void;
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
+  /** Whether the thread holds a message that its feed leaves out. */
+  readonly selectedThreadHidesMessage?: (messageId: string) => boolean;
   readonly pendingHandoff?: HandoffEndpoints | null;
   readonly activityRun: ThreadFeedLatestRun | null;
   readonly activeWorkStartedAt: string | null;
@@ -949,9 +951,18 @@ function ThreadDetailBody(
   const loadEarlierForJump = useEffectEvent(() => {
     if (jumpMessageId !== null) historyForJump?.onLoadThrough(jumpMessageId);
   });
+  const jumpMessageHidden =
+    jumpMessageId !== null &&
+    !jumpMessageLoaded &&
+    props.selectedThreadHidesMessage?.(jumpMessageId) === true;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests earlier history from the server until the jump target message loads, or ends the jump
   useEffect(() => {
     if (jumpMessageId === null || jumpMessageLoaded || contentPresentationKind !== "ready") return;
+    // A loaded message with no row ends the jump where it is instead of paging.
+    if (jumpMessageHidden) {
+      finishThreadMessageJump(selectedThreadKey);
+      return;
+    }
     if (historyForJump?.loading) return;
     if (!historyForJump?.hasMoreHistory || historyForJump.error !== null) {
       finishThreadMessageJump(selectedThreadKey);
@@ -964,6 +975,7 @@ function ThreadDetailBody(
     historyForJump?.hasMoreHistory,
     historyForJump?.loading,
     jumpMessageId,
+    jumpMessageHidden,
     jumpMessageLoaded,
     selectedThreadKey,
   ]);

@@ -349,6 +349,8 @@ export function resolveDraftHeroState(input: {
 export type HeldThreadTimeline<T extends readonly unknown[]> = {
   threadKey: string | null;
   entries: T;
+  /** The runs these entries hide, so remembered rows hide the same ones. */
+  hiddenRunIds?: ReadonlySet<RunId>;
 };
 
 const MAX_REMEMBERED_THREAD_TIMELINES = 16;
@@ -389,6 +391,15 @@ export function peekRememberedThreadTimeline<T extends readonly unknown[]>(
     return null;
   }
   return (rememberedThreadTimelines.get(threadKey)?.entries as T | undefined) ?? null;
+}
+
+/** The hide set remembered with `entries`, while those remembered entries are shown. */
+export function rememberedThreadTimelineHiddenRunIds(
+  threadKey: string | null,
+  entries: readonly unknown[],
+): ReadonlySet<RunId> | undefined {
+  const held = threadKey === null ? undefined : rememberedThreadTimelines.get(threadKey);
+  return held?.entries === entries ? held.hiddenRunIds : undefined;
 }
 
 export function resetHeldThreadTimeline(): void {

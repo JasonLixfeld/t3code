@@ -6,9 +6,16 @@ import {
   type MissionMember,
   type MissionsSnapshot,
   isSettledMissionMember,
+  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2Run,
+  type OrchestrationV2RunAttempt,
+  MISSION_QUIET_REPLY,
+  type OrchestrationV2TurnItem,
+  type RunId,
   type ThreadId,
   threadHasMessages,
 } from "@t3tools/contracts";
+import { resolveT3McpToolId, T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -558,6 +565,266 @@ export function missionScratchHome(
 ): EnvironmentId | null {
   if (machines === null || (usual !== null && machines.has(usual))) return usual;
   return [...machines].find((environmentId) => scratchRootFor(environmentId) !== null) ?? null;
+}
+
+// The wake's turn item id is derived from its `message:mission-update:` message id.
+const MISSION_UPDATE_ITEM_ID_PREFIX = "turn-item:message:message%3Amission-update%3A";
+
+const isMissionUpdateNotification = (item: OrchestrationV2TurnItem) =>
+  item.type === "notification" &&
+  item.id.startsWith(MISSION_UPDATE_ITEM_ID_PREFIX) &&
+  item.source.kind === "system" &&
+  item.summary === "Mission update";
+
+const MISSION_READ_TOOLS: ReadonlySet<string> = new Set(["t3_thread_read", "t3_mission_roster"]);
+
+// `\u` and `\x` escapes can spell a name the scans below cannot read.
+const CODE_MODE_ESCAPE =
+  /\b(?:fetch|eval|globalThis|this|Reflect|Object)\b|\b(?:search|Function|import)\s*\(|\\[ux]/;
+const NON_T3_TOOLS_ACCESS =
+  /\btools\b(?!\s*\[\s*(?:"t3-code[^"\n]*"|'t3-code[^'\n]*')\s*\]|\s*\.\s*t3[\w$]*)/;
+const NAMESPACE_USE =
+  /(\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*)?\btools\s*(?:\[\s*(?:"t3-code[^"\n]*"|'t3-code[^'\n]*')\s*\]|\.\s*t3[\w$]*)(\s*\.\s*([A-Za-z_$][\w$]*))?/g;
+const MEMBER = /^\s*\.\s*([A-Za-z_$][\w$]*)/;
+const STATEMENT_END = /^\s*(?:;|\n|$)/;
+const COMPUTED_KEY_OPEN = /([\w$]+|[)\]])\s*\[/g;
+// After these words `[` opens an array, not a computed key.
+const ARRAY_LITERAL_AFTER: ReadonlySet<string> = new Set([
+  "return",
+  "of",
+  "in",
+  "await",
+  "yield",
+  "typeof",
+  "void",
+  "delete",
+  "case",
+  "throw",
+  "new",
+  "else",
+  "do",
+]);
+const IDENTIFIER = /[A-Za-z_$][\w$]*/g;
+
+/**
+ * Whether a computed key is an index, the T3 namespace, or a plain assignment target such as
+ * `out[id] = …`. Any other computed key could build a tool name the name scan cannot see.
+ */
+function computedKeysAreSafe(code: string): boolean {
+  for (const match of code.matchAll(COMPUTED_KEY_OPEN)) {
+    const before = match[1] ?? "";
+    if (ARRAY_LITERAL_AFTER.has(before)) continue;
+    const rest = code.slice(match.index + match[0].length);
+    const safe =
+      /^\s*\d+\s*\]/.test(rest) ||
+      (/^\s*(?:"t3-code[^"\n]*"|'t3-code[^'\n]*')\s*\]/.test(rest) && before === "tools") ||
+      /^[^[\]\n]*\]\s*=(?!=)/.test(rest);
+    if (!safe) return false;
+  }
+  return true;
+}
+
+/**
+ * An OpenCode Code Mode script reads only when each use of the T3 namespace, directly or through
+ * a `const` alias, calls a mission read, and it names no other T3 tool.
+ */
+function codeModeOnlyReads(input: unknown): boolean {
+  const code =
+    typeof input === "object" && input !== null && "code" in input ? input.code : undefined;
+  if (
+    typeof code !== "string" ||
+    CODE_MODE_ESCAPE.test(code) ||
+    NON_T3_TOOLS_ACCESS.test(code) ||
+    !computedKeysAreSafe(code)
+  ) {
+    return false;
+  }
+  const names = code.match(IDENTIFIER) ?? [];
+  if (
+    names.some(
+      (name) =>
+        (name.startsWith("t3_") || T3_MCP_TOOL_NAMES.has(name)) && !MISSION_READ_TOOLS.has(name),
+    )
+  ) {
+    return false;
+  }
+  let reads = 0;
+  const aliases: Array<{ readonly name: string; readonly declaredAt: number }> = [];
+  for (const use of code.matchAll(NAMESPACE_USE)) {
+    const [whole, declaration, alias, member, accessed] = use;
+    if (declaration !== undefined && alias !== undefined && member === undefined) {
+      if (!STATEMENT_END.test(code.slice(use.index + whole.length))) return false;
+      const keyword = /^(?:const|let|var)\s+/.exec(declaration)?.[0].length ?? 0;
+      aliases.push({ name: alias, declaredAt: use.index + keyword });
+    } else if (declaration === undefined && accessed !== undefined) {
+      if (!MISSION_READ_TOOLS.has(accessed)) return false;
+      reads += 1;
+    } else {
+      return false;
+    }
+  }
+  for (const { name, declaredAt } of aliases) {
+    const occurrence = new RegExp(`(^|[^\\w$.])${name.replaceAll("$", "\\$")}(?![\\w$])`, "g");
+    for (const found of code.matchAll(occurrence)) {
+      const at = found.index + (found[1]?.length ?? 0);
+      if (at === declaredAt) continue;
+      const accessed = MEMBER.exec(code.slice(at + name.length))?.[1];
+      if (accessed === undefined || !MISSION_READ_TOOLS.has(accessed)) return false;
+      reads += 1;
+    }
+  }
+  return reads > 0;
+}
+
+// The server's conversation-only history page leaves out these item types
+// (`isConversationHistoryItem`), so a run with none of them may be missing its actions.
+const WORK_ITEM_TYPES: ReadonlySet<OrchestrationV2TurnItem["type"]> = new Set([
+  "command_execution",
+  "reasoning",
+  "file_change",
+  "dynamic_tool",
+]);
+
+const isQuietReply = (text: string) => {
+  const trimmed = text.trim();
+  return trimmed === "" || trimmed === MISSION_QUIET_REPLY;
+};
+
+function classifyChangesNothing(item: OrchestrationV2TurnItem): boolean {
+  if (item.status !== "completed" || item.deferredWork !== undefined) return false;
+  switch (item.type) {
+    case "assistant_message":
+      return !item.streaming && item.textOmitted !== true && isQuietReply(item.text);
+    case "reasoning":
+      return !item.streaming;
+    case "checkpoint":
+      return item.files.length === 0 && item.filesOmitted !== true;
+    case "dynamic_tool":
+      return item.toolName === "execute"
+        ? codeModeOnlyReads(item.input)
+        : MISSION_READ_TOOLS.has(resolveT3McpToolId(item.toolName) ?? "");
+    default:
+      return false;
+  }
+}
+
+const changesNothingByItem = new WeakMap<OrchestrationV2TurnItem, boolean>();
+
+function changesNothing(item: OrchestrationV2TurnItem): boolean {
+  let known = changesNothingByItem.get(item);
+  if (known === undefined) {
+    known = classifyChangesNothing(item);
+    changesNothingByItem.set(item, known);
+  }
+  return known;
+}
+
+type RunStatus = Pick<OrchestrationV2Run, "id" | "status">;
+type AttemptStatus = Pick<OrchestrationV2RunAttempt, "runId" | "attemptOrdinal" | "status">;
+
+const NO_QUIET_RUNS: ReadonlySet<RunId> = new Set();
+
+interface QuietMissionUpdates {
+  readonly runs: ReadonlyArray<RunStatus> | undefined;
+  readonly attempts: ReadonlyArray<AttemptStatus> | undefined;
+  readonly runIds: ReadonlySet<RunId>;
+  shown?: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
+}
+
+const quietMissionUpdates = new WeakMap<
+  ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  QuietMissionUpdates
+>();
+
+function quietMissionUpdateEntry(
+  rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  runs: ReadonlyArray<RunStatus> | undefined,
+  attempts: ReadonlyArray<AttemptStatus> | undefined,
+): QuietMissionUpdates {
+  const cached = quietMissionUpdates.get(rows);
+  if (cached !== undefined && cached.runs === runs && cached.attempts === attempts) return cached;
+  const completedRuns = new Set(
+    (runs ?? []).flatMap((run) => (run.status === "completed" ? [run.id] : [])),
+  );
+  const latestAttempts = new Map<RunId, AttemptStatus>();
+  for (const attempt of attempts ?? []) {
+    const latest = latestAttempts.get(attempt.runId);
+    if (latest === undefined || attempt.attemptOrdinal > latest.attemptOrdinal) {
+      latestAttempts.set(attempt.runId, attempt);
+    }
+  }
+  const quiet = new Map<RunId, boolean>();
+  const workLoaded = new Set<RunId>();
+  const ordinals = new Map<RunId, Array<number>>();
+  for (const { item } of rows) {
+    if (item.runId === null) continue;
+    if (WORK_ITEM_TYPES.has(item.type)) workLoaded.add(item.runId);
+    const known = quiet.get(item.runId);
+    if (known === undefined) {
+      const isQuiet =
+        isMissionUpdateNotification(item) &&
+        completedRuns.has(item.runId) &&
+        latestAttempts.get(item.runId)?.status === "completed";
+      quiet.set(item.runId, isQuiet);
+      if (isQuiet) ordinals.set(item.runId, [item.ordinal]);
+    } else if (known && !changesNothing(item)) {
+      quiet.set(item.runId, false);
+    } else if (known) {
+      ordinals.get(item.runId)?.push(item.ordinal);
+    }
+  }
+  // A run's items have consecutive ordinals from its wake, so a gap is an item that is not loaded.
+  const fullyLoaded = (runId: RunId) => {
+    const loaded = ordinals.get(runId) ?? [];
+    const wake = loaded[0];
+    return (
+      wake !== undefined &&
+      [...loaded]
+        .sort((left, right) => left - right)
+        .every((ordinal, index) => ordinal === wake + index)
+    );
+  };
+  const runIds = new Set(
+    [...quiet].flatMap(([runId, isQuiet]) =>
+      isQuiet && workLoaded.has(runId) && fullyLoaded(runId) ? [runId] : [],
+    ),
+  );
+  const entry: QuietMissionUpdates = {
+    runs,
+    attempts,
+    runIds: runIds.size === 0 ? NO_QUIET_RUNS : runIds,
+  };
+  quietMissionUpdates.set(rows, entry);
+  return entry;
+}
+
+/**
+ * The finished mission-update runs in which the lead only read and wrote nothing new. Returns the
+ * same set as the previous call while `rows`, `runs` and `attempts` are the same references.
+ */
+export function quietMissionUpdateRunIds(
+  rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  runs: ReadonlyArray<RunStatus> | undefined,
+  attempts: ReadonlyArray<AttemptStatus> | undefined,
+): ReadonlySet<RunId> {
+  return quietMissionUpdateEntry(rows, runs, attempts).runIds;
+}
+
+/**
+ * `rows` without the items of `quietMissionUpdateRunIds`. Returns `rows` itself when nothing is
+ * dropped, and the same array as the previous call while the three references match.
+ */
+export function withoutQuietMissionUpdates(
+  rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  runs: ReadonlyArray<RunStatus> | undefined,
+  attempts: ReadonlyArray<AttemptStatus> | undefined,
+): ReadonlyArray<OrchestrationV2ProjectedTurnItem> {
+  const entry = quietMissionUpdateEntry(rows, runs, attempts);
+  entry.shown ??=
+    entry.runIds.size === 0
+      ? rows
+      : rows.filter(({ item }) => item.runId === null || !entry.runIds.has(item.runId));
+  return entry.shown;
 }
 
 export function missionLeadCandidates<

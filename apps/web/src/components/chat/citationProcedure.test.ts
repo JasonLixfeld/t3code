@@ -158,16 +158,24 @@ describe("resolveCitationPhase", () => {
     history?: "loading" | "found" | "failed";
     entries?: ReadonlyArray<TimelineEntry>;
     rows?: ReadonlyArray<MessagesTimelineRow>;
+    hiddenRunIds?: ReadonlySet<RunId>;
   }) =>
     resolveCitationPhase({
       history: { _tag: input.history ?? "loading" },
       messageId,
       entries: input.entries ?? [],
+      hiddenRunIds: input.hiddenRunIds,
       rows: input.rows ?? [],
     });
 
   it("waits while the cited response is not in the timeline yet", () => {
     expect(phase({ history: "found" })).toEqual({ _tag: "loading" });
+  });
+
+  it("settles a cited response in a hidden quiet mission update without waiting for its row", () => {
+    expect(phase({ entries: [entry], hiddenRunIds: new Set([runId]) })).toEqual({
+      _tag: "failed",
+    });
   });
 
   it("expands the turn that folds the cited response", () => {

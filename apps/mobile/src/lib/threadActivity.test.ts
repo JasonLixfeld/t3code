@@ -20,6 +20,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildThreadFeed,
+  threadFeedHidesMessage,
   workEntryRowLabel,
   threadFeedCompactionLabels,
   createThreadFeedCache,
@@ -448,6 +449,72 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 }
 
 describe("buildThreadFeed", () => {
+  it("leaves out a finished mission update that wrote nothing and keeps the turn before it", () => {
+    const quietRunId = RunId.make("run-quiet");
+    const quiet = (id: string, ordinal: number) => ({
+      ...base(id, "2026-06-20T00:00:04.000Z", ordinal),
+      runId: quietRunId,
+    });
+    const items = [
+      projected(userMessage(), 0),
+      projected(assistantMessage(), 1),
+      projected(
+        {
+          ...quiet("turn-item:message:message%3Amission-update%3Am1%3A1", 3),
+          type: "notification",
+          source: { kind: "system" },
+          outcome: "updated",
+          summary: "Mission update",
+        },
+        2,
+      ),
+      projected(
+        { ...quiet("item-read", 4), type: "dynamic_tool", toolName: "t3_thread_read", input: {} },
+        3,
+      ),
+      projected(
+        {
+          ...quiet("item-quiet-reply", 5),
+          type: "assistant_message",
+          messageId: MessageId.make("message-quiet"),
+          text: "No change.",
+          streaming: false,
+        },
+        4,
+      ),
+    ];
+    const attempts = [runId, quietRunId].map((attemptRunId) => ({
+      id: RunAttemptId.make(`attempt-${attemptRunId}`),
+      runId: attemptRunId,
+      attemptOrdinal: 1,
+      rootNodeId: NodeId.make(`node-${attemptRunId}`),
+      providerInstanceId: ProviderInstanceId.make("provider-instance-1"),
+      providerThreadId: ProviderThreadId.make("provider-thread-1"),
+      providerTurnId: null,
+      reason: "initial" as const,
+      status: "completed" as const,
+      startedAt: DateTime.makeUnsafe("2026-06-20T00:00:01.000Z"),
+      completedAt: DateTime.makeUnsafe("2026-06-20T00:00:05.000Z"),
+    }));
+    const itemIds = (feed: ThreadFeedEntry[]) =>
+      feed.flatMap((entry) =>
+        entry.type === "message"
+          ? [entry.id]
+          : entry.type === "activity-group"
+            ? entry.activities.map((activity) => activity.projectedItem.item.id)
+            : [],
+      );
+
+    const runs = [runId, quietRunId].map((id) => ({ id, status: "completed" as const }));
+    expect(itemIds(buildThreadFeed(items, { runs, attempts }))).toEqual([
+      "message-user",
+      "message-assistant",
+    ]);
+    // A jump to the hidden reply ends instead of paging for a row the feed never shows.
+    expect(threadFeedHidesMessage(items, "message-quiet", { runs, attempts })).toBe(true);
+    expect(threadFeedHidesMessage(items, "message-assistant", { runs, attempts })).toBe(false);
+  });
+
   it("keeps async answers in question history instead of user bubbles", () => {
     const requestId = RuntimeRequestId.make("question");
     const question: OrchestrationV2TurnItem = {

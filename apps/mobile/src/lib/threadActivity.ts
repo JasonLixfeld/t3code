@@ -3,6 +3,10 @@ import type {
   ThreadPendingUserInput,
 } from "@t3tools/client-runtime/state/thread-requests";
 import { linkRequestTargetName } from "@t3tools/client-runtime/link-request";
+import {
+  quietMissionUpdateRunIds,
+  withoutQuietMissionUpdates,
+} from "@t3tools/client-runtime/missions";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
@@ -51,6 +55,7 @@ import type {
   OrchestrationV2ExecutionNode,
   OrchestrationMessageContext,
   OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2Run,
   OrchestrationV2RunAttempt,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItem,
@@ -2503,10 +2508,33 @@ function firstChangedIndex<T>(previous: ReadonlyArray<T>, next: ReadonlyArray<T>
   return index;
 }
 
+/** Whether the thread holds this message but its feed leaves it out, in a quiet mission update. */
+export function threadFeedHidesMessage(
+  turnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  messageId: string,
+  options: {
+    readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status">> | undefined;
+    readonly attempts: ReadonlyArray<OrchestrationV2RunAttempt> | undefined;
+  },
+): boolean {
+  const hidden = quietMissionUpdateRunIds(turnItems, options.runs, options.attempts);
+  return (
+    hidden.size > 0 &&
+    turnItems.some(
+      ({ item }) =>
+        (item.type === "assistant_message" || item.type === "user_message") &&
+        item.messageId === messageId &&
+        item.runId !== null &&
+        hidden.has(item.runId),
+    )
+  );
+}
+
 export function buildThreadFeed(
-  visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  turnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
   options?: {
     readonly anchoredMessages?: ReadonlyArray<LocalThreadMessage>;
+    readonly runs?: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status">>;
     readonly attempts?: ReadonlyArray<OrchestrationV2RunAttempt>;
     readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
     readonly cache?: ThreadFeedCache;
@@ -2515,6 +2543,7 @@ export function buildThreadFeed(
     readonly locale?: string;
   },
 ): ThreadFeedEntry[] {
+  const visibleTurnItems = withoutQuietMissionUpdates(turnItems, options?.runs, options?.attempts);
   const anchoredMessages = options?.anchoredMessages ?? [];
   const resolve = options?.resolve ?? m;
   const locale = options?.locale;

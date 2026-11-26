@@ -1,3 +1,4 @@
+import { quietMissionUpdateRunIds } from "@t3tools/client-runtime/missions";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { type ComponentProps, useLayoutEffect } from "react";
 import { useIncrementalTimelineEntries } from "../../hooks/useIncrementalTimelineEntries";
@@ -5,6 +6,7 @@ import type { TimelineEntriesInput, TimelineEntry } from "../../session-logic";
 import { useTimelineVisibleTurnItems } from "../../state/entities";
 import {
   peekRememberedThreadTimeline,
+  rememberedThreadTimelineHiddenRunIds,
   rememberReadyThreadTimeline,
   resolveThreadSwitchTimeline,
   timelineHasEphemeralPreviewUrls,
@@ -25,7 +27,7 @@ export function ThreadTimeline({
   syncing,
   detailLoading,
   ...timelineProps
-}: Omit<ComponentProps<typeof MessagesTimeline>, "timelineEntries"> & {
+}: Omit<ComponentProps<typeof MessagesTimeline>, "timelineEntries" | "hiddenRunIds"> & {
   /** Null until the thread's detail may load; see resolveThreadDetailRef. */
   threadDetailRef: ScopedThreadRef | null;
   entriesInput: Omit<TimelineEntriesInput, "visibleTurnItems">;
@@ -41,6 +43,11 @@ export function ThreadTimeline({
     visibleTurnItems,
   });
   const entries = draftEntries ?? serverEntries;
+  const hiddenRunIds = quietMissionUpdateRunIds(
+    visibleTurnItems,
+    timelineProps.runs,
+    entriesInput.attempts,
+  );
   const displayedEntries = resolveThreadSwitchTimeline({
     loading: entries.length === 0 && syncing,
     activeThreadKey,
@@ -52,9 +59,18 @@ export function ThreadTimeline({
     if (detailLoading || entries.length === 0 || timelineHasEphemeralPreviewUrls(entries)) {
       return;
     }
-    rememberReadyThreadTimeline({ threadKey: activeThreadKey, entries });
-  }, [activeThreadKey, detailLoading, entries]);
+    rememberReadyThreadTimeline({ threadKey: activeThreadKey, entries, hiddenRunIds });
+  }, [activeThreadKey, detailLoading, entries, hiddenRunIds]);
   return (
-    <MessagesTimeline {...timelineProps} syncing={syncing} timelineEntries={displayedEntries} />
+    <MessagesTimeline
+      {...timelineProps}
+      syncing={syncing}
+      timelineEntries={displayedEntries}
+      hiddenRunIds={
+        displayedEntries === entries
+          ? hiddenRunIds
+          : rememberedThreadTimelineHiddenRunIds(activeThreadKey, displayedEntries)
+      }
+    />
   );
 }

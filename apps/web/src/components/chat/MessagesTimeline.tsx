@@ -17,6 +17,7 @@ import {
   type AssistantCitation,
   type EnvironmentId,
   type MessageId,
+  type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
   type RunAttemptId,
   type ServerProviderSkill,
@@ -92,6 +93,7 @@ import {
   TIMELINE_MINIMAP_TARGET_OFFSET,
   timelineTurnFoldRunIdsByEntryId,
   liveAnswerPreview,
+  withoutHiddenRunEntries,
   type MessagesTimelineRow,
   type TimelineLatestRun,
 } from "./MessagesTimeline.logic";
@@ -268,6 +270,8 @@ interface MessagesTimelineProps {
 
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReadonlyArray<TimelineEntry>;
+  /** Runs left out of the timeline; their entries still count for rewind targets. */
+  hiddenRunIds?: ReadonlySet<RunId> | undefined;
   latestRun: TimelineLatestRun | null;
   usageLimitRunId?: RunId | null;
   /** The run the screen reader announcer follows; see announcedRun. */
@@ -325,7 +329,7 @@ interface MessagesTimelineProps {
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<ServerProviderSkill>;
-  runs: ReadonlyArray<HandoffTimelineRun>;
+  runs: ReadonlyArray<HandoffTimelineRun & Pick<OrchestrationV2Run, "status">>;
   anchorMessageId: MessageId | null;
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
@@ -389,7 +393,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   awaitingUser = null,
   awaitingRequestId = null,
   listRef,
-  timelineEntries,
+  timelineEntries: allTimelineEntries,
+  hiddenRunIds,
   findOpen = false,
   findExpanded = false,
   findQuery = "",
@@ -658,6 +663,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
     }
   }
 
+  const timelineEntries = withoutHiddenRunEntries(allTimelineEntries, hiddenRunIds);
+  // With every loaded entry hidden no row can restore a position, so the list is ready as is.
+  const everyEntryHidden = timelineEntries.length === 0 && allTimelineEntries.length > 0;
+  if (everyEntryHidden && restoringThreadPosition) setPositionedThreadKey(listIdentityKey);
   const preferredToolCallVisibility = useClientSettings((settings) => settings.toolCallVisibility);
   const screenReaderAnnouncements = useClientSettings(
     (settings) => settings.screenReaderAnnouncements,
@@ -762,7 +771,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     pendingApprovals.filter(isVisiblePendingApproval).map((approval) => approval.requestId),
   );
   const rawRows = useIncrementalTimelineRows(`${listIdentityKey}\0${workspaceRoot ?? ""}`, {
-    timelineEntries,
+    timelineEntries: allTimelineEntries,
+    hiddenRunIds,
     pendingApprovalRequestIds,
     latestRun,
     usageLimitRunId,
@@ -866,7 +876,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
       ? resolveCitationPhase({
           history: citationHistory,
           messageId: citationRequest.citation.messageId,
-          entries: timelineEntries,
+          entries: allTimelineEntries,
+          hiddenRunIds,
           rows,
         })
       : null,
@@ -1370,9 +1381,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
   useThreadFindNavigation({
     // Find reveals its match only after the opening restore settles; both
     // scroll the list directly, so the restore would otherwise pull it back.
-    listReady: findListReady && !restoringThreadPosition,
+    listReady: (findListReady || everyEntryHidden) && !restoringThreadPosition,
     historyControls,
-    entries: timelineEntries,
+    // A match in a hidden run is loaded but has no row, so it neither pages nor scrolls.
+    entries: allTimelineEntries,
     container: timelineViewportElement,
     query: normalizedFindQuery,
     match: activeFindMatch,

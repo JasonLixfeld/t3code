@@ -188,3 +188,6 @@ export const missionWasTag = (missionId: string, name: string) =>
 
 export const isMissionTag = (tag: string) =>
   tag.startsWith(MISSION_TAG_PREFIX) || tag.startsWith(MISSION_WAS_TAG_PREFIX);
+
+/** The whole reply a mission lead writes when a mission update needs nothing from the user. */
+export const MISSION_QUIET_REPLY = "No change.";

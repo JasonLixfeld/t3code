@@ -1,6 +1,8 @@
+import { quietMissionUpdateRunIds } from "@t3tools/client-runtime/missions";
 import { ThreadId, type WorktreeSetupSnapshot } from "@t3tools/contracts";
 import {
   CheckpointRef,
+  ProviderThreadId,
   NodeId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -5259,5 +5261,131 @@ describe("workEntryReadOutput", () => {
         "/workspace/t3code",
       ),
     ).toBe("/workspace/t3code/src/app.ts\n~/.claude/CLAUDE.md\n~/.gitconfig");
+  });
+});
+
+describe("quiet mission updates", () => {
+  const at = (second: number) =>
+    DateTime.makeUnsafe(`2026-11-26T00:00:${String(second).padStart(2, "0")}.000Z`);
+  const lead = ThreadId.make("lead");
+  const item = (run: string, id: string, second: number) => ({
+    id: TurnItemId.make(`${run}:${id}`),
+    threadId: lead,
+    runId: RunId.make(run),
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: second,
+    status: "completed" as const,
+    title: null,
+    startedAt: at(second),
+    completedAt: at(second),
+    updatedAt: at(second),
+  });
+  const user = (run: string, second: number): OrchestrationV2TurnItem => ({
+    ...item(run, "user", second),
+    type: "user_message",
+    messageId: MessageId.make(`${run}:user`),
+    createdBy: "user",
+    creationSource: "web",
+    inputIntent: "turn_start",
+    text: "How is the mission going?",
+    attachments: [],
+  });
+  const wake = (run: string, second: number): OrchestrationV2TurnItem => ({
+    ...item(run, "wake", second),
+    id: TurnItemId.make(`turn-item:message:message%3Amission-update%3Am1%3A${run}`),
+    type: "notification",
+    source: { kind: "system" },
+    outcome: "updated",
+    summary: "Mission update",
+  });
+  const read = (run: string, second: number): OrchestrationV2TurnItem => ({
+    ...item(run, "read", second),
+    type: "dynamic_tool",
+    toolName: "mcp__t3-code__t3_thread_read",
+    input: { threadId: "member" },
+  });
+  const reply = (run: string, second: number, text: string): OrchestrationV2TurnItem => ({
+    ...item(run, "reply", second),
+    type: "assistant_message",
+    messageId: MessageId.make(`${run}:reply`),
+    text,
+    streaming: false,
+  });
+  const RUNS = ["asked", "spoke", "quiet", "next"] as const;
+  const turnItems: OrchestrationV2ProjectedTurnItem[] = [
+    user("asked", 1),
+    reply("asked", 2, "Started the mission."),
+    wake("spoke", 3),
+    read("spoke", 4),
+    reply("spoke", 5, "Member 1 needs your answer."),
+    wake("quiet", 6),
+    read("quiet", 7),
+    reply("quiet", 8, ""),
+    user("next", 9),
+    reply("next", 10, "Answered."),
+  ].map((turnItem, position) => ({
+    position,
+    visibility: "local",
+    sourceThreadId: lead,
+    sourceItemId: turnItem.id,
+    item: turnItem,
+  }));
+  const runs = RUNS.map((run) => ({ id: RunId.make(run), status: "completed" as const }));
+  const attempts = RUNS.map((run) => ({
+    id: RunAttemptId.make(`attempt:${run}`),
+    runId: RunId.make(run),
+    attemptOrdinal: 1,
+    rootNodeId: NodeId.make(`node:${run}`),
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerThreadId: ProviderThreadId.make("provider-thread"),
+    providerTurnId: null,
+    reason: "initial" as const,
+    status: "completed" as const,
+    startedAt: at(0),
+    completedAt: at(20),
+  }));
+  const checkpoints = RUNS.map((run, index) => ({
+    runId: RunId.make(run),
+    completedAt: "2026-11-26T00:00:20Z",
+    assistantMessageId: MessageId.make(`${run}:reply`),
+    checkpointTurnCount: index + 1,
+    checkpointRef: `checkpoint-${run}` as never,
+    status: "ready" as const,
+    files: [],
+  }));
+  // The same path as ThreadTimeline: every entry, with the quiet runs hidden at display.
+  const timelineRows = (visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>) =>
+    deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems,
+        optimisticMessages: [],
+        attempts,
+      }),
+      hiddenRunIds: quietMissionUpdateRunIds(visibleTurnItems, runs, attempts),
+      isWorking: false,
+      turnDiffSummaries: checkpoints,
+      supportsConversationRollback: true,
+      threadStartCheckpointAvailable: true,
+    });
+
+  it("leaves out a finished wake that only read, and the turns around it keep their rows", () => {
+    const shown = timelineRows(turnItems).map((row) => row.id);
+    expect(shown).toContain(`turn-item:message:message%3Amission-update%3Am1%3Aspoke`);
+    expect(shown.some((id) => id.includes("quiet"))).toBe(false);
+    expect(shown).toEqual(
+      timelineRows(turnItems.filter(({ item }) => item.runId !== "quiet")).map((row) => row.id),
+    );
+  });
+
+  it("rewinds the message after a hidden wake to the hidden wake's checkpoint", () => {
+    const next = timelineRows(turnItems).find(
+      (row): row is Extract<MessagesTimelineRow, { kind: "message" }> =>
+        row.kind === "message" && row.message.id === "next:user",
+    );
+    expect(next?.revertTurnCount).toBe(3);
   });
 });
