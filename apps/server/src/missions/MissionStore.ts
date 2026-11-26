@@ -276,7 +276,7 @@ export interface MissionRecord {
  * A member's change its lead has not been told about yet. `source` names the run, request or
  * card it came from, so each is told once and a newer one is never cleared in its place.
  */
-export interface MissionUpdate {
+interface MissionUpdate {
   readonly missionId: string;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -320,13 +320,13 @@ const SPENT_INTENT_DAYS = 30;
 const STARTED_JOIN_DAYS = 30;
 
 /** A thread a lead started, and the Mission it asked to join. */
-export interface StartedThread {
+interface StartedThread {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly missionId: string;
 }
 
-export interface Numbers {
+interface Numbers {
   /** By `numberKey`. */
   readonly member: ReadonlyMap<string, number>;
   readonly machine: ReadonlyMap<EnvironmentId, number>;

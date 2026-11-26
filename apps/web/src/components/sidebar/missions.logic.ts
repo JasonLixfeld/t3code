@@ -87,7 +87,7 @@ export function parseMissionTarget(id: MissionMenuId): {
   };
 }
 
-export type MissionBlock = "in-mission" | "no-link" | "fenced" | "not-allowed";
+type MissionBlock = "in-mission" | "no-link" | "fenced" | "not-allowed";
 
 /**
  * The claim this thread's own machine holds for it, when one Mission or another holds it there.
@@ -322,7 +322,7 @@ export function buildMissionMenuItems(
 }
 
 /** How a batch of adds went: each thread is tried, whatever happened to the ones before it. */
-export interface MissionAddOutcome<T> {
+interface MissionAddOutcome<T> {
   readonly added: ReadonlyArray<T>;
   /** Why each refused thread was refused. */
   readonly refused: ReadonlyArray<string>;

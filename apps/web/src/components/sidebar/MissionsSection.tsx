@@ -646,10 +646,10 @@ function useMissingLead(props: {
       { host: props.host, missionId: props.missionId },
       props.hosts,
     ).slice(0, LEAD_CHOICES);
-    const picked = await readLocalApi()?.contextMenu.show(
+    const picked = await readLocalApi()?.contextMenu.show<string>(
       candidates.length === 0
         ? [{ id: "none", label: gt("No thread here can lead it"), disabled: true }]
-        : candidates.map((candidate) => ({ id: candidate.id as string, label: candidate.title })),
+        : candidates.map((candidate) => ({ id: candidate.id, label: candidate.title })),
       { x: event.clientX, y: event.clientY },
       contextMenuSourceOf(event),
     );
