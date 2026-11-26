@@ -16,7 +16,7 @@ import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
 import * as Option from "effect/Option";
 import { type EnvironmentPresentation, useEnvironments } from "../state/environments";
 import { CommandPalette } from "./CommandPalette";
-import { markMissionDraft } from "./sidebar/missionDraftStore";
+import { clearMissionDraft, markMissionDraft, missionDraftOf } from "./sidebar/missionDraftStore";
 import { useMissionHosts, useMissionMenu } from "./sidebar/MissionsSection";
 import { buildMissionMenuItems, type MissionHost } from "./sidebar/missions.logic";
 import type { LocalApi, Mission } from "@t3tools/contracts";
@@ -512,8 +512,8 @@ describe("CommandPalette open intents", () => {
     const local = makeProject("web");
     const remote = { ...makeProject("api"), environmentId: EnvironmentId.make("remote") };
     setup({ projects: [local, remote] });
-    vi.mocked(markMissionDraft).mockClear();
     const created = { draftId: DraftId.make("lead-draft"), threadId: ThreadId.make("lead-thread") };
+    onTestFinished(() => clearMissionDraft(created.draftId));
     entities.handleNewThread.mockResolvedValueOnce(created as never);
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     const intent = {
@@ -530,9 +530,11 @@ describe("CommandPalette open intents", () => {
     await page.getByRole("option", { name: /web/ }).click();
 
     await vi.waitFor(() =>
-      expect(markMissionDraft).toHaveBeenCalledExactlyOnceWith(created.draftId, {
+      expect(missionDraftOf(created.draftId)).toEqual({
         intent,
         thread: { environmentId: local.environmentId, threadId: created.threadId },
+        missionId: intent.missionId,
+        step: "waiting",
       }),
     );
   });
@@ -557,8 +559,8 @@ describe("CommandPalette open intents", () => {
       environmentId: EnvironmentId.make("remote"),
     };
     setup({ projects: [local, remote] });
-    vi.mocked(markMissionDraft).mockClear();
     const created = { draftId: DraftId.make("lead-draft"), threadId: ThreadId.make("lead-thread") };
+    onTestFinished(() => clearMissionDraft(created.draftId));
     entities.handleNewThread.mockResolvedValueOnce(created as never);
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     const intent = {
@@ -578,10 +580,14 @@ describe("CommandPalette open intents", () => {
         projectId: remote.id,
       }),
     );
-    expect(markMissionDraft).toHaveBeenCalledExactlyOnceWith(created.draftId, {
-      intent,
-      thread: { environmentId: remote.environmentId, threadId: created.threadId },
-    });
+    await vi.waitFor(() =>
+      expect(missionDraftOf(created.draftId)).toEqual({
+        intent,
+        thread: { environmentId: remote.environmentId, threadId: created.threadId },
+        missionId: intent.missionId,
+        step: "waiting",
+      }),
+    );
   });
 
   it("drops a mission's intent when the picker is left, so New thread in... stays plain", async () => {
