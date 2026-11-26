@@ -525,6 +525,9 @@ const withMissions = <A, E>(
             NodeCrypto.layer,
             ThreadCommandExecutor.layer,
             world.workspacesLayer,
+            Layer.mock(Project.ProjectService)({
+              getShell: () => Effect.succeedSome({ title: "web" } as never),
+            }),
           ),
         ),
       );
@@ -3801,6 +3804,22 @@ it.effect("the lead adding itself, or a member already in, is not nudged for a b
       const again = yield* add(localMember.threadId);
       assert.include(again, '"state":"joined"');
       assert.notInclude(again, "prior work");
+    }),
+  );
+});
+
+it.effect("a lead's add asks for a brief only for a new member with prior work", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      const add = (member: ScopedThreadRef) =>
+        missions.addAsLead({ missionId, member }, lead.threadId);
+      assert.deepEqual(yield* add(lead), { state: "joined", needsBrief: false });
+      assert.deepEqual(yield* add(localMember), { state: "joined", needsBrief: true });
+      assert.deepEqual(yield* add(localMember), { state: "joined", needsBrief: false });
     }),
   );
 });

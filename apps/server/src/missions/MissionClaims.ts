@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   CommandId,
+  type MemberDetail,
   MissionError,
   missionTag,
   missionWasTag,
@@ -21,7 +22,9 @@ import * as Option from "effect/Option";
 import { DispatchModeLimit } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as Project from "../project/ProjectService.ts";
 import { MemberWorkspaces } from "./MemberWorkspaces.ts";
+import { memberDetail, withinWorkspaceRoom } from "./missionStatus.ts";
 import * as MissionStore from "./MissionStore.ts";
 import type { MissionClaim, MissionRecord } from "./MissionStore.ts";
 
@@ -112,6 +115,12 @@ export class MissionClaims extends Context.Service<
       missionId?: string,
     ) => Effect.Effect<void, MissionError>;
     readonly list: (owner: string) => Effect.Effect<ReadonlyArray<MissionClaim>>;
+    readonly listWithDetail: (
+      owner: string,
+      members?: ReadonlyArray<{ readonly threadId: ThreadId; readonly generation: string }>,
+    ) => Effect.Effect<
+      ReadonlyArray<MissionClaim & { readonly detail?: MemberDetail | undefined }>
+    >;
   }
 >()("t3/missions/MissionClaims") {}
 
@@ -331,6 +340,34 @@ const make = Effect.gen(function* () {
     return yield* store.claimsOf(owner);
   });
 
+  const readServices = yield* Effect.context<
+    ThreadManagement.ThreadManagementService | Project.ProjectService | MemberWorkspaces
+  >();
+  const listWithDetail = Effect.fn("MissionClaims.listWithDetail")(function* (
+    owner: string,
+    members?: ReadonlyArray<{ readonly threadId: ThreadId; readonly generation: string }>,
+  ) {
+    const wanted = (yield* store.claimsOf(owner)).filter(
+      (claim) =>
+        members === undefined ||
+        members.some(
+          (member) => member.threadId === claim.threadId && member.generation === claim.generation,
+        ),
+    );
+    const read = yield* Effect.forEach(wanted, (claim) =>
+      Effect.map(memberDetail(claim.threadId), (detail) => ({ claim, detail })),
+    ).pipe(Effect.provide(readServices));
+    const held = yield* store.claimsOf(owner);
+    return withinWorkspaceRoom(
+      read.map(({ claim, detail }) =>
+        detail === undefined ||
+        !held.some((now) => now.threadId === claim.threadId && now.generation === claim.generation)
+          ? claim
+          : { ...claim, detail },
+      ),
+    );
+  });
+
   return MissionClaims.of({
     create,
     setLead,
@@ -340,6 +377,7 @@ const make = Effect.gen(function* () {
     rename,
     leaveHere,
     list: store.claimsOf,
+    listWithDetail,
   });
 });
 

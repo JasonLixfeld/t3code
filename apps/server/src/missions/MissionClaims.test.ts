@@ -14,6 +14,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as Project from "../project/ProjectService.ts";
 import { MemberWorkspaces } from "./MemberWorkspaces.ts";
 import * as MissionClaims from "./MissionClaims.ts";
 import * as MissionStore from "./MissionStore.ts";
@@ -101,6 +102,7 @@ const onMachine = <A, E>(
             Layer.mock(MemberWorkspaces)({
               forget: (id) => Effect.sync(() => machine.events.push(`forgot ${id}`)),
             }),
+            Layer.mock(Project.ProjectService)({}),
           ),
         ),
       ),

@@ -108,6 +108,9 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
             NodeCrypto.layer,
             ThreadCommandExecutor.layer,
             noWorkspace,
+            Layer.mock(Project.ProjectService)({
+              getShell: () => Effect.succeedSome(webProject),
+            }),
           ),
         ),
       );

@@ -8,15 +8,12 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { linkOwner, MissionClaims } from "../../../missions/MissionClaims.ts";
-import type { MissionClaim } from "../../../missions/MissionStore.ts";
 import * as Missions from "../../../missions/Missions.ts";
 import {
   cutToBytes,
   GET_THE_BRIEF,
-  memberDetail,
   needsAttention,
   type RosterMember,
-  withinWorkspaceRoom,
 } from "../../../missions/missionStatus.ts";
 import { sourceControlDefinitions } from "../../../sourceControl/sourceControlDefinitions.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -111,35 +108,9 @@ export const layer = McpToolAccess.toLayer(
             const mayChange = yield* McpToolAccess.threadWriteAccess;
             const owner =
               scope.client === undefined ? scope.environmentId : linkOwner(scope.client.sessionId);
-            const withDetail = Effect.fn("MissionHandlers.withDetail")(function* (
-              wanted: ReadonlyArray<MissionClaim>,
-            ) {
-              const read = yield* Effect.forEach(wanted, (claim) =>
-                Effect.map(memberDetail(claim.threadId), (detail) => ({ claim, detail })),
-              );
-              const held = yield* claims.list(owner);
-              return withinWorkspaceRoom(
-                read.map(({ claim, detail }) =>
-                  detail === undefined ||
-                  !held.some(
-                    (now) => now.threadId === claim.threadId && now.generation === claim.generation,
-                  )
-                    ? claim
-                    : { ...claim, detail },
-                ),
-              );
-            });
-            if (input.kind === "list") return yield* withDetail(yield* claims.list(owner));
+            if (input.kind === "list") return yield* claims.listWithDetail(owner);
             if (input.kind === "workspaces") {
-              const members = yield* needs(input.members, "members");
-              return yield* withDetail(
-                (yield* claims.list(owner)).filter((claim) =>
-                  members.some(
-                    (member) =>
-                      member.threadId === claim.threadId && member.generation === claim.generation,
-                  ),
-                ),
-              );
+              return yield* claims.listWithDetail(owner, yield* needs(input.members, "members"));
             }
             if (input.kind === "rename") {
               return yield* claims.rename(
@@ -238,15 +209,11 @@ export const layer = McpToolAccess.toLayer(
             environmentId: input.threadRef.environmentId ?? environmentId,
             threadId: input.threadRef.threadId,
           };
-          const already = (yield* missions.memberStatuses(mission.missionId)).some(
-            (row) =>
-              row.ref.environmentId === member.environmentId &&
-              row.ref.threadId === member.threadId,
+          const { state, needsBrief } = yield* missions.addAsLead(
+            { missionId: mission.missionId, member },
+            lead,
           );
-          const state = yield* missions.addMember({ missionId: mission.missionId, member }, lead);
-          return state === "joined" && !already && (yield* missions.hasPriorWork(mission, member))
-            ? { state, next: PRIOR_WORK_NEXT }
-            : { state };
+          return needsBrief ? { state, next: PRIOR_WORK_NEXT } : { state };
         }).pipe(Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) })),
       ),
       t3_mission_release: McpToolAccess.actsAsCaller((input) =>

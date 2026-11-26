@@ -100,10 +100,13 @@ export class Missions extends Context.Service<
       asLead?: ThreadId,
       seesAccess?: boolean,
     ) => Effect.Effect<"joined" | "pending", MissionError>;
-    readonly hasPriorWork: (
-      mission: Pick<MissionRecord, "leadThreadId">,
-      member: ScopedThreadRef,
-    ) => Effect.Effect<boolean>;
+    readonly addAsLead: (
+      input: { readonly missionId: string; readonly member: ScopedThreadRef },
+      lead: ThreadId,
+    ) => Effect.Effect<
+      { readonly state: "joined" | "pending"; readonly needsBrief: boolean },
+      MissionError
+    >;
     readonly releaseMember: (
       input: { readonly missionId: string; readonly member: ScopedThreadRef },
       asLead?: ThreadId,
@@ -1346,6 +1349,20 @@ const make = Effect.gen(function* () {
   const roster = (missionId: string) => members(missionId, true);
   const memberStatuses = (missionId: string) => members(missionId, false);
 
+  const addAsLead = Effect.fn("Missions.addAsLead")(function* (
+    input: { readonly missionId: string; readonly member: ScopedThreadRef },
+    lead: ThreadId,
+  ) {
+    const mission = yield* missionNamed(input.missionId);
+    const already = (yield* memberStatuses(input.missionId)).some(
+      (row) => memberKey(row.ref) === memberKey(input.member),
+    );
+    const state = yield* addMember(input, lead);
+    const needsBrief =
+      state === "joined" && !already && (yield* hasPriorWork(mission, input.member));
+    return { state, needsBrief };
+  });
+
   /**
    * Claude forks copy earlier prompts. Retract inherited mission instructions without changing the
    * fork's claim.
@@ -1485,7 +1502,6 @@ const make = Effect.gen(function* () {
     withLead,
     leadChanges: Stream.fromPubSub(leadChanged),
     joinedWithPriorWork: Stream.fromPubSub(joined),
-    hasPriorWork,
     ledBy,
     heardInWait,
     roster,
@@ -1498,6 +1514,7 @@ const make = Effect.gen(function* () {
     setLead,
     deleteMission,
     addMember,
+    addAsLead,
     releaseMember,
     forgetMember,
     leaveHere,

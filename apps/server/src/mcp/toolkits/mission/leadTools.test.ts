@@ -153,8 +153,11 @@ const makeMissions = () => {
           row(index, index === 0 ? "pending-approval" : "idle"),
         ),
       ),
-    addMember: add,
-    hasPriorWork: (_mission, member) => Effect.succeed(member.threadId !== "here-thread"),
+    addAsLead: (input, asLead) =>
+      Effect.map(add(input, asLead), (state) => ({
+        state,
+        needsBrief: state === "joined" && input.member.threadId !== "here-thread",
+      })),
     releaseMember: (input, asLead) =>
       Effect.suspend(() => {
         calls.push({ kind: "release", ...input, asLead });
