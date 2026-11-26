@@ -276,7 +276,6 @@ export function useMissionActions(openPrompt?: OpenMissionPrompt) {
             threadId: String(thread.threadId),
           },
         });
-        Dialog.alert(gt("Sending starts a new mission led by this thread"));
         return;
       }
       reportMissionFailure(

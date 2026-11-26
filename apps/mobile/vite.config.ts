@@ -59,6 +59,7 @@ const reactTests = [
   "src/features/threads/use-composer-command-menu.select.test.tsx",
   "src/features/threads/useSidebarRowThreadKey.test.tsx",
   "src/features/threads/MissionDraftCoordinator.test.tsx",
+  "src/features/threads/MissionDraftNotice.test.tsx",
   "src/features/threads/useThreadListV2.test.tsx",
   "src/features/home/home-list-options.test.tsx",
   "src/features/home/usePendingTaskListActions.test.tsx",
