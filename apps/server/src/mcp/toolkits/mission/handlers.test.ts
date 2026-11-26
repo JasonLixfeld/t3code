@@ -28,7 +28,6 @@ import * as MissionStore from "../../../missions/MissionStore.ts";
 import type { MissionClaim } from "../../../missions/MissionStore.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
-import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../../../project/RepositoryIdentityResolver.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
@@ -197,7 +196,6 @@ const callOnce = (
       Layer.mock(Project.ProjectService)({
         getShell: () => Effect.succeedSome({ title: "web" } as never),
       }),
-      Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
       workspaces,
     );
     const member = yield* Layer.build(

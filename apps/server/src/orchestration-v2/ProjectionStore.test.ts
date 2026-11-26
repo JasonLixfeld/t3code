@@ -2213,6 +2213,25 @@ const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
       [ThreadId.make("thread:archived")]: "Title for thread:archived",
     },
   );
+  const settlements = yield* store.getThreadSettlements([
+    deleted.id,
+    ThreadId.make("thread:active"),
+    ThreadId.make("thread:archived"),
+    ThreadId.make("unknown"),
+  ]);
+  assert.deepEqual(
+    [...settlements]
+      .toSorted()
+      .map(([threadId, { settledOverride, archivedAt }]) => [
+        threadId,
+        settledOverride,
+        archivedAt !== null,
+      ]),
+    [
+      [ThreadId.make("thread:active"), null, false],
+      [ThreadId.make("thread:archived"), null, true],
+    ],
+  );
 });
 
 const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {

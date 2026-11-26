@@ -479,7 +479,8 @@ describe("groupSidebarMissions", () => {
     shell("leaving"),
     shell("refused"),
   ];
-  const listed = () => groupSidebarMissions(hostOf(ship), threads, null);
+  const live = new Set([environmentId, laptop]);
+  const listed = () => groupSidebarMissions(hostOf(ship), threads, null, new Set(), live);
   const entryOf = (threadId: string) =>
     listed().missions[0]!.members.find((entry) => entry.member.ref.threadId === threadId);
   const rowsOf = (result: ReturnType<typeof listed>) =>
@@ -528,13 +529,13 @@ describe("groupSidebarMissions", () => {
       member("docs", "active"),
     ]);
     const shells = [...threads, shell("other-lead"), shell("third-lead")];
-    const result = groupSidebarMissions(hostOf(ship, stale, later), shells, null);
+    const result = groupSidebarMissions(hostOf(ship, stale, later), shells, null, new Set(), live);
     expect(rowsOf(result)).toEqual([
       ["env-desk:0123456789ab", true, ["docs", "leaving", "refused", "remote"]],
       ["env-desk:aaaaaaaaaaaa", true, ["joining"]],
       ["env-desk:bbbbbbbbbbbb", true, []],
     ]);
-    const twice = groupSidebarMissions(hostOf(stale, later), shells, null);
+    const twice = groupSidebarMissions(hostOf(stale, later), shells, null, new Set(), live);
     expect(rowsOf(twice).map((row) => row[2])).toEqual([["joining"], ["docs"]]);
   });
 
@@ -602,6 +603,18 @@ describe("groupSidebarMissions", () => {
     ]);
     const shown = groupSidebarMissions(hostOf(trimmed), [], null, new Set(), new Set([laptop]));
     expect(rowsOf(shown)[0]![2]).toEqual(["trimmed"]);
+  });
+
+  it("keeps a member whose loaded thread is settled while its machine still syncs", () => {
+    const resyncing = mission("abababababab", [
+      member("lead", "active", "lead"),
+      member("cached", "active"),
+    ]);
+    const shells = [shell("lead"), shell("cached", { settled: true })];
+    const rows = (synced: ReadonlySet<EnvironmentId>) =>
+      rowsOf(groupSidebarMissions(hostOf(resyncing), shells, null, new Set(), synced))[0]![2];
+    expect(rows(new Set([laptop]))).toEqual(["cached"]);
+    expect(rows(new Set([environmentId]))).toEqual([]);
   });
 
   it("keeps an offline or refused-release row even when its loaded thread is settled", () => {

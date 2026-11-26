@@ -28,6 +28,7 @@ import { readLocalApi } from "../../localApi";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { useConnectedEnvironmentIds } from "../../state/environments";
 import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
+import { useLiveShellEnvironmentIds } from "../../state/shell";
 import {
   useProjects,
   useQuietThreadShell,
@@ -162,6 +163,7 @@ vi.mock("../../localApi", { spy: true });
 vi.mock("../../commandPaletteBus", { spy: true });
 vi.mock("../../state/environments", { spy: true });
 vi.mock("../../state/session", { spy: true });
+vi.mock("../../state/shell", { spy: true });
 vi.mock(import("../../state/use-atom-command"), async (original) => {
   const actual = await original();
   return {
@@ -289,6 +291,7 @@ async function renderSidebar(
     ),
   );
   vi.mocked(useConnectedEnvironmentIds).mockReturnValue(CONNECTED);
+  vi.mocked(useLiveShellEnvironmentIds).mockReturnValue(new Set(CONNECTED));
   vi.mocked(useEnvironmentsWithScope).mockImplementation(
     (environments) => new Set(environments.map(({ environmentId }) => environmentId)),
   );

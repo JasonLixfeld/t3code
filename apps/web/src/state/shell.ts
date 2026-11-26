@@ -56,6 +56,10 @@ export const liveShellEnvironmentIdsAtom = createLiveShellEnvironmentIdsAtom({
   statusAtom: environmentShell.statusAtom,
 });
 
+export function useLiveShellEnvironmentIds(): ReadonlySet<EnvironmentId> {
+  return useAtomValue(liveShellEnvironmentIdsAtom);
+}
+
 export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
   const catalog = AsyncResult.value(get(environmentCatalog.catalogAtom));
   if (Option.isNone(catalog)) {

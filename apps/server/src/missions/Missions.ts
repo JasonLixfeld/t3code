@@ -325,21 +325,34 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const readShell = (threadId: ThreadId) =>
-    threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => undefined));
+  /** Undefined when the read failed, so no thread reads as gone or settled. */
+  const readSettlements = (threadIds: ReadonlyArray<ThreadId>) =>
+    projections
+      .getThreadSettlements([...new Set(threadIds)])
+      .pipe(Effect.orElseSucceed(() => undefined));
+  type Settlements = Effect.Success<ReturnType<typeof readSettlements>>;
 
   const missionView = Effect.fn("Missions.view")(function* (
     mission: MissionRecord,
     held: ReadonlyMap<EnvironmentId, Machine>,
     waiting: Waiting,
-    shellOf: typeof readShell = readShell,
+    given?: Settlements,
   ) {
+    const settlements =
+      given ??
+      (yield* readSettlements([
+        mission.leadThreadId,
+        ...(held.get(here)?.claims ?? []).map((claim) => claim.threadId),
+      ]));
+    const gone = (threadId: ThreadId) => settlements !== undefined && !settlements.has(threadId);
+    const settled = (threadId: ThreadId) => {
+      const thread = settlements?.get(threadId);
+      return thread !== undefined && isSettledMissionMember(thread);
+    };
     const lead = { environmentId: here, threadId: mission.leadThreadId };
-    const leadShell = yield* shellOf(mission.leadThreadId);
     const leadDeleted =
-      leadShell === null ||
-      (leadShell !== undefined &&
-        (leadShell.deletedAt !== null || (leadShell.archivedAt ?? null) !== null));
+      gone(mission.leadThreadId) ||
+      (settlements?.get(mission.leadThreadId)?.archivedAt ?? null) !== null;
     const members = new Map<string, MissionMember>([
       [memberKey(lead), { ref: lead, role: "lead", state: leadDeleted ? "deleted" : "active" }],
     ]);
@@ -352,8 +365,8 @@ const make = Effect.gen(function* () {
     for (const [environmentId, machine] of held) {
       for (const claim of machine.claims) {
         if (claim.missionId !== mission.missionId || claim.role === "lead") continue;
-        const shell = environmentId === here ? yield* shellOf(claim.threadId) : undefined;
-        if (shell === null || (shell !== undefined && shell.deletedAt !== null)) continue;
+        const local = environmentId === here;
+        if (local && gone(claim.threadId)) continue;
         const ref = { environmentId, threadId: claim.threadId };
         const sameClaim = (release: PendingRelease) =>
           memberKey(release) === memberKey(ref) && release.generation === claim.generation;
@@ -365,9 +378,7 @@ const make = Effect.gen(function* () {
             : { ref, role: "member", state: machine.reachable ? "active" : "offline" };
         members.set(
           memberKey(ref),
-          shell !== undefined && isSettledMissionMember(shell)
-            ? { ...member, settled: true }
-            : member,
+          local && settled(claim.threadId) ? { ...member, settled: true } : member,
         );
       }
     }
@@ -406,13 +417,14 @@ const make = Effect.gen(function* () {
   const snapshot = Effect.gen(function* () {
     const held = yield* machines;
     const owed = yield* shown;
-    const read = new Map<ThreadId, Effect.Success<ReturnType<typeof readShell>>>();
-    const shellOf = (threadId: ThreadId) =>
-      read.has(threadId)
-        ? Effect.succeed(read.get(threadId))
-        : Effect.tap(readShell(threadId), (shell) => Effect.sync(() => read.set(threadId, shell)));
-    const views = yield* Effect.forEach(yield* store.missions, (mission) =>
-      missionView(mission, held, owed, shellOf),
+    const missions = yield* store.missions;
+    const claimsHere = yield* store.allClaims;
+    const settlements = yield* readSettlements([
+      ...missions.map((mission) => mission.leadThreadId),
+      ...claimsHere.map((claim) => claim.threadId),
+    ]);
+    const views = yield* Effect.forEach(missions, (mission) =>
+      missionView(mission, held, owed, settlements),
     );
     for (const view of views) {
       yield* store.numbersOf(
@@ -424,16 +436,17 @@ const make = Effect.gen(function* () {
     return {
       missions: views,
       links: yield* missionLinks,
-      claims: yield* Effect.forEach(yield* store.allClaims, ({ threadId, missionId, name, role }) =>
-        Effect.map(role === "member" ? shellOf(threadId) : Effect.undefined, (shell) => ({
+      claims: claimsHere.map(({ threadId, missionId, name, role }) => {
+        const thread = role === "member" ? settlements?.get(threadId) : undefined;
+        return {
           threadId,
           missionId,
           name,
-          ...(shell != null && shell.deletedAt === null && isSettledMissionMember(shell)
+          ...(thread !== undefined && isSettledMissionMember(thread)
             ? { settled: true as const }
             : {}),
-        })),
-      ),
+        };
+      }),
     } satisfies MissionsSnapshot;
   });
 
@@ -451,8 +464,10 @@ const make = Effect.gen(function* () {
   }).pipe(publishing.withPermits(1));
   const storeChanged = PubSub.publish(store.changes, undefined);
   const storeChanges = yield* PubSub.subscribe(store.changes);
-  yield* Stream.fromSubscription(storeChanges).pipe(
-    Stream.runForEach(() => publish),
+  // Changes that land while a list is built, as from an archive's side chats, share the next one.
+  yield* PubSub.takeAll(storeChanges).pipe(
+    Effect.andThen(publish),
+    Effect.forever,
     Effect.forkIn(background),
   );
 

@@ -1,11 +1,17 @@
 import * as Effect from "effect/Effect";
 import * as FiberSet from "effect/FiberSet";
+import type * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
 export interface KeyedLock<Key> {
   readonly withLock: <A, E, R>(key: Key, effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+  /** Runs `effect` only if the key is free now; `Option.none` when another holder has it. */
+  readonly withLockIfAvailable: <A, E, R>(
+    key: Key,
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<Option.Option<A>, E, R>;
   readonly activeKeys: Effect.Effect<ReadonlyArray<Key>>;
 }
 
@@ -51,6 +57,12 @@ export const make = Effect.fn("KeyedLock.make")(function* <Key>(): Effect.fn.Ret
       Effect.acquireUseRelease(
         acquire(key),
         (semaphore) => semaphore.withPermit(effect),
+        () => release(key),
+      ),
+    withLockIfAvailable: (key, effect) =>
+      Effect.acquireUseRelease(
+        acquire(key),
+        (semaphore) => Semaphore.withPermitsIfAvailable(semaphore, 1)(effect),
         () => release(key),
       ),
     activeKeys: Effect.map(Ref.get(locks), (current) => Array.from(current.keys())),
