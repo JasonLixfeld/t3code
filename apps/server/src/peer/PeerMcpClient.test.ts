@@ -286,6 +286,35 @@ it.effect("tells a peer that refused apart from one that no longer accepts the l
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect(
+  "takes a tool's internal failure on the peer for no answer, and keeps the link healthy",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const handlers = McpToolAccess.toLayer(toolkit, {
+          probe: McpToolAccess.reads(() => Effect.succeed({ modes: "" })),
+          // As a mission store failure there reaches the MCP server: a defect, not a refusal.
+          hold: McpToolAccess.reads(() => Effect.die(new Error("database is locked"))),
+          refuse: McpToolAccess.reads(() => Effect.fail(refusal)),
+        });
+        const box = descriptorOf("environment-box", "Box");
+        const b = yield* servePeer(box, McpHttpServer.toolkitRegistration(toolkit, handlers));
+        const context = yield* Layer.build(
+          layerLinkingEnvironment(descriptorOf("environment-a", "A")),
+        );
+        const links = Context.get(context, PeerLinks.PeerLinks);
+        yield* linkTo(links, b);
+        const failed = yield* Context.get(context, PeerMcpClient.PeerMcpClient)
+          .ask({ ...probeCall, environmentId: box.environmentId, tool: "hold" })
+          .pipe(Effect.flip);
+        expect(failed).toBeInstanceOf(PeerMcpClient.PeerUnanswered);
+        expect(failed.cause.message).toBe("Tool execution failed due to an internal server error.");
+        const link = yield* links.get(box.environmentId);
+        expect(link._tag === "Some" ? link.value.lastError : "missing").toBeNull();
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("keeps the expiry the peer answers with, so a used link outlives its first 30 days", () =>
   Effect.scoped(
     Effect.gen(function* () {

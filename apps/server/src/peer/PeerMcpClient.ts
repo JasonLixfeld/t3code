@@ -303,7 +303,8 @@ const make = Effect.gen(function* () {
       }
       const text = body.result.content.map((part) => part.text ?? "").join("");
       if (body.result.isError === true) {
-        // A refusal keeps the peer's own code, so the agent sees why it was refused.
+        // A refusal keeps the peer's own code, so the agent sees why it was refused. The MCP
+        // server reports an internal failure as bare text, which says nothing of what happened.
         const refused = decodeFailure(text);
         return Result.fail(
           refused._tag === "Some"
@@ -311,9 +312,12 @@ const make = Effect.gen(function* () {
                 code: refused.value.code,
                 message: refused.value.message,
               })
-            : new OrchestratorMcpFailure({
-                code: "orchestration_error",
-                message: text || "The linked environment refused the call.",
+            : new PeerUnanswered({
+                environmentId: input.environmentId,
+                cause: new OrchestratorMcpFailure({
+                  code: "orchestration_error",
+                  message: text || "The linked environment refused the call.",
+                }),
               }),
         );
       }
@@ -344,6 +348,15 @@ const make = Effect.gen(function* () {
         }),
         Effect.mapError(
           (cause) => new PeerUnanswered({ environmentId: input.environmentId, cause }),
+        ),
+        Effect.flatMap(
+          Result.match({
+            onSuccess: (value) => Effect.succeed(Result.succeed(value)),
+            onFailure: (failure: OrchestratorMcpFailure | PeerUnanswered) =>
+              failure._tag === "PeerUnanswered"
+                ? Effect.fail(failure)
+                : Effect.succeed(Result.fail(failure)),
+          }),
         ),
       ),
   );
