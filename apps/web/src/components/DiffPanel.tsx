@@ -28,8 +28,12 @@ import {
   ChevronsUpDownIcon,
 } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { type MouseEvent, useEffect, useRef, useState } from "react";
+import { type MouseEvent, useEffect, useEffectEvent, useRef, useState } from "react";
+import { serverEnvironment } from "../state/server";
+import { type PreviewAction, subscribePreviewAction } from "./preview/previewActionBus";
 import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
+import { DiffFindToggle } from "./diffs/DiffFindToggle";
+import { useDiffFind } from "./diffs/useDiffFind";
 import { useCodeViewScrollRestore } from "./diffs/useCodeViewScrollRestore";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import { useOpenInPreferredEditor } from "../editorPreferences";
@@ -107,7 +111,6 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { useEnvironmentQuery, useEnvironmentQueryRefresh } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
-import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
 import { filesystemEnvironment } from "../state/filesystem";
 import { vcsEnvironment } from "../state/vcs";
@@ -804,10 +807,20 @@ export default function DiffPanel({
     !isRefreshingDiff && remainingFileCount === 0,
     remainingFileCount > 0 ? loadNextFiles : null,
   );
+  const diffFind = useDiffFind();
   const attachCodeView = useStableCallback((handle: AnnotatableCodeViewHandle | null) => {
     codeViewScroll.attach(handle);
     codeViewReveal.attach(handle);
+    diffFind.attach(handle);
   });
+  const onPanelAction = useEffectEvent((action: PreviewAction) => {
+    if (action === "find") diffFind.find.open();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the panel find command, which fires while focus is anywhere in the right panel
+  useEffect(() => {
+    if (!visible) return;
+    return subscribePreviewAction(onPanelAction);
+  }, [visible]);
   const flushCodeView = useStableCallback(() => {
     codeViewScroll.flush();
     codeViewReveal.flush();
@@ -1412,6 +1425,7 @@ export default function DiffPanel({
             />
           </span>
         ) : null}
+        {diffFileKeys.length > 0 && <DiffFindToggle find={diffFind.find} />}
         {canRefreshGitDiff && (
           <Tooltip>
             <TooltipTrigger
@@ -1781,6 +1795,7 @@ export default function DiffPanel({
                       themeType: resolvedTheme as DiffThemeType,
                       stickyHeaders: true,
                       onPostRender: flushCodeView,
+                      onSearchStateChange: diffFind.onSearchStateChange,
                       ...(currentLoadDiffFiles ? { loadDiffFiles } : {}),
                     }}
                   />
@@ -1798,6 +1813,7 @@ export default function DiffPanel({
                       selectedPath={selectedFilePath}
                       revealRequestId={selectedFileRevealRequestId}
                       onSelectFile={revealDiffFile}
+                      find={diffFind.find}
                     />
                   </FileExplorerPane>
                 ) : null}

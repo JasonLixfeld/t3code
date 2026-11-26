@@ -13064,5 +13064,16 @@
   "17f2d583094514ef": "¿Qué construimos en {project}, en la misión {mission}?",
   "3f5959354b360f90": "¿Qué construimos en {project}, en {mission}?",
   "ba05bd1545ef3881": "¿Qué construimos en {project}, como nuevo hilo principal de {mission}?",
-  "06b6bb85f2e34802": "¿Qué construimos en {project}?"
+  "06b6bb85f2e34802": "¿Qué construimos en {project}?",
+  "05ea16f4e0a5c9eb": "Buscar en las líneas cambiadas",
+  "fcd82e4633e09f3c": "Filtrar archivos por nombre",
+  "c20e8b3635b1145d": "Filtrar por nombre de archivo",
+  "f2f26b2495c97459": "Cerrar la búsqueda de archivos",
+  "c9cc296e7ed91ee8": "Buscar por",
+  "0b2386ff3d38927b": "Nombre",
+  "060d69716652d764": "Contenido",
+  "a6ef358f3e49fce5": "{count, plural, one {{count} línea más} other {{count} líneas más}}",
+  "81f17b378a386c37": "Escribe para buscar en las líneas cambiadas.",
+  "a023bd0c3a131279": "Ninguna línea cambiada coincide.",
+  "ab51922b640ce105": "Buscar en el diff"
 }

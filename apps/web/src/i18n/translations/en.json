@@ -13078,5 +13078,16 @@
   "17f2d583094514ef": "What should we build in {project}, in mission {mission}?",
   "3f5959354b360f90": "What should we build in {project}, in {mission}?",
   "ba05bd1545ef3881": "What should we build in {project}, as the new lead for {mission}?",
-  "06b6bb85f2e34802": "What should we build in {project}?"
+  "06b6bb85f2e34802": "What should we build in {project}?",
+  "05ea16f4e0a5c9eb": "Search changed lines",
+  "fcd82e4633e09f3c": "Filter files by name",
+  "c20e8b3635b1145d": "Filter by file name",
+  "f2f26b2495c97459": "Close file search",
+  "c9cc296e7ed91ee8": "Search by",
+  "0b2386ff3d38927b": "Name",
+  "060d69716652d764": "Contents",
+  "a6ef358f3e49fce5": "{count, plural, one {{count} more line} other {{count} more lines}}",
+  "81f17b378a386c37": "Type to search the changed lines.",
+  "a023bd0c3a131279": "No changed lines match.",
+  "ab51922b640ce105": "Find in diff"
 }

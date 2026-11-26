@@ -65,12 +65,19 @@ composer as a thread chip.
 
 ## Find in a diff
 
-Click into a diff in the Diff panel or a pull request's Code tab, then press
-`mod+f` to search every file in it, including folded files and unchanged lines
-hidden between changes. Enter and `Shift+Enter` move between matches, and a
-match in a folded file opens it. Escape closes the search. This shortcut is not
-configurable. A very large uncommitted diff loads its files as you scroll, and
-find only searches the files loaded so far.
+In the Diff panel or a pull request's Code tab, press `mod+f` or select the
+search button in the toolbar to search every file in the diff, including folded
+files and unchanged lines hidden between changes. Enter and `Shift+Enter` move
+between matches, and a match in a folded file opens it. Escape closes the
+search. Find searches the lines the diff has loaded: the changes, the lines
+around them, and any unchanged lines you expanded. A very large uncommitted
+diff loads its files as you scroll, and find only searches the files loaded so
+far.
+
+The Files list has its own search. Select its search button, or press `mod+f`
+while the list has focus. **Name** filters the list by file path. **Contents**
+uses the same search as find in the diff: it lists each file with matches, its
+match count and the matching lines. Select a line to move the diff to it.
 
 ## iPad
 

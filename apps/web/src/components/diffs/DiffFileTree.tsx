@@ -1,7 +1,7 @@
 import type { GitStatusEntry } from "@pierre/trees";
-import { FileTree, useFileTree } from "@pierre/trees/react";
+import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
 import { T, useGT } from "gt-react";
-import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
+import { ChevronsDownUpIcon, ChevronsUpDownIcon, SearchIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -19,6 +19,8 @@ import {
   subscribeOncePerTask,
 } from "../files/fileTreeExpansion";
 import { Button } from "../ui/button";
+import { InputGroup, InputGroupInput } from "../ui/input-group";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   buildDiffFileTreeUpdates,
@@ -28,6 +30,8 @@ import {
   type DiffFileTreeEntry,
 } from "./diffFileTree.logic";
 import { diffFileTreePositions } from "@t3tools/client-runtime/diff-file-order";
+import { DiffFindResults } from "./DiffFindResults";
+import { type DiffFind, isFindShortcut } from "./useDiffFind";
 
 export type { DiffFileTreeEntry } from "./diffFileTree.logic";
 
@@ -40,7 +44,11 @@ interface DiffFileTreeProps {
   readonly headerAccessory?: ReactNode;
   readonly footer?: ReactNode;
   readonly className?: string;
+  /** Offers a Contents search that shares this diff find's query and matches. */
+  readonly find?: DiffFind;
 }
+
+type SearchMode = "name" | "contents";
 
 export function DiffFileTree({
   entries,
@@ -51,8 +59,14 @@ export function DiffFileTree({
   headerAccessory,
   footer,
   className,
+  find,
 }: DiffFileTreeProps) {
   const gt = useGT();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchMode, setSearchMode] = useState<SearchMode>("name");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchButtonRef = useRef<HTMLButtonElement>(null);
+  const contentsMode = searchOpen && searchMode === "contents" && find !== undefined;
   const { resolvedTheme } = useTheme();
   const paths = entries.map((entry) => entry.path);
   const presented = diffFileTreeModel(paths);
@@ -91,6 +105,7 @@ export function DiffFileTree({
 
   const { model } = useFileTree({
     density: "compact",
+    fileTreeSearchMode: "hide-non-matches",
     flattenEmptyDirectories: true,
     initialExpansion: "open",
     icons,
@@ -104,6 +119,39 @@ export function DiffFileTree({
     (listener) => subscribeOncePerTask(model, listener),
     () => areAllDirectoriesExpanded(model, directoryPaths),
   );
+  const nameSearch = useFileTreeSearch(model);
+  // Pierre restores the unfiltered tree when a search has no matches.
+  const noNameMatches =
+    searchOpen && nameSearch.value.trim() !== "" && nameSearch.matchingPaths.length === 0;
+
+  const focusSearch = () => {
+    if (!searchOpen) {
+      setSearchOpen(true);
+      return;
+    }
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+  const closeSearch = () => {
+    nameSearch.close();
+    setSearchOpen(false);
+  };
+  const setNameQuery = (value: string) => {
+    if (value.trim() === "") nameSearch.close();
+    else nameSearch.setValue(value);
+  };
+  const changeSearchMode = (mode: SearchMode) => {
+    if (mode === searchMode || find === undefined) return;
+    const query = mode === "contents" ? nameSearch.value : (find.state?.query ?? "");
+    setSearchMode(mode);
+    if (mode === "contents") {
+      nameSearch.close();
+      find.search(query, searchInputRef.current);
+    } else {
+      setNameQuery(query);
+    }
+    searchInputRef.current?.focus();
+  };
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the icon set into the imperative Pierre file tree model
   useEffect(() => {
@@ -136,7 +184,11 @@ export function DiffFileTree({
         return directory !== null && "isExpanded" in directory && !directory.isExpanded();
       });
       syncingSelectionRef.current = true;
+      // A reset keeps old search matches, so search closes first and recomputes afterwards.
+      const activeSearch = model.isSearchOpen() ? model.getSearchValue() : null;
+      if (activeSearch !== null) model.closeSearch();
       model.resetPaths(modelPaths);
+      if (activeSearch !== null) model.setSearch(activeSearch);
       for (const path of model.getSelectedPaths()) model.getItem(path)?.deselect();
       for (const path of selectedPaths) model.getItem(path)?.select();
       queueMicrotask(() => {
@@ -191,7 +243,14 @@ export function DiffFileTree({
   }, [model, presented, revealRequestId, selectedPath]);
 
   return (
-    <div className={cn("flex min-h-0 flex-1 flex-col bg-background", className)}>
+    <div
+      className={cn("flex min-h-0 flex-1 flex-col bg-background", className)}
+      onKeyDown={(event) => {
+        if (!isFindShortcut(event)) return;
+        event.preventDefault();
+        focusSearch();
+      }}
+    >
       <div
         className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 text-xs text-muted-foreground in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
         data-surface-subheader
@@ -201,6 +260,23 @@ export function DiffFileTree({
         </span>
         <span className="ml-auto tabular-nums">{entries.length}</span>
         {headerAccessory}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                ref={searchButtonRef}
+                aria-label={gt("Search files")}
+                variant="ghost"
+                size="xs"
+                pressed={searchOpen}
+                onPressedChange={(pressed) => (pressed ? focusSearch() : closeSearch())}
+              />
+            }
+          >
+            <SearchIcon className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipPopup>{gt("Search files")}</TooltipPopup>
+        </Tooltip>
         {directoryPaths.length > 0 ? (
           <Tooltip>
             <TooltipTrigger
@@ -230,35 +306,107 @@ export function DiffFileTree({
           </Tooltip>
         ) : null}
       </div>
-      <FileTree
-        model={model}
-        aria-label={ariaLabel}
-        onClickCapture={(event) => {
-          if (
-            event.defaultPrevented ||
-            event.button !== 0 ||
-            event.ctrlKey ||
-            event.metaKey ||
-            event.shiftKey ||
-            event.altKey
-          ) {
-            return;
-          }
-          // Pierre emits no change for its sole selected row; read before the click to avoid double reveals.
-          const selected = model.getSelectedPaths();
-          const path = selected.length === 1 ? selected[0] : undefined;
-          if (!path || !modelPaths.includes(path)) return;
-          const clickedSelectedRow = event.nativeEvent
-            .composedPath()
-            .some(
-              (node) => node instanceof HTMLElement && node.getAttribute("data-item-path") === path,
-            );
-          if (clickedSelectedRow) onSelectFile(presented.selectionPath(path));
-        }}
-        className="min-h-0 flex-1 overflow-hidden"
-        style={pierreTreeStyle(resolvedTheme)}
-        onPointerOver={titleClippedPierreTreeRow}
-      />
+      {searchOpen ? (
+        <div className="flex shrink-0 flex-col gap-1.5 border-b border-border/60 px-2 py-1.5">
+          <div className="flex items-center gap-1">
+            <InputGroup variant="ghost" className="h-7 min-w-0 flex-1">
+              <InputGroupInput
+                ref={searchInputRef}
+                type="text"
+                role="searchbox"
+                name="diff-files-search"
+                size="sm"
+                autoFocus
+                spellCheck={false}
+                aria-label={contentsMode ? gt("Search changed lines") : gt("Filter files by name")}
+                placeholder={contentsMode ? gt("Search changed lines") : gt("Filter by file name")}
+                value={contentsMode ? (find.state?.query ?? "") : nameSearch.value}
+                onChange={(event) =>
+                  contentsMode
+                    ? find.search(event.target.value, event.currentTarget)
+                    : setNameQuery(event.target.value)
+                }
+                onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    closeSearch();
+                    searchButtonRef.current?.focus();
+                  } else if (event.key === "Enter" && contentsMode) {
+                    event.preventDefault();
+                    find.navigate(event.shiftKey ? "previous" : "next");
+                  }
+                }}
+              />
+            </InputGroup>
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              aria-label={gt("Close file search")}
+              onClick={closeSearch}
+            >
+              <XIcon className="size-3.5" />
+            </Button>
+          </div>
+          {find ? (
+            <ToggleGroup
+              aria-label={gt("Search by")}
+              value={[searchMode]}
+              onValueChange={(value) => {
+                const next = value[0];
+                if (next === "name" || next === "contents") changeSearchMode(next);
+              }}
+            >
+              <Toggle value="name">
+                <T context="search files by file name">Name</T>
+              </Toggle>
+              <Toggle value="contents">
+                <T context="search files by their changed lines">Contents</T>
+              </Toggle>
+            </ToggleGroup>
+          ) : null}
+        </div>
+      ) : null}
+      {contentsMode ? (
+        <DiffFindResults find={find} onSelectFile={onSelectFile} />
+      ) : noNameMatches ? (
+        <p role="status" className="px-3 py-4 text-xs text-muted-foreground">
+          <T>No matching files.</T>
+        </p>
+      ) : (
+        <FileTree
+          model={model}
+          aria-label={ariaLabel}
+          onClickCapture={(event) => {
+            if (
+              event.defaultPrevented ||
+              event.button !== 0 ||
+              event.ctrlKey ||
+              event.metaKey ||
+              event.shiftKey ||
+              event.altKey
+            ) {
+              return;
+            }
+            // Pierre emits no change for its sole selected row; read before the click to avoid double reveals.
+            const selected = model.getSelectedPaths();
+            const path = selected.length === 1 ? selected[0] : undefined;
+            if (!path || !modelPaths.includes(path)) return;
+            const clickedSelectedRow = event.nativeEvent
+              .composedPath()
+              .some(
+                (node) =>
+                  node instanceof HTMLElement && node.getAttribute("data-item-path") === path,
+              );
+            if (clickedSelectedRow) onSelectFile(presented.selectionPath(path));
+          }}
+          className="min-h-0 flex-1 overflow-hidden"
+          style={pierreTreeStyle(resolvedTheme)}
+          onPointerOver={titleClippedPierreTreeRow}
+        />
+      )}
       {footer}
     </div>
   );

@@ -19,7 +19,7 @@ import type {
   FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
-import type { CodeViewAnnotationArgs, CodeViewDiffItem } from "@pierre/diffs/react";
+import type { CodeViewAnnotationArgs, CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
   PullRequestDetailView,
@@ -116,7 +116,10 @@ import { useDiffWorkerPool, useDiffWorkerPoolReady } from "../DiffWorkerPoolProv
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
 import { FileExplorerPane } from "../files/FileExplorerPane";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
+import { DiffFindToggle } from "../diffs/DiffFindToggle";
+import { isFindShortcut, useDiffFind } from "../diffs/useDiffFind";
 import { useHideTestFiles } from "../diffs/useHideTestFiles";
 import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
@@ -686,6 +689,13 @@ function PullRequestCodeTab({
   }, [backgroundRefreshToken, refreshFirstDiffPage, refreshFilesViewed]);
 
   const codeViewReveal = useCodeViewFileReveal();
+  const diffFind = useDiffFind();
+  const attachCodeView = useStableCallback(
+    (handle: CodeViewHandle<ReviewAnnotationGroup, undefined> | null) => {
+      codeViewReveal.attach(handle);
+      diffFind.attach(handle);
+    },
+  );
   const answeredRevealNonce = useRef<number | null>(null);
 
   const loadDiffFiles = createPullRequestDiffFileContentsLoader(getDiffFileContents, {
@@ -1244,6 +1254,7 @@ function PullRequestCodeTab({
     preferredHighlighter: PREFERRED_HIGHLIGHTER,
     themeType: resolvedTheme,
     stickyHeaders: true,
+    onSearchStateChange: diffFind.onSearchStateChange,
     // Full contents would not match the cut lines, and would bring back the lines just cut.
     loadDiffFiles: (fileDiff: FileDiffMetadata) =>
       cutFiles.has(fileDiff)
@@ -1794,6 +1805,7 @@ function PullRequestCodeTab({
             </TooltipPopup>
           </Tooltip>
         ) : null}
+        {fileKeys.length > 0 ? <DiffFindToggle find={diffFind.find} /> : null}
         {fileKeys.length > 0 ? (
           <Tooltip>
             <TooltipTrigger
@@ -1967,7 +1979,14 @@ function PullRequestCodeTab({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div
+      className="flex h-full min-h-0 flex-col"
+      onKeyDown={(event) => {
+        if (event.defaultPrevented || !isFindShortcut(event)) return;
+        event.preventDefault();
+        diffFind.find.open();
+      }}
+    >
       {toolbar}
       {orphanFiles.size > 0 ? (
         <div className="shrink-0 border-b border-border/60">
@@ -2063,7 +2082,7 @@ function PullRequestCodeTab({
                 node?.setAttribute("data-workspace-focus-default", "");
                 scrollerRef(node);
               }}
-              viewerRef={codeViewReveal.attach}
+              viewerRef={attachCodeView}
               items={items}
               selectedLines={selectedLines}
               onSelectedLinesChange={setSelectedLines}
@@ -2095,6 +2114,7 @@ function PullRequestCodeTab({
               )}
               entries={fileTreeEntries}
               onSelectFile={revealFile}
+              find={diffFind.find}
               footer={
                 nextCursor === null ? null : (
                   <div className="shrink-0 border-t border-border/60 p-2">
