@@ -55,6 +55,9 @@ vi.mock("../state/server", async (original) => {
       addMissionMember: Object.assign(actual.serverEnvironment.addMissionMember, {
         permissionAtom: () => Atom.make(true),
       }),
+      createMission: Object.assign(actual.serverEnvironment.createMission, {
+        permissionAtom: () => Atom.make(true),
+      }),
     },
   };
 });
@@ -425,10 +428,26 @@ describe("CommandPalette open intents", () => {
   });
 
   it.each([
-    ["offers New mission... with No project", EnvironmentId.make("local")],
-    ["offers no New mission... with no home for No project", null],
-  ] as const)("with no projects, the palette %s", async (_, home) => {
+    ["offers New mission... with No project", EnvironmentId.make("local"), true],
+    ["offers no New mission... with no home for No project", null, true],
+    [
+      "offers no New mission... where no machine keeps missions",
+      EnvironmentId.make("local"),
+      false,
+    ],
+  ] as const)("with no projects, the palette %s", async (_, home, keepsMissions) => {
     setup();
+    vi.mocked(useMissionHosts).mockReturnValue(
+      keepsMissions
+        ? [
+            {
+              environmentId: EnvironmentId.make("local"),
+              snapshot: { missions: [], claims: [] },
+            },
+          ]
+        : [],
+    );
+    onTestFinished(() => vi.mocked(useMissionHosts).mockRestore());
     vi.mocked(useScratchProject).mockReturnValue({
       scratchEnvironmentId: () => home,
       scratchWorkspaceRootFor: () => (home === null ? null : "/scratch"),
@@ -443,7 +462,7 @@ describe("CommandPalette open intents", () => {
       .element(page.getByPlaceholder("Search commands, projects, and threads..."))
       .toHaveFocus();
     const newMission = page.getByRole("option", { name: /^New mission\.\.\./ });
-    if (home === null) {
+    if (home === null || !keepsMissions) {
       await expect.element(newMission).not.toBeInTheDocument();
       return;
     }

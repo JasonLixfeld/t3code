@@ -245,6 +245,7 @@ import {
   useSortedProjectGroups,
 } from "./CommandPaletteLookups";
 import { markMissionDraft } from "./sidebar/missionDraftStore";
+import { environmentAtomList, environmentIdsKey } from "../state/environmentAtomList";
 import { useMissionHosts } from "./sidebar/MissionsSection";
 import { missionDraftMachines, missionScratchHome } from "./sidebar/missions.logic";
 import {
@@ -338,6 +339,11 @@ function openIntentView(
 }
 
 const NEW_THREAD_NO_PROJECT_VALUE = "new-thread-in:no-project";
+
+const missionCreatePermissionsAtom = environmentAtomList(
+  "command-palette-mission-create-permissions",
+  serverEnvironment.createMission.permissionAtom,
+);
 
 export function CommandPalette({ children }: { children: ReactNode }) {
   useCommandPaletteMount();
@@ -490,7 +496,6 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
-  const missionsEnabled = useClientSettings((settings) => settings.sidebarMissionsEnabled);
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -580,6 +585,9 @@ function OpenCommandPaletteDialog(props: {
   // A draft made from this view starts or leads a Mission once it is sent.
   const missionIntent = currentView?.mission;
   const missionHosts = useMissionHosts();
+  const missionCreatePermissions = useAtomValue(
+    missionCreatePermissionsAtom(environmentIdsKey(missionHosts.map((host) => host.environmentId))),
+  );
   const missionMachines =
     missionIntent === undefined ? null : missionDraftMachines(missionIntent, missionHosts);
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
@@ -1442,7 +1450,10 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (missionsEnabled && (projects.length > 0 || scratchTargetEnvironmentId !== null)) {
+  if (
+    missionCreatePermissions.includes(true) &&
+    (projects.length > 0 || scratchTargetEnvironmentId !== null)
+  ) {
     actionItems.push({
       kind: "action",
       value: "action:new-mission",

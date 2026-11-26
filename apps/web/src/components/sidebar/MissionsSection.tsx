@@ -7,6 +7,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
+  AuthOrchestrationReadScope,
   type EnvironmentId,
   type Mission,
   type MissionMember,
@@ -47,7 +48,9 @@ import {
   useProject,
   useQuietThreadShell,
   useQuietThreadShells,
+  useServerConfigs,
 } from "../../state/entities";
+import { useEnvironmentsWithScope } from "../../state/session";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
@@ -90,16 +93,27 @@ import {
 import { SidebarHeading } from "./SidebarListMarkers";
 import type { SidebarMissionToggle } from "./SidebarThreadRow";
 
-/** No machine is asked for its Missions while the sidebar setting turns them off. */
+/**
+ * Only a machine that keeps Missions, and lets this client read threads, is asked for them. None
+ * is while the sidebar setting turns them off.
+ */
 export function useMissionHosts(): ReadonlyArray<MissionHost> {
   const enabled = useClientSettings((settings) => settings.sidebarMissionsEnabled);
-  const environmentIds = useConnectedEnvironmentIds();
-  const hosts = useAtomValue(
-    serverEnvironment.missionsLiveAcross(JSON.stringify(enabled ? environmentIds : [])),
+  const connected = useConnectedEnvironmentIds();
+  const configs = useServerConfigs();
+  const readable = useEnvironmentsWithScope(
+    connected.map((environmentId) => ({ environmentId })),
+    AuthOrchestrationReadScope,
   );
-  return enabled ? hosts : NO_HOSTS;
+  const environmentIds = enabled
+    ? connected.filter(
+        (environmentId) =>
+          readable.has(environmentId) &&
+          configs.get(environmentId)?.environment.capabilities.missions === true,
+      )
+    : [];
+  return useAtomValue(serverEnvironment.missionsLiveAcross(JSON.stringify(environmentIds)));
 }
-const NO_HOSTS: ReadonlyArray<MissionHost> = [];
 
 function useMachineLabel(hosts: ReadonlyArray<MissionHost>) {
   const identities = useEnvironmentIdentities();

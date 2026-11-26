@@ -27,7 +27,7 @@ import { openCommandPalette } from "../../commandPaletteBus";
 import { readLocalApi } from "../../localApi";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { useConnectedEnvironmentIds } from "../../state/environments";
-import { useEnvironmentScope } from "../../state/session";
+import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import {
   useProjects,
   useQuietThreadShell,
@@ -48,6 +48,7 @@ import type { MissionHost } from "./missions.logic";
 
 const LOCAL = EnvironmentId.make("local");
 const LAPTOP = EnvironmentId.make("env-laptop");
+const CONNECTED = [LOCAL, LAPTOP];
 const project = (id: string): Project => ({
   id: ProjectId.make(id),
   environmentId: LOCAL,
@@ -186,12 +187,14 @@ vi.mock(import("../../state/server"), async (original) => {
     serverEnvironment: {
       ...actual.serverEnvironment,
       // Each sidebar read sees the hosts as they are, and a test's live update reaches it.
-      missionsLiveAcross: () =>
+      missionsLiveAcross: (environmentIdsKey: string) =>
         Atom.make((get) => {
-          const update = () => get.setSelf([...hosts]);
+          const asked = new Set(JSON.parse(environmentIdsKey) as ReadonlyArray<string>);
+          const read = () => hosts.filter((host) => asked.has(host.environmentId));
+          const update = () => get.setSelf(read());
           hostChanges.add(update);
           get.addFinalizer(() => hostChanges.delete(update));
-          return [...hosts];
+          return read();
         }),
       missionPrompt: ({ input }: { input: { missionId: string } }) =>
         Atom.make(AsyncResult.success({ prompt: savedPrompts.get(input.missionId) ?? "" })),
@@ -225,6 +228,8 @@ async function renderSidebar(
     extra?: ReadonlyArray<ReturnType<typeof shell>>;
     /** Threads left out of the stream, by id. */
     without?: ReadonlyArray<string>;
+    /** Whether the machine says it keeps Missions. */
+    keepsMissions?: boolean;
   } = {},
 ) {
   const previousSettings = getClientSettings();
@@ -262,15 +267,19 @@ async function renderSidebar(
       ) ?? null,
   );
   vi.mocked(useServerConfigs).mockReturnValue(
-    new Map([
-      [
-        LOCAL,
+    new Map(
+      CONNECTED.map((environmentId) => [
+        environmentId,
         {
           scratchWorkspaceRoot: null,
-          environment: { capabilities: {} },
+          environment: { capabilities: { missions: options.keepsMissions ?? true } },
         } as unknown as EnvironmentServerConfig,
-      ],
-    ]),
+      ]),
+    ),
+  );
+  vi.mocked(useConnectedEnvironmentIds).mockReturnValue(CONNECTED);
+  vi.mocked(useEnvironmentsWithScope).mockImplementation(
+    (environments) => new Set(environments.map(({ environmentId }) => environmentId)),
   );
   vi.mocked(useHandleNewThread).mockReturnValue({
     activeDraftThread: null,
@@ -820,6 +829,13 @@ describe("missions in the sidebar", () => {
     expect(
       rowTitles(screen.container).filter((title) => title?.includes("Plan the v2")),
     ).toHaveLength(1);
+  });
+
+  it("asks a machine that does not keep Missions for none", async () => {
+    await using screen = await renderSidebar({}, { keepsMissions: false });
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    expect(screen.container.querySelector("[data-testid=sidebar-mission-members]")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Missions" }).elements()).toHaveLength(0);
   });
 
   it("hides both headings when their settings are off", async () => {
