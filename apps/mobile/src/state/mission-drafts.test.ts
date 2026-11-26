@@ -3,11 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   adoptMissionDraft,
-  bindMissionDraft,
-  clearSavedDraftMission,
+  clearMissionDraft,
+  draftMissionTarget,
   markMissionDraft,
   missionDraftOf,
-  missionDraftRequestIdOf,
   settleMissionDraftAttempt,
   startMissionDraftAttempt,
 } from "./mission-drafts";
@@ -21,26 +20,37 @@ const member = {
 };
 
 describe("mission drafts", () => {
-  it("finds a saved draft's mark when the draft is reopened, and drops it when the draft is discarded", () => {
-    markMissionDraft({ requestId: "route-1" }, { kind: "new" }, () => "m-new");
-    bindMissionDraft("route-1", "draft-1");
-    markMissionDraft({ requestId: "route-1" }, member, () => "m-new");
+  it("keeps a saved draft's mark on that draft when the route switches to another saved draft", () => {
+    const draftA = draftMissionTarget("new-task:a", "route:a");
+    markMissionDraft(draftA, member, () => "m-new");
 
-    const reopened = missionDraftRequestIdOf("draft-1");
-    expect(reopened).toBe("route-1");
-    expect(missionDraftOf({ requestId: reopened ?? "" })?.intent).toEqual(member);
+    expect(missionDraftOf(draftMissionTarget(null, "route:b"))).toBeUndefined();
+    expect(missionDraftOf(draftMissionTarget("new-task:b", "route:b"))).toBeUndefined();
+    expect(missionDraftOf(draftMissionTarget("new-task:a", "route:reopened"))?.intent).toEqual(
+      member,
+    );
 
-    clearSavedDraftMission("draft-1");
-    expect(missionDraftOf({ requestId: "route-1" })).toBeUndefined();
-    expect(missionDraftRequestIdOf("draft-1")).toBeUndefined();
+    clearMissionDraft({ draftId: "new-task:a" });
+    expect(missionDraftOf(draftA)).toBeUndefined();
+  });
+
+  it("adopts only the exact mark the send checked", () => {
+    const draft = { draftId: "new-task:send" };
+    markMissionDraft(draft, member, () => "m-new");
+    const checked = missionDraftOf(draft);
+    markMissionDraft(draft, { kind: "new" }, () => "m-other");
+    expect(checked !== undefined && adoptMissionDraft(draft, checked, thread)).toBe(false);
+    expect(missionDraftOf(thread)).toBeUndefined();
+
+    const current = missionDraftOf(draft);
+    expect(current !== undefined && adoptMissionDraft(draft, current, thread)).toBe(true);
+    expect(missionDraftOf(draft)).toBeUndefined();
+    expect(missionDraftOf(thread)?.intent).toEqual({ kind: "new" });
+    clearMissionDraft(thread);
   });
 
   it("applies a retry or an outcome only to the attempt that produced it", () => {
-    markMissionDraft({ requestId: "route-2" }, member, () => "m-new");
-    bindMissionDraft("route-2", "draft-2");
-    adoptMissionDraft("route-2", thread);
-    expect(missionDraftRequestIdOf("draft-2")).toBeUndefined();
-
+    markMissionDraft(thread, member, () => "m-new");
     const first = startMissionDraftAttempt(thread);
     settleMissionDraftAttempt(thread, first, "failed");
     settleMissionDraftAttempt(thread, first, "retry");

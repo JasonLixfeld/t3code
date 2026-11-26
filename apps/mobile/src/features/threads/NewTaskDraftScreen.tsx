@@ -18,11 +18,11 @@ import { ThreadId } from "@t3tools/contracts";
 import * as Dialog from "../../components/ui/Dialog";
 import {
   adoptMissionDraft,
-  bindMissionDraft,
-  useMissionDraft,
-  useMissionDraftRequestId,
+  clearMissionDraft,
+  draftMissionTarget,
+  missionDraftOf,
 } from "../../state/mission-drafts";
-import { useMissionDraftMachines } from "../../state/missions";
+import { readMissionDraftSend, useMissionDraftMachines } from "../../state/missions";
 import { missionDraftAllows } from "../../state/missions.logic";
 import { DraftHeroSentence, DraftMissionControl, useDraftMission } from "./DraftHeroMission";
 import { draftHeroTokens } from "./draftMission.logic";
@@ -189,13 +189,8 @@ export function NewTaskDraftScreen(props: {
   const goBack = useWorkspaceBackNavigation();
   const currentRoute = useRoute();
   const flowKey = newTaskFlowKey(currentRoute);
-  const savedDraftMissionRequestId = useMissionDraftRequestId(props.draftId ?? null);
-  const missionRequestId = props.requestId ?? savedDraftMissionRequestId ?? currentRoute.key;
-  const marked = useMissionDraft(missionRequestId, null) !== undefined;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ties the route's mission mark to its saved draft, so reopening that draft from the pending list finds the mark
-  useEffect(() => {
-    if (marked && flow.draftKey !== null) bindMissionDraft(missionRequestId, flow.draftKey);
-  }, [marked, missionRequestId, flow.draftKey]);
+  const missionRequestId = props.requestId ?? flowKey ?? currentRoute.key;
+  const missionTarget = draftMissionTarget(flow.draftKey, missionRequestId);
   const { getShare, isLoading: isIncomingShareInboxLoading } = useIncomingShare();
   const { projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
   // selectedProject falls back to the environment's first project; remember only a chosen one.
@@ -415,7 +410,7 @@ export function NewTaskDraftScreen(props: {
   const isComposerInteractionLocked =
     isIncomingShareTransferPending || flow.submitting || isImportingContext;
   const { selectedEnvironmentId, switchEnvironment, switchingToEnvironmentId } = flow;
-  const missionMachines = useMissionDraftMachines(missionRequestId);
+  const missionMachines = useMissionDraftMachines(missionTarget);
   const environments = flow.environments.filter((environment) =>
     missionDraftAllows(missionMachines, environment.environmentId),
   );
@@ -731,10 +726,17 @@ export function NewTaskDraftScreen(props: {
       return null;
     }
 
-    if (!missionDraftAllows(missionMachines, selectedProject.environmentId)) {
-      Dialog.alert(gt("This draft's mission no longer allows that machine."));
+    const sendTarget = draftMissionTarget(draftKey, missionRequestId);
+    const mark = missionDraftOf(sendTarget);
+    const missionSend = readMissionDraftSend(mark?.intent, selectedProject.environmentId);
+    if (missionSend === "refused") {
+      Dialog.alert(
+        gt("This draft's mission no longer allows that machine."),
+        gt("Switch to one of the mission's machines, or send it as a plain thread."),
+      );
       return null;
     }
+    if (missionSend === "drop") clearMissionDraft(sendTarget);
 
     const message = flow.buildPendingTaskMessage(creationMetadata, {
       currentCheckoutBranch: queuesInsteadOfStarting ? null : flow.currentCheckoutBranchName,
@@ -754,10 +756,12 @@ export function NewTaskDraftScreen(props: {
       );
       return null;
     }
-    adoptMissionDraft(missionRequestId, {
-      environmentId: message.environmentId,
-      threadId: message.threadId,
-    });
+    if (missionSend === "mission" && mark !== undefined) {
+      adoptMissionDraft(sendTarget, mark, {
+        environmentId: message.environmentId,
+        threadId: message.threadId,
+      });
+    }
     promptInputRef.current?.blur();
     navigation.dispatch(
       CommonActions.setParams(
@@ -780,7 +784,7 @@ export function NewTaskDraftScreen(props: {
   }
 
   const missionDraft = useDraftMission({
-    requestId: missionRequestId,
+    target: missionTarget,
     thread: selectedProject
       ? {
           environmentId: selectedProject.environmentId,

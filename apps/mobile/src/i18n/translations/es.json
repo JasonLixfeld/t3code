@@ -4454,6 +4454,7 @@
   "3d047cec50a41e9f": "\"{title}\" está en otra máquina. Vuelve a su máquina o quítalo del borrador.",
   "6c43021ec1cd0d05": "\"{title}\" está en otra máquina. Vuelve a {owner} o quítalo del borrador.",
   "df569eba6576b4b9": "La misión de este borrador ya no permite esa máquina.",
+  "f17969aa293df0c7": "Cambia a una de las máquinas de la misión o envíalo como hilo normal.",
   "fe11b21043f9c8ce": "No se pudo poner la tarea en cola",
   "dfbeddbcc2922297": "No se pudo guardar la tarea en la bandeja de salida.",
   "a87c89c0fa9c11b1": "Espera a que termine de clonarse el proyecto.",

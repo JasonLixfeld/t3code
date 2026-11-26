@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
-import { bindMissionDraft, markMissionDraft, missionDraftOf } from "../../state/mission-drafts";
+import { markMissionDraft, missionDraftOf } from "../../state/mission-drafts";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 
@@ -53,10 +53,9 @@ it("drops the mission mark of a discarded draft and of a deleted queued task", a
     );
   };
 
-  markMissionDraft({ requestId: "route-1" }, { kind: "new" }, () => "m1");
-  bindMissionDraft("route-1", "draft-1");
+  markMissionDraft({ draftId: "draft-1" }, { kind: "new" }, () => "m1");
   await confirm({ kind: "draft", key: "draft-1", draftKey: "draft-1", title: "Draft" } as never);
-  expect(missionDraftOf({ requestId: "route-1" })).toBeUndefined();
+  expect(missionDraftOf({ draftId: "draft-1" })).toBeUndefined();
 
   markMissionDraft({ environmentId, threadId }, { kind: "new" }, () => "m2");
   await confirm({

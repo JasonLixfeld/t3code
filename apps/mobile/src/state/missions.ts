@@ -3,78 +3,99 @@ import { type MissionHost, missionsLiveKey } from "@t3tools/client-runtime/missi
 import { AuthOrchestrationReadScope, type EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 
-import { useServerConfigs } from "./entities";
-import { useMissionDraft } from "./mission-drafts";
+import { appAtomRegistry } from "./atom-registry";
+import { type MissionDraftTarget, useMissionDraft } from "./mission-drafts";
 import {
   missionAdvertisers,
   missionDraftProjectMachines,
+  missionDraftSend,
   resolveMissionPreferences,
 } from "./missions.logic";
 import { mobilePreferencesAtom } from "./preferences";
 import { connectedEnvironmentIdsAtom } from "./presentation";
-import { serverEnvironment } from "./server";
-import { useEnvironmentsWithScope } from "./session";
+import { environmentServerConfigsAtom, serverEnvironment } from "./server";
+import { environmentSession, sessionHasScope } from "./session";
 
-export function useMissionPreferences() {
-  const preferences = useAtomValue(mobilePreferencesAtom);
+const missionPreferencesAtom = Atom.make((get) => {
+  const preferences = get(mobilePreferencesAtom);
   return resolveMissionPreferences(AsyncResult.isSuccess(preferences) ? preferences.value : null);
-}
+}).pipe(Atom.withLabel("mobile-mission-preferences"));
 
-export function useMissionsLiveKey(): string {
-  const { enabled } = useMissionPreferences();
-  const configs = useServerConfigs();
-  const connected = missionAdvertisers(useAtomValue(connectedEnvironmentIdsAtom), configs);
-  const readable = useEnvironmentsWithScope(
-    connected.map((environmentId) => ({ environmentId })),
-    AuthOrchestrationReadScope,
-  );
-  return missionsLiveKey({
-    enabled,
+const missionAdvertisersAtom = Atom.make((get) =>
+  missionAdvertisers(get(connectedEnvironmentIdsAtom), get(environmentServerConfigsAtom)),
+).pipe(Atom.withLabel("mobile-mission-advertisers"));
+
+const missionsOnAtom = Atom.make(
+  (get) => get(missionPreferencesAtom).enabled && get(missionAdvertisersAtom).length > 0,
+).pipe(Atom.withLabel("mobile-missions-on"));
+
+const missionHostsAtom = Atom.make((get) => {
+  const configs = get(environmentServerConfigsAtom);
+  const connected = get(missionAdvertisersAtom);
+  const key = missionsLiveKey({
+    enabled: get(missionPreferencesAtom).enabled,
     connected,
-    readable,
+    readable: new Set(
+      connected.filter((environmentId) =>
+        sessionHasScope(
+          get(environmentSession.sessionStateAtom(environmentId)),
+          AuthOrchestrationReadScope,
+        ),
+      ),
+    ),
     descriptorOf: (environmentId) => configs.get(environmentId)?.environment,
   });
+  return get(serverEnvironment.missionsLiveAcross(key));
+}).pipe(Atom.withLabel("mobile-mission-hosts"));
+
+const missionStartMachinesAtom = Atom.make(
+  (get): ReadonlySet<EnvironmentId> =>
+    new Set(
+      get(missionHostsAtom)
+        .map((host) => host.environmentId)
+        .filter((environmentId) =>
+          get(serverEnvironment.createMission.permissionAtom(environmentId)),
+        ),
+    ),
+).pipe(Atom.withLabel("mobile-mission-start-machines"));
+
+export function useMissionPreferences() {
+  return useAtomValue(missionPreferencesAtom);
 }
 
 export function useMissionHosts(): ReadonlyArray<MissionHost> {
-  return useAtomValue(serverEnvironment.missionsLiveAcross(useMissionsLiveKey()));
+  return useAtomValue(missionHostsAtom);
 }
+
+export const readMissionHosts = () => appAtomRegistry.get(missionHostsAtom);
 
 export function useMissionsAdvertised(): boolean {
-  return (
-    missionAdvertisers(useAtomValue(connectedEnvironmentIdsAtom), useServerConfigs()).length > 0
-  );
+  return useAtomValue(missionAdvertisersAtom).length > 0;
 }
 
-const missionCreatePermissionsAtom = Atom.family((key: string) =>
-  Atom.make((get) =>
-    key === ""
-      ? []
-      : key
-          .split("\n")
-          .map((environmentId) =>
-            get(serverEnvironment.createMission.permissionAtom(environmentId as EnvironmentId)),
-          ),
-  ).pipe(Atom.withLabel(`mobile-mission-create-permissions:${key}`)),
-);
-
-export function useMissionStartMachines(
-  hosts: ReadonlyArray<MissionHost>,
-): ReadonlySet<EnvironmentId> {
-  const permissions = useAtomValue(
-    missionCreatePermissionsAtom(hosts.map((host) => host.environmentId).join("\n")),
-  );
-  return new Set(
-    hosts.flatMap((host, index) => (permissions[index] === true ? [host.environmentId] : [])),
-  );
+export function useMissionStartMachines(): ReadonlySet<EnvironmentId> {
+  return useAtomValue(missionStartMachinesAtom);
 }
 
 export function useMissionDraftMachines(
-  requestId: string | null,
+  target: MissionDraftTarget | null,
 ): ReadonlySet<EnvironmentId> | null {
-  const { enabled } = useMissionPreferences();
-  const hosts = useMissionHosts();
-  const startMachines = useMissionStartMachines(hosts);
-  const intent = useMissionDraft(requestId, null)?.intent;
-  return enabled ? missionDraftProjectMachines(intent, hosts, startMachines) : null;
+  return missionDraftProjectMachines({
+    intent: useMissionDraft(target)?.intent,
+    missionsOn: useAtomValue(missionsOnAtom),
+    hosts: useMissionHosts(),
+    startMachines: useMissionStartMachines(),
+  });
 }
+
+export const readMissionDraftSend = (
+  intent: Parameters<typeof missionDraftSend>[0]["intent"],
+  environmentId: EnvironmentId,
+) =>
+  missionDraftSend({
+    intent,
+    environmentId,
+    missionsOn: appAtomRegistry.get(missionsOnAtom),
+    hosts: appAtomRegistry.get(missionHostsAtom),
+    startMachines: appAtomRegistry.get(missionStartMachinesAtom),
+  });

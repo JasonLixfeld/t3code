@@ -31,7 +31,7 @@ import { newMissionId, uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { clearMissionDraft, markMissionDraft, missionDraftOf } from "../../state/mission-drafts";
-import { useMissionHosts, useMissionStartMachines, useMissionsLiveKey } from "../../state/missions";
+import { readMissionHosts, useMissionHosts, useMissionStartMachines } from "../../state/missions";
 import { canStartMission } from "../../state/missions.logic";
 import { serverEnvironment } from "../../state/server";
 import { environmentThreadShells } from "../../state/threads";
@@ -153,7 +153,7 @@ export function useMissionListMenus(
 }
 
 export function useCanStartMission(): boolean {
-  const startMachines = useMissionStartMachines(useMissionHosts());
+  const startMachines = useMissionStartMachines();
   const configs = useServerConfigs();
   return canStartMission(
     startMachines,
@@ -184,7 +184,6 @@ export type OpenMissionPrompt = (params: ReactNavigation.RootParamList["MissionP
 export function useMissionActions(openPrompt?: OpenMissionPrompt) {
   const gt = useGT();
   const resolve = useMessages();
-  const liveKey = useMissionsLiveKey();
   const selectDetail = useSelectWorkspaceDetail();
   const navigation = useNavigation();
   const create = useAtomCommand(serverEnvironment.createMission, "mission create");
@@ -194,7 +193,7 @@ export function useMissionActions(openPrompt?: OpenMissionPrompt) {
   const forget = useAtomCommand(serverEnvironment.forgetMissionMember, "mission forget member");
   const deleteMission = useAtomCommand(serverEnvironment.deleteMission, "mission delete");
   const setLead = useAtomCommand(serverEnvironment.setMissionLead, "mission set lead");
-  const hosts = () => appAtomRegistry.get(serverEnvironment.missionsLiveAcross(liveKey));
+  const hosts = readMissionHosts;
   const canChange = (environmentId: EnvironmentId) => can("change", environmentId);
 
   const openDraft = (

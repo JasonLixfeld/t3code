@@ -4461,6 +4461,7 @@
   "3d047cec50a41e9f": "”{title}” finns på en annan dator. Byt tillbaka till dess dator eller ta bort den från utkastet.",
   "6c43021ec1cd0d05": "”{title}” finns på en annan dator. Byt tillbaka till {owner} eller ta bort den från utkastet.",
   "df569eba6576b4b9": "Utkastets uppdrag tillåter inte längre den maskinen.",
+  "f17969aa293df0c7": "Byt till en av uppdragets maskiner, eller skicka den som en vanlig tråd.",
   "fe11b21043f9c8ce": "Kunde inte köa uppgiften",
   "dfbeddbcc2922297": "Uppgiften kunde inte sparas i utkorgen.",
   "a87c89c0fa9c11b1": "Vänta tills kloningen av projektet är klar.",

@@ -7,7 +7,12 @@ import { ComposerInlineControl } from "../../components/ComposerToolbar";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { newMissionId } from "../../lib/uuid";
-import { clearMissionDraft, markMissionDraft, useMissionDraft } from "../../state/mission-drafts";
+import {
+  clearMissionDraft,
+  markMissionDraft,
+  type MissionDraftTarget,
+  useMissionDraft,
+} from "../../state/mission-drafts";
 import {
   useMissionHosts,
   useMissionPreferences,
@@ -23,15 +28,15 @@ import {
 const HERO_TEXT = "text-2xl font-t3-medium tracking-tight text-foreground";
 
 export function useDraftMission(input: {
-  readonly requestId: string;
+  readonly target: MissionDraftTarget;
   readonly thread: ScopedThreadRef | null;
   readonly environmentId: EnvironmentId | null;
 }) {
   const resolve = useMessages();
   const { enabled } = useMissionPreferences();
   const hosts = useMissionHosts();
-  const startMachines = useMissionStartMachines(hosts);
-  const mark = useMissionDraft(input.requestId, input.thread);
+  const startMachines = useMissionStartMachines();
+  const mark = useMissionDraft(input.target, input.thread);
   const choice = draftMissionChoice(
     { enabled, hosts, startMachines, intent: mark?.intent, environmentId: input.environmentId },
     resolve,
@@ -39,9 +44,8 @@ export function useDraftMission(input: {
   const choose = (id: string) => {
     const option = chosenDraftMissionOption(choice, id);
     if (option === undefined) return;
-    const target = { requestId: input.requestId };
-    if (option.intent === null) clearMissionDraft(target);
-    else markMissionDraft(target, option.intent, newMissionId);
+    if (option.intent === null) clearMissionDraft(input.target);
+    else markMissionDraft(input.target, option.intent, newMissionId);
   };
   return { choice, choose };
 }

@@ -8,6 +8,7 @@ import {
   missionAdvertisers,
   missionDraftAllows,
   missionDraftProjectMachines,
+  missionDraftSend,
   resolveMissionPreferences,
 } from "./missions.logic";
 
@@ -78,11 +79,47 @@ describe("a new mission's machines", () => {
   ];
   const member = { kind: "member", host: DESK, missionId: "m1", name: "Ship v2" } as const;
 
+  const startMachines = new Set([DESK]);
+  const machines = (intent: Parameters<typeof missionDraftProjectMachines>[0]["intent"]) =>
+    missionDraftProjectMachines({ intent, missionsOn: true, hosts, startMachines });
+
   it("starts a new mission on a machine that may start one, and a member on its host or a full-access link", () => {
-    const start = new Set([DESK]);
-    expect(missionDraftProjectMachines(undefined, hosts, start)).toBeNull();
-    expect(missionDraftProjectMachines({ kind: "new" }, hosts, start)).toBe(start);
-    expect(missionDraftProjectMachines(member, hosts, start)).toEqual(new Set([DESK, LAPTOP]));
+    expect(machines(undefined)).toBeNull();
+    expect(machines({ kind: "new" })).toBe(startMachines);
+    expect(machines(member)).toEqual(new Set([DESK, LAPTOP]));
+  });
+
+  it("drops a mark while Missions are off, and keeps a member to its host when links are hidden", () => {
+    const send = (
+      environmentId: EnvironmentId,
+      input: { missionsOn?: boolean; hosts?: ReadonlyArray<MissionHost> } = {},
+    ) =>
+      missionDraftSend({
+        intent: member,
+        missionsOn: input.missionsOn ?? true,
+        hosts: input.hosts ?? hosts,
+        startMachines,
+        environmentId,
+      });
+    expect(
+      missionDraftSend({
+        intent: undefined,
+        missionsOn: false,
+        hosts,
+        startMachines,
+        environmentId: PHONE,
+      }),
+    ).toBe("plain");
+    expect(send(PHONE, { missionsOn: false })).toBe("drop");
+    expect(send(LAPTOP)).toBe("mission");
+    expect(send(PHONE)).toBe("refused");
+
+    const hidden: ReadonlyArray<MissionHost> = hosts.map((host) => ({
+      ...host,
+      snapshot: { ...host.snapshot, links: [], linksHidden: true as const },
+    }));
+    expect(send(DESK, { hosts: hidden })).toBe("mission");
+    expect(send(LAPTOP, { hosts: hidden })).toBe("refused");
   });
 
   it("offers New mission only where a start machine has a project or a No project home", () => {

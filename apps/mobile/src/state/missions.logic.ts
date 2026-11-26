@@ -26,13 +26,30 @@ export const missionAdvertisers = (
     (environmentId) => configs.get(environmentId)?.environment.capabilities.missions === true,
   );
 
-export function missionDraftProjectMachines(
-  intent: MissionDraftIntent | undefined,
-  hosts: ReadonlyArray<MissionHost>,
-  startMachines: ReadonlySet<EnvironmentId>,
-): ReadonlySet<EnvironmentId> | null {
-  if (intent === undefined) return null;
-  return intent.kind === "new" ? startMachines : missionDraftMachines(intent, hosts);
+export function missionDraftProjectMachines(input: {
+  readonly intent: MissionDraftIntent | undefined;
+  readonly missionsOn: boolean;
+  readonly hosts: ReadonlyArray<MissionHost>;
+  readonly startMachines: ReadonlySet<EnvironmentId>;
+}): ReadonlySet<EnvironmentId> | null {
+  const { intent } = input;
+  if (intent === undefined || !input.missionsOn) return null;
+  if (intent.kind === "new") return input.startMachines;
+  // Links the operator cannot see cannot be checked, so only the mission's own machine is safe.
+  return missionDraftMachines(intent, input.hosts) ?? new Set([intent.host]);
+}
+
+/** "drop": Missions are off, so the mark is cleared and the draft sends as a plain thread. */
+export function missionDraftSend(
+  input: Parameters<typeof missionDraftProjectMachines>[0] & {
+    readonly environmentId: EnvironmentId;
+  },
+): "plain" | "drop" | "mission" | "refused" {
+  if (input.intent === undefined) return "plain";
+  if (!input.missionsOn) return "drop";
+  return missionDraftProjectMachines(input)?.has(input.environmentId) === true
+    ? "mission"
+    : "refused";
 }
 
 export const missionDraftAllows = (

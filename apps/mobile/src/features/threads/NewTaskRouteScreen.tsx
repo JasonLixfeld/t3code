@@ -41,6 +41,7 @@ import { useWorkspaceState } from "../../state/workspace";
 
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { useNewTaskFlow } from "./new-task-flow-provider";
+import { draftMissionTarget } from "../../state/mission-drafts";
 import { useMissionDraftMachines } from "../../state/missions";
 import {
   filterProjectScopes,
@@ -174,7 +175,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const m = useMessages();
   const projects = useProjects();
   const [searchText, setSearchText] = useState("");
-  const { projectScopes, selectedEnvironmentId, setProject } = useNewTaskFlow();
+  const { projectScopes, selectedEnvironmentId, setProject, draftKey } = useNewTaskFlow();
   const { state: catalogState } = useWorkspaceState();
   const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
@@ -207,7 +208,9 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const projectEmptyState = deriveProjectEmptyState(catalogState, m);
   const serverConfigs = useServerConfigs();
   const requestId = route.params?.requestId;
-  const missionMachines = useMissionDraftMachines(requestId ?? null);
+  const missionMachines = useMissionDraftMachines(
+    requestId === undefined ? null : draftMissionTarget(draftKey, requestId),
+  );
   const listScopes = projectScopesOnMachines(
     pickableProjectGroups(projectScopes),
     missionMachines,

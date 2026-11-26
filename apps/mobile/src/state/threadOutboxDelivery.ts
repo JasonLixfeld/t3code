@@ -68,6 +68,7 @@ import {
   threadOutboxRevision,
   updateThreadOutboxMessage,
 } from "./thread-outbox";
+import { moveMissionDraft } from "./mission-drafts";
 import { removeThreadOutboxMessage } from "./thread-outbox-removal";
 import {
   isQueuedThreadCreationSendable,
@@ -570,6 +571,10 @@ export const restoreRejectedQueuedMessage = Effect.fn("ThreadOutbox.restoreRejec
       // After queue removal, the draft owns content and must never roll back.
       rollback = null;
       if (queuedMessage.creation) {
+        moveMissionDraft(
+          { environmentId: queuedMessage.environmentId, threadId: queuedMessage.threadId },
+          { draftId: draftKey },
+        );
         clearThreadComposerError(threadKey, queuedMessage.messageId);
         recordPendingThreadCreationOutcome({
           kind: "failed",

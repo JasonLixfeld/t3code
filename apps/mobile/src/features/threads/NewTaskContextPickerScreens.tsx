@@ -33,6 +33,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
+import { draftMissionTarget } from "../../state/mission-drafts";
 import { useMissionDraftMachines } from "../../state/missions";
 import { missionDraftAllows } from "../../state/missions.logic";
 import { useEnvironmentScope } from "../../state/session";
@@ -197,7 +198,10 @@ export function NewTaskEnvironmentPickerRouteScreen({
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const missionMachines = useMissionDraftMachines(route.params?.requestId ?? null);
+  const requestId = route.params?.requestId;
+  const missionMachines = useMissionDraftMachines(
+    requestId === undefined ? null : draftMissionTarget(flow.draftKey, requestId),
+  );
   const environments = flow.environments.filter((environment) =>
     missionDraftAllows(missionMachines, environment.environmentId),
   );

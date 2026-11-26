@@ -155,6 +155,7 @@ vi.mock("./thread-outbox", async () => {
 import * as Option from "effect/Option";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { appAtomRegistry } from "./atom-registry";
+import { markMissionDraft, missionDraftOf } from "./mission-drafts";
 import { pendingThreadCreationOutcomesAtom } from "./pending-thread-creation";
 import { clearThreadComposerError, threadComposerErrorsAtom } from "./thread-composer-error";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
@@ -914,8 +915,14 @@ describe("thread outbox recovery rollback", () => {
         },
       };
       yield* Effect.promise(() => harness.manager.enqueue(message));
+      const thread = { environmentId: message.environmentId, threadId: message.threadId };
+      markMissionDraft(thread, { kind: "new" }, () => "mission-1");
 
       expect(yield* restoreRejectedQueuedMessage(message, "rejected by server")).toBe("restored");
+      expect(missionDraftOf(thread)).toBeUndefined();
+      expect(missionDraftOf({ draftId: `new-task:restored-${message.messageId}` })?.intent).toEqual(
+        { kind: "new" },
+      );
 
       expect(
         composerDrafts.getComposerDraftSnapshot(`new-task:restored-${message.messageId}`),

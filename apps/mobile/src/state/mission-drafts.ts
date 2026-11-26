@@ -10,22 +10,31 @@ export interface MissionDraft {
   readonly intent: MissionDraftIntent;
   readonly missionId: string;
   readonly thread: ScopedThreadRef | null;
-  readonly draftKey: string | null;
   readonly step: "waiting" | "trying" | "failed";
   readonly attempt: number;
 }
 
-export type MissionDraftTarget = ScopedThreadRef | { readonly requestId: string };
+export type MissionDraftTarget =
+  | ScopedThreadRef
+  | { readonly requestId: string }
+  | { readonly draftId: string };
 
 export const missionDraftsAtom = Atom.make<ReadonlyMap<string, MissionDraft>>(new Map()).pipe(
   Atom.keepAlive,
   Atom.withLabel("mobile-mission-drafts"),
 );
 
-const REQUEST_PREFIX = "request:";
-const requestKey = (requestId: string) => `${REQUEST_PREFIX}${requestId}`;
+export const draftMissionTarget = (
+  draftKey: string | null,
+  requestId: string,
+): MissionDraftTarget => (draftKey === null ? { requestId } : { draftId: draftKey });
+
 const keyOf = (target: MissionDraftTarget) =>
-  "requestId" in target ? requestKey(target.requestId) : scopedThreadKey(target);
+  "requestId" in target
+    ? `request:${target.requestId}`
+    : "draftId" in target
+      ? `draft:${target.draftId}`
+      : scopedThreadKey(target);
 
 function update(change: (drafts: Map<string, MissionDraft>) => void) {
   const next = new Map(appAtomRegistry.get(missionDraftsAtom));
@@ -33,68 +42,50 @@ function update(change: (drafts: Map<string, MissionDraft>) => void) {
   appAtomRegistry.set(missionDraftsAtom, next);
 }
 
+export const missionDraftOf = (target: MissionDraftTarget) =>
+  appAtomRegistry.get(missionDraftsAtom).get(keyOf(target));
+
 export function markMissionDraft(
   target: MissionDraftTarget,
   intent: MissionDraftIntent,
   newMissionId: () => string,
 ) {
   const missionId = intent.kind === "new" ? newMissionId() : intent.missionId;
-  const thread = "requestId" in target ? null : target;
+  const thread = "threadId" in target ? target : null;
+  update((drafts) =>
+    drafts.set(keyOf(target), { intent, missionId, thread, step: "waiting", attempt: 0 }),
+  );
+}
+
+export function moveMissionDraft(from: MissionDraftTarget, to: MissionDraftTarget) {
+  const draft = missionDraftOf(from);
+  if (draft === undefined || missionDraftOf(to) !== undefined) return;
+  const thread = "threadId" in to ? to : null;
   update((drafts) => {
-    const draftKey = drafts.get(keyOf(target))?.draftKey ?? null;
-    drafts.set(keyOf(target), { intent, missionId, thread, draftKey, step: "waiting", attempt: 0 });
+    drafts.delete(keyOf(from));
+    drafts.set(keyOf(to), { ...draft, thread, step: "waiting" });
   });
 }
 
-export function adoptMissionDraft(requestId: string, thread: ScopedThreadRef) {
-  update((drafts) => {
-    const draft = drafts.get(requestKey(requestId));
-    if (draft === undefined) return;
-    drafts.delete(requestKey(requestId));
-    drafts.set(scopedThreadKey(thread), { ...draft, thread, draftKey: null });
-  });
+export function adoptMissionDraft(
+  target: MissionDraftTarget,
+  expected: MissionDraft,
+  thread: ScopedThreadRef,
+): boolean {
+  if (missionDraftOf(target) !== expected) return false;
+  moveMissionDraft(target, thread);
+  return true;
 }
-
-export function bindMissionDraft(requestId: string, draftKey: string) {
-  const draft = missionDraftOf({ requestId });
-  if (draft === undefined || draft.draftKey === draftKey) return;
-  update((drafts) => drafts.set(requestKey(requestId), { ...draft, draftKey }));
-}
-
-const boundRequestId = (drafts: ReadonlyMap<string, MissionDraft>, draftKey: string) => {
-  for (const [key, draft] of drafts) {
-    if (draft.draftKey === draftKey && key.startsWith(REQUEST_PREFIX)) {
-      return key.slice(REQUEST_PREFIX.length);
-    }
-  }
-  return undefined;
-};
-
-export const missionDraftRequestIdOf = (draftKey: string) =>
-  boundRequestId(appAtomRegistry.get(missionDraftsAtom), draftKey);
-
-export function useMissionDraftRequestId(draftKey: string | null): string | undefined {
-  const drafts = useAtomValue(missionDraftsAtom);
-  return draftKey === null ? undefined : boundRequestId(drafts, draftKey);
-}
-
-export function clearSavedDraftMission(draftKey: string) {
-  const requestId = missionDraftRequestIdOf(draftKey);
-  if (requestId !== undefined) clearMissionDraft({ requestId });
-}
-
-export const missionDraftOf = (target: MissionDraftTarget) =>
-  appAtomRegistry.get(missionDraftsAtom).get(keyOf(target));
 
 export function useMissionDraft(
-  requestId: string | null,
-  thread: ScopedThreadRef | null,
+  ...targets: ReadonlyArray<MissionDraftTarget | null>
 ): MissionDraft | undefined {
   const drafts = useAtomValue(missionDraftsAtom);
-  return (
-    (requestId === null ? undefined : drafts.get(requestKey(requestId))) ??
-    (thread === null ? undefined : drafts.get(scopedThreadKey(thread)))
-  );
+  for (const target of targets) {
+    const draft = target === null ? undefined : drafts.get(keyOf(target));
+    if (draft !== undefined) return draft;
+  }
+  return undefined;
 }
 
 export function startMissionDraftAttempt(thread: ScopedThreadRef): number {
@@ -111,7 +102,7 @@ export function settleMissionDraftAttempt(
   thread: ScopedThreadRef,
   attempt: number,
   outcome: "done" | "failed" | "retry",
-) {
+): void {
   const draft = missionDraftOf(thread);
   if (draft?.attempt !== attempt || (outcome === "retry" && draft.step !== "failed")) return;
   update((drafts) => {

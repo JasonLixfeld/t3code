@@ -9,7 +9,7 @@ import { removeThreadOutboxMessage } from "../../state/thread-outbox-removal";
 import { clearComposerDraftContent } from "../../state/use-composer-drafts";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { clearMissionDraft, clearSavedDraftMission } from "../../state/mission-drafts";
+import { clearMissionDraft } from "../../state/mission-drafts";
 import {
   editingQueuedMessageIdsAtom,
   holdEditingQueuedMessage,
@@ -54,7 +54,7 @@ export function usePendingTaskListActions(
             text: m(msg("Discard", { $context: "verb, discards a draft" })),
             style: "destructive",
             onPress: () => {
-              clearSavedDraftMission(pendingTask.draftKey);
+              clearMissionDraft({ draftId: pendingTask.draftKey });
               void withThreadDismissal(
                 pendingTask.key,
                 async () =>

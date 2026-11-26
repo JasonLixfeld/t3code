@@ -4463,6 +4463,7 @@
   "3d047cec50a41e9f": "\"{title}\" is on another machine. Switch back to its machine or remove it from the draft.",
   "6c43021ec1cd0d05": "\"{title}\" is on another machine. Switch back to {owner} or remove it from the draft.",
   "df569eba6576b4b9": "This draft's mission no longer allows that machine.",
+  "f17969aa293df0c7": "Switch to one of the mission's machines, or send it as a plain thread.",
   "fe11b21043f9c8ce": "Could not queue task",
   "dfbeddbcc2922297": "The task could not be saved to the outbox.",
   "a87c89c0fa9c11b1": "Wait for the project clone to finish.",

@@ -7,7 +7,7 @@ import { clearMissionDraft, useMissionDraft } from "../../state/mission-drafts";
 
 export function MissionDraftNotice(props: { readonly thread: ScopedThreadRef }) {
   const gt = useGT();
-  const draft = useMissionDraft(null, props.thread);
+  const draft = useMissionDraft(props.thread);
   if (draft === undefined) return null;
   const { intent } = draft;
   return (

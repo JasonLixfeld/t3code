@@ -62,6 +62,7 @@ import {
   useComposerDraft,
   useStickyComposerModelSelection,
 } from "../../state/use-composer-drafts";
+import { draftMissionTarget, moveMissionDraft } from "../../state/mission-drafts";
 import {
   rememberModelOptions,
   withRememberedModelOptions,
@@ -241,6 +242,8 @@ export function NewTaskFlowProvider(
     /** Identifies the draft route this flow serves; a new key starts a fresh flow. */
     flowKey?: string;
     routeDraftId?: string;
+    /** The draft route's mission request, whose mark moves onto the draft this flow creates. */
+    missionRequestId?: string;
   }>,
 ) {
   const projects = useProjects();
@@ -594,7 +597,11 @@ export function NewTaskFlowProvider(
       retargetNewTaskDraft(current, target, options);
       return current;
     }
-    return createNewTaskDraft(target);
+    const created = createNewTaskDraft(target);
+    if (props.missionRequestId !== undefined) {
+      moveMissionDraft(draftMissionTarget(current, props.missionRequestId), { draftId: created });
+    }
+    return created;
   };
 
   const setProject = (project: EnvironmentProject) => {

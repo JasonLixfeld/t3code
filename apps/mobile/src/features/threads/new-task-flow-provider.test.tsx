@@ -17,6 +17,7 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act, useEffect, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
+import { markMissionDraft, missionDraftOf } from "../../state/mission-drafts";
 import type { ComposerDraft } from "../../state/use-composer-drafts";
 
 const mocks = vi.hoisted(() => ({
@@ -250,11 +251,15 @@ function setup() {
     get current() {
       return current;
     },
-    async render(active: boolean, pickOnMount?: EnvironmentProject) {
+    async render(active: boolean, pickOnMount?: EnvironmentProject, missionRequestId?: string) {
       await act(async () =>
         root.render(
           <RegistryContext.Provider value={registry}>
-            <NewTaskFlowProvider active={active} flowKey="test-flow">
+            <NewTaskFlowProvider
+              active={active}
+              flowKey="test-flow"
+              missionRequestId={missionRequestId}
+            >
               <Probe pickOnMount={pickOnMount} />
             </NewTaskFlowProvider>
           </RegistryContext.Provider>,
@@ -287,6 +292,16 @@ it("keeps the draft on a project the screen picks as it mounts", async () => {
     environmentId: "two",
     projectId: "b",
   });
+});
+
+it("hands a mission mark made before the draft exists to the draft this flow creates", async () => {
+  using screen = setup();
+  markMissionDraft({ requestId: "request-1" }, { kind: "new" }, () => "m1");
+  await screen.render(true, undefined, "request-1");
+  const draftKey = screen.current.draftKey;
+  expect(draftKey).not.toBeNull();
+  expect(missionDraftOf({ requestId: "request-1" })).toBeUndefined();
+  expect(missionDraftOf({ draftId: draftKey ?? "" })?.intent).toEqual({ kind: "new" });
 });
 
 it("owns a status stream only while the draft is active, retaining draft choices on reopen", async () => {
