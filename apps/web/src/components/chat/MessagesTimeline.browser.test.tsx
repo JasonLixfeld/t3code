@@ -2572,3 +2572,23 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
     .element(screen.getByRole("button", { name: "Open the current tab", exact: true }))
     .toBeVisible();
 });
+
+describe("MessagesTimeline quiet mission updates", () => {
+  it("pages toward an older find match when every loaded run is hidden", async () => {
+    setup();
+    const quiet = RunId.make("run-quiet");
+    const onLoadEarlier = vi.fn();
+    await using _screen = await renderTimeline(
+      [message("No change.", { role: "assistant", runId: quiet }, "quiet-reply")],
+      {
+        hiddenRunIds: new Set([quiet]),
+        findOpen: true,
+        findExpanded: true,
+        findQuery: "deploy",
+        activeFindMatch: { entryId: "entry-older", runId: null, occurrence: 0 },
+        historyControls: { hasMoreHistory: true, loading: false, error: null, onLoadEarlier },
+      },
+    );
+    await vi.waitFor(() => expect(onLoadEarlier).toHaveBeenCalledWith("entry-older"));
+  });
+});

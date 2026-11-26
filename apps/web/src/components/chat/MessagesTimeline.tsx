@@ -664,6 +664,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   }
 
   const timelineEntries = withoutHiddenRunEntries(allTimelineEntries, hiddenRunIds);
+  // With every loaded entry hidden no row can restore a position, so the list is ready as is.
+  const everyEntryHidden = timelineEntries.length === 0 && allTimelineEntries.length > 0;
+  if (everyEntryHidden && restoringThreadPosition) setPositionedThreadKey(listIdentityKey);
   const preferredToolCallVisibility = useClientSettings((settings) => settings.toolCallVisibility);
   const screenReaderAnnouncements = useClientSettings(
     (settings) => settings.screenReaderAnnouncements,
@@ -1378,7 +1381,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   useThreadFindNavigation({
     // Find reveals its match only after the opening restore settles; both
     // scroll the list directly, so the restore would otherwise pull it back.
-    listReady: findListReady && !restoringThreadPosition,
+    listReady: (findListReady || everyEntryHidden) && !restoringThreadPosition,
     historyControls,
     // A match in a hidden run is loaded but has no row, so it neither pages nor scrolls.
     entries: allTimelineEntries,

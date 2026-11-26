@@ -755,23 +755,39 @@ function quietMissionUpdateEntry(
   }
   const quiet = new Map<RunId, boolean>();
   const workLoaded = new Set<RunId>();
+  const ordinals = new Map<RunId, Array<number>>();
   for (const { item } of rows) {
     if (item.runId === null) continue;
     if (WORK_ITEM_TYPES.has(item.type)) workLoaded.add(item.runId);
     const known = quiet.get(item.runId);
     if (known === undefined) {
-      quiet.set(
-        item.runId,
+      const isQuiet =
         isMissionUpdateNotification(item) &&
-          completedRuns.has(item.runId) &&
-          latestAttempts.get(item.runId)?.status === "completed",
-      );
+        completedRuns.has(item.runId) &&
+        latestAttempts.get(item.runId)?.status === "completed";
+      quiet.set(item.runId, isQuiet);
+      if (isQuiet) ordinals.set(item.runId, [item.ordinal]);
     } else if (known && !changesNothing(item)) {
       quiet.set(item.runId, false);
+    } else if (known) {
+      ordinals.get(item.runId)?.push(item.ordinal);
     }
   }
+  // A run's items have consecutive ordinals from its wake, so a gap is an item that is not loaded.
+  const fullyLoaded = (runId: RunId) => {
+    const loaded = ordinals.get(runId) ?? [];
+    const wake = loaded[0];
+    return (
+      wake !== undefined &&
+      [...loaded]
+        .sort((left, right) => left - right)
+        .every((ordinal, index) => ordinal === wake + index)
+    );
+  };
   const runIds = new Set(
-    [...quiet].flatMap(([runId, isQuiet]) => (isQuiet && workLoaded.has(runId) ? [runId] : [])),
+    [...quiet].flatMap(([runId, isQuiet]) =>
+      isQuiet && workLoaded.has(runId) && fullyLoaded(runId) ? [runId] : [],
+    ),
   );
   const entry: QuietMissionUpdates = {
     runs,

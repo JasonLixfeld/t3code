@@ -851,14 +851,22 @@ describe("withoutQuietMissionUpdates", () => {
     requestId: "question" as never,
     questions: [],
   });
+  // Each item takes its position as its ordinal, as a run's items do on the server.
   const rows = (items: ReadonlyArray<Item>): Array<OrchestrationV2ProjectedTurnItem> =>
     items.map((item, position) => ({
       position,
       visibility: "local",
       sourceThreadId: LEAD,
       sourceItemId: item.id,
-      item,
+      item: { ...item, ordinal: position },
     }));
+  const checkpoint = (run: string): Item => ({
+    ...base(run, "checkpoint"),
+    type: "checkpoint",
+    checkpointId: "checkpoint" as never,
+    scopeId: "scope" as never,
+    files: [],
+  });
   type RunStatus = OrchestrationV2Run["status"];
   type AttemptStatus = OrchestrationV2RunAttempt["status"];
   const runOf = (run: string, status: RunStatus) => ({ id: RunId.make(run), status });
@@ -1044,6 +1052,25 @@ describe("withoutQuietMissionUpdates", () => {
   ] as const)("shows a mission update when %s", (_case, items, status) => {
     const { thread, shown } = hide(items, status);
     expect(shown).toBe(thread);
+  });
+
+  it("shows a wake whose write before the loaded window is missing, and hides it fully loaded", () => {
+    const loaded = (middle: Item) =>
+      rows([
+        wake("run"),
+        middle,
+        tool("run", "t3_thread_read"),
+        reply("run", MISSION_QUIET_REPLY),
+        checkpoint("run"),
+      ]);
+    const { runs, attempts } = finished("run");
+    const partial = loaded(tool("run", "mcp__t3-code__t3_thread_send")).filter(
+      ({ item }) =>
+        item.type !== "dynamic_tool" || item.toolName !== "mcp__t3-code__t3_thread_send",
+    );
+    expect(withoutQuietMissionUpdates(partial, runs, attempts)).toBe(partial);
+    const full = loaded(tool("run", "t3_mission_roster"));
+    expect(withoutQuietMissionUpdates(full, runs, attempts)).toEqual([]);
   });
 
   it("returns the same rows for the same inputs, so a render does not loop", () => {
