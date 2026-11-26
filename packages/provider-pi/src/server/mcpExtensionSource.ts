@@ -397,10 +397,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // Tool exposure arrived with registerMcpServer in Pi 0.99. Keep the HTTP
   // bridge as the credential owner: mcp.json overrides native registrations.
   const supportsExposure = "registerMcpServer" in pi && typeof pi.registerMcpServer === "function";
-  // T3 lists the tools again before each run only on Pi 1.2 and later. Earlier Pi marks itself
-  // busy after before_agent_start, so a steer sent during the listing starts a second run and is
-  // dropped. Pi before 0.99 also cannot hide a tool: --tools re-activates it on every registration.
-  // On that Pi, and on a Pi whose version is unknown, the catalog stays as the session first listed it.
+  // Before Pi 1.2, \`before_agent_start\` runs before Pi marks the session busy. A steer during a
+  // refresh can start another run.
   const version = /^(\\d+)\\.(\\d+)\\.(\\d+)(\\+[0-9A-Za-z.-]+)?$/.exec(String((PiCodingAgent as { VERSION?: unknown }).VERSION));
   const [major = 0, minor = 0, patch = 0] = version?.slice(1, 4).map(Number) ?? [];
   const refreshesCatalog = supportsExposure && version !== null && (major - 1 || minor - 2 || patch) >= 0;
@@ -418,14 +416,12 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     registered.has("mcp__t3-code__" + name) &&
     (isDeferred(name) || active.includes("mcp__t3-code__" + name));
   let catalog: ReadonlyArray<McpTool> = [];
-  // Preserve public names for saved loadouts and tool selectors. The alias,
-  // Pi's own MCP name for T3, reserves it against Pi's configured MCP servers.
-  // model-only keeps it out of codemode; it hides its own declaration.
+  // Pi normalizes \`t3-code\` to \`t3_code\` in MCP names. Keep the old public names for saved
+  // loadouts, and make the native aliases model-only.
   const prefixes = supportsExposure ? ["mcp__t3-code__", ALIAS_PREFIX] : ["mcp__t3-code__"];
   // Pi does not reserve T3's prefixes, so the bridge changes only names it registered itself.
   const owned = new Set<string>();
   let bridgeTools = new Set<string>();
-  // T3 tools whose name another extension registered first.
   const foreign = new Set<string>();
 
   const client = createMcpClient(endpoint, token);
@@ -434,8 +430,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   const registerTools = () => {
     const tools = catalog.filter((tool) => !foreign.has(tool.name));
     const next = new Set(tools.flatMap((tool) => prefixes.map((prefix) => prefix + tool.name)));
-    // Pi cannot unregister a tool, so one T3 stopped listing is registered again as hidden,
-    // as Pi's own MCP extension does.
+    // Pi has no \`unregisterTool\`. Replace withdrawn tools with hidden registrations.
     const withdrawn = [...bridgeTools].filter((name) => !next.has(name));
     bridgeTools = next;
     for (const toolName of withdrawn) {
@@ -532,8 +527,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       foreign.add(tool.name);
       ctx.ui.notify(\`T3 Code did not register its tool \${taken}: another extension already registered that name.\`, "warning");
     }
-    // Each registration re-applies --tools, which turns on tools another extension turned off.
-    // Keep every other tool as it was, drop withdrawn bridge tools, and add the ones Pi turned on.
+    // Pi re-applies \`--tools\` on registration, which can reactivate tools another extension
+    // disabled.
     const before = pi.getActiveTools();
     const previous = bridgeTools;
     catalog = next;
@@ -542,7 +537,6 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       ...before.filter((name) => !owned.has(name) || bridgeTools.has(name)),
       ...pi.getActiveTools().filter((name) => bridgeTools.has(name) && !previous.has(name) && !before.includes(name)),
     ]);
-    // Another extension may have turned tool_search off during the wait.
     reconcileDiscovery(ctx, false);
   };
 

@@ -606,9 +606,8 @@ export interface ProviderAdapterV2TurnInput {
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
   /**
-   * Set on every turn of a mission's lead thread, and of a thread that led one before. `prompt`
-   * is the user's mission prompt under its header, to follow as instructions; `status` is
-   * app-written data. Codex, OpenCode and Claude deliver it; ACP and Pi get none.
+   * `prompt` is user-provided instruction text. `status` is app-written data. Former leads receive
+   * a retraction.
    */
   readonly missionContext?:
     | { readonly role: "lead"; readonly prompt: string; readonly status: string }

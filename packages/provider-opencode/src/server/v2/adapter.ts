@@ -4504,7 +4504,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         mcpAvailable
           ? "To wait for a background shell you started (tests, a build), call `t3_background_wait` with its shell ID before you end your turn. Do not mark work you leave running, or PRs."
           : undefined,
-        // In this entry, not one of its own: nothing would remove that once the thread stops leading.
+        // OpenCode entries persist by key. Replacing the shared entry clears old mission
+        // instructions.
         ...(turnInput.missionContext?.role === "lead"
           ? [turnInput.missionContext.prompt, turnInput.missionContext.status]
           : []),

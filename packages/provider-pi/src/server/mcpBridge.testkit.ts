@@ -76,7 +76,6 @@ export async function loadMcpBridge(
     readonly allowsTool?: (name: string) => boolean;
     readonly runtimeMode?: string;
     readonly inputSchema?: Record<string, unknown>;
-    // Pi's exported VERSION; undefined models a Pi build without the export.
     readonly version?: string | undefined;
     readonly extraTools?: ReadonlyArray<McpFixtureTool>;
     // Pi 0.84.3 re-activates every registered name `--tools` selects, or else only new names.
@@ -89,7 +88,6 @@ export async function loadMcpBridge(
   const tools: RegisteredTool[] = [];
   let registrations = 0;
   let listingFails = false;
-  // AbortSignal.timeout deadlines, which a test expires instead of waiting for them.
   const deadlines = new Map<AbortSignal, Deadline>();
   let reportHungListing: ((deadline: Deadline | undefined) => void) | undefined;
   let onListing: (() => void) | undefined;
@@ -296,7 +294,6 @@ export async function loadMcpBridge(
     failListing: (fails: boolean) => {
       listingFails = fails;
     },
-    // Resolves with the deadline of the next tools/list, which hangs until it expires.
     hangNextListing: () =>
       new Promise<Deadline | undefined>((resolve) => {
         reportHungListing = resolve;
