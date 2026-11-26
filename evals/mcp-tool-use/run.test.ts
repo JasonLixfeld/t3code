@@ -5388,7 +5388,12 @@ it("mission lead cases fail a lead that speaks, asks half a question or reports 
     decodeDeviceCase(lines.find((entry) => JSON.parse(entry).id === id) ?? "").expect;
   const passes = (
     id: string,
-    sample: { text?: string; stopReason?: string; calls?: ReadonlyArray<[string, unknown]> },
+    sample: {
+      text?: string;
+      finalText?: string;
+      stopReason?: string;
+      calls?: ReadonlyArray<[string, unknown]>;
+    },
   ) =>
     gradeSample(expectOf(id), {
       calls: (sample.calls ?? []).map(([tool, input], step) => ({
@@ -5399,7 +5404,7 @@ it("mission lead cases fail a lead that speaks, asks half a question or reports 
         output: "",
       })),
       text: sample.text ?? "",
-      finalText: sample.text ?? "",
+      finalText: sample.finalText ?? sample.text ?? "",
       stopReason: sample.stopReason ?? "end_turn",
     }).every((check) => check.pass);
 
@@ -5416,14 +5421,26 @@ it("mission lead cases fail a lead that speaks, asks half a question or reports 
       ],
     },
   ];
-  assert.isTrue(passes("mission-quiet-idle-update", { calls: [read] }));
-  assert.isFalse(passes("mission-quiet-idle-update", { calls: [read], stopReason: "max_steps" }));
+  const quiet = "mission-quiet-idle-update";
+  assert.isTrue(passes(quiet, { calls: [read], text: "No change." }));
+  assert.isTrue(passes(quiet, { calls: [read], text: "  No change.\n" }));
+  assert.isFalse(passes(quiet, { calls: [read] }));
+  assert.isFalse(passes(quiet, { calls: [read], text: "No change.", stopReason: "max_steps" }));
   assert.isFalse(
-    passes("mission-quiet-idle-update", {
+    passes(quiet, {
       calls: [read, ask("Anything else?", [["No", "Nothing more."]])],
+      text: "No change.",
     }),
   );
-  assert.isFalse(passes("mission-quiet-idle-update", { text: "Nothing is needed from you." }));
+  assert.isFalse(passes(quiet, { text: "Nothing is needed from you." }));
+  assert.isFalse(passes(quiet, { text: "No change. Member 2 is still reviewing." }));
+  assert.isFalse(
+    passes(quiet, {
+      calls: [read],
+      text: "Checking member 2.\n\nNo change.",
+      finalText: "No change.",
+    }),
+  );
 
   const link =
     "<t3-thread://v2/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee/11111111-1111-4111-8111-111111111111>";
