@@ -327,7 +327,7 @@ it("a machine that predates run and request ids is compared by status", () => {
 it("a wake names each member by the lead's own numbers", () => {
   assert.equal(
     missionUpdateText([{ member: "member 1", place: "machine 2", event: "awaiting-input" }]),
-    "Mission update: member 1 on machine 2 is awaiting input.\nFor details, call t3_thread_read or t3_mission_roster.",
+    "Mission update: member 1 on machine 2 is awaiting input.\nFor details, call t3_thread_read (limit: 2, runLimit: 1) or t3_mission_roster.",
   );
   assert.equal(
     missionUpdateText([
@@ -338,7 +338,7 @@ it("a wake names each member by the lead's own numbers", () => {
       "Mission update:",
       "- member 1 on machine 2 finished its turn and is idle.",
       "- member 2 on this machine failed.",
-      "For details, call t3_thread_read or t3_mission_roster.",
+      "For details, call t3_thread_read (limit: 2, runLimit: 1) or t3_mission_roster.",
     ].join("\n"),
   );
 });

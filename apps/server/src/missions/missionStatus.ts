@@ -369,7 +369,7 @@ const UPDATE_TEXT: Record<MissionUpdateEvent, string> = {
 
 /** How a lead gets a member's brief: the same words in its wake and in t3_mission_add's answer. */
 export const GET_THE_BRIEF =
-  'Get its brief before giving it new work: queue a message asking for it with t3_thread_send (mode "queue", outputSchema a JSON Schema whose required "brief" property is a string), then call t3_thread_wait with the runId it returned and untilOutput: true. If the send is refused or the member is settled, read it with t3_thread_read instead.';
+  'Get its brief before giving it new work: queue a message asking for it with t3_thread_send (mode "queue", outputSchema a JSON Schema whose required "brief" property is a string with maxLength 4000), then call t3_thread_wait with the runId it returned and untilOutput: true. If the send is refused or the member is settled, read it with t3_thread_read (limit: 2, runLimit: 1, maxCharsPerItem: 4000) instead.';
 
 /**
  * Names each member by the lead's own numbers, as the status does. A joined member's `status` is
@@ -399,5 +399,5 @@ export const missionUpdateText = (
           ...lines.slice(0, ATTENTION_LINES).map((line) => `- ${line}`),
           ...(more > 0 ? [`… and ${more} more`] : []),
         ].join("\n");
-  return `${body}\n${briefing ? `${GET_THE_BRIEF}\n` : ""}For details, call t3_thread_read or t3_mission_roster.`;
+  return `${body}\n${briefing ? `${GET_THE_BRIEF}\n` : ""}For details, call t3_thread_read (limit: 2, runLimit: 1) or t3_mission_roster.`;
 };

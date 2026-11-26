@@ -384,7 +384,7 @@ const told = (lines: ReadonlyArray<string>) =>
     ...(lines.length === 1
       ? [`Mission update: ${lines[0]}`]
       : ["Mission update:", ...lines.map((line) => `- ${line}`)]),
-    "For details, call t3_thread_read or t3_mission_roster.",
+    "For details, call t3_thread_read (limit: 2, runLimit: 1) or t3_mission_roster.",
   ].join("\n");
 const nextText = (world: ReturnType<typeof makeWorld>) =>
   Queue.take(world.woke).pipe(Effect.map((sent) => sent.text));
@@ -922,12 +922,12 @@ const joinedWithPriorWork = (
     yield* Queue.offer(world.live("joined"), MISSION);
   });
 const GET_THE_BRIEF =
-  'Get its brief before giving it new work: queue a message asking for it with t3_thread_send (mode "queue", outputSchema a JSON Schema whose required "brief" property is a string), then call t3_thread_wait with the runId it returned and untilOutput: true. If the send is refused or the member is settled, read it with t3_thread_read instead.';
+  'Get its brief before giving it new work: queue a message asking for it with t3_thread_send (mode "queue", outputSchema a JSON Schema whose required "brief" property is a string with maxLength 4000), then call t3_thread_wait with the runId it returned and untilOutput: true. If the send is refused or the member is settled, read it with t3_thread_read (limit: 2, runLimit: 1, maxCharsPerItem: 4000) instead.';
 const joinedText = (line: string) =>
   [
     `Mission update: ${line}`,
     GET_THE_BRIEF,
-    "For details, call t3_thread_read or t3_mission_roster.",
+    "For details, call t3_thread_read (limit: 2, runLimit: 1) or t3_mission_roster.",
   ].join("\n");
 
 it.effect(
@@ -963,7 +963,7 @@ it.effect(
             "- member 2 on this machine joined with prior work (status: settled).",
             "- member 3 on machine 2 joined with prior work (status: unknown).",
             GET_THE_BRIEF,
-            "For details, call t3_thread_read or t3_mission_roster.",
+            "For details, call t3_thread_read (limit: 2, runLimit: 1) or t3_mission_roster.",
           ].join("\n"),
         );
       }),

@@ -257,7 +257,7 @@ it.effect("add and release act on the caller's own mission, by the UI's rules", 
     assert.deepEqual((yield* add({ threadId: "here-thread" })).structured, { state: "joined" });
     assert.deepEqual((yield* add({ threadId: "worked" })).structured, {
       state: "joined",
-      next: 'This thread has prior work. Get its brief before giving it new work: queue a message asking for it with t3_thread_send (mode "queue", outputSchema a JSON Schema whose required "brief" property is a string), then call t3_thread_wait with the runId it returned and untilOutput: true. If the send is refused or the member is settled, read it with t3_thread_read instead.',
+      next: 'This thread has prior work. Get its brief before giving it new work: queue a message asking for it with t3_thread_send (mode "queue", outputSchema a JSON Schema whose required "brief" property is a string with maxLength 4000), then call t3_thread_wait with the runId it returned and untilOutput: true. If the send is refused or the member is settled, read it with t3_thread_read (limit: 2, runLimit: 1, maxCharsPerItem: 4000) instead.',
     });
     assert.deepEqual((yield* add({ threadId: "t1", environmentId: LAPTOP })).structured, {
       state: "pending",
