@@ -4709,7 +4709,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
     ) {
       const ensured = yield* ensureMcp(state, turnInput);
-      if (ensured.mcp === "failed") yield* writeInstructions(state, turnInput, ensured);
+      if (ensured.mcp === "failed") {
+        yield* writeInstructions(state, turnInput, ensured).pipe(
+          Effect.timeout(REQUEST_REPLY_TIMEOUT),
+          Effect.ignore({ log: true }),
+        );
+      }
       yield* beginTurn(state, turnInput, false);
       yield* lock.withPermit(
         Effect.gen(function* () {
