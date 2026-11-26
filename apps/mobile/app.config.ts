@@ -290,7 +290,9 @@ const config: ExpoConfig = {
           ],
         }),
     entitlements: {
-      "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
+      "keychain-access-groups": [
+        `$(AppIdentifierPrefix)${isForkBuild ? iosBundleIdentifier : variant.iosBundleIdentifier}`,
+      ],
     },
     infoPlist: {
       UISupportedInterfaceOrientations: [
@@ -400,6 +402,9 @@ const config: ExpoConfig = {
     // Gate Clerk here: withoutIosPersonalTeamCapabilities runs too early to strip its entitlement.
     ["@clerk/expo", { theme: "./clerk-theme.json", appleSignIn: !reducedIosCapabilities }],
     "expo-web-browser",
+    ...(isForkBuild
+      ? [["expo-dev-client", { addGeneratedScheme: false }] satisfies [string, unknown]]
+      : []),
     [
       "expo-quick-actions",
       {

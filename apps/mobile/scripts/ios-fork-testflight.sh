@@ -12,14 +12,17 @@ export APP_VARIANT=production EXPO_NO_GIT_STATUS=1
 : "${APPLE_ASC_KEY_ID:?Set APPLE_ASC_KEY_ID to your App Store Connect API key ID.}"
 : "${APPLE_ASC_ISSUER_ID:?Set APPLE_ASC_ISSUER_ID to your App Store Connect issuer ID.}"
 APPLE_ASC_KEY_PATH=${APPLE_ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_${APPLE_ASC_KEY_ID}.p8}
+if [ "$(basename "$APPLE_ASC_KEY_PATH")" != "AuthKey_${APPLE_ASC_KEY_ID}.p8" ]; then
+  echo "Name the App Store Connect API key file AuthKey_${APPLE_ASC_KEY_ID}.p8. altool finds the key by that name." >&2
+  exit 1
+fi
 if [ ! -f "$APPLE_ASC_KEY_PATH" ]; then
   echo "No App Store Connect API key at $APPLE_ASC_KEY_PATH. Set APPLE_ASC_KEY_PATH." >&2
   exit 1
 fi
 
-out="${TMPDIR:-/tmp}/lstack/t3-testflight-fork-app"
-rm -rf "$out"
-mkdir -p "$out"
+out=$(mktemp -d "${TMPDIR:-/tmp}/t3-fork-testflight.XXXXXX")
+trap 'rm -rf "$out"' EXIT
 
 expo prebuild --clean --platform ios
 
@@ -33,6 +36,7 @@ auth=(
   -authenticationKeyIssuerID "$APPLE_ASC_ISSUER_ID"
 )
 
+echo "Archiving to $archive"
 xcodebuild archive \
   -workspace "$workspace" \
   -scheme "$scheme" \
@@ -73,5 +77,4 @@ build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info")
 API_PRIVATE_KEYS_DIR=$(dirname "$APPLE_ASC_KEY_PATH") xcrun altool --upload-app --type ios \
   --file "$ipa" --apiKey "$APPLE_ASC_KEY_ID" --apiIssuer "$APPLE_ASC_ISSUER_ID"
 
-rm -rf "$out"
 echo "Uploaded $T3CODE_FORK_BUNDLE_ID version $version build $build to App Store Connect."

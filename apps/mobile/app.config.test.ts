@@ -70,6 +70,9 @@ it("gives a fork build its own identity without T3's domains, updates, EAS proje
   expect(config.scheme).toBe("t3fork");
   expect(config.ios?.bundleIdentifier).toBe("io.example.t3fork");
   expect(config.ios?.appleTeamId).toBe("ABCDE12345");
+  expect(config.ios?.entitlements?.["keychain-access-groups"]).toEqual([
+    "$(AppIdentifierPrefix)io.example.t3fork",
+  ]);
   expect(config.ios?.associatedDomains).toBeUndefined();
   expect(config.updates).toEqual({ enabled: false });
   expect(config.owner).toBeUndefined();
@@ -79,6 +82,7 @@ it("gives a fork build its own identity without T3's domains, updates, EAS proje
     "expo-notifications",
     expect.objectContaining({ enableRemoteNotifications: false }),
   ]);
+  expect(config.plugins).toContainEqual(["expo-dev-client", { addGeneratedScheme: false }]);
   expect(config.extra?.clerk?.publishableKey).toBeNull();
   expect(config.extra?.relay?.url).toBeNull();
 });

@@ -121,11 +121,20 @@ still works.
 
 This script archives a fork build and uploads it to TestFlight. It needs an App Store Connect API key
 in `APPLE_ASC_KEY_ID` and `APPLE_ASC_ISSUER_ID`. The key file defaults to
-`~/.appstoreconnect/private_keys/AuthKey_<key id>.p8`, or set `APPLE_ASC_KEY_PATH`.
+`~/.appstoreconnect/private_keys/AuthKey_<key id>.p8`, or set `APPLE_ASC_KEY_PATH`. The file must
+keep that name, because altool finds the key by it.
+
+Before the first upload, the team's Account Holder must accept the current Apple Developer agreements.
+You must also create an App Store Connect app record for the fork bundle ID by hand. The App Store
+Connect API cannot create one.
 
 ```bash
 vp run ios:fork:testflight
 ```
+
+A fork build reuses T3 Code's icons, so keep it to your own devices. If you publish or distribute a
+fork build, [TRADEMARK.md](../../TRADEMARK.md) asks you to replace the T3 name and icons with your
+own branding.
 
 Build and run the local iOS preview app:
 
