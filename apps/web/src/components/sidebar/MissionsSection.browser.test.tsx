@@ -1056,7 +1056,7 @@ describe("dragging threads into and out of missions", () => {
     await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
     const toasts = vi.spyOn(toastManager, "add");
     onTestFinished(() => toasts.mockRestore());
-    // The family read answers 300 ms after the drop; only then is the thread there.
+    // The family read answers after the drop; only then is the thread there.
     const older = shell("older", "Old settled bug", { settled: true });
     let answered = false;
     const listedShell = vi.mocked(readThreadShell).getMockImplementation()!;
@@ -1067,13 +1067,7 @@ describe("dragging threads into and out of missions", () => {
       AsyncResult.initial(true),
     );
     using _family = vi.spyOn(threadFamilies, "familyAtom").mockReturnValue(family as never);
-    using _mount = vi.spyOn(threadFamilies, "mount").mockImplementation(() => {
-      setTimeout(() => {
-        answered = true;
-        appAtomRegistry.set(family, AsyncResult.success({ threads: [] }));
-      }, 300);
-      return () => {};
-    });
+    using mount = vi.spyOn(threadFamilies, "mount").mockImplementation(() => () => {});
     useThreadSelectionStore.setState({
       selectedThreadKeys: new Set(["local:plain", "local:older"]),
     });
@@ -1083,6 +1077,10 @@ describe("dragging threads into and out of missions", () => {
       rowOf(screen.container, "Plan the v2 release"),
     );
     await drag.release();
+    await vi.waitFor(() => expect(mount).toHaveBeenCalled());
+    expect(commandFor("mission add member")).not.toHaveBeenCalled();
+    answered = true;
+    await act(() => appAtomRegistry.set(family, AsyncResult.success({ threads: [] })));
     const added = () =>
       commandFor("mission add member").mock.calls.map(
         ([call]) => (call as { input: { member: { threadId: string } } }).input.member.threadId,
@@ -1479,9 +1477,7 @@ describe("dragging threads into and out of missions", () => {
       clientX: view.left + 40,
       clientY: view.top + 2,
     });
-    await vi.waitFor(() => expect(areas.map(hintIn)).toContain("Add to mission"), {
-      timeout: 10_000,
-    });
+    await vi.waitFor(() => expect(areas.map(hintIn)).toContain("Add to mission"));
     await drag.release();
     expect(commandFor("mission add member")).toHaveBeenCalledOnce();
   });
