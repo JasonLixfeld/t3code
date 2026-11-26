@@ -3414,9 +3414,7 @@ interface ClaudeAppContextEntry {
 }
 
 /**
- * The lead's prompt is the user's, so it goes unquoted; its members' status goes quoted, as data.
- * A former lead is told once per session: the old prompt stays in Claude's history, across a
- * resume too, and the retraction stays after it. A compaction or a new session sends it again.
+ * Claude resumes with prior prompts, so send a retraction to former leads. Compaction can drop it.
  */
 const claudeMissionContext = (
   context: ProviderAdapter.ProviderAdapterV2TurnInput["missionContext"],
@@ -14708,8 +14706,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               offerCommitted = true;
               pdfReservation.commit();
               if (userMessage === steerMessage) return;
-              // Merged into what the turn holds when the steer is sent, which a compaction during
-              // its wait may have cleared: then only what it sent is in Claude's history.
+              // Claude can compact while a steer is queued. Merge against delivered entries at
+              // send time.
               const appContextBefore = currentTurn.appContextOffered;
               const appContextOffered = new Map([
                 ...(appContextBefore ?? deliveredAppContext.get(existing.nativeThreadId) ?? []),
@@ -14751,7 +14749,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               text: turnInput.message.text,
               liveQuery: existing,
               pdfReservation,
-              // Set when the steer is sent.
               appContextOffered: undefined,
               appContextBefore: undefined,
             });

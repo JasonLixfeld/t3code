@@ -7849,7 +7849,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* finish(6);
         assert.deepEqual(yield* turn(7, "Still there?", { role: "former-lead" }), ["Still there?"]);
         yield* finish(7);
-        // A fork of the old lead is a new session, whose first turn is told again.
         const forked = yield* harness.runtime.forkThread({
           sourceProviderThread: harness.providerThread,
           targetThreadId: harness.threadId,
@@ -7936,7 +7935,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
         assert.include(yield* turn(0, "Status: A."), "Status: A.");
         assert.equal(yield* end(0), "completed");
-        // B is offered, Claude starts answering, and the user stops the turn.
         assert.include(yield* turn(1, "Status: B."), "Status: B.");
         yield* harness.offerAndWait(
           makeAssistantTextFrame({ uuid: "stale-status-answer-1", text: "Looking at B" }),
@@ -7949,7 +7947,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         });
         assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
-        // Claude may hold B, so A goes again; the prompt, which did not change, does not.
         const afterStop = yield* turn(2, "Status: A.");
         assert.include(afterStop, "Status: A.");
         assert.notInclude(afterStop, "<t3_code_mission>");
@@ -7958,7 +7955,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(yield* end(3, true), "failed");
         assert.include(yield* turn(4, "Status: A."), "Status: A.");
         assert.equal(yield* end(4), "completed");
-        // A failed turn that offered B leaves B to be sent again, even while B is still current.
         assert.include(yield* turn(5, "Status: B."), "Status: B.");
         assert.equal(yield* end(5, true), "failed");
         assert.include(yield* turn(6, "Status: B."), "Status: B.");
@@ -7986,7 +7982,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             Effect.as(true),
           ),
       });
-      // Delivered with the first turn, and carried again, unsent, by the steer.
       const delivered = { key: "mcp_app_item-0", text: "Created PROJ-41" };
       const leadTurn = (ordinal: number, text: string) =>
         Effect.map(DateTime.now, (now) => ({
@@ -8034,7 +8029,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           session_id: WAKE_NATIVE_SESSION,
         }),
       );
-      // The steer waits on the subagent while Claude compacts the session.
       const steering = yield* Effect.forkScoped(
         harness.runtime.steerTurn({
           threadId: harness.threadId,
@@ -8071,7 +8065,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* harness.runtime.startTurn(yield* leadTurn(2, "Next"));
       assert.include(offered(), "<t3_code_mission>");
       assert.include(offered(), "Status: 1 member.");
-      // The compaction summarized the note away too, and the steer did not send it.
       assert.include(offered(), "PROJ-41");
     }).pipe(
       Effect.scoped,
@@ -8104,7 +8097,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               providerTurnOrdinal: ordinal,
               text,
               attachments: [],
-              // No effort prefix, so the prompt opens with the path itself.
               modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, options: [] },
             }),
             missionContext: {

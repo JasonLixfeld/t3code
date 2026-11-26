@@ -354,8 +354,6 @@ describe("CodexAdapterV2 runtime policy", () => {
           t3_code_mission: { kind: "application", value: "Lead it." },
           t3_code_mission_status: { kind: "untrusted", value: "Status: 0." },
         });
-        // Its history keeps what it was sent, so a thread that led is told so on every turn,
-        // the first one of a new session included: nothing here remembers the last session.
         const ended = yield* build({ missionContext: { role: "former-lead" } });
         assert.deepEqual(Object.keys(ended.additionalContext ?? {}), ["t3_code_mission"]);
         assert.include(

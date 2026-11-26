@@ -911,10 +911,8 @@ function codexCyberAccess(
 }
 
 /**
- * The user's mission prompt goes as instructions, the app's status of its members as quoted data.
- * A thread that led one is told on every turn that it no longer does, from the first turn of each
- * session, since earlier context stays in its history. Unverified: whether Codex keeps an entry a
- * turn no longer sends, or drops it; no Codex source is at hand. Either way the retraction holds.
+ * Clearing Codex `additionalContext` leaves earlier messages in history. Retract the old mission
+ * instructions explicitly.
  */
 const codexMissionContext = (
   context: ProviderAdapter.ProviderAdapterV2TurnInput["missionContext"],
