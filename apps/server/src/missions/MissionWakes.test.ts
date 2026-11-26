@@ -634,6 +634,28 @@ it.effect(
   },
 );
 
+it.effect("a plan ready while a pull request watch holds wakes the lead for the plan only", () => {
+  const world = makeWorld();
+  return withWakes(
+    world,
+    Effect.gen(function* () {
+      world.set(first, {
+        hasActionableProposedPlan: true,
+        pendingBackgroundTasks: [
+          { taskId: "pull-request-watch:github.com/acme/app#42", kind: "monitor", awaited: true },
+        ],
+      });
+      yield* world.run(first, "f1", "completed");
+      assert.equal(yield* nextText(world), told(["member 1 on this machine is awaiting input."]));
+      yield* world.leadRead;
+      yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+      yield* world.run(second, "s1", "failed");
+      assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
+      assert.equal(world.sent.length, 2);
+    }),
+  );
+});
+
 it.effect("a member held by its pull request watch is told once it is settled or archived", () => {
   const world = makeWorld();
   const watching = (id: ThreadId) => ({

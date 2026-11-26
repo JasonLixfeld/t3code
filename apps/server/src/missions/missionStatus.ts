@@ -70,12 +70,9 @@ export const memberStatusOf = (shell: StatusFields): MemberStatus => {
   const request = waitedOn(shell);
   if (request !== null) return eventForRequest(request.kind);
   if (shell.status === "failed") return "failed";
-  if (
-    WORKING.has(shell.status) ||
-    backgroundWorkHoldsCompletion(shell.pendingBackgroundTasks ?? [])
-  )
-    return "working";
-  return shell.hasActionableProposedPlan ? "awaiting-input" : "idle";
+  if (WORKING.has(shell.status)) return "working";
+  if (shell.hasActionableProposedPlan) return "awaiting-input";
+  return backgroundWorkHoldsCompletion(shell.pendingBackgroundTasks ?? []) ? "working" : "idle";
 };
 
 export const needsAttention = (status: RosterStatus) =>
@@ -124,6 +121,7 @@ interface Mark {
   readonly status: MemberStatus;
   readonly run?: { readonly id: string; readonly status: string } | undefined;
   readonly held?: boolean | undefined;
+  readonly plan?: boolean | undefined;
   readonly requests?: ReadonlyArray<string> | undefined;
   readonly unreportedCompletionRunId?: string | undefined;
 }
@@ -135,6 +133,7 @@ const markFields = (detail: MemberDetail): Mark => ({
   status: detail.status,
   run: detail.run,
   held: detail.held,
+  plan: detail.plan,
   requests: detail.requests?.map((request) => request.id),
 });
 
@@ -150,7 +149,8 @@ export const memberUpdates = (
   listedAt: number,
 ): { readonly updates: ReadonlyArray<SourcedUpdate>; readonly mark: string } => {
   const unchanged = (updates: ReadonlyArray<SourcedUpdate>) => ({ updates, mark: markOf(detail) });
-  const heldCompletion = detail.run?.status === "completed" && isHeld(detail);
+  const holding = isHeld(detail) || detail.plan === true;
+  const heldCompletion = detail.run?.status === "completed" && holding;
   if (before === undefined && !needsAttention(detail.status) && !heldCompletion)
     return unchanged([]);
   const mark: Partial<Mark> = before === undefined ? {} : (JSON.parse(before) as Mark);
@@ -177,12 +177,14 @@ export const memberUpdates = (
     unreportedCompletionRunId = undefined;
   } else if (
     unreportedCompletionRunId !== undefined &&
-    !isHeld(detail) &&
+    !holding &&
     !WORKING.has(run?.status ?? "")
   ) {
     told(unreportedCompletionRunId, "completed");
     unreportedCompletionRunId = undefined;
   }
+  if (detail.plan === true && mark.plan !== true)
+    updates.push({ source: `plan:${run?.id ?? listedAt}`, event: "awaiting-input" });
   for (const request of detail.requests ?? []) {
     if (mark.requests?.includes(request.id) === true) continue;
     updates.push({ source: `request:${request.id}`, event: eventForRequest(request.kind) });
@@ -209,6 +211,7 @@ export const shellDetail = (
     project: "",
     ...(observed === undefined ? {} : { run: observed }),
     held: newerRuns || backgroundWorkHoldsCompletion(shell.pendingBackgroundTasks ?? []),
+    plan: request === null && !WORKING.has(shell.status) && shell.hasActionableProposedPlan,
     requests: request === null ? [] : [{ id: request.id, kind: request.kind }],
   };
 };
