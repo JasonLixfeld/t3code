@@ -75,8 +75,8 @@ export function useThreadListV2(input: {
   const { threads, workingShelfEnabled } = input;
   const missionHosts = useMissionHosts();
   const settledMissingMissionLeadKeys = useMissionLeadShells(missionHosts, threads);
-  const missionThreads = useMissionThreadShells(missionHosts);
-  const liveEnvironmentIds = useAtomValue(liveShellEnvironmentIdsAtom);
+  const fallbackMissionThreadShells = useMissionThreadShells(missionHosts);
+  const liveShellEnvironmentIds = useAtomValue(liveShellEnvironmentIdsAtom);
   const { headerVisible: missionsHeaderVisible, threadsHeaderVisible } = useMissionPreferences();
   const collapsedMissions = useMemo(
     () => new Set(input.collapsedMissions ?? []),
@@ -168,8 +168,8 @@ export function useThreadListV2(input: {
         settledShelfExpanded: input.settledShelfExpanded,
         selectedThreadKey: input.selectedThreadKey,
         missionHosts,
-        missionThreads,
-        liveEnvironmentIds,
+        fallbackMissionThreadShells,
+        liveShellEnvironmentIds,
         settledMissingMissionLeadKeys,
         collapsedMissions,
         isListedSettled: isListed,
@@ -205,8 +205,8 @@ export function useThreadListV2(input: {
       input.settledShelfExpanded,
       input.selectedThreadKey,
       missionHosts,
-      missionThreads,
-      liveEnvironmentIds,
+      fallbackMissionThreadShells,
+      liveShellEnvironmentIds,
       settledMissingMissionLeadKeys,
       collapsedMissions,
       isListed,

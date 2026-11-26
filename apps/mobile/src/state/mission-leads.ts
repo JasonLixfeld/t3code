@@ -72,14 +72,10 @@ export function useMissionLeadShells(
   return useAtomValue(settledMissingLeadsAtom(JSON.stringify(missing)));
 }
 
-/**
- * Each Mission thread's shell, as the web sidebar reads them. The thread list leaves out an
- * archived thread and a task delegated from its lead's machine, which left a blank member row.
- */
-const missionThreadShellsAtom = Atom.family((keys: string) => {
+const quietMissionThreadShellsAtom = Atom.family((lines: string) => {
+  const wanted = lines === "" ? [] : lines.split("\n");
   let previous: ReadonlyArray<EnvironmentThreadShell> = [];
   return Atom.make((get) => {
-    const wanted = JSON.parse(keys) as ReadonlyArray<string>;
     if (wanted.length === 0) return previous;
     const hidden = get(steadyThreadShells.hiddenThreadKeysAtom);
     const next = wanted.flatMap((key) => {
@@ -91,7 +87,7 @@ const missionThreadShellsAtom = Atom.family((keys: string) => {
     if (arrayElementsEqual(previous, next)) return previous;
     previous = next;
     return next;
-  }).pipe(Atom.withLabel(`mobile-mission-thread-shells:${keys}`));
+  }).pipe(Atom.withLabel("mobile-quiet-mission-thread-shells"));
 });
 
 export function useMissionThreadShells(
@@ -102,5 +98,5 @@ export function useMissionThreadShells(
       mission.members.map((member) => scopedThreadKey(member.ref)),
     ),
   );
-  return useAtomValue(missionThreadShellsAtom(JSON.stringify(keys)));
+  return useAtomValue(quietMissionThreadShellsAtom(keys.join("\n")));
 }

@@ -9,8 +9,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as MissionClaims from "./MissionClaims.ts";
 import { MissionStore } from "./MissionStore.ts";
 
-/** Each one changes whether a member reads as settled in the Missions list. */
-const SETTLEMENT_CHANGES: ReadonlySet<string> = new Set([
+const MISSION_SETTLEMENT_INVALIDATION_EVENTS: ReadonlySet<string> = new Set([
   "thread.settled",
   "thread.unsettled",
   "thread.archived",
@@ -35,7 +34,7 @@ export const followMemberThreads = Effect.fn("MissionThreadDeletions.followMembe
             ),
           );
       }
-      if (!SETTLEMENT_CHANGES.has(event.type)) return Effect.void;
+      if (!MISSION_SETTLEMENT_INVALIDATION_EVENTS.has(event.type)) return Effect.void;
       return store
         .claim(event.threadId)
         .pipe(

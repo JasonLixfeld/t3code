@@ -1071,7 +1071,7 @@ describe("buildThreadListV2ListItems", () => {
       environmentId: laptop,
       id: ThreadId.make("delegated"),
       title: "Delegated task",
-      delegatedFrom: { environmentId, threadId: ThreadId.make("lead") } as never,
+      delegatedFrom: { environmentId, threadId: ThreadId.make("lead"), title: "lead" },
     });
     const archived = makeThread({
       id: ThreadId.make("archived"),
@@ -1080,8 +1080,8 @@ describe("buildThreadListV2ListItems", () => {
     });
     const members = buildThreadListV2Items({
       threads: [makeThread({ id: ThreadId.make("lead"), title: "lead" })],
-      missionThreads: [delegated, archived],
-      liveEnvironmentIds: new Set([environmentId, laptop]),
+      fallbackMissionThreadShells: [delegated, archived],
+      liveShellEnvironmentIds: new Set([environmentId, laptop]),
       environmentId: null,
       searchQuery: "",
       now: NOW,

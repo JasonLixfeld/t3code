@@ -29,7 +29,6 @@ export const MissionMember = Schema.Struct({
 });
 export type MissionMember = typeof MissionMember.Type;
 
-/** A settled or archived member: the sidebar hides it, and ending its Mission releases it. */
 export const isSettledMissionMember = (thread: {
   readonly settledOverride: string | null;
   readonly archivedAt: unknown;
@@ -107,8 +106,9 @@ export const MissionSetLeadInput = Schema.Struct({
 });
 
 /**
- * Ends a Mission whose members on its own machine are all settled, and releases them. Its lead
- * stays a thread of its own.
+ * Ends a Mission only when every remaining member is settled on the Mission's machine and no add
+ * or release still waits. Ending releases their claims and deletes no thread: the lead and its
+ * members stay threads of their own.
  */
 export const MissionDeleteInput = Schema.Struct({ missionId: Schema.String });
 

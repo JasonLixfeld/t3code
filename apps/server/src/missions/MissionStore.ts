@@ -371,15 +371,11 @@ export class MissionStore extends Context.Service<
     readonly setLead: (
       lead: ClaimInput & { readonly previous: ThreadId },
     ) => Effect.Effect<MissionRecord, MissionError>;
-    /**
-     * Releases the member claims here with the Mission, only when each is one of
-     * `settledMembers`. Their callers hold every member's claim and thread lock.
-     */
     readonly deleteMission: (input: {
       readonly missionId: string;
       readonly lead: ThreadId;
       readonly machines: ReadonlyArray<EnvironmentId>;
-      readonly settledMembers: ReadonlyArray<ThreadId>;
+      readonly checkedLocalMembers: ReadonlyArray<ThreadId>;
     }) => Effect.Effect<void, MissionError>;
     readonly join: (
       input: ClaimInput,
@@ -589,7 +585,7 @@ const make = Effect.gen(function* () {
     readonly missionId: string;
     readonly lead: ThreadId;
     readonly machines: ReadonlyArray<EnvironmentId>;
-    readonly settledMembers: ReadonlyArray<ThreadId>;
+    readonly checkedLocalMembers: ReadonlyArray<ThreadId>;
   }) {
     const asked = DateTime.toEpochMillis(yield* DateTime.now);
     return yield* change(
@@ -617,7 +613,7 @@ const make = Effect.gen(function* () {
           SELECT thread_id, mission_id, mission_name, role, owner, generation, intent_id FROM claims
           WHERE mission_id = ${input.missionId} AND role = 'member'
         `;
-        const settled = new Set<string>(input.settledMembers);
+        const settled = new Set<string>(input.checkedLocalMembers);
         if (held !== undefined || members.some((member) => !settled.has(member.thread_id))) {
           return refuse(MISSION_NOT_ENDED);
         }
