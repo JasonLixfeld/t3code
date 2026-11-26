@@ -122,17 +122,7 @@ export const MissionToolkit = Toolkit.make(
       byRepository: Schema.Array(
         Schema.Struct({
           repository: Schema.String,
-          members: Schema.Array(
-            Schema.Struct({
-              member: Schema.String,
-              place: Schema.String,
-              branch: Schema.NullOr(Schema.String),
-              branchSource: Schema.Literals(["live", "recorded"]),
-              pullRequests: Schema.Array(
-                Schema.Struct({ number: Schema.Number, state: Schema.String, url: Schema.String }),
-              ),
-            }),
-          ),
+          members: Schema.Array(Schema.Struct({ member: Schema.String, place: Schema.String })),
         }),
       ),
       total: NonNegativeInt,

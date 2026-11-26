@@ -37,17 +37,13 @@ const refused = (error: MissionError) =>
     message: error.message,
   });
 
+/** As t3_thread_read: Claude Code saves an MCP answer past about 25k tokens to a file. */
+const ROSTER_MAX_BYTES = 30_000;
+const jsonBytes = (answer: object) => Buffer.byteLength(JSON.stringify(answer), "utf8");
+
+/** Which members work in each repository. Each member's branch and pull requests are its own. */
 const byRepository = (rows: ReadonlyArray<RosterMember>) => {
-  const groups = new Map<
-    string,
-    Array<{
-      readonly member: string;
-      readonly place: string;
-      readonly branch: string | null;
-      readonly branchSource: "live" | "recorded";
-      readonly pullRequests: ReadonlyArray<{ number: number; state: string; url: string }>;
-    }>
-  >();
+  const groups = new Map<string, Array<{ readonly member: string; readonly place: string }>>();
   for (const row of rows) {
     if (row.workspace === undefined || typeof row.workspace === "string") continue;
     for (const repository of row.workspace.repositories) {
@@ -55,16 +51,7 @@ const byRepository = (rows: ReadonlyArray<RosterMember>) => {
         repository.remote === null
           ? `${row.ref.environmentId}:${repository.repositoryPath}`
           : sourceControlDefinitions.canonicalRepositoryKey(repository.remote);
-      groups.set(key, [
-        ...(groups.get(key) ?? []),
-        {
-          member: row.member,
-          place: row.place,
-          branch: repository.branch,
-          branchSource: repository.branchSource,
-          pullRequests: repository.pullRequests,
-        },
-      ]);
+      groups.set(key, [...(groups.get(key) ?? []), { member: row.member, place: row.place }]);
     }
   }
   return [...groups].map(([repository, members]) => ({ repository, members }));
@@ -217,8 +204,7 @@ export const layer = McpToolAccess.toLayer(
           const { missions, mission } = yield* callersMission;
           const rows = yield* missions.roster(mission.missionId);
           const cursor = input.cursor ?? 0;
-          const end = cursor + (input.limit ?? 10);
-          return {
+          const page = (end: number) => ({
             missionId: mission.missionId,
             name: mission.name,
             members: rows.slice(cursor, end).map((row) => ({
@@ -235,7 +221,14 @@ export const layer = McpToolAccess.toLayer(
             byRepository: byRepository(rows.slice(cursor, end)),
             total: rows.length,
             nextCursor: end < rows.length ? end : null,
-          };
+          });
+          // Whole members only, at least one, until the answer would pass its cap.
+          const last = Math.min(rows.length, cursor + (input.limit ?? 10));
+          let end = Math.min(last, cursor + 1);
+          while (end < last && jsonBytes(page(end + 1)) <= ROSTER_MAX_BYTES) {
+            end += 1;
+          }
+          return page(end);
         }).pipe(Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) })),
       ),
       t3_mission_add: McpToolAccess.actsAsCaller((input) =>

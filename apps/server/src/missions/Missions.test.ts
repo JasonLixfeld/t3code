@@ -61,6 +61,7 @@ import {
   exceededDispatchModeLimit,
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import {
+  MEMBER_REPOSITORIES_MAX,
   type MemberRepository,
   type MemberWorkspace,
   MemberWorkspaces,
@@ -3233,12 +3234,7 @@ const workspaceOf = (
   otherPullRequests: [],
   stale: false,
 });
-const inGroup = (
-  member: string,
-  place: string,
-  branch: string,
-  pullRequests: MemberRepository["pullRequests"],
-) => ({ member, place, branch, branchSource: "recorded" as const, pullRequests });
+const inGroup = (member: string, place: string) => ({ member, place });
 
 it.effect(
   "the roster lists each member's repositories, branches and pull requests, and groups them by repository",
@@ -3279,18 +3275,11 @@ it.effect(
         assert.deepEqual(roster.byRepository, [
           {
             repository: "github.com/acme/api",
-            members: [
-              inGroup("member 1", "this machine", "t3/checkout", [
-                { number: 12, state: "open", url: "https://github.com/acme/api/pull/12" },
-              ]),
-              inGroup("member 2", "machine 2", "t3/docs", [
-                { number: 13, state: "open", url: "https://github.com/acme/api/pull/13" },
-              ]),
-            ],
+            members: [inGroup("member 1", "this machine"), inGroup("member 2", "machine 2")],
           },
           {
             repository: `${HERE}:/code/app/web`,
-            members: [inGroup("member 1", "this machine", "t3/checkout", [])],
+            members: [inGroup("member 1", "this machine")],
           },
         ]);
         assert.deepEqual(world.dispatched, []);
@@ -3327,9 +3316,9 @@ it.effect("one Azure DevOps repository spelled two ways is one group in the rost
       assert.deepEqual(
         roster.byRepository.map((group) => [
           group.repository,
-          group.members.map((member) => member.branch),
+          group.members.map((member) => member.member),
         ]),
-        [["dev.azure.com/acme/proj/_git/repo", ["a", "b"]]],
+        [["dev.azure.com/acme/proj/_git/repo", ["member 1", "member 2"]]],
       );
     }),
   );
@@ -3892,3 +3881,46 @@ it.effect("the lead adding itself, or a member already in, is not nudged for a b
     }),
   );
 });
+
+it.effect(
+  "a roster answer stays within 30,000 bytes and resumes at the first member it left out",
+  () => {
+    const members = Array.from({ length: 10 }, (_, index) => ref(HERE, `big-${index}`));
+    const world = makeWorld([lead, ...members]);
+    for (const member of members) {
+      world.workspaces.set(
+        worktreeOf(member.threadId),
+        workspaceOf(
+          "worktree",
+          Array.from({ length: MEMBER_REPOSITORIES_MAX }, (_, index) =>
+            repository(`repo-${index}`, `github.com/acme/repo-${index}`, `t3/${member.threadId}`, [
+              index,
+            ]),
+          ),
+        ),
+      );
+    }
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const { missionId } = yield* createOne;
+        for (const member of members) yield* missions.addMember({ missionId, member });
+        const seen: Array<string> = [];
+        let cursor: number | null = 0;
+        while (cursor !== null) {
+          const answer = yield* leadTool(world, "t3_mission_roster", { cursor, limit: 100 });
+          assert.isAtMost(Buffer.byteLength(answer, "utf8"), 30_000);
+          const roster = decodeRoster(JSON.parse(answer));
+          assert.isNotEmpty(roster.members);
+          seen.push(...roster.members.map((row) => row.member));
+          cursor = roster.nextCursor;
+        }
+        assert.deepEqual(
+          seen,
+          members.map((_, index) => `member ${index + 1}`),
+        );
+      }),
+    );
+  },
+);
