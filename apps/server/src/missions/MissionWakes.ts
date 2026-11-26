@@ -15,6 +15,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import { eventCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -22,6 +23,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import { MissionStore, type MissionRecord, numberKey } from "./MissionStore.ts";
 import { Missions } from "./Missions.ts";
 import {
+  holdsCompletion,
   markOf,
   ATTENTION_LINES,
   missionUpdateText,
@@ -102,10 +104,21 @@ export const layer = Layer.effectDiscard(
       missionId: string,
       ref: ScopedThreadRef,
       detail: MemberDetail,
+      unseen?: string,
     ) {
-      const before = yield* store.memberMark(ref);
+      const before = (yield* store.memberMark(ref)) ?? unseen;
       yield* record(missionId, ref, remoteUpdates(before, detail, yield* Clock.currentTimeMillis));
       yield* store.setMemberMark(ref, markOf(detail));
+    });
+
+    // A shell shows only its latest request, so a local member's requests are told by their events.
+    const observeRun = Effect.fn("MissionWakes.observeRun")(function* (
+      missionId: string,
+      ref: ScopedThreadRef,
+    ) {
+      const shell = yield* shellOf(ref.threadId);
+      if (shell === null || shell.deletedAt !== null) return;
+      yield* observe(missionId, ref, { ...shellDetail(shell), requests: [] }, "{}");
     });
 
     const seeLocalMembers = Effect.gen(function* () {
@@ -113,7 +126,11 @@ export const layer = Layer.effectDiscard(
       for (const claim of yield* store.claimsOf(here)) {
         if (claim.role !== "member" || !led.has(claim.missionId)) continue;
         const ref = { environmentId: here, threadId: claim.threadId };
-        if ((yield* store.memberMark(ref)) !== undefined) continue;
+        const mark = yield* store.memberMark(ref);
+        if (mark !== undefined) {
+          if (holdsCompletion(mark)) yield* observeRun(claim.missionId, ref);
+          continue;
+        }
         const shell = yield* shellOf(claim.threadId);
         if (shell === null || shell.deletedAt !== null) continue;
         yield* observe(claim.missionId, ref, shellDetail(shell));
@@ -137,20 +154,25 @@ export const layer = Layer.effectDiscard(
         if (claim?.role === "lead") yield* Queue.offer(due, claim.missionId);
         return;
       }
-      if (
-        event.type !== "run.updated" &&
-        event.type !== "runtime-request.updated" &&
-        event.type !== "turn-item.updated"
-      ) {
-        return;
-      }
-      const update = updateFromEvent(event);
-      if (update === undefined && event.type !== "run.updated") return;
+      const update =
+        event.type === "run.updated" ||
+        event.type === "runtime-request.updated" ||
+        event.type === "turn-item.updated"
+          ? updateFromEvent(event)
+          : undefined;
+      const run = event.type === "run.updated";
+      if (update === undefined && !run && !eventCanEndBackgroundWork(event)) return;
       const claim = yield* missionOf(event.threadId);
       if (claim === undefined) return;
-      if (claim.role === "lead") return yield* Queue.offer(due, claim.missionId);
-      if (update === undefined) return;
-      yield* record(claim.missionId, { environmentId: here, threadId: event.threadId }, [update]);
+      if (claim.role === "lead") {
+        if (run || update !== undefined) yield* Queue.offer(due, claim.missionId);
+        return;
+      }
+      const ref = { environmentId: here, threadId: event.threadId };
+      if (update?.event === "completed") return yield* observeRun(claim.missionId, ref);
+      if (update !== undefined) return yield* record(claim.missionId, ref, [update]);
+      const mark = yield* store.memberMark(ref);
+      if (mark !== undefined && holdsCompletion(mark)) yield* observeRun(claim.missionId, ref);
     });
 
     const dropUpdates = (missionId: string, lead: ThreadId): Effect.Effect<void> =>

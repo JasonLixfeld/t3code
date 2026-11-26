@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2DomainEvent,
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderThread,
   OrchestrationV2Run,
@@ -44,14 +45,33 @@ const SETTLED_FOR_BACKGROUND_WAIT_RUN_STATUSES = new Set<OrchestrationV2Run["sta
   "waiting",
 ]);
 
-void TERMINAL_RUN_STATUSES;
-
 export type PendingBackgroundWorkTask = OrchestrationV2PendingBackgroundTask;
 
 export function turnItemUpdateCanEndBackgroundWork(
   item: Pick<OrchestrationV2TurnItem, "type" | "status">,
 ): boolean {
   return BACKGROUND_TURN_ITEM_TYPES.has(item.type) && !isOrchestrationV2WorkActive(item.status);
+}
+
+/** Progress updates cannot end background work, so readers recheck a thread only after these. */
+export function eventCanEndBackgroundWork(event: OrchestrationV2DomainEvent): boolean {
+  switch (event.type) {
+    case "provider-session.detached":
+    case "run.background-work-cancelled":
+      return true;
+    case "subagent.updated":
+      return !isOrchestrationV2WorkActive(event.payload.status);
+    case "provider-thread.updated":
+      return !backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? []);
+    case "turn-item.updated":
+      return turnItemUpdateCanEndBackgroundWork(event.payload);
+    case "provider-session.updated":
+      return event.payload.status !== "starting" && event.payload.status !== "running";
+    case "run.updated":
+      return TERMINAL_RUN_STATUSES.has(event.payload.status);
+    default:
+      return false;
+  }
 }
 
 export function deriveBlockedOnThreadWait(input: {

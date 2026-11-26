@@ -15,6 +15,7 @@ import {
   type RosterMember,
   type RosterStatus,
   remoteUpdates,
+  shellDetail,
   updateFor,
   updateFromEvent,
   withinWorkspaceRoom,
@@ -44,10 +45,13 @@ const HEADER = [
   "- Drive each repository to a pull request. Track which repositories need changes, need none, or are blocked; t3_mission_roster lists them by repository.",
   "- Never pull, push, merge or switch branches only because a thread joined or finished.",
   "- When a member joins with prior work, get its brief before giving it new work.",
+  "- If an update needs nothing from the user and changes no milestone, end your turn with no reply text. Milestones are a pull request opened, merged or live, a member blocked or failed, and a question for the user.",
+  "- Make every question to the user stand on its own. Link the member thread. Say in plain words what it is working on, what must be decided and why now, and what each option changes. Recommend one option. Do not rely on earlier messages.",
 ].join("\n");
 
 it("the prompt sits under the header, and without one the header stands alone", () => {
   assert.equal(missionPromptText("0123456789ab", ""), HEADER);
+  assert.isAtMost(Buffer.byteLength(HEADER, "utf8"), MISSION_PROMPT_MAX_BYTES / 2);
   assert.equal(
     missionPromptText("0123456789ab", "Review every PR."),
     `${HEADER}\n\nReview every PR.`,
@@ -176,6 +180,35 @@ it("reads a member's status from its thread", () => {
     }),
     "working",
   );
+  const tasks = (kind: string, awaited?: true) => ({
+    pendingBackgroundTasks: [{ taskId: "t", kind, ...(awaited ? { awaited } : {}) }] as never,
+  });
+  assert.equal(memberStatusOf({ ...shell, status: "completed", ...tasks("subagent") }), "working");
+  assert.equal(memberStatusOf({ ...shell, status: "completed", ...tasks("command") }), "idle");
+  assert.equal(
+    memberStatusOf({ ...shell, status: "completed", ...tasks("command", true) }),
+    "working",
+  );
+  assert.equal(memberStatusOf({ ...shell, status: "failed", ...tasks("subagent") }), "failed");
+});
+
+it("a member whose turn ended while its own work runs is told once that work ends", () => {
+  const shell = {
+    status: "completed" as const,
+    pendingRuntimeRequest: null,
+    hasActionableProposedPlan: false,
+    latestRunId: "run-5" as never,
+  };
+  const running = markOf(detail({ status: "working", run: { id: "run-5", status: "running" } }));
+  const held = shellDetail({
+    ...shell,
+    pendingBackgroundTasks: [{ taskId: "agent-1", kind: "subagent" }],
+  });
+  assert.deepEqual(remoteUpdates(running, held, 0), []);
+  assert.deepEqual(remoteUpdates(markOf(held), shellDetail(shell), 0), [
+    { source: "run:run-5", event: "completed" },
+  ]);
+  assert.deepEqual(remoteUpdates(markOf(shellDetail(shell)), shellDetail(shell), 0), []);
 });
 
 it("only a move into a state that needs the lead, or a finished turn, is an update", () => {

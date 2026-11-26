@@ -83,8 +83,17 @@ import { ThreadToolkit } from "../../apps/server/src/mcp/toolkits/thread/tools.t
 import { WorktreeToolkit } from "../../apps/server/src/mcp/toolkits/worktree/tools.ts";
 import {
   CLAUDE_PROVIDER,
+  claudeAppContextText,
+  claudeMissionContext,
   makeClaudeQueryOptions,
 } from "../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import {
+  missionPromptText,
+  missionStatusText,
+  missionUpdateText,
+  type RosterMember,
+  type RosterStatus,
+} from "../../apps/server/src/missions/missionStatus.ts";
 import { proxyConfig } from "../shared/proxy.ts";
 import { changeRequestsCreatedBy } from "../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts";
 import { type BackgroundWait, makeBackgroundWait } from "./backgroundWait.ts";
@@ -377,6 +386,27 @@ export const McpToolUseCase = Schema.Struct({
     /** Regexes on one part of a shell command. A match wins over the shell simulator. */
     shellMocks: Schema.optional(
       Schema.Array(Schema.Struct({ match: Schema.String, output: Schema.String })),
+    ),
+    /**
+     * The thread leads a mission whose members, numbered from 1, are on this machine. Claude's
+     * turn carries T3's mission prompt and status ahead of the message. With `updates`, the message
+     * is the wake T3 sends the lead, and `prompt` is empty.
+     */
+    mission: Schema.optional(
+      Schema.Struct({
+        prompt: Schema.optional(Schema.String),
+        members: Schema.Array(
+          Schema.Literals(["awaiting-input", "pending-approval", "failed", "working", "idle"]),
+        ),
+        updates: Schema.optional(
+          Schema.Array(
+            Schema.Struct({
+              member: Schema.Number,
+              event: Schema.Literals(["awaiting-input", "pending-approval", "failed", "completed"]),
+            }),
+          ),
+        ),
+      }),
     ),
     /** The thread is a side chat's first turn: T3 puts the parent's digest ahead of `prompt`. */
     sideChat: Schema.optional(
@@ -1187,6 +1217,17 @@ const loadTools = (tools: Array<ApiTool>, id: string, found: ReadonlyArray<ApiTo
 };
 
 /** Messages for a case: reminders, context, prior turns with real tool blocks, then the prompt. */
+const MISSION_ID = "0123456789ab";
+const rosterMember = (status: RosterStatus, index: number): RosterMember => ({
+  ref: { environmentId: EnvironmentId.make("env-here"), threadId: ThreadId.make(`m${index + 1}`) },
+  member: `member ${index + 1}`,
+  place: "this machine",
+  machine: "This machine",
+  project: "app",
+  status,
+  title: "",
+});
+
 export const buildMessages = (sample: Sample) => {
   const { testCase, base, tools } = sample;
   const messages: Array<ApiMessage> = [];
@@ -1201,6 +1242,9 @@ export const buildMessages = (sample: Sample) => {
     throw new Error(
       `${testCase.id}: Empty-prompt replay requires a top-level thread without side-chat context.`,
     );
+  }
+  if (testCase.setup.mission?.updates !== undefined && testCase.prompt !== "") {
+    throw new Error(`${testCase.id}: A mission wake is the message, so the prompt must be empty.`);
   }
   const sideChatContext =
     sideChat === undefined
@@ -1257,15 +1301,31 @@ export const buildMessages = (sample: Sample) => {
     }
     if (turn.text) push(turn.role, text(turn.text));
   }
+  const mission = testCase.setup.mission;
+  const wake = mission?.updates?.map(({ member, event }) => ({
+    member: `member ${member}`,
+    place: "this machine",
+    event,
+  }));
   const userText =
-    testCase.promptContext === undefined
-      ? testCase.prompt
-      : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
+    wake !== undefined
+      ? missionUpdateText(wake)
+      : testCase.promptContext === undefined
+        ? testCase.prompt
+        : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
   const prompt =
     sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
-  if (testCase.prompt !== "")
-    push("user", text(role === "delegated-child" ? childPrompt() : prompt));
+  const missionContext =
+    mission === undefined
+      ? []
+      : claudeMissionContext({
+          role: "lead",
+          prompt: missionPromptText(MISSION_ID, mission.prompt ?? ""),
+          status: missionStatusText(mission.members.map(rosterMember)),
+        }).map((entry) => text(claudeAppContextText(entry)));
+  if (testCase.prompt !== "" || wake !== undefined)
+    push("user", ...missionContext, text(role === "delegated-child" ? childPrompt() : prompt));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
   if (native && base.subagentContext) {
     push("user", reminder(`SubagentStart hook additional context: ${base.subagentContext}`));

@@ -290,6 +290,27 @@ Passes per case, main's runtime text (3 samples) → this branch's "Link every o
 
 After the change, the first reference to a file is an absolute link. The remaining failures come from two other kinds of span. Some repeat the file later as relative inline code (Sonnet's other-checkout failures). Others quote values rather than cite files, such as `main` set to `src/index.ts` or the import `./ws`. Chat still turns those spans into pills.
 
+## Mission lead cases
+
+`cases/missions.ndjson` checks what a mission lead writes when a member update wakes it. The cases come from a 2026-11-26 field report. A lead was woken 8 times while one member moved between its build, check and review subagents, and it answered each wake with "Nothing is needed from you." Its questions to the user also relied on earlier messages.
+
+| Case                               | Kind    | What it checks                                                                                                                  |
+| ---------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| mission-quiet-idle-update          | bad     | A member finished a review round with nothing for the user. The lead writes no visible text at all. Reading the member is fine. |
+| mission-question-stands-alone      | bad     | A member needs a product choice. The lead asks the user with the member's link, its work, why it waits, the options and a pick. |
+| mission-member-failed-speaks       | control | A member failed. The lead says so.                                                                                              |
+| mission-pull-request-merged-speaks | control | The same kind of wake as the quiet case, but the member merged its pull request. The lead says so.                              |
+
+`setup.mission` makes the thread a mission lead. The runner builds the lead's mission prompt, its status and the wake message with T3's own `missionPromptText`, `missionStatusText` and `missionUpdateText`, and wraps them as the Claude adapter does. The cases run on Claude only. Codex gets its mission context another way, which the runner does not model. T3's mission tools are not in the eval's tool list, so a lead that calls `t3_mission_roster` finds no such tool and reads the member with `t3_thread_read` instead.
+
+From `evals/`:
+
+```sh
+pnpm mcp-tool-use --cases mcp-tool-use/cases/missions.ndjson --model claude-sonnet-5-5 --samples 3 --out runs/missions
+```
+
+No paid run has been recorded for these cases yet.
+
 ## PR tools vs raw CLIs
 
 `cases/pr-tools-vs-cli.ndjson` asks whether T3's PR, CI and issue tools pay for the context they add. Each case is a forge task from a real failure in 2026-09/11 Claude and Codex sessions. `--arm raw` removes those tools and the `<pull_request_linking>` instructions, so the agent has only `gh`, `cafe` and the shell. `--arm tools` (the default) is T3 as shipped. Run both arms on the same model and compare:
