@@ -55,7 +55,8 @@ export type MissionClaimHere = typeof MissionClaimHere.Type;
 
 export const MissionsSnapshot = Schema.Struct({
   missions: Schema.Array(Mission),
-  links: Schema.Array(MissionLink),
+  /** Absent for a session that may not read access, as the peer-link list is kept from it. */
+  links: Schema.optional(Schema.Array(MissionLink)),
   claims: Schema.Array(MissionClaimHere),
 });
 export type MissionsSnapshot = typeof MissionsSnapshot.Type;

@@ -78,6 +78,17 @@ describe("buildMissionMenuItems", () => {
       disabled: true,
       detail: "No link from Desk",
     });
+    // A session that may not read access is told no links, so the host decides on the add.
+    const unlisted: ReadonlyArray<MissionHost> = hosts.map(
+      ({ snapshot: { links: _links, ...snapshot }, ...host }) => ({ ...host, snapshot }),
+    );
+    for (const environmentId of [BOX, OTHER]) {
+      expect(
+        buildMissionMenuItems([thread(environmentId)], unlisted, label, allowed).find(
+          (item) => item.id === "mission-add",
+        )!.children![0],
+      ).toMatchObject({ disabled: false, detail: "Desk" });
+    }
     // The claim its own machine holds decides, not a tag the thread carries.
     const held = buildMissionMenuItems([thread(DESK, "held")], hosts, label, allowed);
     expect(held.map((item) => [item.id, item.disabled, item.detail])).toEqual([

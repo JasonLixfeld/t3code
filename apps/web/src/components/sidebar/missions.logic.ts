@@ -136,7 +136,8 @@ function missionBlock(
   // A member may be empty: one a lead starts with no prompt joins as it is. Only a lead needs
   // messages, since T3 deletes a draft chat that never got one.
   if (claimHere(thread, hosts) !== undefined) return "in-mission";
-  if (thread.environmentId === host.environmentId) return null;
+  // A session that may not read access is not told the links, so the host decides on the add.
+  if (thread.environmentId === host.environmentId || host.snapshot.links === undefined) return null;
   const link = host.snapshot.links.find((entry) => entry.environmentId === thread.environmentId);
   if (link === undefined) return "no-link";
   return link.fullAccess ? null : "fenced";
@@ -528,7 +529,7 @@ export function missionDraftMachines(
     intent.kind === "member"
       ? (hosts
           .find((host) => host.environmentId === intent.host)
-          ?.snapshot.links.filter((link) => link.fullAccess)
+          ?.snapshot.links?.filter((link) => link.fullAccess)
           .map((link) => link.environmentId) ?? [])
       : [];
   return new Set([intent.host, ...links]);

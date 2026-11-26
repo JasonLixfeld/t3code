@@ -104,7 +104,7 @@ function useMachineLabel(hosts: ReadonlyArray<MissionHost>) {
   return (environmentId: EnvironmentId) =>
     identities.find((identity) => identity.environmentId === environmentId)?.label ??
     hosts
-      .flatMap((host) => host.snapshot.links)
+      .flatMap((host) => host.snapshot.links ?? [])
       .find((link) => link.environmentId === environmentId)?.label ??
     environmentId;
 }

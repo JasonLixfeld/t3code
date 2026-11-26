@@ -84,8 +84,11 @@ const WORKSPACE_ASK_AGAIN_GAP = Duration.seconds(5);
 export class Missions extends Context.Service<
   Missions,
   {
-    /** The Missions here and the links that can reach member threads, now and after each change. */
-    readonly watch: Stream.Stream<MissionsSnapshot>;
+    /**
+     * The Missions here, now and after each change. With `links`, also the links that can reach
+     * member threads, which only a session that may read access gets.
+     */
+    readonly watch: (options: { readonly links: boolean }) => Stream.Stream<MissionsSnapshot>;
     /**
      * Starts a Mission led by a thread here, named for its title. Refuses a thread with no
      * messages. Asking again with the same id returns that Mission.
@@ -1362,7 +1365,7 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const watch = Stream.unwrap(
+  const watchAll = Stream.unwrap(
     Effect.gen(function* () {
       // Subscribed before the first read, so a change in between is not missed.
       const later = yield* PubSub.subscribe(views);
@@ -1383,6 +1386,13 @@ const make = Effect.gen(function* () {
       );
     }),
   );
+  const watch = (options: { readonly links: boolean }) =>
+    options.links
+      ? watchAll
+      : watchAll.pipe(
+          Stream.map(({ links: _links, ...snapshot }): MissionsSnapshot => snapshot),
+          Stream.changesWith(sameSnapshot),
+        );
 
   const ledBy = (threadId: ThreadId) =>
     Effect.map(store.missions, (missions) =>

@@ -230,7 +230,7 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
         .pipe(Effect.flip);
       assert.equal(unknownKind.code, "invalid_request");
       const membersWhen = (matches: (threadIds: ReadonlyArray<string>) => boolean) =>
-        missions.watch.pipe(
+        missions.watch({ links: true }).pipe(
           Stream.map((snapshot: MissionsSnapshot) =>
             snapshot.missions[0]!.members.map((member) => member.ref.threadId as string),
           ),

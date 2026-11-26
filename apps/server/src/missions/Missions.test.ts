@@ -598,7 +598,7 @@ const withMissions = <A, E>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 const listed = Effect.flatMap(Missions.Missions, (missions) =>
-  missions.watch.pipe(
+  missions.watch({ links: true }).pipe(
     Stream.runHead,
     Effect.map((snapshot) => Option.getOrThrow(snapshot)),
   ),
@@ -614,7 +614,7 @@ const createOne = Effect.flatMap(Missions.Missions, (missions) =>
 /** Waits for a snapshot that matches, starting with the one a new client gets at once. */
 const eventually = (matches: (snapshot: MissionsSnapshot) => boolean) =>
   Effect.flatMap(Missions.Missions, (missions) =>
-    missions.watch.pipe(Stream.filter(matches), Stream.runHead, Effect.asVoid),
+    missions.watch({ links: true }).pipe(Stream.filter(matches), Stream.runHead, Effect.asVoid),
   );
 
 /**
@@ -624,7 +624,7 @@ const eventually = (matches: (snapshot: MissionsSnapshot) => boolean) =>
 const openSidebar = Effect.gen(function* () {
   const missions = yield* Missions.Missions;
   const seen = yield* Queue.unbounded<MissionsSnapshot>();
-  yield* missions.watch.pipe(
+  yield* missions.watch({ links: true }).pipe(
     Stream.runForEach((snapshot) => Queue.offer(seen, snapshot)),
     Effect.forkScoped,
   );
@@ -664,6 +664,12 @@ it.effect(
             ["Fenced box", false],
           ],
         );
+        // A session that may not read access sees the same Missions, without the links.
+        const unlinked = yield* missions.watch({ links: false }).pipe(
+          Stream.runHead,
+          Effect.map((first) => Option.getOrThrow(first)),
+        );
+        assert.deepEqual(unlinked, { missions: snapshot.missions, claims: snapshot.claims });
       }),
     );
   },
@@ -1878,7 +1884,7 @@ it.effect("a new watcher never gets an older snapshot after a newer one", () => 
       // A member leaves while that snapshot is open, and a client starts watching.
       yield* missions.leaveHere(b.threadId);
       const seen = yield* Queue.unbounded<ReturnType<typeof membersOf>>();
-      yield* missions.watch.pipe(
+      yield* missions.watch({ links: true }).pipe(
         Stream.runForEach((snapshot) => Queue.offer(seen, membersOf(snapshot.missions[0]))),
         Effect.forkChild({ startImmediately: true }),
       );
