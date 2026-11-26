@@ -41,6 +41,7 @@ import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useThreadListV2 } from "./useThreadListV2";
+import { useMissionActions, useMissionListMenus } from "./useMissionActions";
 import { useSidebarRowThreadKey } from "./useSidebarRowThreadKey";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { requestThreadMessageJump } from "./threadMessageJump";
@@ -277,7 +278,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const pendingOrder = usePendingThreadOrder();
   const {
     layout: threadListV2Layout,
-    items: threadListV2Items,
+    items: threadListV2ItemsWithoutMenus,
     contentOnlyThreadKeys,
     olderSettledShelf,
   } = useThreadListV2({
@@ -303,6 +304,8 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     collapsedMissions,
     selectedThreadKey,
   });
+  const threadListV2Items = useMissionListMenus(threadListV2ItemsWithoutMenus, launchingThreads);
+  const runMissionAction = useMissionActions();
   const listItems: readonly SidebarListItem[] =
     settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
       ? [
@@ -493,7 +496,9 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             onSwipeableWillOpen={handleSwipeableWillOpen}
             simultaneousSwipeGesture={sidebarScrollGesture}
             mission={item.mission}
+            missionMenu={item.missionMenu}
             onToggleMission={toggleMission}
+            onMissionAction={runMissionAction}
           />
         );
       }
@@ -507,8 +512,10 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
               savedConnectionsById[item.mission.member.ref.environmentId]?.environmentLabel ??
               item.mission.member.ref.environmentId
             }
+            missionMenu={item.missionMenu}
             pane="sidebar"
             onToggleMission={toggleMission}
+            onMissionAction={runMissionAction}
           />
         );
       case "v2-working-shelf":

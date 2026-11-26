@@ -62,6 +62,8 @@ import { useWorkspaceEnvironments } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadSearchMatchExcerpt } from "../threads/thread-search-match";
+import { missionPaletteRows } from "../threads/missionMenus";
+import { useMissionActions, useMissionMenuContext } from "../threads/useMissionActions";
 import { pickTriageEnvironment } from "../triage/triageTarget";
 import { useStartTriage } from "../triage/useStartTriage";
 import { useNewTaskFlow } from "../threads/new-task-flow-provider";
@@ -292,6 +294,8 @@ export function CommandPalette(props: {
     triageEnvironmentId !== null &&
     serverConfigs.get(triageEnvironmentId)?.environment.capabilities.triage === true;
   const canShareWithGuest = useCanShareWithGuest(activeThreadRef?.environmentId ?? null);
+  const missionMenu = useMissionMenuContext(threads);
+  const runMissionAction = useMissionActions();
   const contentMatchByKey = new Map(
     search.matches
       .filter((match) => match.source === "user" || match.source === "assistant")
@@ -413,6 +417,18 @@ export function CommandPalette(props: {
           run: () => runCommand(command),
         })),
       );
+      if (activeThread !== null && missionMenu !== null) {
+        actions.push(
+          ...missionPaletteRows(activeThread, missionMenu).map((row) => ({
+            key: row.id,
+            kind: "action" as const,
+            title: row.title,
+            ...(row.detail ? { detail: row.detail } : {}),
+            searchTerms: ["mission"],
+            run: () => void runMissionAction(row.id, { thread: activeThreadRef, place: null }),
+          })),
+        );
+      }
       if (canShareWithGuest) {
         actions.push({
           key: "shareWithGuest",
@@ -500,8 +516,10 @@ export function CommandPalette(props: {
     environments.length,
     canTriage,
     canShareWithGuest,
+    missionMenu,
     navigation,
     projects,
+    runMissionAction,
     runCommand,
     savedConnectionsById,
     selectDetail,

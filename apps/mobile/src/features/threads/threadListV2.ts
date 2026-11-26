@@ -157,17 +157,20 @@ export function layoutThreadListV2RowMenuActions(
   input: {
     readonly nested: boolean;
     readonly direct: readonly MenuAction[];
+    readonly mission?: readonly MenuAction[];
     readonly reorder: readonly MenuAction[];
     readonly pin: readonly MenuAction[];
     readonly secondary: readonly MenuAction[];
   },
   resolve: MessageResolver = m,
 ): MenuAction[] {
+  const mission = input.mission ?? [];
   if (!input.nested) {
-    return [...input.direct, ...input.reorder, ...input.pin, ...input.secondary];
+    return [...input.direct, ...mission, ...input.reorder, ...input.pin, ...input.secondary];
   }
   return [
     ...input.direct,
+    ...mission,
     ...input.pin,
     {
       id: "more",
@@ -473,6 +476,13 @@ export interface ThreadListV2ThreadListItem {
   readonly canMoveUp: boolean;
   readonly canMoveDown: boolean;
   readonly mission: ThreadListV2MissionPlace | null;
+  readonly missionMenu: ThreadListV2MissionMenu | null;
+}
+
+/** A row's mission menu; `key` stands for `actions` in item equality. */
+export interface ThreadListV2MissionMenu {
+  readonly key: string;
+  readonly actions: ReadonlyArray<MenuAction>;
 }
 
 export interface ThreadListV2SectionListItem {
@@ -485,6 +495,7 @@ export interface ThreadListV2MissionMemberListItem {
   readonly type: "v2-mission-member";
   readonly key: string;
   readonly mission: ThreadListV2MissionPlace;
+  readonly missionMenu: ThreadListV2MissionMenu | null;
 }
 
 export interface ThreadListV2PendingListItem {
@@ -581,7 +592,8 @@ export function threadListV2ListItemsAreEqual(
         previous.hasQueuedMessages === item.hasQueuedMessages &&
         previous.canMoveUp === item.canMoveUp &&
         previous.canMoveDown === item.canMoveDown &&
-        missionPlacesAreEqual(previous.mission, item.mission)
+        missionPlacesAreEqual(previous.mission, item.mission) &&
+        previous.missionMenu?.key === item.missionMenu?.key
       );
     case "v2-section":
       return previous.type === "v2-section" && previous.section === item.section;
@@ -589,7 +601,8 @@ export function threadListV2ListItemsAreEqual(
       return (
         previous.type === "v2-mission-member" &&
         previous.key === item.key &&
-        missionPlacesAreEqual(previous.mission, item.mission)
+        missionPlacesAreEqual(previous.mission, item.mission) &&
+        previous.missionMenu?.key === item.missionMenu?.key
       );
     case "v2-pending":
       return (
@@ -703,6 +716,7 @@ export function buildThreadListV2ListItems(input: {
       canMoveUp: move?.canMoveUp === true,
       canMoveDown: move?.canMoveDown === true,
       mission,
+      missionMenu: null,
     };
   };
   const threadItems = input.items.map((item) => toListItem(item, null));
@@ -721,6 +735,7 @@ export function buildThreadListV2ListItems(input: {
                     type: "v2-mission-member",
                     key: `v2-mission-member:${place.key}:${place.member.ref.environmentId}:${place.member.ref.threadId}`,
                     mission: place,
+                    missionMenu: null,
                   }
                 : toListItem(item, place),
             ),

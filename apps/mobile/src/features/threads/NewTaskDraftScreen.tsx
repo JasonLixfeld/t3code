@@ -16,6 +16,7 @@ import { AppBar } from "../../components/ui/AppBar";
 import { ThreadId } from "@t3tools/contracts";
 
 import * as Dialog from "../../components/ui/Dialog";
+import { adoptMissionDraft } from "../../state/mission-drafts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -167,6 +168,7 @@ export function NewTaskDraftScreen(props: {
   };
   readonly draftId?: string;
   readonly incomingShareId?: string;
+  readonly requestId?: string;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -724,6 +726,10 @@ export function NewTaskDraftScreen(props: {
       );
       return null;
     }
+    adoptMissionDraft(props.requestId, {
+      environmentId: message.environmentId,
+      threadId: message.threadId,
+    });
     promptInputRef.current?.blur();
     navigation.dispatch(
       CommonActions.setParams(

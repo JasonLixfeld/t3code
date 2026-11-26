@@ -64,6 +64,7 @@ import { useThreadSearch } from "../../state/queries";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import { useThreadListSearchMatches } from "../threads/useThreadListSearchMatches";
 import { useThreadListV2 } from "../threads/useThreadListV2";
+import { useMissionActions, useMissionListMenus } from "../threads/useMissionActions";
 import { useSidebarRowThreadKey } from "../threads/useSidebarRowThreadKey";
 import { useThreadListNow } from "../threads/use-thread-list-now";
 import { useSearchScrollRestoration } from "../layout/workspace/useSearchScrollRestoration";
@@ -419,7 +420,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const pendingOrder = usePendingThreadOrder();
   const {
     layout: threadListV2Layout,
-    items: threadListV2Items,
+    items: threadListV2ItemsWithoutMenus,
     contentOnlyThreadKeys,
     olderSettledShelf,
   } = useThreadListV2({
@@ -445,6 +446,8 @@ export function HomeScreen(props: HomeScreenProps) {
     collapsedMissions,
     selectedThreadKey,
   });
+  const threadListV2Items = useMissionListMenus(threadListV2ItemsWithoutMenus, props.threads);
+  const runMissionAction = useMissionActions();
   // Called as `props.onSelectThread(...)`, the compiler would cache this handler on the whole
   // props object, which is new on every render of Home's parent.
   const { onSelectThread } = props;
@@ -538,8 +541,10 @@ export function HomeScreen(props: HomeScreenProps) {
             props.savedConnectionsById[item.mission.member.ref.environmentId]?.environmentLabel ??
             item.mission.member.ref.environmentId
           }
+          missionMenu={item.missionMenu}
           pane={sidebarSurface ? "sidebar" : "screen"}
           onToggleMission={toggleMission}
+          onMissionAction={runMissionAction}
         />
       );
     }
@@ -622,7 +627,9 @@ export function HomeScreen(props: HomeScreenProps) {
         simultaneousSwipeGesture={homeScrollGesture}
         activationKey={item.key}
         mission={item.mission}
+        missionMenu={item.missionMenu}
         onToggleMission={toggleMission}
+        onMissionAction={runMissionAction}
       />
     );
   };

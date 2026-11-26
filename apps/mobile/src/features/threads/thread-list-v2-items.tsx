@@ -35,6 +35,7 @@ import {
 import { toServerClock } from "@t3tools/client-runtime/clock";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
+import { isMissionMenuId } from "@t3tools/client-runtime/missions";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useNavigation } from "@react-navigation/native";
@@ -90,9 +91,11 @@ import {
   resolveThreadListV2SwipeActions,
   layoutThreadListV2RowMenuActions,
   threadListV2RowAccessibilityLabel,
+  type ThreadListV2MissionMenu,
   type ThreadListV2MissionPlace,
   type ThreadListV2Status,
 } from "./threadListV2";
+import type { MissionActionTarget } from "./useMissionActions";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
@@ -441,6 +444,8 @@ export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(pro
 
 const MISSION_MEMBER_INDENT = 16;
 
+type OnMissionAction = (id: string, target: MissionActionTarget) => Promise<void>;
+
 const SECTION_COPY = {
   missions: msg("Missions", { $context: "thread list section" }),
   threads: msg("Threads", { $context: "thread list section" }),
@@ -520,9 +525,11 @@ function ThreadListV2MissionToggle(props: {
 
 export const ThreadListV2MissionMemberRow = memo(function ThreadListV2MissionMemberRow(props: {
   readonly place: ThreadListV2MissionPlace;
+  readonly missionMenu: ThreadListV2MissionMenu | null;
   readonly machineLabel: string;
   readonly pane?: "screen" | "sidebar";
   readonly onToggleMission: (key: string) => void;
+  readonly onMissionAction: OnMissionAction;
 }) {
   const gt = useGT();
   const titleTypography = useScaledTextRole("body");
@@ -535,8 +542,9 @@ export const ThreadListV2MissionMemberRow = memo(function ThreadListV2MissionMem
         ? props.place.missionName
         : gt("Thread on {machine}", { machine: props.machineLabel });
   const state = missionMemberState(member, gt) ?? props.machineLabel;
-  return (
-    <View
+  const row = (
+    <Pressable
+      accessibilityLabel={member.state === "add-refused" ? state : `${title}, ${state}`}
       className={cn(
         THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
         "min-h-[44px] flex-row items-center gap-2 py-2",
@@ -561,7 +569,24 @@ export const ThreadListV2MissionMemberRow = memo(function ThreadListV2MissionMem
           {state}
         </Text>
       </View>
-    </View>
+    </Pressable>
+  );
+  const actions = props.missionMenu?.actions;
+  return actions === undefined ? (
+    row
+  ) : (
+    <Menu
+      actions={[...actions]}
+      onPressAction={({ nativeEvent }) =>
+        void props.onMissionAction(nativeEvent.event, {
+          thread: member.ref,
+          place: props.place,
+        })
+      }
+      shouldOpenOnLongPress
+    >
+      {row}
+    </Menu>
   );
 });
 
@@ -929,7 +954,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly searchQuery?: string;
   readonly simultaneousSwipeGesture?: ComponentProps<typeof ThreadSwipeable>["simultaneousWith"];
   readonly mission?: ThreadListV2MissionPlace | null;
+  readonly missionMenu?: ThreadListV2MissionMenu | null;
   readonly onToggleMission?: (key: string) => void;
+  readonly onMissionAction?: OnMissionAction;
 }) {
   const { width: windowWidth, fontScale } = useWindowDimensions();
   const titleTypography = useScaledTextRole("body");
@@ -965,7 +992,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   } = props;
   const snoozedRow = props.snoozed === true;
   const pinnedRow = props.pinned === true;
-  const { onToggleMission } = props;
+  const { onToggleMission, onMissionAction } = props;
+  const missionActions = props.missionMenu?.actions;
   const mission = props.mission ?? null;
   const leadToggle = mission?.toggle ?? null;
   const project = leadToggle === null ? props.project : null;
@@ -1269,6 +1297,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       return layoutThreadListV2RowMenuActions(
         {
           nested,
+          mission: missionActions,
           direct: [...direct, localized(SNOOZED_MENU_ACTIONS[0]!)],
           reorder: [],
           pin: [],
@@ -1286,6 +1315,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       return layoutThreadListV2RowMenuActions(
         {
           nested,
+          mission: missionActions,
           direct: [...direct, localized(LEGACY_MENU_ACTIONS[0]!)],
           reorder: reorderMenuItems,
           pin: pinMenuItems,
@@ -1298,6 +1328,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       return layoutThreadListV2RowMenuActions(
         {
           nested,
+          mission: missionActions,
           direct: [...direct, localized(SLIM_MENU_ACTIONS[0]!)],
           reorder: reorderMenuItems.filter(
             (action) => action.id !== "move-up" && action.id !== "move-down",
@@ -1316,6 +1347,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     return layoutThreadListV2RowMenuActions(
       {
         nested,
+        mission: missionActions,
         direct: [
           ...direct,
           localized(CARD_MENU_ACTIONS[0]!),
@@ -1345,6 +1377,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     autoSettleMenuItems,
     canShareWithGuest,
     canUnsettle,
+    missionActions,
     pinMenuItems,
     props.settlementSupported,
     reorderMenuItems,
@@ -1400,6 +1433,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         });
       }
       if (nativeEvent.event === "delete") handleDelete();
+      if (isMissionMenuId(nativeEvent.event)) {
+        void onMissionAction?.(nativeEvent.event, {
+          thread: { environmentId: thread.environmentId, threadId: thread.id },
+          place: mission,
+        });
+        return;
+      }
       if (nativeEvent.event === "snooze:custom") {
         setCustomSnoozeOpen(true);
         return;
@@ -1422,6 +1462,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [
       gt,
       m,
+      mission,
+      onMissionAction,
       onNewThreadOnBranch,
       thread,
       navigation,

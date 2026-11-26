@@ -15,8 +15,8 @@ export function useMissionPreferences() {
   return resolveMissionPreferences(AsyncResult.isSuccess(preferences) ? preferences.value : null);
 }
 
-/** The connected servers' Missions lists. Empty while Missions are off or no server serves them. */
-export function useMissionHosts(): ReadonlyArray<MissionHost> {
+/** The key of `missionsLiveAcross` for this client: stable while the mission lists tick. */
+export function useMissionsLiveKey(): string {
   const { enabled } = useMissionPreferences();
   const connected = useAtomValue(connectedEnvironmentIdsAtom);
   const configs = useServerConfigs();
@@ -24,16 +24,17 @@ export function useMissionHosts(): ReadonlyArray<MissionHost> {
     connected.map((environmentId) => ({ environmentId })),
     AuthOrchestrationReadScope,
   );
-  return useAtomValue(
-    serverEnvironment.missionsLiveAcross(
-      missionsLiveKey({
-        enabled,
-        connected,
-        readable,
-        descriptorOf: (environmentId) => configs.get(environmentId)?.environment,
-      }),
-    ),
-  );
+  return missionsLiveKey({
+    enabled,
+    connected,
+    readable,
+    descriptorOf: (environmentId) => configs.get(environmentId)?.environment,
+  });
+}
+
+/** The connected servers' Missions lists. Empty while Missions are off or no server serves them. */
+export function useMissionHosts(): ReadonlyArray<MissionHost> {
+  return useAtomValue(serverEnvironment.missionsLiveAcross(useMissionsLiveKey()));
 }
 
 /** Whether Settings offers Missions: some connected server says it serves them. */

@@ -219,6 +219,7 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
               : params.incomingShareId
           }
           draftId={draftId}
+          requestId={params.requestId}
         />
       )}
     </>
