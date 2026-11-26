@@ -855,10 +855,8 @@ export function buildThreadListV2Items(input: {
   /** Settled threads in scope that are not local (older settled threads not loaded). */
   readonly unloadedSettledCount?: number;
   readonly missionHosts?: ReadonlyArray<MissionHost>;
-  /** Mission threads `threads` leaves out, such as a task delegated from its lead's machine. */
-  readonly missionThreads?: ReadonlyArray<EnvironmentThreadShell>;
-  /** Environments done syncing: only there may a settled member without a shell hide. */
-  readonly liveEnvironmentIds?: ReadonlySet<EnvironmentId>;
+  readonly fallbackMissionThreadShells?: ReadonlyArray<EnvironmentThreadShell>;
+  readonly liveShellEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly settledMissingMissionLeadKeys?: ReadonlySet<string>;
   readonly collapsedMissions?: ReadonlySet<string>;
 }): ThreadListV2Layout {
@@ -1128,11 +1126,10 @@ function groupThreadListV2Missions(
       : new Set(listedThreads.map((thread) => `${thread.environmentId}:${thread.projectId}`)));
   const grouped = groupSidebarMissions(
     input.missionHosts ?? [],
-    // The list's own shells come last, so they win over the mission's quieter copies.
-    [...(input.missionThreads ?? []), ...input.threads],
+    [...(input.fallbackMissionThreadShells ?? []), ...input.threads],
     scope,
     input.settledMissingMissionLeadKeys,
-    input.liveEnvironmentIds,
+    input.liveShellEnvironmentIds,
   );
   const item = (thread: EnvironmentThreadShell): ThreadListV2Item => {
     const snoozed =

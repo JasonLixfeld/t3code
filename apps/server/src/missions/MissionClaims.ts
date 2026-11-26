@@ -127,12 +127,16 @@ export class MissionClaims extends Context.Service<
 
 const fail = (message: string) => Effect.fail(new MissionError({ message }));
 
-/** Takes each key's lock in the order given; callers sort the keys so no two can deadlock. */
+// The orchestrator locks a parent before its side chats and subagents, and side chats in id
+// order. Locking shallower threads first, each depth in id order, never crosses it.
 const withEachLock = <A, E, R>(
   lock: KeyedLock.KeyedLock<ThreadId>,
-  keys: ReadonlyArray<ThreadId>,
+  threads: ReadonlyArray<{ readonly threadId: ThreadId; readonly depth: number }>,
   effect: Effect.Effect<A, E, R>,
-) => keys.reduceRight((inner, key) => lock.withLock(key, inner), effect);
+) =>
+  threads
+    .toSorted((a, b) => a.depth - b.depth || (a.threadId < b.threadId ? -1 : 1))
+    .reduceRight((inner, { threadId }) => lock.withLock(threadId, inner), effect);
 
 const make = Effect.gen(function* () {
   const store = yield* MissionStore.MissionStore;
@@ -250,8 +254,23 @@ const make = Effect.gen(function* () {
     return yield* locks.withLock(first!, locks.withLock(second!, swap));
   });
 
-  // Ending a Mission releases its settled members with it. Each member's thread lock keeps a
-  // message from starting work there between its check and its release.
+  const lockDepth = Effect.fn("MissionClaims.lockDepth")(function* (threadId: ThreadId) {
+    const seen = new Set<ThreadId>();
+    let shell = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+    while (
+      shell !== null &&
+      (shell.lineage.sideChat === true || shell.lineage.relationshipToParent === "subagent") &&
+      shell.lineage.parentThreadId !== null &&
+      !seen.has(shell.lineage.parentThreadId)
+    ) {
+      seen.add(shell.lineage.parentThreadId);
+      shell = yield* threads
+        .getThreadShell(shell.lineage.parentThreadId)
+        .pipe(Effect.orElseSucceed(() => null));
+    }
+    return seen.size;
+  });
+
   const deleteMission = Effect.fn("MissionClaims.deleteMission")(function* (input: {
     readonly missionId: string;
     readonly lead: ThreadId;
@@ -260,21 +279,25 @@ const make = Effect.gen(function* () {
     const members = (yield* store.allClaims).flatMap((claim) =>
       claim.missionId === input.missionId && claim.role === "member" ? [claim.threadId] : [],
     );
-    const held = [...new Set([input.lead, ...members])].toSorted();
-    const end = Effect.gen(function* () {
+    const held = [...new Set([input.lead, ...members])];
+    const byId = held.map((threadId) => ({ threadId, depth: 0 }));
+    const byDepth = yield* Effect.forEach(held, (threadId) =>
+      Effect.map(lockDepth(threadId), (depth) => ({ threadId, depth })),
+    );
+    const recheckAndReleaseSettledMembers = Effect.gen(function* () {
       for (const threadId of members) {
         const shell = yield* readThread(threadId);
         if (shell !== null && shell.deletedAt === null && !isSettledMissionMember(shell)) {
           return yield* fail(MissionStore.MISSION_NOT_ENDED);
         }
       }
-      yield* store.deleteMission({ ...input, settledMembers: members });
+      yield* store.deleteMission({ ...input, checkedLocalMembers: members });
     });
     yield* withEachLock(
       locks,
-      held,
+      byId,
       Effect.gen(function* () {
-        yield* withEachLock(threadCommands, held, end);
+        yield* withEachLock(threadCommands, byDepth, recheckAndReleaseSettledMembers);
         for (const threadId of members) yield* workspaces.forget(threadId);
         for (const threadId of held) yield* syncTags(threadId);
       }),

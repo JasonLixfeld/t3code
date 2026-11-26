@@ -1085,10 +1085,9 @@ it.effect(
         settle(world, localMember);
         assert.deepEqual(settledOf(yield* listed), ["env-here/local"]);
 
-        // As a message dispatch does: under the thread's lock, it unsettles the thread.
         const holding = yield* Deferred.make<void>();
         const send = yield* Deferred.make<void>();
-        const sending = yield* Effect.forkChild(
+        const unsettleMemberUnderThreadLock = yield* Effect.forkChild(
           threadCommands.withLock(
             localMember.threadId,
             Deferred.succeed(holding, undefined).pipe(
@@ -1108,7 +1107,7 @@ it.effect(
         );
         yield* Effect.raceFirst(Deferred.await(asked), Fiber.await(ending));
         yield* Deferred.succeed(send, undefined);
-        yield* Fiber.join(sending);
+        yield* Fiber.join(unsettleMemberUnderThreadLock);
         assert.equal((yield* Fiber.join(ending)).message, MissionStore.MISSION_NOT_ENDED);
         assert.deepEqual(
           (yield* listed).claims.map((claim) => claim.threadId),
@@ -1119,6 +1118,37 @@ it.effect(
     );
   },
 );
+
+it.effect("ending a mission locks parents before their side chats and subagents", () => {
+  const parent = ref(HERE, "b-parent");
+  const sideChat = ref(HERE, "a-side");
+  const subagent = ref(HERE, "a-sub");
+  const world = makeWorld([lead, parent, sideChat, subagent]);
+  const childOf = (thread: ScopedThreadRef, isSideChat: boolean) => ({
+    parentThreadId: thread.threadId,
+    relationshipToParent: isSideChat ? null : "subagent",
+    rootThreadId: thread.threadId,
+    ...(isSideChat ? { sideChat: true } : {}),
+  });
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      for (const member of [parent, sideChat, subagent]) {
+        yield* missions.addMember({ missionId, member });
+        settle(world, member);
+      }
+      world.shell(sideChat, { lineage: childOf(parent, true) });
+      world.shell(subagent, { lineage: childOf(lead, false) });
+      const locked: Array<string> = [];
+      world.beforeThreadLock = (threadId) => Effect.sync(() => locked.push(threadId));
+      yield* missions.deleteMission({ missionId });
+      assert.deepEqual(locked, ["b-parent", "lead", "a-side", "a-sub"]);
+      assert.deepEqual((yield* listed).missions, []);
+    }),
+  );
+});
 
 it.effect(
   "a mission with an active member is not ended; once released, its lead stays a thread",
