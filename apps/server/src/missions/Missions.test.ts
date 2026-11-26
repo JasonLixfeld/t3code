@@ -3071,7 +3071,7 @@ it.effect("a started thread released before its join landed is not joined by a r
 });
 
 it.effect(
-  "a fork of a thread that leads or led a mission is told it leads none, and gets no lead tools",
+  "a fork of a thread that leads or led a mission is told it leads none, and does not inherit its lead authority",
   () => {
     const fork = ref(HERE, "fork");
     const forkOfFork = ref(HERE, "fork-of-fork");

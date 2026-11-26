@@ -407,10 +407,11 @@ const leadHere = {
 };
 
 it.effect(
-  "over /mcp, only a linked environment's session lists t3_mission_tag, and every agent the lead tools",
+  "over /mcp, only a linked environment's session lists t3_mission_tag, and every agent the lead tools, which work once it leads",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const leads = new Set<string>([leadHere.thread.threadId]);
         const settingsContext = yield* Layer.build(ServerSettings.layerTest());
         // On, as on any machine that links: the tool must still stay away from agents.
         yield* Context.get(settingsContext, ServerSettings.ServerSettingsService).updateSettings({
@@ -432,11 +433,22 @@ it.effect(
               noWorkspace,
               Layer.mock(Missions.Missions)({
                 ledBy: (threadId) =>
-                  Effect.succeed(
-                    threadId === leadHere.thread.threadId
-                      ? ({ missionId: SHIP } as never)
+                  Effect.sync(() =>
+                    leads.has(threadId)
+                      ? {
+                          missionId: SHIP,
+                          name: "Ship",
+                          leadThreadId: threadId,
+                          createdAt: "",
+                          prompt: "",
+                        }
                       : undefined,
                   ),
+                roster: () => Effect.succeed([]),
+                memberStatuses: () => Effect.succeed([]),
+                hasPriorWork: () => Effect.succeed(false),
+                addMember: () => Effect.succeed("joined" as const),
+                releaseMember: () => Effect.succeed("released" as const),
               }),
             ),
           ),
@@ -472,75 +484,104 @@ it.effect(
           Layer.build,
         );
         const httpClient = yield* HttpClient.HttpClient;
-        const rpc = (token: string, method: string, params: object) =>
-          Effect.gen(function* () {
-            const headers = {
-              accept: "application/json, text/event-stream",
-              authorization: `Bearer ${token}`,
-            };
-            const initialize = yield* httpClient.post("/mcp", {
-              headers,
-              body: HttpBody.text(
-                `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
-                "application/json",
-              ),
-            });
-            const response = yield* httpClient.post("/mcp", {
-              headers: {
-                ...headers,
-                "mcp-session-id": initialize.headers["mcp-session-id"]!,
-                "mcp-protocol-version": "2025-06-18",
-              },
-              body: HttpBody.text(
-                JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }),
-                "application/json",
-              ),
-            });
-            const text = yield* response.text;
-            const messages = text.startsWith("data:")
-              ? text
-                  .split("\n")
-                  .filter((line) => line.startsWith("data:"))
-                  .map((line) => JSON.parse(line.slice(5)) as { readonly id?: number })
-              : [JSON.parse(text) as { readonly id?: number }];
-            return messages.find((message) => message.id === 2) as {
-              readonly result?: {
-                readonly tools?: ReadonlyArray<{ readonly name: string }>;
-                readonly structuredContent?: { readonly tools?: ReadonlyArray<{ name: string }> };
-              };
-            };
+        type Answer = {
+          readonly result?: {
+            readonly isError?: boolean;
+            readonly tools?: ReadonlyArray<{ readonly name: string }>;
+            readonly structuredContent?: { readonly tools?: ReadonlyArray<{ name: string }> };
+          };
+          readonly error?: unknown;
+        };
+        /** One MCP session, initialized once, that every later request reuses. */
+        const session = Effect.fn(function* (token: string) {
+          const headers = {
+            accept: "application/json, text/event-stream",
+            authorization: `Bearer ${token}`,
+          };
+          const initialize = yield* httpClient.post("/mcp", {
+            headers,
+            body: HttpBody.text(
+              `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+              "application/json",
+            ),
           });
-        const listed = (token: string) =>
-          rpc(token, "tools/list", {}).pipe(
+          const sessionId = initialize.headers["mcp-session-id"]!;
+          let id = 1;
+          const rpc = (method: string, params: object) =>
+            Effect.gen(function* () {
+              id += 1;
+              const sent = id;
+              const response = yield* httpClient.post("/mcp", {
+                headers: {
+                  ...headers,
+                  "mcp-session-id": sessionId,
+                  "mcp-protocol-version": "2025-06-18",
+                },
+                body: HttpBody.text(
+                  JSON.stringify({ jsonrpc: "2.0", id: sent, method, params }),
+                  "application/json",
+                ),
+              });
+              const text = yield* response.text;
+              const messages = text.startsWith("data:")
+                ? text
+                    .split("\n")
+                    .filter((line) => line.startsWith("data:"))
+                    .map((line) => JSON.parse(line.slice(5)) as { readonly id?: number })
+                : [JSON.parse(text) as { readonly id?: number }];
+              return messages.find((message) => message.id === sent) as Answer;
+            });
+          const listed = rpc("tools/list", {}).pipe(
             Effect.map((body) => body.result?.tools?.map((tool) => tool.name) ?? []),
           );
-
-        assert.notInclude(yield* listed("agentToken"), "t3_mission_tag");
-        const searched = yield* rpc("agentToken", "tools/call", {
-          name: "tool_search",
-          arguments: { query: "t3_mission_tag mission tag" },
+          return { rpc, listed };
         });
-        assert.notInclude(
-          (searched.result?.structuredContent?.tools ?? []).map((tool) => tool.name),
-          "t3_mission_tag",
-        );
-        assert.notInclude(yield* listed("cliToken"), "t3_mission_tag");
-        assert.include(yield* listed("linkToken"), "t3_mission_tag");
+        const leadCalls = [
+          ["t3_mission_roster", {}],
+          ["t3_mission_add", { threadRef: { threadId: "thread:other" } }],
+          ["t3_mission_release", { threadRef: { threadId: "thread:other" } }],
+        ] as const;
 
-        const lead = yield* listed("leadToken");
+        const agent = yield* session("agentToken");
+        const link = yield* session("linkToken");
+        const cli = yield* session("cliToken");
+        assert.notInclude(yield* agent.listed, "t3_mission_tag");
+        assert.notInclude(yield* cli.listed, "t3_mission_tag");
+        assert.include(yield* link.listed, "t3_mission_tag");
+        const searched = yield* agent.rpc("tools/call", {
+          name: "tool_search",
+          arguments: { query: "mission" },
+        });
+        const found = (searched.result?.structuredContent?.tools ?? []).map((tool) => tool.name);
+        assert.includeMembers(found, LEAD_TOOLS);
+        assert.notInclude(found, "t3_mission_tag");
+
+        const lead = yield* (yield* session("leadToken")).listed;
         assert.includeMembers(lead, LEAD_TOOLS);
         assert.notInclude(lead, "t3_mission_tag");
-        // A thread that becomes the lead mid-session needs no new tool list.
-        assert.includeMembers(yield* listed("agentToken"), LEAD_TOOLS);
-        for (const token of ["linkToken", "cliToken"]) {
-          const others = yield* listed(token);
+        for (const outside of [link, cli]) {
+          const others = yield* outside.listed;
           for (const tool of LEAD_TOOLS) assert.notInclude(others, tool);
+          for (const [name, args] of leadCalls) {
+            const answer = yield* outside.rpc("tools/call", { name, arguments: args });
+            assert.include(JSON.stringify(answer), `Tool '${name}' not found`);
+          }
         }
-        const refused = yield* rpc("agentToken", "tools/call", {
+
+        // The agent is listed the lead tools before it leads, and refused them.
+        assert.includeMembers(yield* agent.listed, LEAD_TOOLS);
+        const refused = yield* agent.rpc("tools/call", {
           name: "t3_mission_roster",
           arguments: {},
         });
         assert.include(JSON.stringify(refused), "This thread leads no mission.");
+        // Made the lead, the same session calls each with no new list.
+        leads.add(agentHere.thread.threadId);
+        for (const [name, args] of leadCalls) {
+          const answer = yield* agent.rpc("tools/call", { name, arguments: args });
+          assert.isUndefined(answer.error, name);
+          assert.notEqual(answer.result?.isError, true, `${name}: ${JSON.stringify(answer)}`);
+        }
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
