@@ -67,7 +67,7 @@ import { MEMBER_REPOSITORIES_MAX, MemberWorkspaces } from "./MemberWorkspaces.ts
 import * as MissionClaims from "./MissionClaims.ts";
 import { missionPromptText } from "./missionStatus.ts";
 import * as MissionTurnContexts from "./MissionTurnContexts.ts";
-import { releaseDeletedThreads } from "./MissionThreadDeletions.ts";
+import { followMemberThreads } from "./MissionThreadDeletions.ts";
 import { afterAnswer, afterMiss, newTombstoneCheck } from "./tombstoneChecks.ts";
 import * as MissionStore from "./MissionStore.ts";
 import * as Missions from "./Missions.ts";
@@ -420,6 +420,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       SqlClient.SqlClient
     >,
     beforeShellRead: (_threadId: ThreadId): Effect.Effect<void> => Effect.void,
+    beforeThreadLock: (_threadId: ThreadId): Effect.Effect<void> => Effect.void,
     beforeMissionsRead: Effect.void as Effect.Effect<void>,
     beforeReleasesRead: Effect.void as Effect.Effect<void>,
     lineageReads: 0,
@@ -490,6 +491,7 @@ const withMissions = <A, E>(
       | MissionStore.MissionStore
       | MissionClaims.MissionClaims
       | MissionTurnContexts.MissionTurnContexts
+      | ThreadCommandExecutor.ThreadCommandExecutor
       | Scope.Scope
     >
   >
@@ -556,12 +558,25 @@ const withMissions = <A, E>(
           Layer.mergeAll(
             world.threadsOn(environmentId),
             NodeCrypto.layer,
-            ThreadCommandExecutor.layer,
             world.workspacesLayer,
             Layer.mock(Project.ProjectService)({
               getShell: () =>
                 Effect.succeedSome({ title: environmentId === LAPTOP ? "api" : "web" } as never),
             }),
+          ),
+        ),
+        Layer.provideMerge(
+          Layer.effect(
+            ThreadCommandExecutor.ThreadCommandExecutor,
+            Effect.map(ThreadCommandExecutor.make, (real) =>
+              ThreadCommandExecutor.ThreadCommandExecutor.of({
+                ...real,
+                withLock: (threadId, effect) =>
+                  Effect.suspend(() => world.beforeThreadLock(threadId)).pipe(
+                    Effect.andThen(real.withLock(threadId, effect)),
+                  ),
+              }),
+            ),
           ),
         ),
       );
@@ -954,29 +969,180 @@ const deleteRefusal = (missionId: string) =>
     ),
   );
 
-it.effect("a mission with a member is not deleted; once released, its lead stays a thread", () => {
-  const world = makeWorld([lead, localMember]);
+const otherMember = ref(HERE, "other");
+const settle = (world: ReturnType<typeof makeWorld>, thread: ScopedThreadRef) =>
+  world.shell(thread, { settledOverride: "settled" });
+const settledOf = (snapshot: MissionsSnapshot) =>
+  snapshot.missions[0]?.members.flatMap((member) =>
+    member.settled === true ? [keyOf(member.ref)] : [],
+  );
+
+it.effect("each settled or archived member here is marked settled, and none elsewhere is", () => {
+  const world = makeWorld([lead, localMember, otherMember, laptopMember]);
   return withMissions(
     world,
     Effect.gen(function* () {
       const missions = yield* Missions.Missions;
-      const mission = yield* createOne;
-      yield* missions.addMember({ missionId: mission.missionId, member: localMember });
-      assert.equal(
-        yield* deleteRefusal(mission.missionId),
-        "Its threads must leave this mission, and its pending adds must be cleared, before you delete it.",
+      const until = yield* openSidebar;
+      const { missionId } = yield* createOne;
+      for (const member of [localMember, otherMember, laptopMember]) {
+        yield* missions.addMember({ missionId, member });
+      }
+      settle(world, localMember);
+      world.archive(otherMember);
+      settle(world, laptopMember);
+      world.archive(lead);
+      assert.deepEqual(settledOf(yield* listed), ["env-here/local", "env-here/other"]);
+
+      world.shell(localMember, { settledOverride: null });
+      yield* followMemberThreads(
+        Stream.make({ type: "thread.unsettled", threadId: localMember.threadId }),
+        HERE,
       );
-      assert.equal((yield* listed).missions.length, 1);
-      yield* missions.releaseMember({ missionId: mission.missionId, member: localMember });
-      yield* missions.deleteMission({ missionId: mission.missionId });
-      const after = yield* listed;
-      assert.deepEqual(after.missions, []);
-      assert.deepEqual(after.claims, []);
-      assert.deepEqual(world.tags(lead), [WAS_TAG]);
-      assert.include(yield* deleteRefusal(mission.missionId), "not found");
+      yield* until((snapshot) => settledOf(snapshot)?.join() === "env-here/other");
     }),
   );
 });
+
+it.effect("a mission whose members here are all settled ends, and frees them as threads", () => {
+  const world = makeWorld([lead, localMember, otherMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: localMember });
+      yield* missions.addMember({ missionId, member: otherMember });
+      settle(world, localMember);
+      world.archive(otherMember);
+      yield* missions.deleteMission({ missionId });
+      const after = yield* listed;
+      assert.deepEqual(after.missions, []);
+      assert.deepEqual(after.claims, []);
+      assert.deepEqual(
+        [world.tags(lead), world.tags(localMember), world.tags(otherMember)],
+        [[WAS_TAG], [WAS_TAG], [WAS_TAG]],
+      );
+      const store = yield* MissionStore.MissionStore;
+      assert.isUndefined(yield* store.claim(localMember.threadId));
+    }),
+  );
+});
+
+it.effect("one active member keeps its mission from ending, and frees none of the others", () => {
+  const world = makeWorld([lead, localMember, otherMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: localMember });
+      yield* missions.addMember({ missionId, member: otherMember });
+      settle(world, localMember);
+      assert.equal(yield* deleteRefusal(missionId), MissionStore.MISSION_NOT_ENDED);
+      const after = yield* listed;
+      assert.deepEqual(
+        after.claims.map((claim) => claim.threadId),
+        [lead.threadId, localMember.threadId, otherMember.threadId],
+      );
+      assert.deepEqual([world.tags(localMember), world.tags(otherMember)], [[TAG], [TAG]]);
+    }),
+  );
+});
+
+it.effect("a settled member on another machine keeps its mission from ending", () => {
+  const world = makeWorld([lead, localMember, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: localMember });
+      yield* missions.addMember({ missionId, member: laptopMember });
+      settle(world, localMember);
+      settle(world, laptopMember);
+      assert.equal(yield* deleteRefusal(missionId), MissionStore.MISSION_NOT_ENDED);
+      assert.deepEqual(
+        (yield* listed).claims.map((claim) => claim.threadId),
+        [lead.threadId, localMember.threadId],
+      );
+      assert.equal((yield* laptopClaims(world)).length, 1);
+    }),
+  );
+});
+
+it.effect(
+  "work that starts on a settled member while its mission ends either waits or stops the end",
+  () => {
+    const world = makeWorld([lead, localMember]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        const { missionId } = yield* createOne;
+        yield* missions.addMember({ missionId, member: localMember });
+        settle(world, localMember);
+        assert.deepEqual(settledOf(yield* listed), ["env-here/local"]);
+
+        // As a message dispatch does: under the thread's lock, it unsettles the thread.
+        const holding = yield* Deferred.make<void>();
+        const send = yield* Deferred.make<void>();
+        const sending = yield* Effect.forkChild(
+          threadCommands.withLock(
+            localMember.threadId,
+            Deferred.succeed(holding, undefined).pipe(
+              Effect.andThen(Deferred.await(send)),
+              Effect.andThen(
+                Effect.sync(() => world.shell(localMember, { settledOverride: null })),
+              ),
+            ),
+          ),
+        );
+        yield* Deferred.await(holding);
+        const asked = yield* Deferred.make<void>();
+        world.beforeThreadLock = (threadId) =>
+          threadId === localMember.threadId ? Deferred.succeed(asked, undefined) : Effect.void;
+        const ending = yield* Effect.forkChild(
+          missions.deleteMission({ missionId }).pipe(Effect.flip),
+        );
+        yield* Effect.raceFirst(Deferred.await(asked), Fiber.await(ending));
+        yield* Deferred.succeed(send, undefined);
+        yield* Fiber.join(sending);
+        assert.equal((yield* Fiber.join(ending)).message, MissionStore.MISSION_NOT_ENDED);
+        assert.deepEqual(
+          (yield* listed).claims.map((claim) => claim.threadId),
+          [lead.threadId, localMember.threadId],
+        );
+        assert.deepEqual([world.tags(lead), world.tags(localMember)], [[TAG], [TAG]]);
+      }),
+    );
+  },
+);
+
+it.effect(
+  "a mission with an active member is not ended; once released, its lead stays a thread",
+  () => {
+    const world = makeWorld([lead, localMember]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const mission = yield* createOne;
+        yield* missions.addMember({ missionId: mission.missionId, member: localMember });
+        assert.equal(yield* deleteRefusal(mission.missionId), MissionStore.MISSION_NOT_ENDED);
+        assert.equal((yield* listed).missions.length, 1);
+        yield* missions.releaseMember({ missionId: mission.missionId, member: localMember });
+        yield* missions.deleteMission({ missionId: mission.missionId });
+        const after = yield* listed;
+        assert.deepEqual(after.missions, []);
+        assert.deepEqual(after.claims, []);
+        assert.deepEqual(world.tags(lead), [WAS_TAG]);
+        assert.include(yield* deleteRefusal(mission.missionId), "not found");
+      }),
+    );
+  },
+);
 
 it.effect(
   "an add here under way holds off its mission's delete, which then finds the member",
@@ -1046,7 +1212,7 @@ it.effect("a join that landed unanswered is released once its deleted mission's 
           Effect.flip,
           Effect.map((error) => error.message),
         ),
-        "was deleted",
+        "has ended",
       );
     }),
   );
@@ -1302,7 +1468,7 @@ it.effect(
         const store = yield* MissionStore.MissionStore;
         const started = { ...localMember, missionId: mission.missionId };
         yield* store.startJoin(started, "intent-1");
-        yield* releaseDeletedThreads(
+        yield* followMemberThreads(
           Stream.make(
             { type: "thread.deleted", threadId: localMember.threadId },
             { type: "thread.deleted", threadId: lead.threadId },
@@ -1330,10 +1496,7 @@ it.effect("a mission is not deleted while an add to another machine waits for it
       world.laptop.mode = "lostReply";
       yield* missions.addMember({ missionId: mission.missionId, member: laptopMember });
       assert.equal(stateOf(yield* listed, laptopMember), "add-pending");
-      assert.equal(
-        yield* deleteRefusal(mission.missionId),
-        "Its threads must leave this mission, and its pending adds must be cleared, before you delete it.",
-      );
+      assert.equal(yield* deleteRefusal(mission.missionId), MissionStore.MISSION_NOT_ENDED);
       assert.deepEqual(world.tags(lead), [TAG]);
     }),
   );

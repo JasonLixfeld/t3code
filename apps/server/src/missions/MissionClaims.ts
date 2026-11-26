@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   CommandId,
+  isSettledMissionMember,
   type MemberDetail,
   MissionError,
   missionTag,
@@ -126,6 +127,13 @@ export class MissionClaims extends Context.Service<
 
 const fail = (message: string) => Effect.fail(new MissionError({ message }));
 
+/** Takes each key's lock in the order given; callers sort the keys so no two can deadlock. */
+const withEachLock = <A, E, R>(
+  lock: KeyedLock.KeyedLock<ThreadId>,
+  keys: ReadonlyArray<ThreadId>,
+  effect: Effect.Effect<A, E, R>,
+) => keys.reduceRight((inner, key) => lock.withLock(key, inner), effect);
+
 const make = Effect.gen(function* () {
   const store = yield* MissionStore.MissionStore;
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -242,17 +250,36 @@ const make = Effect.gen(function* () {
     return yield* locks.withLock(first!, locks.withLock(second!, swap));
   });
 
-  const deleteMission = Effect.fn("MissionClaims.deleteMission")(
-    function* (input: {
-      readonly missionId: string;
-      readonly lead: ThreadId;
-      readonly machines: ReadonlyArray<EnvironmentId>;
-    }) {
-      yield* threadCommands.withLock(input.lead, store.deleteMission(input));
-      yield* syncTags(input.lead);
-    },
-    (effect, input) => locks.withLock(input.lead, effect),
-  );
+  // Ending a Mission releases its settled members with it. Each member's thread lock keeps a
+  // message from starting work there between its check and its release.
+  const deleteMission = Effect.fn("MissionClaims.deleteMission")(function* (input: {
+    readonly missionId: string;
+    readonly lead: ThreadId;
+    readonly machines: ReadonlyArray<EnvironmentId>;
+  }) {
+    const members = (yield* store.allClaims).flatMap((claim) =>
+      claim.missionId === input.missionId && claim.role === "member" ? [claim.threadId] : [],
+    );
+    const held = [...new Set([input.lead, ...members])].toSorted();
+    const end = Effect.gen(function* () {
+      for (const threadId of members) {
+        const shell = yield* readThread(threadId);
+        if (shell !== null && shell.deletedAt === null && !isSettledMissionMember(shell)) {
+          return yield* fail(MissionStore.MISSION_NOT_ENDED);
+        }
+      }
+      yield* store.deleteMission({ ...input, settledMembers: members });
+    });
+    yield* withEachLock(
+      locks,
+      held,
+      Effect.gen(function* () {
+        yield* withEachLock(threadCommands, held, end);
+        for (const threadId of members) yield* workspaces.forget(threadId);
+        for (const threadId of held) yield* syncTags(threadId);
+      }),
+    );
+  });
 
   const join = Effect.fn("MissionClaims.join")(
     function* <E>(owner: string, input: JoinInput, access?: ThreadAccess<E>) {
