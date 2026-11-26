@@ -95,6 +95,7 @@ const TAG = "mission:0123456789ab:One";
 const WAS_TAG = "mission-was:0123456789ab:One";
 
 type Claims = MissionClaims.MissionClaims["Service"];
+type HeardUpdate = Parameters<MissionStore.MissionStore["Service"]["markMissionUpdateHeard"]>[0];
 type ClaimKind = "join" | "release" | "list" | "rename" | "workspaces";
 
 const mcpClient = McpSchema.McpServerClient.of({
@@ -429,6 +430,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     workspacesLayer,
     beforeLeadWrite: Effect.void as Effect.Effect<void>,
     afterSettle: Effect.void as Effect.Effect<void>,
+    afterHeard: (_update: HeardUpdate): Effect.Effect<void> => Effect.void,
     afterMissionRenamed: Effect.void as Effect.Effect<void>,
     threadsOn,
     layer: Layer.mergeAll(
@@ -477,8 +479,31 @@ const startHeardInWait = Effect.fnUntraced(function* (
 });
 const markingDone = (marking: Deferred.Deferred<Effect.Effect<void>>) =>
   Effect.flatten(Deferred.await(marking));
-const heardInWait = (lead: ThreadId, member: ScopedThreadRef, runId: string) =>
+const heardInWaitWithoutWrite = (lead: ThreadId, member: ScopedThreadRef, runId: string) =>
   Effect.flatMap(startHeardInWait(lead, member, runId), markingDone);
+
+const heardWritten = Effect.fnUntraced(function* (
+  world: ReturnType<typeof makeWorld>,
+  member: ScopedThreadRef,
+  runId: string,
+) {
+  const written = yield* Deferred.make<void>();
+  world.afterHeard = (update) =>
+    keyOf(update) === keyOf(member) && update.source === `run:${runId}`
+      ? Effect.asVoid(Deferred.succeed(written, undefined))
+      : Effect.void;
+  return Deferred.await(written);
+});
+const heardInWait = Effect.fnUntraced(function* (
+  world: ReturnType<typeof makeWorld>,
+  lead: ThreadId,
+  member: ScopedThreadRef,
+  runId: string,
+) {
+  const written = yield* heardWritten(world, member, runId);
+  yield* (yield* Missions.Missions).heardInWait(lead, member, runId);
+  yield* written;
+});
 
 const withMissions = <A, E>(
   world: ReturnType<typeof makeWorld>,
@@ -540,6 +565,10 @@ const withMissions = <A, E>(
                   ),
                 settleAdd: (...args) =>
                   real.settleAdd(...args).pipe(Effect.tap(() => world.afterSettle)),
+                markMissionUpdateHeard: (update) =>
+                  real
+                    .markMissionUpdateHeard(update)
+                    .pipe(Effect.tap(() => world.afterHeard(update))),
                 renameMission: (input) =>
                   real
                     .renameMission(input)
@@ -4034,9 +4063,10 @@ it.effect(
 
 it.effect(
   "a lead's wait that saw a member's run complete keeps that run's completion from a wake, before or after it is recorded, and nothing else",
-  () =>
-    withMissions(
-      makeWorld([lead, localMember, laptopMember]),
+  () => {
+    const world = makeWorld([lead, localMember, laptopMember]);
+    return withMissions(
+      world,
       Effect.gen(function* () {
         const store = yield* MissionStore.MissionStore;
         const { missionId } = yield* createOne;
@@ -4048,23 +4078,24 @@ it.effect(
         yield* update(laptopMember, "r3", "completed");
         yield* update(localMember, "r4", "completed");
         yield* update(other, "r7", "completed");
-        yield* heardInWait(lead.threadId, localMember, "r1");
-        yield* heardInWait(lead.threadId, localMember, "r2");
-        yield* heardInWait(lead.threadId, laptopMember, "r3");
-        yield* heardInWait(lead.threadId, localMember, "r9");
-        yield* heardInWait(lead.threadId, localMember, "r7");
-        yield* heardInWait(localMember.threadId, localMember, "r4");
-        yield* heardInWait(lead.threadId, laptopMember, "r10");
+        yield* heardInWait(world, lead.threadId, localMember, "r1");
+        yield* heardInWait(world, lead.threadId, localMember, "r2");
+        yield* heardInWait(world, lead.threadId, laptopMember, "r3");
+        yield* heardInWait(world, lead.threadId, localMember, "r9");
+        yield* heardInWait(world, lead.threadId, localMember, "r7");
+        yield* heardInWaitWithoutWrite(localMember.threadId, localMember, "r4");
+        yield* heardInWait(world, lead.threadId, laptopMember, "r10");
         yield* update(laptopMember, "r10", "completed");
         const left = ["local run:r2", "local run:r4", "other run:r7"];
         const told = Effect.map(store.takeMissionUpdates(missionId, lead.threadId), ({ updates }) =>
           updates.map((row) => `${row.threadId} ${row.source}`),
         );
         assert.deepEqual(yield* told, left);
-        yield* heardInWait(lead.threadId, localMember, "r4");
+        yield* heardInWait(world, lead.threadId, localMember, "r4");
         assert.deepEqual(yield* told, left);
       }),
-    ),
+    );
+  },
 );
 
 it.effect("a wait answered as its lead handed over keeps the completion for the new lead", () => {
@@ -4096,7 +4127,7 @@ it.effect("a wait answered as its lead handed over keeps the completion for the 
               .pipe(Effect.orDie, Effect.asVoid)
           : Effect.void,
       );
-      yield* heardInWait(lead.threadId, localMember, "r1");
+      yield* heardInWaitWithoutWrite(lead.threadId, localMember, "r1");
       world.beforeMissionsRead = Effect.void;
       assert.equal(reads, 2);
       const { updates } = yield* store.takeMissionUpdates(missionId, next.threadId);
@@ -4130,19 +4161,18 @@ it.effect("a lead's wait does not wait on the mission lock to mark what it saw",
         )
         .pipe(Effect.forkChild);
       yield* Deferred.await(locked);
-      const call = yield* startHeardInWait(lead.threadId, localMember, "r1").pipe(
-        Effect.timeoutOption("1 second"),
-        Effect.forkChild,
-      );
+      const written = yield* heardWritten(world, localMember, "r1");
+      const call = yield* missions
+        .heardInWait(lead.threadId, localMember, "r1")
+        .pipe(Effect.timeoutOption("1 second"), Effect.forkChild);
       yield* TestClock.adjust("1 second");
-      const marking = yield* Fiber.join(call);
-      assert.isTrue(Option.isSome(marking), "The wait waited on the mission lock.");
+      assert.isTrue(Option.isSome(yield* Fiber.join(call)), "The wait waited on the mission lock.");
       yield* Deferred.succeed(release, undefined);
-      yield* markingDone(Option.getOrThrow(marking));
+      yield* written;
       const { updates } = yield* store.takeMissionUpdates(missionId, lead.threadId);
       assert.deepEqual(updates, []);
       world.beforeMissionsRead = Effect.die("The mission store is unreadable.");
-      yield* heardInWait(lead.threadId, localMember, "r2");
+      yield* heardInWaitWithoutWrite(lead.threadId, localMember, "r2");
       world.beforeMissionsRead = Effect.void;
     }),
   );

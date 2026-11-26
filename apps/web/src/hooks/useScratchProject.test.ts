@@ -69,7 +69,7 @@ describe("scratchEnvironmentId", () => {
 });
 
 describe("openScratchProject", () => {
-  it("hands its caller's abort signal to the command, so an abort frees the machine's queue", async () => {
+  it("interrupts the open command and returns null when its caller aborts", async () => {
     const controller = new AbortController();
     const opening = actions(local, "/local/scratch").openScratchProject(
       local,

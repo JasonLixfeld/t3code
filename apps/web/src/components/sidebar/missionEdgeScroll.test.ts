@@ -53,9 +53,9 @@ describe("createMissionEdgeScroll", () => {
     const list = viewport();
     scroll.hold(list, 100, () => {});
     scroll.stop();
+    expect(frames.size).toBe(0);
     runFrame(5);
     expect(list.scrollTop).toBe(0);
-    expect(frames.size).toBe(0);
     vi.spyOn(performance, "now").mockReturnValue(1_000);
     scroll.hold(list, 100, () => {});
     runFrame(1_005);
