@@ -1453,6 +1453,12 @@ it.effect("a thread behind a link below full access is refused before anything i
         .addMember({ missionId: mission.missionId, member: fenced })
         .pipe(Effect.flip);
       assert.include(refused.message, "The link to Fenced box has auto access");
+      // A session that may not read access is refused without the link's access level.
+      const withheld = yield* missions
+        .addMember({ missionId: mission.missionId, member: fenced }, undefined, false)
+        .pipe(Effect.flip);
+      assert.include(withheld.message, "The link to Fenced box cannot add its threads");
+      assert.notInclude(withheld.message, "auto");
       assert.deepEqual(world.laptop.calls, []);
     }),
   );

@@ -2452,7 +2452,14 @@ export const layerWsRpc = (
             prompts: input.omitPrompts !== true,
           }),
         [WS_METHODS.missionsCreate]: (input) => missions.create(input),
-        [WS_METHODS.missionsAddMember]: (input) => Effect.asVoid(missions.addMember(input)),
+        [WS_METHODS.missionsAddMember]: (input) =>
+          Effect.asVoid(
+            missions.addMember(
+              input,
+              undefined,
+              currentSession.scopes.includes(AuthAccessReadScope),
+            ),
+          ),
         [WS_METHODS.missionsReleaseMember]: (input) => Effect.asVoid(missions.releaseMember(input)),
         [WS_METHODS.missionsForgetMember]: (input) => missions.forgetMember(input),
         [WS_METHODS.missionsLeave]: (input) => missions.leaveHere(input.threadId, input.missionId),

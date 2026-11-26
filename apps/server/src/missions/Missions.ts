@@ -127,6 +127,8 @@ export class Missions extends Context.Service<
         readonly noBrief?: true | undefined;
       },
       asLead?: ThreadId,
+      /** False for a session that may not read access, which is not told a link's access level. */
+      seesAccess?: boolean,
     ) => Effect.Effect<"joined" | "pending", MissionError>;
     /** A thread on another machine counts as having some: its lead cannot see its messages. */
     readonly hasPriorWork: (
@@ -529,7 +531,10 @@ const make = Effect.gen(function* () {
     Effect.forkIn(background),
   );
 
-  const linkTo = Effect.fn("Missions.linkTo")(function* (environmentId: EnvironmentId) {
+  const linkTo = Effect.fn("Missions.linkTo")(function* (
+    environmentId: EnvironmentId,
+    seesAccess = true,
+  ) {
     if (!(yield* links.enabled)) return yield* fail(PeerLinks.LINKED_ENVIRONMENTS_OFF);
     const link = yield* links
       .get(environmentId)
@@ -548,7 +553,9 @@ const make = Effect.gen(function* () {
     const { label, access, expiresAt } = link.value;
     if (access !== "full-access") {
       return yield* fail(
-        `The link to ${label} has ${access} access. A link below full access may change only threads it started, so relink ${label} with full access to use its threads in a mission.`,
+        seesAccess
+          ? `The link to ${label} has ${access} access. A link below full access may change only threads it started, so relink ${label} with full access to use its threads in a mission.`
+          : `The link to ${label} cannot add its threads to a mission. Someone who manages this machine's access can link it again with full access.`,
       );
     }
     if (DateTime.isLessThanOrEqualTo(expiresAt, yield* DateTime.now)) {
@@ -1191,6 +1198,7 @@ const make = Effect.gen(function* () {
     },
     asLead: ThreadId | undefined,
     intentId: string,
+    seesAccess = true,
   ) {
     const mission = yield* missionNamed(input.missionId);
     const { environmentId } = input.member;
@@ -1235,7 +1243,8 @@ const make = Effect.gen(function* () {
               const reach = yield* reachOf(mission.missionId, asLead, input.member);
               yield* checkHere(input.member, reach);
               // A link this machine cannot use refuses the add here, before anything is written.
-              const linkId = environmentId === here ? "" : (yield* linkTo(environmentId)).linkId;
+              const linkId =
+                environmentId === here ? "" : (yield* linkTo(environmentId, seesAccess)).linkId;
               const add = {
                 ...input.member,
                 missionId: mission.missionId,
@@ -1278,8 +1287,14 @@ const make = Effect.gen(function* () {
       readonly noBrief?: true | undefined;
     },
     asLead?: ThreadId,
+    seesAccess = true,
   ) {
-    const added = yield* addWithIntent(input, asLead, yield* random.uuidV4().pipe(Effect.orDie));
+    const added = yield* addWithIntent(
+      input,
+      asLead,
+      yield* random.uuidV4().pipe(Effect.orDie),
+      seesAccess,
+    );
     // A new intent was never spent, so only a replayed start meets that answer.
     return added === "spent" ? yield* fail("That thread left this mission.") : added;
   });
