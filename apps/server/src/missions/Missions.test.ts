@@ -2197,8 +2197,11 @@ it.effect("the list a client watches stays small, however long a mission's promp
       assert.isBelow(wireBytes(first), 600);
       assert.isBelow(wireBytes(update), 800);
       assert.isUndefined(update.missions[0]?.prompt);
+      assert.isTrue(update.promptsOmitted);
       assert.equal((yield* missions.prompt(mission.missionId)).prompt.length, 10_000);
-      assert.equal((yield* listed).missions[0]?.prompt?.length, MISSION_PROMPT_MAX_LENGTH);
+      const older = yield* listed;
+      assert.equal(older.missions[0]?.prompt?.length, MISSION_PROMPT_MAX_LENGTH);
+      assert.isUndefined(older.promptsOmitted);
     }),
   );
 });

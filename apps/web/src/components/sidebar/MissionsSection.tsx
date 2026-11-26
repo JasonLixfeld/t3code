@@ -255,9 +255,10 @@ export function useMissionMenu() {
         reportFailure(gt("Could not leave the mission"), result);
         return result._tag === "Success" ? [lead] : [];
       }
-      const mission = hosts
-        .find((host) => host.environmentId === target.environmentId)
-        ?.snapshot.missions.find((candidate) => candidate.missionId === target.missionId);
+      const snapshot = hosts.find((host) => host.environmentId === target.environmentId)?.snapshot;
+      const mission = snapshot?.missions.find(
+        (candidate) => candidate.missionId === target.missionId,
+      );
       if (target.action === "new-thread" && mission !== undefined) {
         openCommandPalette({
           open: "new-thread-in",
@@ -288,7 +289,11 @@ export function useMissionMenu() {
         return [];
       }
       if (target.action === "prompt" && mission !== undefined) {
-        registry.set(missionPromptTargetAtom, { host: target.environmentId, mission });
+        registry.set(missionPromptTargetAtom, {
+          host: target.environmentId,
+          mission,
+          promptsOmitted: snapshot?.promptsOmitted === true,
+        });
         return [];
       }
       if (target.action === "release") {
@@ -322,6 +327,7 @@ export function useMissionMenu() {
 const missionPromptTargetAtom = Atom.make<{
   readonly host: EnvironmentId;
   readonly mission: Mission;
+  readonly promptsOmitted: boolean;
 } | null>(null).pipe(Atom.keepAlive, Atom.withLabel("mission-prompt-target"));
 
 export function MissionPromptDialog() {
@@ -332,7 +338,12 @@ export function MissionPromptDialog() {
     <Dialog open={target !== null} onOpenChange={(open) => (open ? undefined : close())}>
       <DialogPopup className="max-w-xl">
         {target === null ? null : (
-          <MissionPromptForm host={target.host} mission={target.mission} onClose={close} />
+          <MissionPromptForm
+            host={target.host}
+            mission={target.mission}
+            promptsOmitted={target.promptsOmitted}
+            onClose={close}
+          />
         )}
       </DialogPopup>
     </Dialog>
@@ -342,31 +353,32 @@ export function MissionPromptDialog() {
 function MissionPromptForm(props: {
   readonly host: EnvironmentId;
   readonly mission: Mission;
+  readonly promptsOmitted: boolean;
   readonly onClose: () => void;
 }) {
   const gt = useGT();
   const resolve = useMessages();
-  const listsPrompts =
-    useServerConfigs().get(props.host)?.environment.capabilities.missions !== true;
   const read = useEnvironmentQuery(
-    listsPrompts
-      ? null
-      : serverEnvironment.missionPrompt({
+    props.promptsOmitted
+      ? serverEnvironment.missionPrompt({
           environmentId: props.host,
           input: { missionId: props.mission.missionId },
-        }),
+        })
+      : null,
     resolve,
   );
-  const saved = listsPrompts ? { data: { prompt: props.mission.prompt ?? "" }, error: null } : read;
+  const loaded = props.promptsOmitted ? (read.data?.prompt ?? null) : (props.mission.prompt ?? "");
+  const [draft, setDraft] = useState<string | null>(null);
+  const changed = loaded !== null && draft !== null && draft !== loaded;
   const setPrompt = useAtomCommand(serverEnvironment.setMissionPrompt, "mission set prompt");
   return (
     <form
       onSubmit={async (event) => {
         event.preventDefault();
-        const prompt = String(new FormData(event.currentTarget).get("prompt") ?? "");
+        if (!changed) return;
         const result = await setPrompt({
           environmentId: props.host,
-          input: { missionId: props.mission.missionId, prompt },
+          input: { missionId: props.mission.missionId, prompt: draft },
         });
         reportFailure(gt("Could not save the mission prompt"), result);
         if (result._tag === "Success") props.onClose();
@@ -375,7 +387,7 @@ function MissionPromptForm(props: {
       <DialogHeader>
         <DialogTitle>{gt("Mission prompt")}</DialogTitle>
         <DialogDescription>
-          {saved.error ??
+          {(props.promptsOmitted ? read.error : null) ??
             gt(
               'The lead of "{mission}" follows this on every turn. Leave it empty to use the default from Settings.',
               { mission: props.mission.name },
@@ -384,20 +396,20 @@ function MissionPromptForm(props: {
       </DialogHeader>
       <DialogPanel>
         <Textarea
-          key={saved.data === null ? "reading" : "read"}
           name="prompt"
           aria-label={gt("Mission prompt")}
           rows={8}
           maxLength={MISSION_PROMPT_MAX_LENGTH}
-          disabled={saved.data === null}
-          defaultValue={saved.data?.prompt ?? ""}
+          disabled={loaded === null}
+          value={draft ?? loaded ?? ""}
+          onChange={(event) => setDraft(event.target.value)}
         />
       </DialogPanel>
       <DialogFooter>
         <Button type="button" variant="outline" onClick={props.onClose}>
           {gt("Cancel")}
         </Button>
-        <Button type="submit" disabled={saved.data === null}>
+        <Button type="submit" disabled={!changed}>
           {gt("Save")}
         </Button>
       </DialogFooter>

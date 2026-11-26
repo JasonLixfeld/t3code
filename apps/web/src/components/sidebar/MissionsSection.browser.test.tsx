@@ -185,8 +185,22 @@ vi.mock(import("../../state/server"), async (original) => {
         Atom.make((get) => {
           const pairs = JSON.parse(environmentIdsKey) as ReadonlyArray<[string, boolean]>;
           subscribed.push(pairs);
-          const asked = new Set(pairs.map(([environmentId]) => environmentId));
-          const read = () => hosts.filter((host) => asked.has(host.environmentId));
+          const asked = new Map(pairs);
+          const read = () =>
+            hosts.flatMap((host) => {
+              const omitPrompts = asked.get(host.environmentId);
+              if (omitPrompts === undefined) return [];
+              if (!omitPrompts) return [host];
+              const missions = host.snapshot.missions.map(
+                ({ prompt: _prompt, ...mission }) => mission,
+              );
+              return [
+                {
+                  ...host,
+                  snapshot: { ...host.snapshot, missions, promptsOmitted: true as const },
+                },
+              ];
+            });
           const update = () => get.setSelf(read());
           hostChanges.add(update);
           get.addFinalizer(() => hostChanges.delete(update));
@@ -818,6 +832,78 @@ describe("missions in the sidebar", () => {
     await expect.element(prompt).toHaveValue("Ship it.");
     (page.getByRole("button", { name: "Cancel" }).element() as HTMLElement).click();
     await expect.element(prompt).not.toBeInTheDocument();
+  });
+
+  const openPrompt = async (root: HTMLElement) => {
+    const show = vi.fn().mockResolvedValue("mission-prompt:local:0123456789ab");
+    vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
+    await userEvent.click(rowOf(root, "Plan the v2 release"), { button: "right" });
+    const prompt = page.getByRole("textbox", { name: "Mission prompt" });
+    const save = () => page.getByRole("button", { name: "Save" }).element() as HTMLButtonElement;
+    return {
+      prompt,
+      save,
+      close: async () => {
+        (page.getByRole("button", { name: "Cancel" }).element() as HTMLElement).click();
+        await expect.element(prompt).not.toBeInTheDocument();
+      },
+    };
+  };
+
+  it.each([
+    ["one that reads it on its own", true, () => savedPrompts.set("0123456789ab", "Ship it.")],
+    [
+      "one that lists it",
+      false,
+      () => {
+        listedMissions[0] = { ...ship, prompt: "Ship it." };
+      },
+    ],
+  ] as const)("saves nothing unchanged on a server %s", async (_, keepsMissions, seed) => {
+    seed();
+    onTestFinished(() => {
+      savedPrompts.clear();
+      listedMissions[0] = ship;
+    });
+    await using screen = await renderSidebar({}, { keepsMissions });
+    const editor = await openPrompt(screen.container);
+    await expect.element(editor.prompt).toHaveValue("Ship it.");
+    expect(editor.save().disabled).toBe(true);
+    editor.save().click();
+    expect(commandFor("mission set prompt")).not.toHaveBeenCalled();
+    await editor.close();
+  });
+
+  it("keeps a prompt another client saved while the editor was open", async () => {
+    await using screen = await renderSidebar({}, { keepsMissions: false });
+    const editor = await openPrompt(screen.container);
+    await expect.element(editor.prompt).toHaveValue("");
+    listedMissions[0] = { ...ship, prompt: "Saved elsewhere." };
+    onTestFinished(() => {
+      listedMissions[0] = ship;
+    });
+    await publishHosts();
+    editor.save().click();
+    expect(commandFor("mission set prompt")).not.toHaveBeenCalled();
+    await editor.close();
+  });
+
+  it("clears a loaded prompt only when the user empties it", async () => {
+    listedMissions[0] = { ...ship, prompt: "Ship it." };
+    onTestFinished(() => {
+      listedMissions[0] = ship;
+    });
+    await using screen = await renderSidebar({}, { keepsMissions: false });
+    const editor = await openPrompt(screen.container);
+    await expect.element(editor.prompt).toHaveValue("Ship it.");
+    await userEvent.clear(editor.prompt);
+    editor.save().click();
+    await vi.waitFor(() =>
+      expect(commandFor("mission set prompt")).toHaveBeenCalledExactlyOnceWith({
+        environmentId: LOCAL,
+        input: { missionId: "0123456789ab", prompt: "" },
+      }),
+    );
   });
 
   it("hides both headings when their settings are off", async () => {

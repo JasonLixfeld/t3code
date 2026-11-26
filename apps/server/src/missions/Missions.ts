@@ -1222,6 +1222,7 @@ const make = Effect.gen(function* () {
               : snapshot.missions.map(({ prompt: _prompt, ...mission }) => mission),
             ...(options.links ? { links: snapshot.links } : { links: [], linksHidden: true }),
             claims: snapshot.claims,
+            ...(options.prompts ? {} : { promptsOmitted: true }),
           })),
           Stream.changesWith(sameSnapshot),
         );

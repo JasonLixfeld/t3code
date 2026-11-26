@@ -60,6 +60,8 @@ export const MissionsSnapshot = Schema.Struct({
   links: Schema.Array(MissionLink),
   /** Set when `links` is empty because the session may not read them. */
   linksHidden: Schema.optional(Schema.Literal(true)),
+  /** Set when the list leaves prompts out. Older servers never leave them out. */
+  promptsOmitted: Schema.optional(Schema.Literal(true)),
   claims: Schema.Array(MissionClaimHere),
 });
 export type MissionsSnapshot = typeof MissionsSnapshot.Type;
