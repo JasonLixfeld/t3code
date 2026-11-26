@@ -367,9 +367,16 @@ function MissionPromptForm(props: {
       : null,
     resolve,
   );
-  const loaded = props.promptsOmitted ? (read.data?.prompt ?? null) : (props.mission.prompt ?? "");
+  const listed =
+    useMissionHosts()
+      .find((host) => host.environmentId === props.host)
+      ?.snapshot.missions.find((mission) => mission.missionId === props.mission.missionId) ??
+    props.mission;
+  const loaded = props.promptsOmitted ? (read.data?.prompt ?? null) : (listed.prompt ?? "");
   const [draft, setDraft] = useState<string | null>(null);
-  const changed = loaded !== null && draft !== null && draft !== loaded;
+  // The server trims the prompt it saves.
+  const next = draft?.trim();
+  const changed = loaded !== null && next !== undefined && next !== loaded;
   const setPrompt = useAtomCommand(serverEnvironment.setMissionPrompt, "mission set prompt");
   return (
     <form
@@ -378,7 +385,7 @@ function MissionPromptForm(props: {
         if (!changed) return;
         const result = await setPrompt({
           environmentId: props.host,
-          input: { missionId: props.mission.missionId, prompt: draft },
+          input: { missionId: props.mission.missionId, prompt: next },
         });
         reportFailure(gt("Could not save the mission prompt"), result);
         if (result._tag === "Success") props.onClose();
@@ -390,7 +397,7 @@ function MissionPromptForm(props: {
           {(props.promptsOmitted ? read.error : null) ??
             gt(
               'The lead of "{mission}" follows this on every turn. Leave it empty to use the default from Settings.',
-              { mission: props.mission.name },
+              { mission: listed.name },
             )}
         </DialogDescription>
       </DialogHeader>

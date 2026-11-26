@@ -874,7 +874,7 @@ describe("missions in the sidebar", () => {
     await editor.close();
   });
 
-  it("keeps a prompt another client saved while the editor was open", async () => {
+  it("shows a prompt another client saved while the editor is untouched, and keeps what the user typed", async () => {
     await using screen = await renderSidebar({}, { keepsMissions: false });
     const editor = await openPrompt(screen.container);
     await expect.element(editor.prompt).toHaveValue("");
@@ -883,9 +883,34 @@ describe("missions in the sidebar", () => {
       listedMissions[0] = ship;
     });
     await publishHosts();
+    await expect.element(editor.prompt).toHaveValue("Saved elsewhere.");
+    expect(editor.save().disabled).toBe(true);
     editor.save().click();
     expect(commandFor("mission set prompt")).not.toHaveBeenCalled();
+    await userEvent.fill(editor.prompt, "Mine.");
+    listedMissions[0] = { ...ship, prompt: "Saved again elsewhere." };
+    await publishHosts();
+    await expect.element(editor.prompt).toHaveValue("Mine.");
+    expect(editor.save().disabled).toBe(false);
     await editor.close();
+  });
+
+  it("counts a change of only spaces as no change, and saves the prompt trimmed", async () => {
+    await using screen = await renderSidebar({}, { keepsMissions: false });
+    const editor = await openPrompt(screen.container);
+    await expect.element(editor.prompt).toHaveValue("");
+    await userEvent.fill(editor.prompt, "   ");
+    expect(editor.save().disabled).toBe(true);
+    editor.save().click();
+    expect(commandFor("mission set prompt")).not.toHaveBeenCalled();
+    await userEvent.fill(editor.prompt, "  Review it. ");
+    editor.save().click();
+    await vi.waitFor(() =>
+      expect(commandFor("mission set prompt")).toHaveBeenCalledExactlyOnceWith({
+        environmentId: LOCAL,
+        input: { missionId: "0123456789ab", prompt: "Review it." },
+      }),
+    );
   });
 
   it("clears a loaded prompt only when the user empties it", async () => {
