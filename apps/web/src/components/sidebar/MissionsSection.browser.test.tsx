@@ -9,6 +9,7 @@ import {
   EnvironmentId,
   type LocalApi,
   type Mission,
+  type MissionMember,
   MissionError,
   ProjectId,
   ThreadId,
@@ -114,9 +115,18 @@ const archived: Mission = {
 const listedMissions: Array<Mission> = [ship, gone, archived];
 /** The claims this machine holds, which a test may add to for itself. */
 const listedClaims: Array<MissionHost["snapshot"]["claims"][number]> = [];
-const hosts: ReadonlyArray<MissionHost> = [
+const hosts: Array<MissionHost> = [
   { environmentId: LOCAL, snapshot: { missions: listedMissions, links: [], claims: listedClaims } },
 ];
+/** Machines whose missions this client may not change, which a test may add to for itself. */
+const readOnly = new Set<EnvironmentId>();
+const permissions = new Map<string, ReturnType<typeof Atom.make<boolean>>>();
+const mayChange = (environmentId: EnvironmentId) => {
+  const key = `${environmentId}:${readOnly.has(environmentId)}`;
+  const atom = permissions.get(key) ?? Atom.make(!readOnly.has(environmentId));
+  permissions.set(key, atom);
+  return atom;
+};
 /** The mission commands the sidebar sends, by the label it sends them under. */
 const commands = vi.hoisted(() => new Map<string, ReturnType<typeof vi.fn>>());
 const commandFor = (label: string) => {
@@ -168,12 +178,12 @@ vi.mock(import("../../state/server"), async (original) => {
     serverEnvironment: {
       ...actual.serverEnvironment,
       missionsLiveAcross: () => Atom.make([...hosts]),
-      // This client may change the missions its machine keeps.
+      // This client may change the missions every machine keeps, unless a test says otherwise.
       addMissionMember: Object.assign(actual.serverEnvironment.addMissionMember, {
-        permissionAtom: () => Atom.make(true),
+        permissionAtom: (environmentId: EnvironmentId) => mayChange(environmentId),
       }),
       releaseMissionMember: Object.assign(actual.serverEnvironment.releaseMissionMember, {
-        permissionAtom: () => Atom.make(true),
+        permissionAtom: (environmentId: EnvironmentId) => mayChange(environmentId),
       }),
       setMissionLead: Object.assign(actual.serverEnvironment.setMissionLead, {
         permissionAtom: () => Atom.make(true),
@@ -1060,6 +1070,138 @@ describe("dragging threads into and out of missions", () => {
       environmentId: LOCAL,
       input: { missionId: "0123456789ab", member: ref(LOCAL, "docs") },
     });
+  });
+
+  /**
+   * A thread here joined a mission the laptop leads, and this machine holds its claim. "plain" is
+   * Unrelated bug's row; "unread" has no thread loaded, so its member row shows instead.
+   */
+  const leadOnLaptop = (
+    state: MissionMember["state"],
+    writable: ReadonlyArray<EnvironmentId>,
+    member = "plain",
+  ) => {
+    const launch: Mission = {
+      missionId: "dddddddddddd",
+      name: "Laptop launch",
+      createdAt: "2026-11-23T00:00:00.000Z",
+      members: [
+        { ref: ref(LAPTOP, "laptop-lead"), role: "lead", state: "active" },
+        { ref: ref(LOCAL, member), role: "member", state },
+      ],
+    };
+    hosts.push({ environmentId: LAPTOP, snapshot: { missions: [launch], links: [], claims: [] } });
+    listedClaims.push({
+      threadId: ThreadId.make(member),
+      missionId: "dddddddddddd",
+      name: "Laptop launch",
+    });
+    for (const environmentId of [LOCAL, LAPTOP]) {
+      if (!writable.includes(environmentId)) readOnly.add(environmentId);
+    }
+    onTestFinished(() => {
+      hosts.length = 1;
+      listedClaims.length = 0;
+      readOnly.clear();
+    });
+  };
+  const leaveRoutes = (member: string) =>
+    [
+      [
+        "only the member's machine",
+        [LOCAL],
+        "mission leave",
+        { environmentId: LOCAL, input: { threadId: member, missionId: "dddddddddddd" } },
+      ],
+      [
+        "only the lead's machine",
+        [LAPTOP],
+        "mission release member",
+        {
+          environmentId: LAPTOP,
+          input: { missionId: "dddddddddddd", member: ref(LOCAL, member) },
+        },
+      ],
+      ["neither machine", [], null, null],
+    ] as const;
+
+  it.each(leaveRoutes("unread"))(
+    "leaves at once from the row's X when %s may be changed",
+    async (_, writable, label, command) => {
+      leadOnLaptop("active", writable, "unread");
+      const confirm = vi.fn().mockResolvedValue(true);
+      vi.mocked(readLocalApi).mockReturnValue({ dialogs: { confirm } } as unknown as LocalApi);
+      await using screen = await renderSidebar();
+      await expect.element(screen.getByText("Laptop launch").first()).toBeInTheDocument();
+      const x = screen.container.querySelector<HTMLElement>('button[aria-label="Leave mission"]')!;
+      expect(x.hasAttribute("disabled")).toBe(label === null);
+      x.click();
+      await act(async () => {});
+      for (const sent of ["mission leave", "mission release member"]) {
+        if (sent === label) expect(commandFor(sent)).toHaveBeenCalledExactlyOnceWith(command);
+        else expect(commandFor(sent)).not.toHaveBeenCalled();
+      }
+      expect(confirm).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(leaveRoutes("plain"))(
+    "leaves at once by a drop on the zone when %s may be changed",
+    async (_, writable, label, command) => {
+      leadOnLaptop("active", writable);
+      const confirm = vi.fn().mockResolvedValue(true);
+      vi.mocked(readLocalApi).mockReturnValue({ dialogs: { confirm } } as unknown as LocalApi);
+      using _drag = allowDrag();
+      await using screen = await renderSidebar();
+      await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
+      const drag = await dragBetween(
+        rowOf(screen.container, "Unrelated bug"),
+        releaseZone(screen.container),
+      );
+      await drag.release();
+      await act(async () => {});
+      for (const sent of ["mission leave", "mission release member"]) {
+        if (sent === label) expect(commandFor(sent)).toHaveBeenCalledExactlyOnceWith(command);
+        else expect(commandFor(sent)).not.toHaveBeenCalled();
+      }
+      expect(confirm).not.toHaveBeenCalled();
+    },
+  );
+
+  it("retries a refused leave by the route that works, here its own machine", async () => {
+    leadOnLaptop("release-refused", [LOCAL], "unread");
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Laptop launch").first()).toBeInTheDocument();
+    const retry = screen.container.querySelector<HTMLElement>('button[aria-label="Retry"]')!;
+    expect(retry.hasAttribute("disabled")).toBe(false);
+    retry.click();
+    await vi.waitFor(() =>
+      expect(commandFor("mission leave")).toHaveBeenCalledExactlyOnceWith({
+        environmentId: LOCAL,
+        input: { threadId: "unread", missionId: "dddddddddddd" },
+      }),
+    );
+    expect(commandFor("mission release member")).not.toHaveBeenCalled();
+  });
+
+  it("keeps a pending leave as Leave pending with Forget, even with the claim still held here", async () => {
+    leadOnLaptop("release-pending", [LOCAL, LAPTOP]);
+    const confirm = vi.fn().mockResolvedValue(true);
+    vi.mocked(readLocalApi).mockReturnValue({ dialogs: { confirm } } as unknown as LocalApi);
+    await using screen = await renderSidebar();
+    const pending = screen.getByText("Leave pending (machine offline)");
+    await expect.element(pending).toBeInTheDocument();
+    pending
+      .element()
+      .parentElement!.querySelector<HTMLElement>('button[aria-label="Forget"]')!
+      .click();
+    await vi.waitFor(() =>
+      expect(commandFor("mission forget member")).toHaveBeenCalledExactlyOnceWith({
+        environmentId: LAPTOP,
+        input: { missionId: "dddddddddddd", member: ref(LOCAL, "plain") },
+      }),
+    );
+    expect(commandFor("mission leave")).not.toHaveBeenCalled();
   });
 
   it("releases only on the dashed box, not on the padding around it", async () => {

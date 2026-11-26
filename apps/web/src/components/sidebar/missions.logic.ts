@@ -32,7 +32,7 @@ type MissionThread = Pick<MissionCandidate, "environmentId" | "id">;
 
 export type MissionMenuId =
   | "mission-start"
-  | "mission-leave"
+  | `mission-leave:${string}`
   | "mission-add"
   | `mission-add:${string}`
   | `mission-release:${string}`
@@ -48,6 +48,7 @@ export const isMissionMenuId = (id: string): id is MissionMenuId => id.startsWit
 
 const ADD_PREFIX = "mission-add:";
 const RELEASE_PREFIX = "mission-release:";
+const LEAVE_PREFIX = "mission-leave:";
 const NEW_THREAD_PREFIX = "mission-new-thread:";
 const DELETE_PREFIX = "mission-delete:";
 const PROMPT_PREFIX = "mission-prompt:";
@@ -56,11 +57,12 @@ const PROMPT_PREFIX = "mission-prompt:";
 export const isThreadMissionAction = (id: MissionMenuId) =>
   id === "mission-start" ||
   id === "mission-add" ||
-  id === "mission-leave" ||
+  id.startsWith(LEAVE_PREFIX) ||
   id.startsWith(RELEASE_PREFIX);
 const TARGET_ACTIONS = {
   [ADD_PREFIX]: "add",
   [RELEASE_PREFIX]: "release",
+  [LEAVE_PREFIX]: "leave",
   [NEW_THREAD_PREFIX]: "new-thread",
   [DELETE_PREFIX]: "delete",
   [PROMPT_PREFIX]: "prompt",
@@ -103,9 +105,16 @@ export function missionLeaveId(
     | undefined,
   hosts: ReadonlyArray<MissionHost>,
   canChangeOn: (environmentId: EnvironmentId) => boolean,
+  /** The thread's own menu names no Mission, so it leaves whichever one its machine holds it in. */
+  anyClaim = false,
 ): MissionMenuId | null {
-  if (claimHere(thread, hosts) !== undefined && canChangeOn(thread.environmentId)) {
-    return "mission-leave";
+  const claim = claimHere(thread, hosts);
+  if (
+    claim !== undefined &&
+    canChangeOn(thread.environmentId) &&
+    (anyClaim || claim.missionId === heldBy?.mission.missionId)
+  ) {
+    return `${LEAVE_PREFIX}${thread.environmentId}:${claim.missionId}`;
   }
   return heldBy !== undefined && canChangeOn(heldBy.host)
     ? `${RELEASE_PREFIX}${heldBy.host}:${heldBy.mission.missionId}`
@@ -270,8 +279,8 @@ export function buildMissionMenuItems(
         ]),
     ...(single === undefined || (heldBy === undefined && claimHere(single, hosts) === undefined)
       ? []
-      : [missionLeaveId(single, heldBy, hosts, canChangeOn)].map((id) => ({
-          id: id ?? ("mission-leave" as const),
+      : [missionLeaveId(single, heldBy, hosts, canChangeOn, true)].map((id) => ({
+          id: id ?? LEAVE_PREFIX,
           label: resolve(msg("Leave mission")),
           icon: "folder-minus",
           disabled: id === null,

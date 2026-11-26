@@ -905,7 +905,7 @@ describe("CommandPalette mission thread actions", () => {
     listMissions([]);
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     for (const [listed, id] of [
-      [{ ...host, snapshot: { ...host.snapshot, claims } }, "mission-leave"],
+      [{ ...host, snapshot: { ...host.snapshot, claims } }, "mission-leave:local:ba9876543210"],
       [host, "mission-release:local:ba9876543210"],
     ] as const) {
       await relistMissions([listed]);

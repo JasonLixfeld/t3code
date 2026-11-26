@@ -154,7 +154,10 @@ export class MissionClaims extends Context.Service<
       access?: ThreadAccess<E>,
     ) => Effect.Effect<ReadonlyArray<MissionClaim>>;
     /** The local user frees a thread here from whichever Mission holds it. A lead thread stays. */
-    readonly leaveHere: (threadId: ThreadId) => Effect.Effect<void, MissionError>;
+    readonly leaveHere: (
+      threadId: ThreadId,
+      missionId?: string,
+    ) => Effect.Effect<void, MissionError>;
     /** The owner's claims here. Reads only. */
     readonly list: (owner: string) => Effect.Effect<ReadonlyArray<MissionClaim>>;
   }
@@ -340,8 +343,8 @@ const make = Effect.gen(function* () {
   );
 
   const leaveHere = Effect.fn("MissionClaims.leaveHere")(
-    function* (threadId: ThreadId) {
-      yield* threadCommands.withLock(threadId, store.leave(threadId));
+    function* (threadId: ThreadId, missionId?: string) {
+      yield* threadCommands.withLock(threadId, store.leave(threadId, missionId));
       yield* workspaces.forget(threadId);
       yield* syncTags(threadId);
     },

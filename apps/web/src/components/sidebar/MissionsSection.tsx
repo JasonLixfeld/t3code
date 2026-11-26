@@ -200,6 +200,8 @@ export function useMissionMenu() {
       threads: ReadonlyArray<ScopedThreadRef>,
       /** Why some threads of the batch were refused before any was sent, for its one line. */
       refusedFirst: ReadonlyArray<string> = [],
+      /** A row's X and a drag act at once; a menu pick asks first. */
+      options: { readonly confirm?: boolean } = {},
     ): Promise<ReadonlyArray<ScopedThreadRef>> => {
       const lead = threads[0];
       if (id === "mission-start" && lead !== undefined) {
@@ -210,24 +212,27 @@ export function useMissionMenu() {
         reportFailure(gt("Could not start the mission"), result);
         return result._tag === "Success" ? [lead] : [];
       }
-      const claim =
-        lead === undefined ? undefined : claimHere({ ...lead, id: lead.threadId }, hosts);
-      if (id === "mission-leave" && lead !== undefined && claim !== undefined) {
-        const confirmed = await readLocalApi()?.dialogs.confirm(
-          gt('Leave the mission "{mission}"? Its lead will see that this thread left.', {
-            mission: claim.name,
-          }),
-        );
-        if (confirmed !== true) return [];
+      const target = parseMissionTarget(id);
+      if (target === null) return [];
+      if (target.action === "leave") {
+        if (lead === undefined) return [];
+        const claim = claimHere({ ...lead, id: lead.threadId }, hosts);
+        if (options.confirm !== false && claim?.missionId === target.missionId) {
+          const confirmed = await readLocalApi()?.dialogs.confirm(
+            gt('Leave the mission "{mission}"? Its lead will see that this thread left.', {
+              mission: claim.name,
+            }),
+          );
+          if (confirmed !== true) return [];
+        }
+        // Its machine checks the thread is still in this Mission, so a moved one stays put.
         const result = await leave({
-          environmentId: lead.environmentId,
-          input: { threadId: lead.threadId },
+          environmentId: target.environmentId,
+          input: { threadId: lead.threadId, missionId: target.missionId },
         });
         reportFailure(gt("Could not leave the mission"), result);
         return result._tag === "Success" ? [lead] : [];
       }
-      const target = parseMissionTarget(id);
-      if (target === null) return [];
       const mission = hosts
         .find((host) => host.environmentId === target.environmentId)
         ?.snapshot.missions.find((candidate) => candidate.missionId === target.missionId);
@@ -411,6 +416,7 @@ function MemberRow(props: {
     environmentId: props.host,
     input: { missionId: props.missionId, member: props.member.ref },
   };
+  const leaveNow = (id: MissionMenuId) => menu.run(id, [props.member.ref], [], { confirm: false });
   const onRelease = async () => {
     if (forgets) {
       const confirmed = await readLocalApi()?.dialogs.confirm(
@@ -425,12 +431,13 @@ function MemberRow(props: {
       reportFailure(gt("Could not forget the thread"), await forget(command));
     } else if (dismisses) {
       reportFailure(gt("Could not leave the mission"), await release(command));
-    } else if (leaveId !== null) await menu.run(leaveId, [props.member.ref]);
+    } else if (leaveId !== null) await leaveNow(leaveId);
     setReleasing(false);
   };
   const onRetry = async () => {
+    if (leaveId === null) return;
     setReleasing(true);
-    reportFailure(gt("Could not leave the mission"), await release(command));
+    await leaveNow(leaveId);
     setReleasing(false);
   };
   const { toggle } = props;
@@ -458,7 +465,7 @@ function MemberRow(props: {
           <button
             type="button"
             aria-label={gt("Retry")}
-            disabled={!canRelease || releasing}
+            disabled={leaveId === null || releasing}
             onClick={(event) => {
               event.stopPropagation();
               void onRetry();
@@ -1016,7 +1023,7 @@ export function useMissionDrop(missions: ReadonlyArray<SidebarMission<Environmen
         const leave =
           dragged[0] &&
           menu.leaveId(dragged[0], { host: next.host, mission: { missionId: next.missionId } });
-        if (leave) void menu.run(leave, dragged);
+        if (leave) void menu.run(leave, dragged, [], { confirm: false });
       }
       return true;
     }),

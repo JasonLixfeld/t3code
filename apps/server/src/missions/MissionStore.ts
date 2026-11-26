@@ -457,8 +457,8 @@ export class MissionStore extends Context.Service<
     /** Drops the member claim that one join made, if this owner still holds it. */
     /** Whether a claim was dropped: a late release of an earlier join drops nothing. */
     readonly release: (input: Omit<ClaimInput, "name">) => Effect.Effect<boolean>;
-    /** Drops the thread's claim, whoever holds it. Refuses a lead's claim. */
-    readonly leave: (threadId: ThreadId) => Effect.Effect<void, MissionError>;
+    /** Drops the thread's claim, whoever holds it, if it is `missionId`'s. Refuses a lead's claim. */
+    readonly leave: (threadId: ThreadId, missionId?: string) => Effect.Effect<void, MissionError>;
     /**
      * Names a Mission led here again, from the title of `lead`, unless its lead changed since.
      * Answers the name it has now. Its claims follow through `renameClaims`.
@@ -733,7 +733,9 @@ const make = Effect.gen(function* () {
           LIMIT 1
         `;
         if (held !== undefined) {
-          return refuse("Its threads must leave this mission before you delete it.");
+          return refuse(
+            "Its threads must leave this mission, and its pending adds must be cleared, before you delete it.",
+          );
         }
         // A refused release whose claim is still listed held the delete back above; one whose
         // claim is gone holds nothing, and goes with the Mission.
@@ -913,11 +915,14 @@ const make = Effect.gen(function* () {
     return dropped;
   }, Effect.orDie);
 
-  const leave = Effect.fn("MissionStore.leave")(function* (threadId: ThreadId) {
+  const leave = Effect.fn("MissionStore.leave")(function* (threadId: ThreadId, missionId?: string) {
     yield* change(
       Effect.gen(function* () {
         const held = yield* claimRow(threadId);
         if (held === undefined) return refuse("This thread is not in a mission.");
+        if (missionId !== undefined && held.mission_id !== missionId) {
+          return refuse("This thread is now in another mission, so it was not removed.");
+        }
         if (held.role === "lead") {
           return refuse("A mission keeps its lead thread, so the lead cannot leave.");
         }

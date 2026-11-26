@@ -131,6 +131,34 @@ it.effect("a release drops only the member claim that its generation, mission an
   ),
 );
 
+it.effect("a leave meant for one mission removes nothing once the claim is another's", () =>
+  withDatabase((filename) =>
+    usingStore(filename, (store) =>
+      Effect.gen(function* () {
+        yield* store.createMission(claimFor(lead, "m1", "g1"));
+        yield* store.createMission(claimFor(ThreadId.make("lead-2"), "m2", "g2"));
+        yield* store.join(claimFor(member, "m1", "g3"));
+        yield* store.release({
+          threadId: member,
+          missionId: "m1",
+          owner: "env-a",
+          generation: "g3",
+        });
+        const moved = yield* store.join(claimFor(member, "m2", "g4"));
+
+        const refused = yield* store.leave(member, "m1").pipe(Effect.flip);
+        assert.equal(
+          refused.message,
+          "This thread is now in another mission, so it was not removed.",
+        );
+        assert.deepEqual(yield* store.claim(member), moved);
+        yield* store.leave(member, "m2");
+        assert.isUndefined(yield* store.claim(member));
+      }),
+    ),
+  ),
+);
+
 it.effect(
   "the production store writes missions.sqlite in the state folder, not the main database",
   () =>

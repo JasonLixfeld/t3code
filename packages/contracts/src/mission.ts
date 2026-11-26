@@ -108,8 +108,14 @@ export const MissionJoinOutcome = Schema.Struct({
 });
 export type MissionJoinOutcome = typeof MissionJoinOutcome.Type;
 
-/** The local user frees a thread on this machine from its Mission. */
-export const MissionLeaveInput = Schema.Struct({ threadId: ThreadId });
+/**
+ * The local user frees a thread on this machine from its Mission. With `missionId`, only from
+ * that Mission: a thread that has moved to another stays where it is.
+ */
+export const MissionLeaveInput = Schema.Struct({
+  threadId: ThreadId,
+  missionId: Schema.optional(Schema.String),
+});
 
 export class MissionError extends Schema.TaggedError<MissionError>()("MissionError", {
   message: Schema.String,

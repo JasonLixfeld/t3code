@@ -974,7 +974,7 @@ it.effect("a mission with a member is not deleted; once released, its lead stays
       yield* missions.addMember({ missionId: mission.missionId, member: localMember });
       assert.equal(
         yield* deleteRefusal(mission.missionId),
-        "Its threads must leave this mission before you delete it.",
+        "Its threads must leave this mission, and its pending adds must be cleared, before you delete it.",
       );
       assert.equal((yield* listed).missions.length, 1);
       yield* missions.releaseMember({ missionId: mission.missionId, member: localMember });
@@ -1362,7 +1362,7 @@ it.effect("a mission is not deleted while an add to another machine waits for it
       assert.equal(stateOf(yield* listed, laptopMember), "add-pending");
       assert.equal(
         yield* deleteRefusal(mission.missionId),
-        "Its threads must leave this mission before you delete it.",
+        "Its threads must leave this mission, and its pending adds must be cleared, before you delete it.",
       );
       assert.deepEqual(world.tags(lead), [TAG]);
     }),

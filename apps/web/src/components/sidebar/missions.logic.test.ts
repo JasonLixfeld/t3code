@@ -14,6 +14,7 @@ import {
   groupSidebarMissions,
   missionAddSummary,
   missionDraftMachines,
+  missionLeaveId,
   type MissionHost,
   parseMissionTarget,
 } from "./missions.logic";
@@ -81,7 +82,7 @@ describe("buildMissionMenuItems", () => {
     const held = buildMissionMenuItems([thread(DESK, "held")], hosts, label, allowed);
     expect(held.map((item) => [item.id, item.disabled, item.detail])).toEqual([
       ["mission-start", true, "In a mission"],
-      ["mission-leave", false, undefined],
+      ["mission-leave:env-desk:ffffffffffff", false, undefined],
       ["mission-add", true, "In a mission"],
     ]);
   });
@@ -195,8 +196,8 @@ describe("buildMissionMenuItems", () => {
 
   it("offers leaving only for a thread its own machine holds in a mission", () => {
     const leaveOf = (thread: Parameters<typeof buildMissionMenuItems>[0][number], can = allowed) =>
-      buildMissionMenuItems([thread], hosts, label, can).find(
-        (item) => item.id === "mission-leave",
+      buildMissionMenuItems([thread], hosts, label, can).find((item) =>
+        item.id.startsWith("mission-leave:"),
       );
     expect(leaveOf(thread(DESK, "held"))).toMatchObject({
       label: "Leave mission",
@@ -270,7 +271,11 @@ describe("buildMissionMenuItems", () => {
         (item) => item.icon === "folder-minus",
       );
     expect(ways(allowed)).toEqual([
-      expect.objectContaining({ id: "mission-leave", label: "Leave mission", disabled: false }),
+      expect.objectContaining({
+        id: "mission-leave:env-laptop:0123456789ab",
+        label: "Leave mission",
+        disabled: false,
+      }),
     ]);
     expect(ways((environmentId) => environmentId === DESK)).toEqual([
       expect.objectContaining({
@@ -286,6 +291,32 @@ describe("buildMissionMenuItems", () => {
         detail: "Not allowed here",
       }),
     ]);
+  });
+
+  it("leaves directly only the mission the row names, not another the thread's machine holds", () => {
+    const ios = { environmentId: LAPTOP, id: ThreadId.make("ios") };
+    const movedOn: ReadonlyArray<MissionHost> = [
+      {
+        environmentId: LAPTOP,
+        snapshot: {
+          links: [],
+          missions: [],
+          claims: [{ threadId: ios.id, missionId: "ffffffffffff", name: "Theirs" }],
+        },
+      },
+    ];
+    // A stale row under this mission, while the thread's machine now holds it in another.
+    const row = { host: DESK, mission: { missionId: mission.missionId } };
+    expect(missionLeaveId(ios, row, movedOn, allowed)).toBe(
+      "mission-release:env-desk:0123456789ab",
+    );
+    expect(
+      missionLeaveId(ios, row, movedOn, (environmentId) => environmentId === LAPTOP),
+    ).toBeNull();
+    // The thread's own menu names no mission, so it leaves the one it is in.
+    expect(missionLeaveId(ios, row, movedOn, allowed, true)).toBe(
+      "mission-leave:env-laptop:ffffffffffff",
+    );
   });
 
   it("releases a thread from the mission the sidebar lists it under", () => {

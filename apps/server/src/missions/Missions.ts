@@ -137,9 +137,12 @@ export class Missions extends Context.Service<
     }) => Effect.Effect<void, MissionError>;
     /**
      * The local user frees a thread on this machine from its Mission, whichever machine leads it.
-     * The lead thread of a Mission here stays.
+     * The lead thread of a Mission here stays. With `missionId`, only a thread still in that one.
      */
-    readonly leaveHere: (threadId: ThreadId) => Effect.Effect<void, MissionError>;
+    readonly leaveHere: (
+      threadId: ThreadId,
+      missionId?: string,
+    ) => Effect.Effect<void, MissionError>;
     /** The Mission a thread here leads, if it leads one. */
     readonly ledBy: (threadId: ThreadId) => Effect.Effect<MissionRecord | undefined>;
     /**
@@ -1592,9 +1595,12 @@ const make = Effect.gen(function* () {
     return added === "spent" ? undefined : added;
   });
 
-  const leaveHere = Effect.fn("Missions.leaveHere")(function* (threadId: ThreadId) {
+  const leaveHere = Effect.fn("Missions.leaveHere")(function* (
+    threadId: ThreadId,
+    missionId?: string,
+  ) {
     const claim = yield* store.claim(threadId);
-    yield* claims.leaveHere(threadId);
+    yield* claims.leaveHere(threadId, missionId);
     if (claim !== undefined) {
       yield* store.startedReleased({
         environmentId: here,
