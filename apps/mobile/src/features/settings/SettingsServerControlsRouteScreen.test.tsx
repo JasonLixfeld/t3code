@@ -45,6 +45,11 @@ vi.mock("../../state/preferences", () => ({
   saveMobilePreferences: {},
 }));
 vi.mock("./components/AutoSettleDaysField", () => ({ AutoSettleDaysField: () => null }));
+vi.mock("./components/MissionPromptSettings", () => ({ MissionPromptSettings: () => null }));
+vi.mock("../../state/missions", () => ({
+  useMissionPreferences: () => ({ loaded: true, enabled: false }),
+  useMissionsAdvertised: () => false,
+}));
 vi.mock("./components/IssueTrackerSection", () => ({ IssueTrackerSection: () => null }));
 vi.mock("./components/SourceControlProvidersSection", () => ({
   SourceControlProvidersSection: () => null,
