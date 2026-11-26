@@ -7397,10 +7397,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return updated;
           });
 
+        // A buffered notification that is discarded takes its owed subagent wake with it.
+        const releaseOwedSubagentWakes = Effect.fnUntraced(function* (
+          nativeThreadId: string,
+          kept: (taskId: string) => boolean,
+        ) {
+          if (!(yield* keepOwedSubagentWakes(nativeThreadId, kept))) return;
+          const providerThread = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
+            nativeThreadId,
+          );
+          if (providerThread !== undefined)
+            yield* emitProviderThreadRoster({ nativeThreadId, providerThread });
+        });
+        const notifiedTaskIds = (messages: ReadonlyArray<SDKMessage>) =>
+          new Set(
+            messages.flatMap((entry) =>
+              entry.type === "system" && entry.subtype === "task_notification"
+                ? [entry.task_id]
+                : [],
+            ),
+          );
+
         const clearWakeStateForNativeThread =
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (nativeThreadId: string) {
             yield* clearWakeReports(nativeThreadId);
+            yield* releaseOwedSubagentWakes(nativeThreadId, () => false);
             yield* Ref.update(wakeBuffers, (current) => {
               if (!current.has(nativeThreadId)) {
                 return current;
@@ -10834,7 +10856,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
             yield* clearOpaqueBackgroundTaskReplayTombstone(nativeThreadId, taskId);
           }
-          yield* keepOwedSubagentWakes(nativeThreadId, (taskId) => !retiredTaskIds.has(taskId));
           yield* endClaudeMonitorTasks((taskId) => retiredTaskIds.has(taskId));
           const providerThread = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
             nativeThreadId,
@@ -10882,6 +10903,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return [true, updated] as const;
           });
           if (!replaced) return false;
+          const stillNotified = notifiedTaskIds(messages);
+          yield* releaseOwedSubagentWakes(nativeThreadId, (taskId) => stillNotified.has(taskId));
           yield* Ref.update(wakeReportsByNativeThread, ({ userTurns, reports }) => {
             const threadReports = reports.get(nativeThreadId);
             if (threadReports === undefined) return { userTurns, reports };
@@ -12111,6 +12134,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 reopen: true,
                 ...(message.run_id === undefined ? {} : { nativeRunId: message.run_id }),
               });
+              yield* releaseOwedSubagentWakes(
+                liveQuery.nativeThreadId,
+                (taskId) => taskId !== message.task_id,
+              );
               yield* Ref.update(wakeBuffers, (current) => {
                 const entry = current.get(liveQuery.nativeThreadId);
                 if (entry === undefined) return current;
