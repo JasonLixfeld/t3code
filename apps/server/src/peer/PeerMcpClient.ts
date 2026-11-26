@@ -116,6 +116,15 @@ const linkedEnvironmentsOffThere = new OrchestratorMcpFailure({
 const LINK_NOT_ACCEPTED =
   "The linked environment no longer accepts this link. It may have been revoked there; link it again.";
 
+const settleAnswer = <A>(
+  answer: Result.Result<A, OrchestratorMcpFailure | PeerUnanswered>,
+): Effect.Effect<Result.Result<A, OrchestratorMcpFailure>, PeerUnanswered> =>
+  Result.isSuccess(answer)
+    ? Effect.succeed(Result.succeed(answer.success))
+    : answer.failure._tag === "PeerUnanswered"
+      ? Effect.fail(answer.failure)
+      : Effect.succeed(Result.fail(answer.failure));
+
 const stoppedAnswering = new OrchestratorMcpFailure({
   code: "orchestration_error",
   message: "The linked environment stopped answering.",
@@ -349,15 +358,7 @@ const make = Effect.gen(function* () {
         Effect.mapError(
           (cause) => new PeerUnanswered({ environmentId: input.environmentId, cause }),
         ),
-        Effect.flatMap(
-          Result.match({
-            onSuccess: (value) => Effect.succeed(Result.succeed(value)),
-            onFailure: (failure: OrchestratorMcpFailure | PeerUnanswered) =>
-              failure._tag === "PeerUnanswered"
-                ? Effect.fail(failure)
-                : Effect.succeed(Result.fail(failure)),
-          }),
-        ),
+        Effect.flatMap(settleAnswer),
       ),
   );
   const call: PeerMcpClient["Service"]["call"] = (input) =>
