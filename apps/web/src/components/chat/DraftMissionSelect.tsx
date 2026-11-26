@@ -52,11 +52,6 @@ export interface DraftMissionChoice {
   readonly word: ReactElement;
 }
 
-/**
- * Which Mission on the draft's machine its thread joins once sent, or none, or a new one it leads,
- * as a word for the draft's headline. A draft that starts or leads a Mission already belongs to
- * one, so its word is fixed.
- */
 export function useDraftMissionChoice(
   draftId: DraftId | null,
   environmentId: EnvironmentId | null,
