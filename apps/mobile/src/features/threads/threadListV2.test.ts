@@ -27,6 +27,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
+import type { MissionHost } from "@t3tools/client-runtime/missions";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -898,6 +899,92 @@ describe("buildThreadListV2ListItems", () => {
         item.type === "v2-thread" || item.type === "v2-pending" ? item.showTrailingDivider : null,
       ),
     ).toEqual([true, true, true, false, null, false]);
+  });
+
+  it("lists each mission above the other threads, its lead heading its members", () => {
+    const member = (threadId: string, state: "active" | "release-pending" = "active") => ({
+      ref: { environmentId, threadId: ThreadId.make(threadId) },
+      role: "member" as const,
+      state,
+    });
+    const hosts: ReadonlyArray<MissionHost> = [
+      {
+        environmentId,
+        snapshot: {
+          links: [],
+          claims: [],
+          missions: [
+            {
+              missionId: "m1",
+              name: "Ship v2",
+              createdAt: NOW,
+              members: [
+                { ...member("lead"), role: "lead" },
+                member("member", "release-pending"),
+                member("unloaded"),
+              ],
+            },
+          ],
+        },
+      },
+    ];
+    const threads = ["lead", "member", "plain"].map((id) =>
+      makeThread({ id: ThreadId.make(id), title: id }),
+    );
+    const names = (items: ReadonlyArray<ThreadListV2ListItem>) =>
+      items.map((item) =>
+        item.type === "v2-thread"
+          ? `${item.item.thread.id}${item.mission?.toggle ? " (lead)" : item.mission ? " (member)" : ""}`
+          : item.type === "v2-mission-member"
+            ? `missing ${item.mission.member.ref.threadId}`
+            : item.type === "v2-section"
+              ? `# ${item.section}`
+              : item.type,
+      );
+    const list = (collapsed: ReadonlyArray<string>, headers = true) => {
+      const built = buildThreadListV2Items({
+        threads,
+        environmentId: null,
+        searchQuery: "",
+        now: NOW,
+        missionHosts: hosts,
+        collapsedMissions: new Set(collapsed),
+      });
+      return buildThreadListV2ListItems({
+        items: built.items,
+        missions: built.missions,
+        missionsHeaderVisible: headers,
+        threadsHeaderVisible: headers,
+        pendingTasks: [],
+      });
+    };
+
+    const expanded = list([]);
+    expect(names(expanded)).toEqual([
+      "# missions",
+      "lead (lead)",
+      "member (member)",
+      "missing unloaded",
+      "# threads",
+      "plain",
+    ]);
+    expect(expanded[1]).toMatchObject({ mission: { toggle: { expanded: true, memberCount: 2 } } });
+    expect(expanded[2]).toMatchObject({ mission: { member: { state: "release-pending" } } });
+    expect(names(list([`${environmentId}:m1`], false))).toEqual(["lead (lead)", "plain"]);
+    expect(threadListV2ListItemsAreEqual(expanded[1]!, list([`${environmentId}:m1`])[1]!)).toBe(
+      false,
+    );
+
+    const flat = buildThreadListV2Items({
+      threads,
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      missionHosts: [],
+    });
+    expect(
+      names(buildThreadListV2ListItems({ items: flat.items, pendingTasks: [] })).sort(),
+    ).toEqual(["lead", "member", "plain"]);
   });
 
   it("places queued tasks above active rows and a collapsed snoozed shelf", () => {

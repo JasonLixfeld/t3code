@@ -33,7 +33,13 @@ import {
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
-import { isListedThreadLineage, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
+import { groupSidebarMissions, type MissionHost } from "@t3tools/client-runtime/missions";
+import {
+  isListedThreadLineage,
+  type EnvironmentId,
+  type MissionMember,
+  type ProjectId,
+} from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import type { MenuAction } from "@react-native-menu/menu";
 
@@ -417,7 +423,27 @@ export interface ThreadListV2Item {
   readonly isLast: boolean;
 }
 
+export interface ThreadListV2MissionPlace {
+  readonly key: string;
+  readonly host: EnvironmentId;
+  readonly missionId: string;
+  readonly missionName: string;
+  readonly member: MissionMember;
+  readonly toggle: { readonly expanded: boolean; readonly memberCount: number } | null;
+}
+
+export interface ThreadListV2MissionEntry {
+  readonly place: ThreadListV2MissionPlace;
+  readonly item: ThreadListV2Item | null;
+}
+
+export interface ThreadListV2MissionGroup {
+  readonly lead: ThreadListV2MissionEntry;
+  readonly members: ReadonlyArray<ThreadListV2MissionEntry>;
+}
+
 export interface ThreadListV2Layout {
+  readonly missions: ReadonlyArray<ThreadListV2MissionGroup>;
   readonly items: ThreadListV2Item[];
   readonly hiddenSettledCount: number;
   /** The settled rows the shelf may list, before its visible limit. */
@@ -446,6 +472,19 @@ export interface ThreadListV2ThreadListItem {
   readonly hasQueuedMessages: boolean;
   readonly canMoveUp: boolean;
   readonly canMoveDown: boolean;
+  readonly mission: ThreadListV2MissionPlace | null;
+}
+
+export interface ThreadListV2SectionListItem {
+  readonly type: "v2-section";
+  readonly key: "v2-section:missions" | "v2-section:threads";
+  readonly section: "missions" | "threads";
+}
+
+export interface ThreadListV2MissionMemberListItem {
+  readonly type: "v2-mission-member";
+  readonly key: string;
+  readonly mission: ThreadListV2MissionPlace;
 }
 
 export interface ThreadListV2PendingListItem {
@@ -483,6 +522,8 @@ export interface ThreadListV2SettledShelfListItem {
 
 export type ThreadListV2ListItem =
   | ThreadListV2ThreadListItem
+  | ThreadListV2SectionListItem
+  | ThreadListV2MissionMemberListItem
   | ThreadListV2PendingListItem
   | ThreadListV2WorkingShelfListItem
   | ThreadListV2SnoozedShelfListItem
@@ -493,10 +534,28 @@ export function isThreadListV2ListItem(value: {
 }): value is ThreadListV2ListItem {
   return (
     value.type === "v2-thread" ||
+    value.type === "v2-section" ||
+    value.type === "v2-mission-member" ||
     value.type === "v2-pending" ||
     value.type === "v2-working-shelf" ||
     value.type === "v2-snoozed-shelf" ||
     value.type === "v2-settled-shelf"
+  );
+}
+
+function missionPlacesAreEqual(
+  previous: ThreadListV2MissionPlace | null,
+  place: ThreadListV2MissionPlace | null,
+): boolean {
+  if (previous === null || place === null) return previous === place;
+  return (
+    previous.key === place.key &&
+    previous.missionName === place.missionName &&
+    previous.member.role === place.member.role &&
+    previous.member.state === place.member.state &&
+    previous.member.detail === place.member.detail &&
+    previous.toggle?.expanded === place.toggle?.expanded &&
+    previous.toggle?.memberCount === place.toggle?.memberCount
   );
 }
 
@@ -521,7 +580,16 @@ export function threadListV2ListItemsAreEqual(
         previous.showTrailingDivider === item.showTrailingDivider &&
         previous.hasQueuedMessages === item.hasQueuedMessages &&
         previous.canMoveUp === item.canMoveUp &&
-        previous.canMoveDown === item.canMoveDown
+        previous.canMoveDown === item.canMoveDown &&
+        missionPlacesAreEqual(previous.mission, item.mission)
+      );
+    case "v2-section":
+      return previous.type === "v2-section" && previous.section === item.section;
+    case "v2-mission-member":
+      return (
+        previous.type === "v2-mission-member" &&
+        previous.key === item.key &&
+        missionPlacesAreEqual(previous.mission, item.mission)
       );
     case "v2-pending":
       return (
@@ -580,6 +648,9 @@ function resolveThreadListV2ItemTimeLabel(
 
 export function buildThreadListV2ListItems(input: {
   readonly items: ReadonlyArray<ThreadListV2Item>;
+  readonly missions?: ReadonlyArray<ThreadListV2MissionGroup>;
+  readonly missionsHeaderVisible?: boolean;
+  readonly threadsHeaderVisible?: boolean;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   readonly workingCount?: number;
   readonly workingShelfExpanded?: boolean;
@@ -599,7 +670,10 @@ export function buildThreadListV2ListItems(input: {
 }): ThreadListV2ListItem[] {
   const resolve = input.resolve ?? m;
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
-  const threadItems = input.items.map((item): ThreadListV2ListItem => {
+  const toListItem = (
+    item: ThreadListV2Item,
+    mission: ThreadListV2MissionPlace | null,
+  ): ThreadListV2ThreadListItem => {
     const snoozeWakeLabelText =
       item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
         ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow }, resolve)
@@ -628,8 +702,33 @@ export function buildThreadListV2ListItems(input: {
         queuedThreadKeys?.has(`${item.thread.environmentId}:${item.thread.id}`) === true,
       canMoveUp: move?.canMoveUp === true,
       canMoveDown: move?.canMoveDown === true,
+      mission,
     };
-  });
+  };
+  const threadItems = input.items.map((item) => toListItem(item, null));
+  const missions = input.missions ?? [];
+  const missionItems: ThreadListV2ListItem[] =
+    missions.length === 0
+      ? []
+      : [
+          ...(input.missionsHeaderVisible === false
+            ? []
+            : [{ type: "v2-section", key: "v2-section:missions", section: "missions" } as const]),
+          ...missions.flatMap((group) =>
+            [group.lead, ...group.members].map(({ place, item }): ThreadListV2ListItem =>
+              item === null
+                ? {
+                    type: "v2-mission-member",
+                    key: `v2-mission-member:${place.key}:${place.member.ref.environmentId}:${place.member.ref.threadId}`,
+                    mission: place,
+                  }
+                : toListItem(item, place),
+            ),
+          ),
+          ...(input.threadsHeaderVisible === false
+            ? []
+            : [{ type: "v2-section", key: "v2-section:threads", section: "threads" } as const]),
+        ];
   const pendingItems = input.pendingTasks.map((pendingTask, index): ThreadListV2ListItem => ({
     type: "v2-pending",
     key: `v2-${pendingTask.key}`,
@@ -646,7 +745,11 @@ export function buildThreadListV2ListItems(input: {
   const snoozedEnd = settledShelfHeaderIndex ?? threadItems.length;
   const workingEnd = snoozedShelfHeaderIndex ?? snoozedEnd;
   const activeEnd = workingShelfHeaderIndex ?? workingEnd;
-  const result: ThreadListV2ListItem[] = [...pendingItems, ...threadItems.slice(0, activeEnd)];
+  const result: ThreadListV2ListItem[] = [
+    ...missionItems,
+    ...pendingItems,
+    ...threadItems.slice(0, activeEnd),
+  ];
   const shelfDisabled = input.shelfPreferencesLoading === true;
   if (workingShelfHeaderIndex !== null && workingCount > 0) {
     result.push({
@@ -737,6 +840,8 @@ export function buildThreadListV2Items(input: {
   readonly isListedSettled?: (thread: EnvironmentThreadShell) => boolean;
   /** Settled threads in scope that are not local (older settled threads not loaded). */
   readonly unloadedSettledCount?: number;
+  readonly missionHosts?: ReadonlyArray<MissionHost>;
+  readonly collapsedMissions?: ReadonlySet<string>;
 }): ThreadListV2Layout {
   const now = input.now;
   const pending =
@@ -783,6 +888,10 @@ export function buildThreadListV2Items(input: {
         ).map(({ item }) => item)
       : null;
   const matchingThreads = rankedMatches === null ? null : new Set(rankedMatches);
+  const missions =
+    rankedMatches === null && input.missionHosts !== undefined && input.missionHosts.length > 0
+      ? groupThreadListV2Missions(input, listedThreads, projectKeys)
+      : null;
   // Threads listed only because their messages match; only their rows show
   // the message and open at it.
   const contentOnlyThreadKeys = new Set<string>();
@@ -795,6 +904,7 @@ export function buildThreadListV2Items(input: {
       if (input.matchedThreadKeys?.has(key) !== true) continue;
       contentOnlyThreadKeys.add(key);
     }
+    if (missions?.threadKeys.has(`${thread.environmentId}:${thread.id}`) === true) continue;
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
     const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
     if (supportsSnooze && effectiveSnoozed(thread, { now })) {
@@ -840,6 +950,7 @@ export function buildThreadListV2Items(input: {
     });
     const results = [...rankedMatches, ...contentOnly];
     return {
+      missions: [],
       items: results.map((thread, index) => ({
         thread,
         variant: slim.has(thread) ? "slim" : "card",
@@ -970,6 +1081,7 @@ export function buildThreadListV2Items(input: {
     items[items.length - 1] = { ...last, isLast: true };
   }
   return {
+    missions: missions?.groups ?? [],
     items,
     hiddenSettledCount: Math.max(0, settledTotal - pagedSettled.length),
     listedSettledThreads: listedSettled,
@@ -982,4 +1094,58 @@ export function buildThreadListV2Items(input: {
     nextSnoozeWakeAt,
     contentOnlyThreadKeys,
   };
+}
+
+function groupThreadListV2Missions(
+  input: Parameters<typeof buildThreadListV2Items>[0],
+  listedThreads: ReadonlyArray<EnvironmentThreadShell>,
+  projectKeys: ReadonlySet<string> | null,
+) {
+  const now = input.now;
+  // An environment filter scopes missions like a project filter: to that environment's projects.
+  const scope =
+    projectKeys ??
+    (input.environmentId === null
+      ? null
+      : new Set(listedThreads.map((thread) => `${thread.environmentId}:${thread.projectId}`)));
+  const grouped = groupSidebarMissions(input.missionHosts ?? [], input.threads, scope);
+  const item = (thread: EnvironmentThreadShell): ThreadListV2Item => {
+    const snoozed =
+      (input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true) &&
+      effectiveSnoozed(thread, { now });
+    const slim =
+      snoozed ||
+      ((input.settlementEnvironmentIds?.has(thread.environmentId) ?? true) &&
+        thread.settledOverride === "settled");
+    return {
+      thread,
+      variant: slim ? "slim" : "card",
+      snoozed,
+      pinned: false,
+      wokeAt: slim ? null : resolveThreadListV2WokeAt(thread, { now }),
+      isLast: false,
+    };
+  };
+  const groups = grouped.missions.map((mission): ThreadListV2MissionGroup => {
+    const expanded = input.collapsedMissions?.has(mission.key) !== true;
+    const entry = (
+      listed: (typeof mission.members)[number],
+      toggle: ThreadListV2MissionPlace["toggle"] = null,
+    ): ThreadListV2MissionEntry => ({
+      place: {
+        key: mission.key,
+        host: mission.host,
+        missionId: mission.mission.missionId,
+        missionName: mission.mission.name,
+        member: listed.member,
+        toggle,
+      },
+      item: listed.thread === null ? null : item(listed.thread),
+    });
+    return {
+      lead: entry(mission.lead, { expanded, memberCount: mission.members.length }),
+      members: expanded ? mission.members.map((member) => entry(member)) : [],
+    };
+  });
+  return { groups, threadKeys: grouped.threadKeys };
 }

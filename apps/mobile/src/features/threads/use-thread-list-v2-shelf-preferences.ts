@@ -15,6 +15,7 @@ export function useThreadListV2ShelfPreferences() {
   const workingShelfEnabled = loaded && preferencesResult.value.workingShelfEnabled !== false;
   const workingShelfExpanded =
     loaded && preferencesResult.value.threadListWorkingShelfExpanded === true;
+  const collapsedMissions = loaded ? preferencesResult.value.collapsedMissions : undefined;
 
   // Transforms read optimistic state so same-frame presses toggle twice.
   const toggleSnoozedShelf = () => {
@@ -41,9 +42,23 @@ export function useThreadListV2ShelfPreferences() {
       }),
     });
   };
+  const toggleMission = (key: string) => {
+    if (!loaded) return;
+    void savePreferences({
+      transform: (current) => {
+        const collapsed = current.collapsedMissions ?? [];
+        return {
+          collapsedMissions: collapsed.includes(key)
+            ? collapsed.filter((entry) => entry !== key)
+            : [...collapsed, key],
+        };
+      },
+    });
+  };
 
   return {
     loaded,
+    collapsedMissions,
     settledShelfExpanded,
     snoozedShelfExpanded,
     workingShelfEnabled,
@@ -51,5 +66,6 @@ export function useThreadListV2ShelfPreferences() {
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
+    toggleMission,
   } as const;
 }

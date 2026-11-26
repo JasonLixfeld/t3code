@@ -63,7 +63,9 @@ import { WorkspaceListHeader } from "../layout/workspace/WorkspaceListHeader";
 import { WorkspaceSidebarColumn } from "../layout/workspace/WorkspaceSidebarColumn";
 import {
   ThreadListV2PendingRow,
+  ThreadListV2MissionMemberRow,
   ThreadListV2Row,
+  ThreadListV2SectionHeader,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
@@ -254,6 +256,8 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
+    collapsedMissions,
+    toggleMission,
   } = useThreadListV2ShelfPreferences();
   const now = useThreadListNow(threads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
@@ -296,6 +300,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     workingShelfExpanded,
     snoozedShelfExpanded,
     settledShelfExpanded,
+    collapsedMissions,
     selectedThreadKey,
   });
   const listItems: readonly SidebarListItem[] =
@@ -487,9 +492,25 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             onSwipeableClose={handleSwipeableClose}
             onSwipeableWillOpen={handleSwipeableWillOpen}
             simultaneousSwipeGesture={sidebarScrollGesture}
+            mission={item.mission}
+            onToggleMission={toggleMission}
           />
         );
       }
+      case "v2-section":
+        return <ThreadListV2SectionHeader section={item.section} pane="sidebar" />;
+      case "v2-mission-member":
+        return (
+          <ThreadListV2MissionMemberRow
+            place={item.mission}
+            machineLabel={
+              savedConnectionsById[item.mission.member.ref.environmentId]?.environmentLabel ??
+              item.mission.member.ref.environmentId
+            }
+            pane="sidebar"
+            onToggleMission={toggleMission}
+          />
+        );
       case "v2-working-shelf":
         return (
           <ThreadListV2WorkingShelfHeader

@@ -30,6 +30,7 @@ import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
   type EnvironmentMachineKind,
+  type MissionMember,
 } from "@t3tools/contracts";
 import { toServerClock } from "@t3tools/client-runtime/clock";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
@@ -89,6 +90,7 @@ import {
   resolveThreadListV2SwipeActions,
   layoutThreadListV2RowMenuActions,
   threadListV2RowAccessibilityLabel,
+  type ThreadListV2MissionPlace,
   type ThreadListV2Status,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
@@ -434,6 +436,132 @@ export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(pro
         {label}
       </Text>
     </Pressable>
+  );
+});
+
+const MISSION_MEMBER_INDENT = 16;
+
+const SECTION_COPY = {
+  missions: msg("Missions", { $context: "thread list section" }),
+  threads: msg("Threads", { $context: "thread list section" }),
+} as const;
+
+export const ThreadListV2SectionHeader = memo(function ThreadListV2SectionHeader(props: {
+  readonly section: keyof typeof SECTION_COPY;
+  readonly pane?: "screen" | "sidebar";
+}) {
+  const m = useMessages();
+  return <ThreadListV2SectionDivider label={m(SECTION_COPY[props.section])} pane={props.pane} />;
+});
+
+type Translate = ReturnType<typeof useGT>;
+
+function missionMemberRowState(member: MissionMember, gt: Translate): string | null {
+  if (member.state === "release-pending") return gt("Leave pending (machine offline)");
+  if (member.state === "add-pending") return gt("Add pending (machine offline)");
+  if (member.state === "release-refused") {
+    return gt("Leave refused: {reason}", { reason: member.detail ?? "" });
+  }
+  return null;
+}
+
+function missionMemberState(member: MissionMember, gt: Translate): string | null {
+  if (member.state === "add-refused") return member.detail ?? null;
+  if (member.state === "offline") return gt("Last known (machine offline)");
+  return missionMemberRowState(member, gt);
+}
+
+function ThreadListV2MissionToggle(props: {
+  readonly place: ThreadListV2MissionPlace;
+  readonly title: string;
+  readonly size: number;
+  readonly height: number;
+  readonly onToggle: ((key: string) => void) | undefined;
+}) {
+  const gt = useGT();
+  const toggle = props.place.toggle;
+  if (toggle === null) return null;
+  const count = toggle.memberCount;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ expanded: toggle.expanded }}
+      accessibilityLabel={
+        toggle.expanded
+          ? gt(
+              "Collapse mission {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
+              { mission: props.title, count },
+            )
+          : gt(
+              "Expand mission {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
+              { mission: props.title, count },
+            )
+      }
+      className="-m-2 flex-row items-center justify-center gap-0.5 p-2"
+      hitSlop={4}
+      onPress={() => props.onToggle?.(props.place.key)}
+      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, minWidth: props.size + 16 })}
+    >
+      <View className="items-center justify-center" style={{ height: props.height }}>
+        <SymbolView
+          name="chevron.down"
+          size={11}
+          tintColorClassName="accent-foreground-muted"
+          type="monochrome"
+          style={{ transform: [{ rotate: toggle.expanded ? "0deg" : "-90deg" }] }}
+        />
+      </View>
+      {!toggle.expanded && count > 0 ? (
+        <Text className="text-xs tabular-nums text-foreground-muted">{count}</Text>
+      ) : null}
+    </Pressable>
+  );
+}
+
+export const ThreadListV2MissionMemberRow = memo(function ThreadListV2MissionMemberRow(props: {
+  readonly place: ThreadListV2MissionPlace;
+  readonly machineLabel: string;
+  readonly pane?: "screen" | "sidebar";
+  readonly onToggleMission: (key: string) => void;
+}) {
+  const gt = useGT();
+  const titleTypography = useScaledTextRole("body");
+  const { fontScale } = useWindowDimensions();
+  const { member } = props.place;
+  const title =
+    member.state === "deleted"
+      ? gt("Lead deleted", { $context: "the thread that led a mission no longer exists" })
+      : member.role === "lead"
+        ? props.place.missionName
+        : gt("Thread on {machine}", { machine: props.machineLabel });
+  const state = missionMemberState(member, gt) ?? props.machineLabel;
+  return (
+    <View
+      className={cn(
+        THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
+        "min-h-[44px] flex-row items-center gap-2 py-2",
+        props.pane === "sidebar" && "px-3",
+      )}
+      style={{ marginLeft: member.role === "lead" ? 0 : MISSION_MEMBER_INDENT }}
+    >
+      <ThreadListV2MissionToggle
+        place={props.place}
+        title={title}
+        size={titleTypography.fontSize * 1.25 * fontScale}
+        height={titleTypography.lineHeight * fontScale}
+        onToggle={props.onToggleMission}
+      />
+      <View className="min-w-0 flex-1">
+        {member.state === "add-refused" ? null : (
+          <Text className="text-base text-foreground-muted" numberOfLines={1}>
+            {title}
+          </Text>
+        )}
+        <Text className="text-xs text-foreground-tertiary" numberOfLines={2}>
+          {state}
+        </Text>
+      </View>
+    </View>
   );
 });
 
@@ -800,6 +928,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly searchMatch?: EnvironmentThreadSearchMatch;
   readonly searchQuery?: string;
   readonly simultaneousSwipeGesture?: ComponentProps<typeof ThreadSwipeable>["simultaneousWith"];
+  readonly mission?: ThreadListV2MissionPlace | null;
+  readonly onToggleMission?: (key: string) => void;
 }) {
   const { width: windowWidth, fontScale } = useWindowDimensions();
   const titleTypography = useScaledTextRole("body");
@@ -835,6 +965,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   } = props;
   const snoozedRow = props.snoozed === true;
   const pinnedRow = props.pinned === true;
+  const { onToggleMission } = props;
+  const mission = props.mission ?? null;
+  const leadToggle = mission?.toggle ?? null;
+  const project = leadToggle === null ? props.project : null;
+  const memberIndent = mission !== null && leadToggle === null ? MISSION_MEMBER_INDENT : 0;
+  const missionState =
+    mission === null || leadToggle !== null ? null : missionMemberRowState(mission.member, gt);
   const dormant = useSwipeRowDormant(props.activationKey);
 
   const selectThread = () => onSelectThread(thread);
@@ -1379,19 +1516,30 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ? primaryAction.swipeHint
       : primaryAction.swipeSnoozeHint;
 
-  const titleTextInset = props.project ? projectIconSize + 8 : 0;
+  const titleTextInset = project || leadToggle ? projectIconSize + 8 : 0;
+  const missionToggle =
+    leadToggle && mission ? (
+      <ThreadListV2MissionToggle
+        place={mission}
+        title={thread.title}
+        size={projectIconSize}
+        height={titleLineHeight}
+        onToggle={onToggleMission}
+      />
+    ) : null;
   const cardContent = (
     <>
       <View className="flex-row items-start gap-2">
-        {props.project ? (
+        {missionToggle}
+        {project ? (
           <View className="justify-center" style={{ height: titleLineHeight }}>
             <ProjectFavicon
               environmentId={thread.environmentId}
-              faviconPath={props.project.faviconPath}
-              projectIcon={props.project.projectIcon}
+              faviconPath={project.faviconPath}
+              projectIcon={project.projectIcon}
               size={projectIconSize}
-              projectTitle={props.project.title}
-              workspaceRoot={props.project.workspaceRoot}
+              projectTitle={project.title}
+              workspaceRoot={project.workspaceRoot}
             />
           </View>
         ) : null}
@@ -1531,6 +1679,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           >
             {thread.runtime.lastError}
           </Text>
+        ) : missionState ? (
+          <Text
+            className={cn(
+              "flex-1 text-xs",
+              selected
+                ? selectedThreadRowColors.mutedForegroundClassName
+                : rowAppearance.tertiaryForegroundClassName,
+            )}
+            numberOfLines={1}
+          >
+            {missionState}
+          </Text>
         ) : props.environmentLabel ? (
           <View className="min-w-0 flex-1 flex-row items-center gap-1">
             {props.environmentMachine ? (
@@ -1641,11 +1801,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     </>
   );
 
-  const fadedCardContent = recede ? (
-    <View style={{ opacity: 0.55 }}>{cardContent}</View>
-  ) : (
-    cardContent
-  );
+  const fadedCardContent =
+    recede || memberIndent > 0 ? (
+      <View style={{ opacity: recede ? 0.55 : 1, paddingLeft: memberIndent }}>{cardContent}</View>
+    ) : (
+      cardContent
+    );
 
   const rowContent = (close: () => void) =>
     variant === "card" ? (
@@ -1702,16 +1863,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             "min-h-[44px] flex-row items-center gap-2 py-2",
             sidebarPane && "px-3",
           )}
+          style={{ marginLeft: memberIndent }}
         >
-          {props.project ? (
+          {missionToggle}
+          {project ? (
             <View className="opacity-40">
               <ProjectFavicon
                 environmentId={thread.environmentId}
-                faviconPath={props.project.faviconPath}
-                projectIcon={props.project.projectIcon}
+                faviconPath={project.faviconPath}
+                projectIcon={project.projectIcon}
                 size={projectIconSize}
-                projectTitle={props.project.title}
-                workspaceRoot={props.project.workspaceRoot}
+                projectTitle={project.title}
+                workspaceRoot={project.workspaceRoot}
               />
             </View>
           ) : null}
@@ -1740,6 +1903,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 numberOfLines={1}
               >
                 {providerNameLabel}
+              </Text>
+            ) : null}
+            {missionState ? (
+              <Text
+                className={cn(
+                  "text-xs",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : rowAppearance.tertiaryForegroundClassName,
+                )}
+                numberOfLines={1}
+              >
+                {missionState}
               </Text>
             ) : null}
             {props.searchMatch ? (

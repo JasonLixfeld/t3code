@@ -4,6 +4,7 @@ import { useMemo, useSyncExternalStore } from "react";
 
 import { keepMarked } from "../../i18n/messages";
 import { scopedProjectKey } from "../../lib/scopedEntities";
+import { useMissionHosts, useMissionPreferences } from "../../state/missions";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
@@ -65,9 +66,16 @@ export function useThreadListV2(input: {
   readonly workingShelfExpanded: boolean;
   readonly snoozedShelfExpanded: boolean;
   readonly settledShelfExpanded: boolean;
+  readonly collapsedMissions?: ReadonlyArray<string>;
   readonly selectedThreadKey: string | null;
 }) {
   const { threads, workingShelfEnabled } = input;
+  const missionHosts = useMissionHosts();
+  const { headerVisible: missionsHeaderVisible, threadsHeaderVisible } = useMissionPreferences();
+  const collapsedMissions = useMemo(
+    () => new Set(input.collapsedMissions ?? []),
+    [input.collapsedMissions],
+  );
   const layoutTime = useMemo(
     () => threadListV2LayoutTime({ threads, now: input.now, searchQuery: input.searchQuery }),
     [threads, input.now, input.searchQuery],
@@ -153,6 +161,8 @@ export function useThreadListV2(input: {
         snoozedShelfExpanded: input.snoozedShelfExpanded,
         settledShelfExpanded: input.settledShelfExpanded,
         selectedThreadKey: input.selectedThreadKey,
+        missionHosts,
+        collapsedMissions,
         isListedSettled: isListed,
         unloadedSettledCount: unloadedCount(
           threads.filter(
@@ -185,6 +195,8 @@ export function useThreadListV2(input: {
       input.snoozedShelfExpanded,
       input.settledShelfExpanded,
       input.selectedThreadKey,
+      missionHosts,
+      collapsedMissions,
       isListed,
       unloadedCount,
       scopes,
@@ -214,6 +226,9 @@ export function useThreadListV2(input: {
     () =>
       buildThreadListV2ListItems({
         items: layout.items,
+        missions: layout.missions,
+        missionsHeaderVisible,
+        threadsHeaderVisible,
         pendingTasks,
         workingCount: layout.workingCount,
         workingShelfExpanded: input.workingShelfExpanded,
@@ -233,6 +248,8 @@ export function useThreadListV2(input: {
       }),
     [
       layout,
+      missionsHeaderVisible,
+      threadsHeaderVisible,
       pendingTasks,
       input.workingShelfExpanded,
       input.snoozedShelfExpanded,

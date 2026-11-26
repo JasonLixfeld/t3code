@@ -160,6 +160,7 @@ export interface Preferences {
   readonly connectionTracesEnabled?: boolean;
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
+  readonly collapsedMissions?: readonly string[];
   readonly dismissedDatabaseStorageNotices?: readonly string[];
   /** Per host, when the newest T3 Connect device this phone has announced first signed in. */
   readonly connectDevicesSeenThrough?: Readonly<Record<string, number>>;
@@ -260,6 +261,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     connectionTracesEnabled?: boolean;
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
+    collapsedMissions?: readonly string[];
     dismissedDatabaseStorageNotices?: readonly string[];
     connectDevicesSeenThrough?: Readonly<Record<string, number>>;
     composerEnterBehavior?: ComposerEnterBehavior;
@@ -372,6 +374,11 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (Array.isArray(parsed.collapsedProjectGroups)) {
     preferences.collapsedProjectGroups = parsed.collapsedProjectGroups.filter(
+      (key): key is string => typeof key === "string",
+    );
+  }
+  if (Array.isArray(parsed.collapsedMissions)) {
+    preferences.collapsedMissions = parsed.collapsedMissions.filter(
       (key): key is string => typeof key === "string",
     );
   }

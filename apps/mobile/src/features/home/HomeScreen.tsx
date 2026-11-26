@@ -74,7 +74,9 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
   ThreadListV2PendingRow,
+  ThreadListV2MissionMemberRow,
   ThreadListV2Row,
+  ThreadListV2SectionHeader,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
@@ -396,6 +398,8 @@ export function HomeScreen(props: HomeScreenProps) {
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
+    collapsedMissions,
+    toggleMission,
   } = useThreadListV2ShelfPreferences();
   const now = useThreadListNow(props.threads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
@@ -438,6 +442,7 @@ export function HomeScreen(props: HomeScreenProps) {
     workingShelfExpanded,
     snoozedShelfExpanded,
     settledShelfExpanded,
+    collapsedMissions,
     selectedThreadKey,
   });
   // Called as `props.onSelectThread(...)`, the compiler would cache this handler on the whole
@@ -514,6 +519,27 @@ export function HomeScreen(props: HomeScreenProps) {
           disabled={item.disabled}
           expanded={item.expanded}
           onToggle={toggleSnoozedShelf}
+        />
+      );
+    }
+    if (item.type === "v2-section") {
+      return (
+        <ThreadListV2SectionHeader
+          section={item.section}
+          pane={sidebarSurface ? "sidebar" : "screen"}
+        />
+      );
+    }
+    if (item.type === "v2-mission-member") {
+      return (
+        <ThreadListV2MissionMemberRow
+          place={item.mission}
+          machineLabel={
+            props.savedConnectionsById[item.mission.member.ref.environmentId]?.environmentLabel ??
+            item.mission.member.ref.environmentId
+          }
+          pane={sidebarSurface ? "sidebar" : "screen"}
+          onToggleMission={toggleMission}
         />
       );
     }
@@ -595,6 +621,8 @@ export function HomeScreen(props: HomeScreenProps) {
         onSwipeableWillOpen={handleSwipeableWillOpen}
         simultaneousSwipeGesture={homeScrollGesture}
         activationKey={item.key}
+        mission={item.mission}
+        onToggleMission={toggleMission}
       />
     );
   };
