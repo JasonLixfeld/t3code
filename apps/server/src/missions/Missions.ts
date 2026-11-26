@@ -1283,7 +1283,7 @@ const make = Effect.gen(function* () {
             return yield* fail("That thread is not in this mission.");
           }
           if (claim?.role === "lead") {
-            return yield* fail("A mission keeps its lead thread, so the lead cannot be released.");
+            return yield* fail("A mission keeps its lead thread, so the lead cannot leave.");
           }
           // A refusal the view hides behind a live claim must not take the release meant for it.
           if (refused !== undefined) yield* store.clearPendingAdd(refused);

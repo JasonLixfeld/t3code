@@ -3852,7 +3852,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             label={
                               (missionDrop.target?.kind === "release"
                                 ? missionDrop.target.refusal
-                                : null) ?? gt("Release from mission")
+                                : null) ?? gt("Leave mission")
                             }
                             isDropTarget={
                               missionDrop.target?.kind === "release" &&

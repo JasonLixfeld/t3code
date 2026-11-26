@@ -321,6 +321,21 @@ describe("missions in the sidebar", () => {
     expect(screen.getByRole("button", { name: "Dismiss" }).elements()).toHaveLength(1);
   });
 
+  it("shows a member's pending leave as Leave pending", async () => {
+    listedMissions[0] = {
+      ...ship,
+      members: [
+        ...ship.members,
+        { ref: ref(LOCAL, "plain"), role: "member", state: "release-pending" },
+      ],
+    };
+    onTestFinished(() => {
+      listedMissions[0] = ship;
+    });
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Leave pending (machine offline)")).toBeInTheDocument();
+  });
+
   it("shows a refused release with why, and offers Dismiss and Retry", async () => {
     listedMissions[0] = {
       ...ship,
@@ -339,7 +354,7 @@ describe("missions in the sidebar", () => {
     });
     await using screen = await renderSidebar();
     await expect
-      .element(screen.getByText("Release refused: The laptop refused it."))
+      .element(screen.getByText("Leave refused: The laptop refused it."))
       .toBeInTheDocument();
     // Still a member: its thread shows under the mission, with the refusal under its row.
     const members = screen.container.querySelector("[data-testid=sidebar-mission-members]")!;
@@ -348,7 +363,7 @@ describe("missions in the sidebar", () => {
       environmentId: LOCAL,
       input: { missionId: "0123456789ab", member: ref(LOCAL, "plain") },
     };
-    const refusal = screen.getByText("Release refused: The laptop refused it.").element();
+    const refusal = screen.getByText("Leave refused: The laptop refused it.").element();
     const button = (name: string) =>
       refusal.parentElement!.querySelector<HTMLElement>(`button[aria-label="${name}"]`)!;
     button("Retry").click();
@@ -556,7 +571,7 @@ describe("missions in the sidebar", () => {
     expect(ids).toContain("unsnooze");
   });
 
-  it("offers a settled lead Un-settle, and a member Release from mission", async () => {
+  it("offers a settled lead Un-settle, and a member Leave mission", async () => {
     const show = vi.fn().mockResolvedValue(null);
     vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
     await using screen = await renderSidebar({}, { leadSettled: true });
@@ -611,7 +626,7 @@ describe("missions in the sidebar", () => {
     }
     // A member keeps them.
     const member = await menuOf(rowOf(screen.container, "Update the release notes"), null);
-    expect(member).toEqual(expect.arrayContaining(["Release from mission", "Add to mission"]));
+    expect(member).toEqual(expect.arrayContaining(["Leave mission", "Add to mission"]));
     expect(member).not.toContain("New thread in this mission");
     // A deleted lead's row also takes a new lead.
     const gone = screen.getByText("Lead deleted").element().closest("li")!;
@@ -1039,7 +1054,7 @@ describe("dragging threads into and out of missions", () => {
       rowOf(screen.container, "Update the release notes"),
       releaseZone(screen.container),
     );
-    expect(releaseZone(screen.container)().textContent).toBe("Release from mission");
+    expect(releaseZone(screen.container)().textContent).toBe("Leave mission");
     await drag.release();
     expect(commandFor("mission release member")).toHaveBeenCalledExactlyOnceWith({
       environmentId: LOCAL,
@@ -1241,7 +1256,7 @@ describe("dragging threads into and out of missions", () => {
       rowOf(screen.container, "Plan the v2 release"),
       rowOf(screen.container, "Unrelated bug"),
     );
-    expect(screen.container.textContent).not.toContain("Release from mission");
+    expect(screen.container.textContent).not.toContain("Leave mission");
     await out.release();
     expect(commandFor("mission add member")).not.toHaveBeenCalled();
     expect(commandFor("mission release member")).not.toHaveBeenCalled();

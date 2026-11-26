@@ -407,7 +407,7 @@ const refuse = (message: string) => new MissionError({ message });
 const isRefusal = Schema.is(MissionError);
 const heldElsewhere = (held: ClaimRow) =>
   refuse(
-    `This thread is already in the mission "${held.mission_name}". Release it from that mission first.`,
+    `This thread is already in the mission "${held.mission_name}". It must leave that mission first.`,
   );
 
 const now = Effect.map(DateTime.now, DateTime.formatIso);
@@ -733,7 +733,7 @@ const make = Effect.gen(function* () {
           LIMIT 1
         `;
         if (held !== undefined) {
-          return refuse("Release this mission's threads before deleting it.");
+          return refuse("Its threads must leave this mission before you delete it.");
         }
         // A refused release whose claim is still listed held the delete back above; one whose
         // claim is gone holds nothing, and goes with the Mission.
@@ -919,7 +919,7 @@ const make = Effect.gen(function* () {
         const held = yield* claimRow(threadId);
         if (held === undefined) return refuse("This thread is not in a mission.");
         if (held.role === "lead") {
-          return refuse("A mission keeps its lead thread, so the lead cannot be released.");
+          return refuse("A mission keeps its lead thread, so the lead cannot leave.");
         }
         yield* spendIntent(held);
         yield* sql`DELETE FROM claims WHERE thread_id = ${threadId}`;

@@ -232,17 +232,60 @@ describe("buildMissionMenuItems", () => {
       },
     ];
     const releaseOf = (can: (environmentId: EnvironmentId) => boolean, id = "ios") =>
-      buildMissionMenuItems([thread(LAPTOP, id)], joined, label, can).find((item) =>
-        item.id.startsWith("mission-release:"),
+      buildMissionMenuItems([thread(LAPTOP, id)], joined, label, can).find(
+        (item) => item.label === "Leave mission",
       );
     expect(releaseOf(allowed)).toMatchObject({
       id: "mission-release:env-desk:0123456789ab",
-      label: "Release from mission",
       disabled: false,
     });
     expect(parseMissionTarget(releaseOf(allowed)!.id)).toMatchObject({ action: "release" });
     expect(releaseOf(() => false)).toMatchObject({ disabled: true, detail: "Not allowed here" });
     expect(releaseOf(allowed, "other")).toBeUndefined();
+  });
+
+  it("offers one Leave mission, on the member's machine when it may be changed, else the lead's", () => {
+    const member = { ref: { environmentId: LAPTOP, threadId: ThreadId.make("ios") } };
+    const held: ReadonlyArray<MissionHost> = [
+      {
+        ...hosts[0]!,
+        snapshot: {
+          ...hosts[0]!.snapshot,
+          missions: [{ ...mission, members: [{ ...member, role: "member", state: "active" }] }],
+        },
+      },
+      {
+        environmentId: LAPTOP,
+        snapshot: {
+          links: [],
+          missions: [],
+          claims: [
+            { threadId: ThreadId.make("ios"), missionId: mission.missionId, name: "Ship v2" },
+          ],
+        },
+      },
+    ];
+    const ways = (can: (environmentId: EnvironmentId) => boolean) =>
+      buildMissionMenuItems([thread(LAPTOP, "ios")], held, label, can).filter(
+        (item) => item.icon === "folder-minus",
+      );
+    expect(ways(allowed)).toEqual([
+      expect.objectContaining({ id: "mission-leave", label: "Leave mission", disabled: false }),
+    ]);
+    expect(ways((environmentId) => environmentId === DESK)).toEqual([
+      expect.objectContaining({
+        id: "mission-release:env-desk:0123456789ab",
+        label: "Leave mission",
+        disabled: false,
+      }),
+    ]);
+    expect(ways(() => false)).toEqual([
+      expect.objectContaining({
+        label: "Leave mission",
+        disabled: true,
+        detail: "Not allowed here",
+      }),
+    ]);
   });
 
   it("releases a thread from the mission the sidebar lists it under", () => {

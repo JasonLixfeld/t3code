@@ -71,6 +71,7 @@ import {
   buildMissionMenuItems,
   isMissionMenuId,
   claimHere,
+  missionLeaveId,
   missionAddSummary,
   type MissionCandidate,
   type MissionDrop,
@@ -184,6 +185,14 @@ export function useMissionMenu() {
     items: (threads: ReadonlyArray<MissionCandidate>) =>
       enabled ? buildMissionMenuItems(threads, hosts, machineLabel, canChangeOn, resolve) : [],
     /** The menu of a Mission's own row where no thread row stands in for its lead. */
+    /** How this member leaves the Mission `heldBy` lists it under, or null when it cannot. */
+    leaveId: (ref: ScopedThreadRef, heldBy: Parameters<typeof missionLeaveId>[1]) =>
+      missionLeaveId(
+        { environmentId: ref.environmentId, id: ref.threadId },
+        heldBy,
+        hosts,
+        canChangeOn,
+      ),
     rowItems: (host: EnvironmentId, mission: Mission, leadGone: boolean) =>
       missionRowItems({ host, mission, leadGone, canChange: canChangeOn(host) }, resolve),
     /** The threads that got where they were sent; the rest stay selected. */
@@ -206,7 +215,7 @@ export function useMissionMenu() {
         lead === undefined ? undefined : claimHere({ ...lead, id: lead.threadId }, hosts);
       if (id === "mission-leave" && lead !== undefined && claim !== undefined) {
         const confirmed = await readLocalApi()?.dialogs.confirm(
-          gt('Leave the mission "{mission}"? Its lead will see this thread as released.', {
+          gt('Leave the mission "{mission}"? Its lead will see that this thread left.', {
             mission: claim.name,
           }),
         );
@@ -262,7 +271,7 @@ export function useMissionMenu() {
           environmentId: target.environmentId,
           input: { missionId: target.missionId, member: lead },
         });
-        reportFailure(gt("Could not release the thread"), result);
+        reportFailure(gt("Could not leave the mission"), result);
         return result._tag === "Success" ? [lead] : [];
       }
       if (target.action !== "add") return [];
@@ -375,6 +384,11 @@ function MemberRow(props: {
   );
   const release = useAtomCommand(serverEnvironment.releaseMissionMember, "mission release member");
   const forget = useAtomCommand(serverEnvironment.forgetMissionMember, "mission forget member");
+  const menu = useMissionMenu();
+  const leaveId = menu.leaveId(props.member.ref, {
+    host: props.host,
+    mission: { missionId: props.missionId },
+  });
   const [releasing, setReleasing] = useState(false);
   const deleted = props.member.state === "deleted";
   const title = deleted
@@ -410,24 +424,26 @@ function MemberRow(props: {
     setReleasing(true);
     if (forgets || releaseRefused) {
       reportFailure(gt("Could not forget the thread"), await forget(command));
-    } else reportFailure(gt("Could not release the thread"), await release(command));
+    } else if (dismisses) {
+      reportFailure(gt("Could not leave the mission"), await release(command));
+    } else if (leaveId !== null) await menu.run(leaveId, [props.member.ref]);
     setReleasing(false);
   };
   const onRetry = async () => {
     setReleasing(true);
-    reportFailure(gt("Could not release the thread"), await release(command));
+    reportFailure(gt("Could not leave the mission"), await release(command));
     setReleasing(false);
   };
   const { toggle } = props;
   const stateText =
     props.member.state === "release-pending"
-      ? gt("Release pending (machine offline)")
+      ? gt("Leave pending (machine offline)")
       : props.member.state === "add-pending"
         ? gt("Add pending (machine offline)")
         : props.member.state === "add-refused"
           ? props.member.detail
           : releaseRefused
-            ? gt("Release refused: {reason}", { reason: props.member.detail ?? "" })
+            ? gt("Leave refused: {reason}", { reason: props.member.detail ?? "" })
             : props.member.state === "offline"
               ? gt("Last known (machine offline)")
               : where;
@@ -435,7 +451,7 @@ function MemberRow(props: {
     ? gt("Forget")
     : dismisses || releaseRefused
       ? gt("Dismiss")
-      : gt("Release from mission");
+      : gt("Leave mission");
   const retry = releaseRefused ? (
     <Tooltip>
       <TooltipTrigger
@@ -467,7 +483,10 @@ function MemberRow(props: {
               <button
                 type="button"
                 aria-label={dismissLabel}
-                disabled={!canRelease || releasing}
+                disabled={
+                  releasing ||
+                  (forgets || dismisses || releaseRefused ? !canRelease : leaveId === null)
+                }
                 onClick={(event) => {
                   // Inside a thread's row, the row would open the thread as well.
                   event.stopPropagation();
@@ -479,9 +498,7 @@ function MemberRow(props: {
               </button>
             }
           />
-          <TooltipPopup side="top">
-            {forgets || dismisses || releaseRefused ? dismissLabel : <T>Release from mission</T>}
-          </TooltipPopup>
+          <TooltipPopup side="top">{dismissLabel}</TooltipPopup>
         </Tooltip>
       </>
     ) : null;
@@ -989,7 +1006,7 @@ export function useMissionDrop(missions: ReadonlyArray<SidebarMission<Environmen
             title:
               next.kind === "add"
                 ? resolve(msg("Not added to the mission"))
-                : resolve(msg("Not released from the mission")),
+                : resolve(msg("Did not leave the mission")),
             description: next.refusal,
           }),
         );
@@ -997,7 +1014,10 @@ export function useMissionDrop(missions: ReadonlyArray<SidebarMission<Environmen
         void add(`mission-add:${next.host}:${next.missionId}`, at.refs);
       } else if (next.refusal === null) {
         const dragged = at.refs.filter((ref) => scopedThreadKey(ref) === at.dragged);
-        void menu.run(`mission-release:${next.host}:${next.missionId}`, dragged);
+        const leave =
+          dragged[0] &&
+          menu.leaveId(dragged[0], { host: next.host, mission: { missionId: next.missionId } });
+        if (leave) void menu.run(leave, dragged);
       }
       return true;
     }),

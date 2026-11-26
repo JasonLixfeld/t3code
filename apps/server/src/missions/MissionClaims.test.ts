@@ -311,7 +311,7 @@ it.effect("a leave racing the start of a mission never frees its lead", () =>
           concurrency: "unbounded",
         });
         const refused = yield* claims.leaveHere(threadId).pipe(Effect.flip);
-        assert.include(refused.message, "lead cannot be released");
+        assert.include(refused.message, "lead cannot leave");
         assert.equal((yield* claims.list("env-here"))[0]?.role, "lead");
         assert.deepEqual(machine.tags, ["mission:aaaa:AAAA"]);
       }),

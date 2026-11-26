@@ -97,6 +97,26 @@ export const claimHere = (thread: MissionThread, hosts: ReadonlyArray<MissionHos
     ?.snapshot.claims.find((claim) => claim.threadId === thread.id);
 
 /**
+ * How a member leaves its Mission: on its own machine, at once, when that machine may be changed,
+ * else through its lead's machine. Null when neither may be changed.
+ */
+export function missionLeaveId(
+  thread: MissionThread,
+  heldBy:
+    | { readonly host: EnvironmentId; readonly mission: Pick<Mission, "missionId"> }
+    | undefined,
+  hosts: ReadonlyArray<MissionHost>,
+  canChangeOn: (environmentId: EnvironmentId) => boolean,
+): MissionMenuId | null {
+  if (claimHere(thread, hosts) !== undefined && canChangeOn(thread.environmentId)) {
+    return "mission-leave";
+  }
+  return heldBy !== undefined && canChangeOn(heldBy.host)
+    ? `${RELEASE_PREFIX}${heldBy.host}:${heldBy.mission.missionId}`
+    : null;
+}
+
+/**
  * Why a thread cannot join a Mission kept on `host`. A thread on another machine needs the host's
  * link to that machine to have full access, because a weaker link may change only threads it started.
  */
@@ -252,30 +272,15 @@ export function buildMissionMenuItems(
                     : {}),
           },
         ]),
-    ...(heldBy === undefined
+    ...(single === undefined || (heldBy === undefined && claimHere(single, hosts) === undefined)
       ? []
-      : [
-          {
-            id: `${RELEASE_PREFIX}${heldBy.host}:${heldBy.mission.missionId}` as const,
-            label: resolve(msg("Release from mission")),
-            icon: "folder-minus",
-            disabled: !canChangeOn(heldBy.host),
-            ...(canChangeOn(heldBy.host) ? {} : { detail: blockLabel("not-allowed", "", resolve) }),
-          },
-        ]),
-    ...(single === undefined || claimHere(single, hosts) === undefined
-      ? []
-      : [
-          {
-            id: "mission-leave" as const,
-            label: resolve(msg("Leave mission")),
-            icon: "folder-minus",
-            disabled: !canChangeOn(single.environmentId),
-            ...(canChangeOn(single.environmentId)
-              ? {}
-              : { detail: blockLabel("not-allowed", "", resolve) }),
-          },
-        ]),
+      : [missionLeaveId(single, heldBy, hosts, canChangeOn)].map((id) => ({
+          id: id ?? ("mission-leave" as const),
+          label: resolve(msg("Leave mission")),
+          icon: "folder-minus",
+          disabled: id === null,
+          ...(id === null ? { detail: blockLabel("not-allowed", "", resolve) } : {}),
+        }))),
     {
       id: "mission-add",
       label: resolve(msg("Add to mission")),
@@ -571,14 +576,24 @@ export function resolveMissionDrop(input: {
   const notAllowed = (host: EnvironmentId) =>
     input.canChangeOn(host) ? null : blockLabel("not-allowed", "", resolve);
   if (input.over === "list") {
-    return from === undefined
+    const ref = from?.members.find((entry) => scopedThreadKey(entry.member.ref) === input.dragged)
+      ?.member.ref;
+    return from === undefined || ref === undefined
       ? null
       : {
           kind: "release",
           mission: from.key,
           host: from.host,
           missionId: from.mission.missionId,
-          refusal: notAllowed(from.host),
+          refusal:
+            missionLeaveId(
+              { environmentId: ref.environmentId, id: ref.threadId },
+              from,
+              input.hosts,
+              input.canChangeOn,
+            ) === null
+              ? blockLabel("not-allowed", "", resolve)
+              : null,
         };
   }
   const target = input.missions.find((mission) => mission.key === input.over);

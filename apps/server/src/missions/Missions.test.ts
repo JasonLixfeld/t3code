@@ -974,7 +974,7 @@ it.effect("a mission with a member is not deleted; once released, its lead stays
       yield* missions.addMember({ missionId: mission.missionId, member: localMember });
       assert.equal(
         yield* deleteRefusal(mission.missionId),
-        "Release this mission's threads before deleting it.",
+        "Its threads must leave this mission before you delete it.",
       );
       assert.equal((yield* listed).missions.length, 1);
       yield* missions.releaseMember({ missionId: mission.missionId, member: localMember });
@@ -1016,7 +1016,7 @@ it.effect(
         );
         yield* Deferred.succeed(letGo, undefined);
         assert.equal(yield* Fiber.join(adding), "joined");
-        assert.include((yield* Fiber.join(deleting)).message, "Release this mission's threads");
+        assert.include((yield* Fiber.join(deleting)).message, "must leave this mission");
         assert.deepEqual(
           (yield* listed).missions[0]?.members.map((member) => member.ref.threadId),
           [lead.threadId, localMember.threadId],
@@ -1362,7 +1362,7 @@ it.effect("a mission is not deleted while an add to another machine waits for it
       assert.equal(stateOf(yield* listed, laptopMember), "add-pending");
       assert.equal(
         yield* deleteRefusal(mission.missionId),
-        "Release this mission's threads before deleting it.",
+        "Its threads must leave this mission before you delete it.",
       );
       assert.deepEqual(world.tags(lead), [TAG]);
     }),
@@ -1907,7 +1907,7 @@ it.effect("releasing replaces the member's tag; a lead cannot be released", () =
       const refused = yield* missions
         .releaseMember({ missionId: mission.missionId, member: lead })
         .pipe(Effect.flip);
-      assert.include(refused.message, "lead cannot be released");
+      assert.include(refused.message, "lead cannot leave");
     }),
   );
 });
@@ -2137,7 +2137,7 @@ it.effect("the lead thread of a mission here cannot leave it", () => {
       const missions = yield* Missions.Missions;
       yield* createOne;
       const refused = yield* missions.leaveHere(lead.threadId).pipe(Effect.flip);
-      assert.include(refused.message, "lead cannot be released");
+      assert.include(refused.message, "lead cannot leave");
       assert.deepEqual(world.tags(lead), [TAG]);
     }),
   );

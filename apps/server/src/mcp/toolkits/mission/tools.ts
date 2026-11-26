@@ -161,7 +161,7 @@ export const MissionToolkit = Toolkit.make(
     .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenUnlessMissionLead),
   Tool.make("t3_mission_release", {
     description:
-      "Release a thread from the mission you lead. It stays a thread. `pending`: its machine has not answered yet.",
+      "Make a thread leave the mission you lead. It stays a thread. `pending`: its machine has not answered yet.",
     parameters: Schema.Struct({ threadRef: MissionThreadRef }),
     success: Schema.Struct({ state: Schema.Literals(["released", "pending"]) }),
     failure: OrchestratorMcpFailure,

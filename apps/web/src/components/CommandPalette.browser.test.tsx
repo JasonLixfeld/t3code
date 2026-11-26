@@ -655,6 +655,7 @@ describe("CommandPalette mission thread actions", () => {
     missionRun.mockClear();
     vi.mocked(useMissionMenu).mockImplementation(() => ({
       items: itemsOn(useSyncExternalStore(subscribe, () => listed.hosts)),
+      leaveId: () => null,
       rowItems: () => [],
       run: missionRun,
     }));
@@ -896,19 +897,23 @@ describe("CommandPalette mission thread actions", () => {
     await expect.element(page.getByText("Backspace", { exact: true })).toBeVisible();
   });
 
-  it("releases a member thread from its mission, and leaves it, from the palette", async () => {
+  it("leaves a mission from the palette, on the member's machine or else through the lead's", async () => {
     const thread = openThread(true);
     const ref = { environmentId: LOCAL, threadId: thread.id };
     const host = hostWith(["Ship v2"], undefined, [{ ref, role: "member", state: "active" }]);
     const claims = [{ threadId: thread.id, missionId: "ba9876543210", name: "Ship v2" }];
-    listMissions([{ ...host, snapshot: { ...host.snapshot, claims } }]);
+    listMissions([]);
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
-    for (const [label, id] of [
-      ["Release from mission", "mission-release:local:ba9876543210"],
-      ["Leave mission", "mission-leave"],
+    // With the claim, its own machine leaves at once; without it, the lead's machine asks.
+    for (const [listed, id] of [
+      [{ ...host, snapshot: { ...host.snapshot, claims } }, "mission-leave"],
+      [host, "mission-release:local:ba9876543210"],
     ] as const) {
+      await relistMissions([listed]);
       openCommandPalette();
-      await page.getByRole("option", { name: new RegExp(`^${label}`) }).click();
+      await expect.element(page.getByRole("option", { name: /^Leave mission/ })).toBeVisible();
+      expect(page.getByText(/Release/).elements()).toHaveLength(0);
+      await page.getByRole("option", { name: /^Leave mission/ }).click();
       await vi.waitFor(() => expect(missionRun).toHaveBeenCalledWith(id, [ref]));
     }
   });
