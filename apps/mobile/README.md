@@ -107,6 +107,26 @@ T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID=com.example.t3code \
 vp run ios:release
 ```
 
+### Fork builds
+
+A fork build is a Release app signed by your own Apple team. It installs beside the App Store app.
+Setting `T3CODE_FORK_BUNDLE_ID` turns it on. `T3CODE_FORK_TEAM_ID` is your 10-character team ID, and
+`T3CODE_FORK_APP_NAME` and `T3CODE_FORK_SCHEME` set the home screen name and URL scheme.
+`T3CODE_IOS_BUILD_NUMBER` sets the build number for any build.
+
+Another team cannot use T3's push, App Groups, associated domains, Clerk, relay or EAS project. A
+fork build therefore drops the same capabilities as a Personal Team build. It also turns off T3
+Connect sign-in, over-the-air updates and links from app.t3.codes. Pairing directly with a server
+still works.
+
+This script archives a fork build and uploads it to TestFlight. It needs an App Store Connect API key
+in `APPLE_ASC_KEY_ID` and `APPLE_ASC_ISSUER_ID`. The key file defaults to
+`~/.appstoreconnect/private_keys/AuthKey_<key id>.p8`, or set `APPLE_ASC_KEY_PATH`.
+
+```bash
+vp run ios:fork:testflight
+```
+
 Build and run the local iOS preview app:
 
 ```bash

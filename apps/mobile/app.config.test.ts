@@ -6,7 +6,17 @@ import assetLinks from "../web/public/.well-known/assetlinks.json";
 
 // Keep config parsing independent of local env files and build credentials.
 vi.mock("../../scripts/lib/public-config.ts", () => ({
-  loadRepoEnv: () => ({ APP_VARIANT: process.env.APP_VARIANT }),
+  // app.config.ts copies this into process.env, which would turn undefined into "undefined".
+  loadRepoEnv: () =>
+    Object.fromEntries(
+      [
+        "APP_VARIANT",
+        "T3CODE_FORK_BUNDLE_ID",
+        "T3CODE_FORK_TEAM_ID",
+        "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY",
+        "T3CODE_RELAY_URL",
+      ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]])),
+    ),
 }));
 
 afterEach(() => {
@@ -45,3 +55,38 @@ it.each([
   ]);
   expect(assetLinks.map((link) => link.target.package_name)).toContain(identifier);
 });
+
+function stubForkEnv(teamId: string | undefined) {
+  vi.stubEnv("T3CODE_FORK_BUNDLE_ID", "io.example.t3fork");
+  vi.stubEnv("T3CODE_FORK_TEAM_ID", teamId);
+  vi.stubEnv("EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY", "pk_test_upstream");
+  vi.stubEnv("T3CODE_RELAY_URL", "https://relay.example.com");
+}
+
+it("gives a fork build its own identity without T3's domains, updates, EAS project or cloud", async () => {
+  stubForkEnv("ABCDE12345");
+  const config = await loadConfig("production");
+  expect(config.name).toBe("T3 Fork");
+  expect(config.scheme).toBe("t3fork");
+  expect(config.ios?.bundleIdentifier).toBe("io.example.t3fork");
+  expect(config.ios?.appleTeamId).toBe("ABCDE12345");
+  expect(config.ios?.associatedDomains).toBeUndefined();
+  expect(config.updates).toEqual({ enabled: false });
+  expect(config.owner).toBeUndefined();
+  expect(config.extra?.eas?.projectId).toBeUndefined();
+  expect(config.extra?.iosPersonalTeamBuild).toBe(true);
+  expect(config.plugins).toContainEqual([
+    "expo-notifications",
+    expect.objectContaining({ enableRemoteNotifications: false }),
+  ]);
+  expect(config.extra?.clerk?.publishableKey).toBeNull();
+  expect(config.extra?.relay?.url).toBeNull();
+});
+
+it.each([undefined, "abcde12345", "ABC"])(
+  "rejects a fork build with T3CODE_FORK_TEAM_ID=%j",
+  async (teamId) => {
+    stubForkEnv(teamId);
+    await expect(loadConfig("production")).rejects.toThrow("T3CODE_FORK_TEAM_ID");
+  },
+);
