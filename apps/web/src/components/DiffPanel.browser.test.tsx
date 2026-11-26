@@ -47,10 +47,12 @@ const state = vi.hoisted(() => ({
   commits: null as unknown as ResultAtom<ReviewBranchCommitsResult>,
   checkpoints: [] as unknown[],
   checkpointDiff: null as Partial<OrchestrationGetTurnDiffResult> | null,
+  realFileTree: false,
 }));
 
-vi.mock("~/state/server", () => ({
+vi.mock("~/state/server", async () => ({
   serverEnvironment: { configValueAtom: () => state.config },
+  primaryServerKeybindingsAtom: (await import("effect/reactivity")).Atom.make([]),
 }));
 vi.mock("~/state/review", () => ({
   reviewEnvironment: {
@@ -86,6 +88,7 @@ vi.mock("~/hooks/useSettings", () => ({
   updateClientSettings: async () => {},
 }));
 vi.mock("~/hooks/useTheme", () => ({
+  useTheme: () => ({ resolvedTheme: "dark" }),
   useRenderedAppearance: () => "dark",
   getRenderedAppearance: () => "dark",
   subscribeRenderedAppearance: () => () => {},
@@ -104,12 +107,19 @@ vi.mock("~/editorPreferences", () => ({ useOpenInPreferredEditor: () => async ()
 vi.mock("~/fileContextMenu", () => ({ useFileContextMenuHandler: () => () => {} }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => async () => {} }));
 vi.mock("./diffs/DiffCommentAnnotation", () => ({ DiffCommentAnnotation: () => null }));
-vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
+vi.mock("./diffs/DiffFileTree", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./diffs/DiffFileTree")>();
+  return {
+    DiffFileTree: (props: Parameters<typeof actual.DiffFileTree>[0]) =>
+      state.realFileTree ? <actual.DiffFileTree {...props} /> : null,
+  };
+});
 vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
 
 import DiffPanel from "./DiffPanel";
 import { useDiffPanelSessionStore, useDiffPanelStore } from "~/diffPanelStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
+import { dispatchPreviewAction } from "./preview/previewActionBus";
 
 const cwd = "/project-worktree";
 const errorMessage = "Could not find a common commit between 'origin/orphan' and HEAD.";
@@ -143,9 +153,11 @@ function setup(failedBaseRef: string | null) {
     });
     useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
     useRightPanelStore.setState({ byThreadKey: {}, threadPanelVisibilityByThreadKey: {} });
+    localStorage.removeItem("t3code.diffFileTreeOpen");
   };
   reset();
   state.diffFilesCollapsed = false;
+  state.realFileTree = false;
   state.project = { workspaceRoot: "/project", repositoryIdentity: null };
   state.toolCallItem = null;
   state.checkpoints = [];
@@ -496,4 +508,112 @@ it("opens a file from a tool call's diff by the path its agent recorded", async 
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, context.threadRef),
     ).toMatchObject({ activeSurfaceId: "file:src/a.ts" }),
   );
+});
+
+const FIND_DIFF = [
+  "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,2 +1,2 @@\n const retry = 1;\n-old retry\n+new retry retry\n",
+  "diff --git a/lib/b.ts b/lib/b.ts\n--- a/lib/b.ts\n+++ b/lib/b.ts\n@@ -1 +1 @@\n-before\n+retry here\n",
+].join("");
+
+async function renderFindDiff(threadRef: ScopedThreadRef, registry: AtomRegistry.AtomRegistry) {
+  state.checkpoints = [
+    {
+      runId: "run",
+      checkpointTurnCount: 1,
+      checkpointRef: "ref",
+      status: "ready",
+      files: [],
+      assistantMessageId: null,
+      completedAt: "2026-01-01T00:00:00Z",
+    },
+  ];
+  state.checkpointDiff = { diff: FIND_DIFF };
+  useDiffPanelStore.getState().selectTurn(threadRef, RunId.make("run"));
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(
+    await render(
+      <RegistryContext.Provider value={registry}>
+        <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+          <DiffPanel composerDraftTarget={threadRef} workspaceMutationId={null} visible />
+        </div>
+      </RegistryContext.Provider>,
+    ),
+  );
+  await expect.element(screen.getByText("new retry retry", { exact: true })).toBeVisible();
+  stack.move();
+  return screen;
+}
+
+const pressFind = () =>
+  userEvent.keyboard(
+    navigator.platform.toLowerCase().includes("mac") ? "{Meta>}f{/Meta}" : "{Control>}f{/Control}",
+  );
+
+it("opens find in the diff from its toolbar button and from the panel find command", async () => {
+  using context = setup("origin/orphan");
+  await using screen = await renderFindDiff(context.threadRef, context.registry);
+  const findToggle = screen.getByRole("button", { name: "Find in diff" });
+  await userEvent.click(findToggle);
+  const findInput = page.getByPlaceholder("Search", { exact: true });
+  // Pierre's find input lives in its panel's shadow root.
+  const findHasFocus = () =>
+    expect(document.activeElement?.shadowRoot?.activeElement).toBe(findInput.element());
+  await vi.waitFor(findHasFocus);
+  await expect.element(findToggle).toHaveAttribute("aria-pressed", "true");
+  await userEvent.keyboard("{Escape}");
+  await expect.element(findInput).not.toBeInTheDocument();
+  await expect.element(findToggle).toHaveAttribute("aria-pressed", "false");
+  // mod+f anywhere in the right panel dispatches the panel find command.
+  findToggle.element().focus();
+  await act(() => dispatchPreviewAction("find"));
+  await vi.waitFor(findHasFocus);
+});
+
+it("filters the Files list by name from mod+f in the list and closes on Escape", async () => {
+  using context = setup("origin/orphan");
+  state.realFileTree = true;
+  await using screen = await renderFindDiff(context.threadRef, context.registry);
+  await userEvent.click(screen.getByRole("button", { name: "Show file tree" }));
+  const otherFile = screen.getByRole("treeitem", { name: /b\.ts/ });
+  await userEvent.click(otherFile);
+  await pressFind();
+  const search = screen.getByRole("searchbox", { name: "Filter files by name" });
+  await expect.element(search).toHaveFocus();
+  await expect.element(page.getByPlaceholder("Search", { exact: true })).not.toBeInTheDocument();
+  await userEvent.type(search, "a.ts");
+  await expect.element(otherFile).not.toBeInTheDocument();
+  await expect.element(screen.getByRole("treeitem", { name: /a\.ts/ })).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(search).not.toBeInTheDocument();
+  await expect.element(screen.getByRole("treeitem", { name: /b\.ts/ })).toBeVisible();
+});
+
+it("lists the diff find's matches by file in Contents mode and jumps to a clicked line", async () => {
+  using context = setup("origin/orphan");
+  state.realFileTree = true;
+  await using screen = await renderFindDiff(context.threadRef, context.registry);
+  await userEvent.click(screen.getByRole("button", { name: "Show file tree" }));
+  await userEvent.click(screen.getByRole("button", { name: "Search files" }));
+  await userEvent.click(screen.getByRole("button", { name: "Contents" }));
+  await userEvent.type(screen.getByRole("searchbox", { name: "Search changed lines" }), "retry");
+  // The stacked diff shows the context line once: 1 context, 1 removed and 2 added in a.ts.
+  await expect.element(page.getByPlaceholder("Search", { exact: true })).toHaveValue("retry");
+  await expect.element(page.getByText("1 of 5", { exact: true })).toBeInTheDocument();
+  await expect.element(screen.getByRole("tree")).not.toBeInTheDocument();
+  const fileA = screen.getByRole("region", { name: "src/a.ts" });
+  const fileB = screen.getByRole("region", { name: "lib/b.ts" });
+  const fileCount = (file: typeof fileA) =>
+    file.element().querySelector("[data-diff-find-file-count]")?.textContent;
+  await vi.waitFor(() => {
+    expect(fileCount(fileA)).toBe("4");
+    expect(fileCount(fileB)).toBe("1");
+  });
+  // The diff lists lib/b.ts first, so its line holds match 1 and the a.ts addition holds 4 and 5.
+  await expect
+    .element(fileB.getByRole("button", { name: /retry here/ }))
+    .toHaveAttribute("aria-current", "true");
+  const addedLine = fileA.getByRole("button", { name: /new retry retry/ });
+  await userEvent.click(addedLine);
+  await expect.element(page.getByText("4 of 5", { exact: true })).toBeInTheDocument();
+  await expect.element(addedLine).toHaveAttribute("aria-current", "true");
 });

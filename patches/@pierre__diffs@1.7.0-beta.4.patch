@@ -1,3 +1,43 @@
+diff --git a/dist/components/CodeView.d.ts b/dist/components/CodeView.d.ts
+index b10df4452e4b2e3dbbb7e949f59939e66d5326f1..f1dc07745dfcd8b928d3e98fb7e3738954dcc783 100644
+--- a/dist/components/CodeView.d.ts
++++ b/dist/components/CodeView.d.ts
+@@ -1,4 +1,5 @@
+ import { SearchOptionDefaults, SearchPanelMode, SearchPanelState } from "../search/index.js";
++import { CodeViewSearchMatch } from "../search/codeViewSearch.js";
+ import { CodeViewDiffItem, CodeViewFileItem, CodeViewItem, CodeViewLayout, CodeViewScrollBehavior, CodeViewScrollTarget, HunkSeparators, ScrollRequestResult, SelectedLineRange, SmoothScrollSettings, VirtualFileMetrics, VirtualWindowSpecs } from "../types.js";
+ import { EditCompletionDecision, EditorChangeEvent, EditorType, FileDiffEditCompleteEvent, FileEditCompleteEvent } from "../editor/types.js";
+ import { SelectionWriteOptions } from "../managers/InteractionManager.js";
+@@ -385,6 +386,10 @@ declare class CodeView<LAnnotation = undefined, Caret = undefined> {
+   isSearchOpen(): boolean;
+   /** Steps the open panel to the next or previous match, like find-again. */
+   navigateSearch(direction: 'next' | 'previous'): void;
++  /** The open panel's matches, in panel order. Empty while search is closed. */
++  getSearchMatches(): readonly CodeViewSearchMatch[];
++  /** Makes the match at `index` in `getSearchMatches()` current and scrolls to it. */
++  selectSearchMatch(index: number): void;
+   getItem(itemId: string): CodeViewItem<LAnnotation> | undefined;
+   /**
+    * Returns the editor while this item is being edited. Partial diffs get an
+diff --git a/dist/components/CodeView.js b/dist/components/CodeView.js
+index 0b14f541214c7319e259bc88b9747c543f295d5d..a506af6705f03af5a4bb16db8451bce71878f6d2 100644
+--- a/dist/components/CodeView.js
++++ b/dist/components/CodeView.js
+@@ -1188,6 +1188,14 @@ var CodeView = class CodeView {
+ 		this.flushSearchMatches();
+ 		this.searchPanel?.navigate(direction === "previous");
+ 	}
++	getSearchMatches() {
++		return this.searchState.matches;
++	}
++	selectSearchMatch(index) {
++		this.flushSearchMatches();
++		const match = this.searchState.matches[index];
++		if (match != null) this.searchPanel?.selectMatch(match);
++	}
+ 	getItem(itemId) {
+ 		return this.idToItem.get(itemId)?.item;
+ 	}
 diff --git a/dist/editor/editor.js b/dist/editor/editor.js
 index b4c280390b52434f63fbe7916d81b150d9006fb4..db87ba385f927d793a80d908cd575216d22a09a7 100644
 --- a/dist/editor/editor.js
@@ -313,6 +353,42 @@ index 96d4fb137ea683b66381b1ce6e47e8708a89366c..13f2564897a5bf53a8f311300003b3ea
  	}
  	/**
  	* Re-measure the '0' character width against the font that is loaded right
+diff --git a/dist/search/SearchPanelWidget.js b/dist/search/SearchPanelWidget.js
+index 14970e0ba17385d19ae26ad01a4921f69ce1d2ff..2d909740a97c5e34360bfc2023ca5cf15f8e0188 100644
+--- a/dist/search/SearchPanelWidget.js
++++ b/dist/search/SearchPanelWidget.js
+@@ -15,6 +15,7 @@ var SearchPanelWidget = class {
+ 	#mount;
+ 	#closed = false;
+ 	#updateMatches;
++	#selectMatch;
+ 	#applyMode;
+ 	#setReplaceHandlers;
+ 	#navigate;
+@@ -114,6 +115,12 @@ var SearchPanelWidget = class {
+ 			emitState();
+ 		};
+ 		this.#navigate = (findPrevious) => findNextMatch(findPrevious, true);
++		this.#selectMatch = (match) => {
++			if (getMatchIndex(match) === -1) return;
++			updateCurrentMatch(match);
++			scrollToMatch(match, true);
++			emitState();
++		};
+ 		const replaceCurrentMatch = () => {
+ 			const replace = replaceHandlers;
+ 			if (replace === void 0 || searchParams.text === "" || matches.all.length === 0) return;
+@@ -391,6 +398,10 @@ var SearchPanelWidget = class {
+ 	setQuery(text) {
+ 		this.#setQuery?.(text);
+ 	}
++	selectMatch(match) {
++		this.#initializeMatches();
++		this.#selectMatch?.(match);
++	}
+ 	updateMatches(options) {
+ 		this.#updateMatches?.(options);
+ 	}
 diff --git a/dist/utils/parsePatchFiles.js b/dist/utils/parsePatchFiles.js
 index 48568bd6f669ba4826de17ba03caad466e1f0000..f27123f7c812c728ee8393792665ba288141771c 100644
 --- a/dist/utils/parsePatchFiles.js

@@ -13076,5 +13076,16 @@
   "17f2d583094514ef": "Vad ska vi bygga i {project}, i uppdraget {mission}?",
   "3f5959354b360f90": "Vad ska vi bygga i {project}, i {mission}?",
   "ba05bd1545ef3881": "Vad ska vi bygga i {project}, som ny ledande tråd för {mission}?",
-  "06b6bb85f2e34802": "Vad ska vi bygga i {project}?"
+  "06b6bb85f2e34802": "Vad ska vi bygga i {project}?",
+  "05ea16f4e0a5c9eb": "Sök i ändrade rader",
+  "fcd82e4633e09f3c": "Filtrera filer efter namn",
+  "c20e8b3635b1145d": "Filtrera efter filnamn",
+  "f2f26b2495c97459": "Stäng filsökningen",
+  "c9cc296e7ed91ee8": "Sök efter",
+  "0b2386ff3d38927b": "Namn",
+  "060d69716652d764": "Innehåll",
+  "a6ef358f3e49fce5": "{count, plural, one {{count} rad till} other {{count} rader till}}",
+  "81f17b378a386c37": "Skriv för att söka i de ändrade raderna.",
+  "a023bd0c3a131279": "Inga ändrade rader matchar.",
+  "ab51922b640ce105": "Sök i diff"
 }
