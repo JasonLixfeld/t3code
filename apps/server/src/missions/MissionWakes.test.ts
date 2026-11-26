@@ -6,6 +6,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -506,6 +507,47 @@ it.effect(
         );
         yield* world.leadRead;
         yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+        yield* world.run(second, "s1", "failed");
+        assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
+        assert.equal(world.sent.length, 2);
+      }),
+    );
+  },
+);
+
+it.effect(
+  "a startup look at a held member and a later event about it do not undo each other",
+  () => {
+    const world = makeWorld();
+    const reading = Deferred.makeUnsafe<void>();
+    const release = Deferred.makeUnsafe<void>();
+    return withWakes(
+      world,
+      Effect.gen(function* () {
+        world.set(first, { pendingBackgroundTasks: [subagent] });
+        yield* world.read(first, world.run(first, "f1", "completed"));
+        world.hooks.afterMemberRead = (id) =>
+          id !== first
+            ? Effect.void
+            : Effect.gen(function* () {
+                world.hooks.afterMemberRead = () => Effect.void;
+                yield* Deferred.succeed(reading, undefined);
+                yield* Deferred.await(release);
+              });
+      }),
+      Effect.gen(function* () {
+        yield* Deferred.await(reading);
+        world.set(first, { pendingBackgroundTasks: [] });
+        yield* world.event(first, "subagent.updated", { status: "completed" });
+        yield* world.drained;
+        yield* TestClock.adjust(MissionWakes.HELD_WORK_SETTLE);
+        yield* Deferred.succeed(release, undefined);
+        assert.equal(
+          yield* nextText(world),
+          told(["member 1 on this machine finished its turn and is idle."]),
+        );
+      }),
+      Effect.gen(function* () {
         yield* world.run(second, "s1", "failed");
         assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
         assert.equal(world.sent.length, 2);
