@@ -294,7 +294,20 @@ interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
   ) => Effect.Effect<void, never, never>;
   readonly retryExpectedFailureAfter?: Duration.Input;
   readonly resubscribe?: Stream.Stream<unknown, never, never>;
+  readonly parksDefect?: (cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>) => boolean;
 }
+
+// Effect RPC answers a method the server does not have with this defect.
+export const isUnknownRpcMethod =
+  (tag: string) =>
+  (cause: Cause.Cause<unknown>): boolean =>
+    cause.reasons.length > 0 &&
+    cause.reasons.every(
+      (reason) =>
+        reason._tag === "Die" &&
+        (reason.defect instanceof Error ? reason.defect.message : reason.defect) ===
+          `Unknown request tag: ${tag}`,
+    );
 
 function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
   tag: TTag,
@@ -458,6 +471,7 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                           ),
                         );
                       }
+                      if (options?.parksDefect?.(cause) === true) return Stream.empty;
                       // A reported defect parks until the next session or resubscribe. Failing would
                       // end the whole subscription, so a mounted screen never syncs again.
                       if (options?.onDefect !== undefined && Cause.hasDies(cause)) {

@@ -59,6 +59,7 @@ import { workflowRunRefreshKey } from "../workflows.ts";
 import {
   currentSession,
   isRpcClientError,
+  isUnknownRpcMethod,
   request,
   requestGuarded,
   requestInSession,
@@ -1498,9 +1499,13 @@ export function createServerEnvironmentAtoms<R, E>(
       sources.map(({ environmentId, atom }) => ({ environmentId, result: get(atom) })),
     ).pipe(Atom.withLabel(`environment-data:server:workflows:live-across:${environmentIdsKey}`));
   });
-  const missionsLive = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+  // A server without Missions waits for the next session, which may be one that has them.
+  const missionsLive = createEnvironmentSubscriptionAtomFamily(runtime, {
     label: "environment-data:server:missions:live",
-    tag: WS_METHODS.missionsSubscribe,
+    subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.missionsSubscribe>) =>
+      subscribe(WS_METHODS.missionsSubscribe, input, {
+        parksDefect: isUnknownRpcMethod(WS_METHODS.missionsSubscribe),
+      }),
   });
   const missionsLiveAcross = Atom.family((environmentIdsKey: string) => {
     const sources = (

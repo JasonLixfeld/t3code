@@ -29,7 +29,13 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { runStream, subscribe, subscribeDynamicWithSession, refreshVcsBranch } from "./client.ts";
+import {
+  isUnknownRpcMethod,
+  runStream,
+  subscribe,
+  subscribeDynamicWithSession,
+  refreshVcsBranch,
+} from "./client.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -480,6 +486,70 @@ describe("environment RPC", () => {
 
       expect(subscriptions).toEqual(["first", "second"]);
       expect(yield* Ref.get(retryCount)).toBe(0);
+    }),
+  );
+
+  it.effect(
+    "parks a method the server does not have until a replacement session probes again",
+    () =>
+      Effect.gen(function* () {
+        const snapshot = { missions: [], links: [], claims: [] };
+        const probes: string[] = [];
+        const probed = yield* Queue.unbounded<void>();
+        const upstream = {
+          [WS_METHODS.missionsSubscribe]: () => {
+            probes.push("upstream");
+            Queue.offerUnsafe(probed, undefined);
+            return Stream.die(`Unknown request tag: ${WS_METHODS.missionsSubscribe}`);
+          },
+        } as unknown as WsRpcProtocolClient;
+        const fork = {
+          [WS_METHODS.missionsSubscribe]: () => {
+            probes.push("fork");
+            return Stream.concat(Stream.make(snapshot), Stream.never);
+          },
+        } as unknown as WsRpcProtocolClient;
+        const { activeSession, supervisor } = yield* makeHarness();
+        yield* SubscriptionRef.set(activeSession, Option.some(session(upstream)));
+        const values = yield* Queue.unbounded<unknown>();
+        const subscriptionFiber = yield* subscribe(
+          WS_METHODS.missionsSubscribe,
+          {},
+          { parksDefect: isUnknownRpcMethod(WS_METHODS.missionsSubscribe) },
+        ).pipe(
+          Stream.runForEach((value) => Queue.offer(values, value)),
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.forkChild,
+        );
+        yield* Queue.take(probed);
+        yield* TestClock.adjust("1 minute");
+        expect(subscriptionFiber.pollUnsafe()).toBeUndefined();
+        expect(probes).toEqual(["upstream"]);
+
+        yield* SubscriptionRef.set(activeSession, Option.some(session(fork)));
+        expect(yield* Queue.take(values)).toEqual(snapshot);
+        expect(probes).toEqual(["upstream", "fork"]);
+        yield* Fiber.interrupt(subscriptionFiber);
+      }),
+  );
+
+  it.effect("still ends a subscription on any other defect", () =>
+    Effect.gen(function* () {
+      const client = {
+        [WS_METHODS.missionsSubscribe]: () => Stream.die(new Error("snapshot invariant failed")),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const exit = yield* subscribe(
+        WS_METHODS.missionsSubscribe,
+        {},
+        { parksDefect: isUnknownRpcMethod(WS_METHODS.missionsSubscribe) },
+      ).pipe(
+        Stream.runDrain,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.exit,
+      );
+      expect(exit._tag).toBe("Failure");
     }),
   );
 
