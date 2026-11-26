@@ -109,6 +109,7 @@ import {
 } from "./devices.ts";
 import {
   argvForm,
+  askToolTexts,
   gradeSecret,
   scriptsBefore,
   UNKNOWN_SCRIPT,
@@ -264,6 +265,8 @@ const McpToolUseExpect = Schema.Struct({
   /** Case-sensitive regexes on the agent's visible text. */
   textMust: Schema.optional(Schema.Array(Schema.String)),
   textMustNot: Schema.optional(Schema.Array(Schema.String)),
+  /** Case-sensitive regexes on what the user reads: the visible text and question-tool text. */
+  userTextMust: Schema.optional(Schema.Array(Schema.String)),
   /** Case-sensitive regexes on the final answer: the last response's text, once the turn ended. */
   finalTextMust: Schema.optional(Schema.Array(Schema.String)),
   /** Each entry matches a PR URL linked at the end, as `args` values match. */
@@ -2693,6 +2696,8 @@ export const gradeSample = (
     );
   for (const p of expect.textMust ?? []) add(`textMust /${p}/`, test(p, run.text));
   for (const p of expect.textMustNot ?? []) add(`textMustNot /${p}/`, !test(p, run.text));
+  const userText = [run.text, ...askToolTexts(run)].join("\n\n");
+  for (const p of expect.userTextMust ?? []) add(`userTextMust /${p}/`, test(p, userText));
   for (const p of expect.finalTextMust ?? [])
     add(`finalTextMust /${p}/`, run.stopReason === "end_turn" && test(p, run.finalText ?? ""));
   const isLinked = (url: string) => (run.linked ?? []).some((at) => matches(url, at));
