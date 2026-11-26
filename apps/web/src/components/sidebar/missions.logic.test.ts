@@ -1,3 +1,4 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
   type Mission,
@@ -14,9 +15,12 @@ import {
   groupSidebarMissions,
   missionAddSummary,
   missionDraftMachines,
+  missionLeadCandidates,
   missionLeaveId,
   type MissionHost,
   parseMissionTarget,
+  resolveMissionDrop,
+  type SidebarMission,
 } from "./missions.logic";
 
 const DESK = EnvironmentId.make("env-desk");
@@ -551,5 +555,93 @@ describe("missionDraftMachines", () => {
       snapshot: { ...host.snapshot, links: [], linksHidden: true },
     }));
     expect(missionDraftMachines({ kind: "member", ...joins }, hidden)).toBeNull();
+  });
+});
+
+describe("resolveMissionDrop", () => {
+  const docs = { environmentId: DESK, threadId: ThreadId.make("docs") };
+  const sidebarMission = (missionId: string, members: ReadonlyArray<MissionMember>) => {
+    const entries = members.map((member) => ({ member, thread: {} }));
+    return {
+      key: `${DESK}:${missionId}`,
+      host: DESK,
+      mission: { ...mission, missionId, members },
+      lead: entries[0]!,
+      leadInScope: true,
+      members: entries.slice(1),
+    } satisfies SidebarMission<unknown>;
+  };
+  const lead = (id: string): MissionMember => ({
+    ref: { environmentId: DESK, threadId: ThreadId.make(id) },
+    role: "lead",
+    state: "active",
+  });
+  const ship = sidebarMission(mission.missionId, [
+    lead("lead"),
+    { ref: docs, role: "member", state: "active" },
+  ]);
+  const other = sidebarMission("bbbbbbbbbbbb", [lead("other-lead")]);
+  const drop = (
+    over: string,
+    options: {
+      readonly source?: { readonly host: EnvironmentId; readonly missionId: string };
+      readonly canChangeOn?: (environmentId: EnvironmentId) => boolean;
+    } = {},
+  ) =>
+    resolveMissionDrop({
+      dragged: scopedThreadKey(docs),
+      threads: [thread(DESK, "docs")],
+      over,
+      missions: [ship, other],
+      hosts,
+      machineLabel: label,
+      canChangeOn: options.canChangeOn ?? allowed,
+      source: options.source ?? null,
+    });
+
+  it("refuses a release when the thread moved to another mission on the same machine", () => {
+    expect(drop("list", { source: { host: DESK, missionId: ship.mission.missionId } })).toEqual({
+      kind: "release",
+      mission: ship.key,
+      host: DESK,
+      missionId: ship.mission.missionId,
+      refusal: null,
+    });
+    expect(
+      drop("list", { source: { host: DESK, missionId: other.mission.missionId } })?.refusal,
+    ).toBe("This thread moved to another mission.");
+  });
+
+  it("refuses an add to a mission on a machine this client may not change", () => {
+    expect(drop(other.key)).toEqual({
+      kind: "add",
+      mission: other.key,
+      host: DESK,
+      missionId: other.mission.missionId,
+      refusal: null,
+    });
+    expect(drop(other.key, { canChangeOn: () => false })?.refusal).toBe("Not allowed here");
+  });
+});
+
+describe("missionLeadCandidates", () => {
+  const candidate = (id: string, latestUserMessageAt: string, archived = false) => ({
+    ...thread(DESK, id),
+    latestUserMessageAt,
+    title: id,
+    archivedAt: archived ? "2026-11-24T00:00:00.000Z" : null,
+  });
+
+  it("offers the mission's machine's live threads with messages, the most recent first", () => {
+    const candidates = missionLeadCandidates(
+      [
+        candidate("older", "2026-11-20T00:00:00.000Z"),
+        candidate("archived", "2026-11-25T00:00:00.000Z", true),
+        candidate("newer", "2026-11-24T00:00:00.000Z"),
+      ],
+      { host: DESK, missionId: mission.missionId },
+      hosts,
+    );
+    expect(candidates.map((entry) => entry.id)).toEqual(["newer", "older"]);
   });
 });
