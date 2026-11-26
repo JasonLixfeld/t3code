@@ -176,6 +176,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   }
 
   fun setAppearanceScheme(value: String) {
+    canvasView.darkAppearance = value == "dark"
     canvasView.theme = DiffTheme.fallback(value)
   }
 
@@ -600,8 +601,12 @@ internal data class SearchMatch(
   val end: Int
 )
 
-private val SEARCH_MATCH_COLOR = Color.argb(89, 255, 204, 0)
-private val ACTIVE_SEARCH_MATCH_COLOR = Color.argb(166, 255, 149, 0)
+// The web diff's find colors: a translucent orange match and its modified blue at 45%.
+internal fun searchMatchColor(dark: Boolean): Int =
+  if (dark) Color.argb(0x66, 0xff, 0x96, 0x32) else Color.argb(0x88, 0xff, 0x96, 0x32)
+
+internal fun activeSearchMatchColor(dark: Boolean): Int =
+  if (dark) Color.argb(115, 0x69, 0xb1, 0xff) else Color.argb(115, 0x00, 0x9f, 0xff)
 
 private fun parseSearchHighlights(
   value: String
@@ -921,6 +926,11 @@ private class DiffCanvasView(context: Context) : View(context) {
       field = value
       invalidate()
     }
+  var darkAppearance = false
+    set(value) {
+      field = value
+      invalidate()
+    }
   private var searchRangesByRowId: Map<String, List<DiffWordDiffRange>> = emptyMap()
   private var activeSearchMatch: SearchMatch? = null
 
@@ -946,7 +956,8 @@ private class DiffCanvasView(context: Context) : View(context) {
     if (!codeWrap.enabled) {
       val left = drawing.codeOffsetX(row, lines, match.start, style).toInt()
       val right = drawing.codeOffsetX(row, lines, match.end, style).toInt()
-      val visibleWidth = width - (style.changeBarWidthPx + style.gutterWidthPx + style.codePaddingPx * 2f).toInt()
+      val visibleWidth =
+        width - (style.changeBarWidthPx + style.gutterWidthPx + style.codePaddingPx * 2f).toInt()
       if (left < horizontalOffset || right > horizontalOffset + visibleWidth) {
         setHorizontalOffset(left - visibleWidth / 3)
       }
@@ -1443,16 +1454,20 @@ private class DiffCanvasView(context: Context) : View(context) {
       val baseline = lines.baseline(top, firstLineBottom, textPaint)
       val tokens = tokensByRowId[row.id]
       drawing.drawWordDiffRanges(canvas, row, tokens, codeX, top, firstLineBottom, lines, style)
+      val active = activeSearchMatch?.takeIf { it.rowId == row.id }
+        ?.let { DiffWordDiffRange(it.start, it.end) }
+      // The current match replaces its match color, as on web, instead of stacking on it.
       searchRangesByRowId[row.id]?.let { ranges ->
         drawing.drawSearchRanges(
-          canvas, row, tokens, codeX, top, firstLineBottom, baseline, lines, style, ranges,
-          SEARCH_MATCH_COLOR,
+          canvas, row, tokens, codeX, top, firstLineBottom, baseline, lines, style,
+          if (active == null) ranges else ranges.filter { it != active },
+          searchMatchColor(darkAppearance),
         )
       }
-      activeSearchMatch?.takeIf { it.rowId == row.id }?.let { active ->
+      active?.let {
         drawing.drawSearchRanges(
-          canvas, row, tokens, codeX, top, firstLineBottom, baseline, lines, style,
-          listOf(DiffWordDiffRange(active.start, active.end)), ACTIVE_SEARCH_MATCH_COLOR,
+          canvas, row, tokens, codeX, top, firstLineBottom, baseline, lines, style, listOf(it),
+          activeSearchMatchColor(darkAppearance),
         )
       }
       drawing.drawCode(canvas, row, tokens, codeX, baseline, style, lines)
