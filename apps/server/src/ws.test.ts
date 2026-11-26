@@ -3233,7 +3233,7 @@ it.effect("the socket passes a session's access scope into mission lists and add
           ).pipe(Layer.provide(services), Layer.merge(RpcAuthorization.layer(scopes))),
         ),
       );
-      const subscribe = (input: { readonly omitPrompts?: boolean }) =>
+      const subscribe = (input: { readonly omitPrompts?: true }) =>
         client[WS_METHODS.missionsSubscribe](input).pipe(Stream.runHead);
       assert.deepEqual(yield* subscribe({}), Option.some(listed));
       yield* subscribe({ omitPrompts: true });
