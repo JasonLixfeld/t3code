@@ -1,6 +1,6 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
+  type ExecutionEnvironmentDescriptor,
   type Mission,
   type MissionLink,
   type MissionMember,
@@ -18,10 +18,9 @@ import {
   missionLeadCandidates,
   missionLeaveId,
   type MissionHost,
+  missionsLiveKey,
   parseMissionTarget,
-  resolveMissionDrop,
-  type SidebarMission,
-} from "./missions.logic";
+} from "./missions.ts";
 
 const DESK = EnvironmentId.make("env-desk");
 const LAPTOP = EnvironmentId.make("env-laptop");
@@ -558,69 +557,34 @@ describe("missionDraftMachines", () => {
   });
 });
 
-describe("resolveMissionDrop", () => {
-  const docs = { environmentId: DESK, threadId: ThreadId.make("docs") };
-  const sidebarMission = (missionId: string, members: ReadonlyArray<MissionMember>) => {
-    const entries = members.map((member) => ({ member, thread: {} }));
-    return {
-      key: `${DESK}:${missionId}`,
-      host: DESK,
-      mission: { ...mission, missionId, members },
-      lead: entries[0]!,
-      leadInScope: true,
-      members: entries.slice(1),
-    } satisfies SidebarMission<unknown>;
-  };
-  const lead = (id: string): MissionMember => ({
-    ref: { environmentId: DESK, threadId: ThreadId.make(id) },
-    role: "lead",
-    state: "active",
-  });
-  const ship = sidebarMission(mission.missionId, [
-    lead("lead"),
-    { ref: docs, role: "member", state: "active" },
+describe("missionsLiveKey", () => {
+  const descriptors: ReadonlyMap<
+    EnvironmentId,
+    Pick<ExecutionEnvironmentDescriptor, "capabilities">
+  > = new Map([
+    [DESK, { capabilities: { repositoryIdentity: true, missions: true } }],
+    [LAPTOP, { capabilities: { repositoryIdentity: true } }],
   ]);
-  const other = sidebarMission("bbbbbbbbbbbb", [lead("other-lead")]);
-  const drop = (
-    over: string,
-    options: {
-      readonly source?: { readonly host: EnvironmentId; readonly missionId: string };
-      readonly canChangeOn?: (environmentId: EnvironmentId) => boolean;
-    } = {},
-  ) =>
-    resolveMissionDrop({
-      dragged: scopedThreadKey(docs),
-      threads: [thread(DESK, "docs")],
-      over,
-      missions: [ship, other],
-      hosts,
-      machineLabel: label,
-      canChangeOn: options.canChangeOn ?? allowed,
-      source: options.source ?? null,
-    });
+  const key = (enabled: boolean, readable: ReadonlyArray<EnvironmentId>) =>
+    JSON.parse(
+      missionsLiveKey({
+        enabled,
+        connected: [DESK, LAPTOP, BOX],
+        readable: new Set(readable),
+        descriptorOf: (environmentId) => descriptors.get(environmentId),
+      }),
+    );
 
-  it("refuses a release when the thread moved to another mission on the same machine", () => {
-    expect(drop("list", { source: { host: DESK, missionId: ship.mission.missionId } })).toEqual({
-      kind: "release",
-      mission: ship.key,
-      host: DESK,
-      missionId: ship.mission.missionId,
-      refusal: null,
-    });
-    expect(
-      drop("list", { source: { host: DESK, missionId: other.mission.missionId } })?.refusal,
-    ).toBe("This thread moved to another mission.");
+  it("asks each readable server with a known config, omitting prompts only where it says it can", () => {
+    expect(key(true, [DESK, LAPTOP, BOX])).toEqual([
+      [DESK, true],
+      [LAPTOP, false],
+    ]);
   });
 
-  it("refuses an add to a mission on a machine this client may not change", () => {
-    expect(drop(other.key)).toEqual({
-      kind: "add",
-      mission: other.key,
-      host: DESK,
-      missionId: other.mission.missionId,
-      refusal: null,
-    });
-    expect(drop(other.key, { canChangeOn: () => false })?.refusal).toBe("Not allowed here");
+  it("asks no server this session may not read, and none while Missions are off", () => {
+    expect(key(true, [LAPTOP])).toEqual([[LAPTOP, false]]);
+    expect(key(false, [DESK, LAPTOP])).toEqual([]);
   });
 });
 

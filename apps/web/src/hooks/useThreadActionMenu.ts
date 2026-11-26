@@ -54,7 +54,7 @@ import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { canTurnThreadIntoProject, useThreadActions } from "./useThreadActions";
 import type { useMissionMenu } from "../components/sidebar/MissionsSection";
-import { isMissionMenuId } from "../components/sidebar/missions.logic";
+import { isMissionMenuId } from "@t3tools/client-runtime/missions";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(

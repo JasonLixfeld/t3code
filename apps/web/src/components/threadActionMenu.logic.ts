@@ -3,7 +3,7 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "../i18n/messages";
-import type { MissionMenuId } from "./sidebar/missions.logic";
+import type { MissionMenuId } from "@t3tools/client-runtime/missions";
 
 export type ThreadActionMenuId =
   | "find"

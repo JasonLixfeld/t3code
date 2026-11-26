@@ -84,23 +84,23 @@ import {
   missionLeaveId,
   missionAddSummary,
   type MissionCandidate,
-  type MissionDrop,
   missionLeadCandidates,
   type MissionHost,
-  resolveMissionDrop,
   type MissionMenuId,
   missionRowItems,
+  missionsLiveKey,
   newMissionId,
   parseMissionTarget,
   type SidebarMission,
   type SidebarMissionEntry,
-} from "./missions.logic";
+} from "@t3tools/client-runtime/missions";
 import {
   clearServerThreadMissionDraft,
   markMissionDraft,
   missionDraftOf,
   serverThreadMissionDraftId,
 } from "./missionDraftStore";
+import { type MissionDrop, resolveMissionDrop } from "./missionDrop.logic";
 import { SidebarHeading } from "./SidebarListMarkers";
 import type { SidebarMissionToggle } from "./SidebarThreadRow";
 
@@ -112,16 +112,16 @@ export function useMissionHosts(): ReadonlyArray<MissionHost> {
     connected.map((environmentId) => ({ environmentId })),
     AuthOrchestrationReadScope,
   );
-  // A fork server from before the capability serves Missions too, with prompts in the list.
-  const asked = enabled
-    ? connected.flatMap((environmentId) => {
-        const config = configs.get(environmentId);
-        return readable.has(environmentId) && config !== undefined
-          ? [[environmentId, config.environment.capabilities.missions === true] as const]
-          : [];
-      })
-    : [];
-  return useAtomValue(serverEnvironment.missionsLiveAcross(JSON.stringify(asked)));
+  return useAtomValue(
+    serverEnvironment.missionsLiveAcross(
+      missionsLiveKey({
+        enabled,
+        connected,
+        readable,
+        descriptorOf: (environmentId) => configs.get(environmentId)?.environment,
+      }),
+    ),
+  );
 }
 
 const missionCreatePermissionsAtom = environmentAtomList(

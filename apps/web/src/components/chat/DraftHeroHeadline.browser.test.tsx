@@ -27,7 +27,7 @@ import {
   missionDraftOf,
 } from "~/components/sidebar/missionDraftStore";
 import { openCommandPalette } from "~/commandPaletteBus";
-import type { MissionDraftIntent } from "~/components/sidebar/missions.logic";
+import type { MissionDraftIntent } from "@t3tools/client-runtime/missions";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,

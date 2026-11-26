@@ -10,7 +10,7 @@ import {
   useMissionDrafts,
 } from "../sidebar/missionDraftStore";
 import { useMissionHosts, useMissionStartMachines } from "../sidebar/MissionsSection";
-import { missionDraftMachines } from "../sidebar/missions.logic";
+import { missionDraftMachines } from "@t3tools/client-runtime/missions";
 import {
   Menu,
   MenuPopup,

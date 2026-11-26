@@ -5703,5 +5703,22 @@
   "58aa5059cf714786": "{status, select, inProgress {Listing the mission's threads} completed {Listed the mission's threads} failed {Failed to list the mission's threads} declined {Declined to list the mission's threads} stopped {Stopped listing the mission's threads} other {Listing the mission's threads}}",
   "ce059975145aa8c1": "{status, select, inProgress {Adding a thread to the mission} completed {Added a thread to the mission} failed {Failed to add a thread to the mission} declined {Declined to add a thread to the mission} stopped {Stopped adding a thread to the mission} other {Adding a thread to the mission}}",
   "c5b456a231ea6b6d": "{status, select, inProgress {Making a thread leave the mission} completed {Made a thread leave the mission} failed {Failed to make a thread leave the mission} declined {Declined to make a thread leave the mission} stopped {Stopped making a thread leave the mission} other {Making a thread leave the mission}}",
-  "7c80cb764b3df506": "{status, select, inProgress {Marking a thread's mission} completed {Marked a thread's mission} failed {Failed to mark a thread's mission} declined {Declined to mark a thread's mission} stopped {Stopped marking a thread's mission} other {Marking a thread's mission}}"
+  "7c80cb764b3df506": "{status, select, inProgress {Marking a thread's mission} completed {Marked a thread's mission} failed {Failed to mark a thread's mission} declined {Declined to mark a thread's mission} stopped {Stopped marking a thread's mission} other {Marking a thread's mission}}",
+  "7671402affa732e1": "In a mission",
+  "40acdf448ff6ddab": "No link from {machine}",
+  "93ecfc2b6717ab09": "Needs full-access link",
+  "380a8495b3872071": "Not allowed here",
+  "1534e3e2d7fe1e6d": "Mission",
+  "c14823b109f213cc": "New thread in this mission",
+  "32bb9fa25796a9eb": "Edit mission prompt…",
+  "03d266b5e18e221e": "New lead",
+  "e41e604f2ab02e67": "Choose a thread…",
+  "41ed219e17bd8470": "Delete mission",
+  "76a0f477c383d3a2": "Has threads",
+  "05c3f1ee25e600fa": "Start mission from this thread",
+  "eb84c6df689a435c": "Not supported here",
+  "57b98f569f27871b": "Leave mission",
+  "b96040bc31b81189": "Add to mission",
+  "0155f1feb7b83800": "No missions yet",
+  "902d29ef248677bb": "{added} added, {refused} refused: {reasons}"
 }

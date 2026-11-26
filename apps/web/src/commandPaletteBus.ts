@@ -1,7 +1,7 @@
 import type { EnvironmentId, PullRequestLinkedThreadsResult } from "@t3tools/contracts";
 
 import { dispatchCommandPalette, isCommandPaletteMounted } from "./commandPaletteStore";
-import type { MissionDraftIntent } from "./components/sidebar/missions.logic";
+import type { MissionDraftIntent } from "@t3tools/client-runtime/missions";
 
 export interface CommandPaletteLinkedThreads {
   readonly environmentId: EnvironmentId;

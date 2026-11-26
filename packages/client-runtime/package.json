@@ -47,6 +47,14 @@
       "types": "./src/contractLabels.ts",
       "default": "./src/contractLabels.ts"
     },
+    "./missions": {
+      "types": "./src/missions.ts",
+      "default": "./src/missions.ts"
+    },
+    "./draft-hero-sentence": {
+      "types": "./src/draftHeroSentence.ts",
+      "default": "./src/draftHeroSentence.ts"
+    },
     "./workflows": {
       "types": "./src/workflows.ts",
       "default": "./src/workflows.ts"

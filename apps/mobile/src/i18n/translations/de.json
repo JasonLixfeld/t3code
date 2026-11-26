@@ -5701,5 +5701,22 @@
   "58aa5059cf714786": "{status, select, inProgress {Threads der Mission werden aufgelistet} completed {Threads der Mission aufgelistet} failed {Threads der Mission konnten nicht aufgelistet werden} declined {Auflisten der Threads der Mission abgelehnt} stopped {Auflisten der Threads der Mission gestoppt} other {Threads der Mission werden aufgelistet}}",
   "ce059975145aa8c1": "{status, select, inProgress {Thread wird zur Mission hinzugefügt} completed {Thread zur Mission hinzugefügt} failed {Thread konnte nicht zur Mission hinzugefügt werden} declined {Hinzufügen des Threads zur Mission abgelehnt} stopped {Hinzufügen des Threads zur Mission gestoppt} other {Thread wird zur Mission hinzugefügt}}",
   "c5b456a231ea6b6d": "{status, select, inProgress {Thread verlässt die Mission} completed {Thread hat die Mission verlassen} failed {Thread konnte die Mission nicht verlassen} declined {Verlassen der Mission abgelehnt} stopped {Verlassen der Mission gestoppt} other {Thread verlässt die Mission}}",
-  "7c80cb764b3df506": "{status, select, inProgress {Mission eines Threads wird markiert} completed {Mission eines Threads markiert} failed {Mission eines Threads konnte nicht markiert werden} declined {Markieren der Mission eines Threads abgelehnt} stopped {Markieren der Mission eines Threads gestoppt} other {Mission eines Threads wird markiert}}"
+  "7c80cb764b3df506": "{status, select, inProgress {Mission eines Threads wird markiert} completed {Mission eines Threads markiert} failed {Mission eines Threads konnte nicht markiert werden} declined {Markieren der Mission eines Threads abgelehnt} stopped {Markieren der Mission eines Threads gestoppt} other {Mission eines Threads wird markiert}}",
+  "7671402affa732e1": "In einer Mission",
+  "40acdf448ff6ddab": "Keine Verbindung von {machine}",
+  "93ecfc2b6717ab09": "Braucht Vollzugriff-Verbindung",
+  "380a8495b3872071": "Hier nicht erlaubt",
+  "1534e3e2d7fe1e6d": "Mission",
+  "c14823b109f213cc": "Neuer Thread in dieser Mission",
+  "32bb9fa25796a9eb": "Missions-Prompt bearbeiten…",
+  "03d266b5e18e221e": "Neue Leitung",
+  "e41e604f2ab02e67": "Thread wählen…",
+  "41ed219e17bd8470": "Mission löschen",
+  "76a0f477c383d3a2": "Hat Threads",
+  "05c3f1ee25e600fa": "Mission mit diesem Thread starten",
+  "eb84c6df689a435c": "Hier nicht unterstützt",
+  "57b98f569f27871b": "Mission verlassen",
+  "b96040bc31b81189": "Zur Mission hinzufügen",
+  "0155f1feb7b83800": "Noch keine Missionen",
+  "902d29ef248677bb": "{added} hinzugefügt, {refused} abgelehnt: {reasons}"
 }

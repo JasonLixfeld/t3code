@@ -293,9 +293,9 @@ import {
 import {
   groupSidebarMissions,
   isMissionMenuId,
-  missionDragKeys,
   type MissionHost,
-} from "./sidebar/missions.logic";
+} from "@t3tools/client-runtime/missions";
+import { missionDragKeys } from "./sidebar/missionDrop.logic";
 import {
   SidebarProjectFolderHeader,
   sidebarFolderRowId,

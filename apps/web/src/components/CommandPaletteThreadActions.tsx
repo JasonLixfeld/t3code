@@ -23,7 +23,7 @@ import {
 
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu";
 import { useMissionMenu } from "./sidebar/MissionsSection";
-import { isThreadMissionAction } from "./sidebar/missions.logic";
+import { isThreadMissionAction } from "@t3tools/client-runtime/missions";
 import {
   ADDON_ICON_CLASS,
   ITEM_ICON_CLASS,

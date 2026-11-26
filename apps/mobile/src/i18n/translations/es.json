@@ -5695,5 +5695,22 @@
   "58aa5059cf714786": "{status, select, inProgress {Listando los hilos de la misión} completed {Se listaron los hilos de la misión} failed {No se pudieron listar los hilos de la misión} declined {Se rechazó listar los hilos de la misión} stopped {Se detuvo el listado de los hilos de la misión} other {Listando los hilos de la misión}}",
   "ce059975145aa8c1": "{status, select, inProgress {Añadiendo un hilo a la misión} completed {Se añadió un hilo a la misión} failed {No se pudo añadir un hilo a la misión} declined {Se rechazó añadir un hilo a la misión} stopped {Se dejó de añadir un hilo a la misión} other {Añadiendo un hilo a la misión}}",
   "c5b456a231ea6b6d": "{status, select, inProgress {Haciendo que un hilo salga de la misión} completed {Un hilo salió de la misión} failed {No se pudo hacer que un hilo saliera de la misión} declined {Se rechazó que un hilo saliera de la misión} stopped {Se dejó de hacer que un hilo saliera de la misión} other {Haciendo que un hilo salga de la misión}}",
-  "7c80cb764b3df506": "{status, select, inProgress {Marcando la misión de un hilo} completed {Se marcó la misión de un hilo} failed {No se pudo marcar la misión de un hilo} declined {Se rechazó marcar la misión de un hilo} stopped {Se dejó de marcar la misión de un hilo} other {Marcando la misión de un hilo}}"
+  "7c80cb764b3df506": "{status, select, inProgress {Marcando la misión de un hilo} completed {Se marcó la misión de un hilo} failed {No se pudo marcar la misión de un hilo} declined {Se rechazó marcar la misión de un hilo} stopped {Se dejó de marcar la misión de un hilo} other {Marcando la misión de un hilo}}",
+  "7671402affa732e1": "En una misión",
+  "40acdf448ff6ddab": "Sin enlace desde {machine}",
+  "93ecfc2b6717ab09": "Requiere enlace con acceso completo",
+  "380a8495b3872071": "No permitido aquí",
+  "1534e3e2d7fe1e6d": "Misión",
+  "c14823b109f213cc": "Nuevo hilo en esta misión",
+  "32bb9fa25796a9eb": "Editar prompt de la misión…",
+  "03d266b5e18e221e": "Nuevo hilo principal",
+  "e41e604f2ab02e67": "Elegir un hilo…",
+  "41ed219e17bd8470": "Eliminar misión",
+  "76a0f477c383d3a2": "Tiene hilos",
+  "05c3f1ee25e600fa": "Iniciar misión desde este hilo",
+  "eb84c6df689a435c": "No compatible aquí",
+  "57b98f569f27871b": "Salir de la misión",
+  "b96040bc31b81189": "Añadir a la misión",
+  "0155f1feb7b83800": "Aún no hay misiones",
+  "902d29ef248677bb": "{added} añadidos, {refused} rechazados: {reasons}"
 }

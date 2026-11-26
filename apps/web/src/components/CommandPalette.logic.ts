@@ -12,7 +12,7 @@ import {
 } from "@t3tools/shared/paletteSearch";
 import { threadSearchSubject } from "@t3tools/client-runtime/state/thread-search";
 import type { CommandPaletteLinkedThreads } from "../commandPaletteBus";
-import type { MissionDraftIntent } from "./sidebar/missions.logic";
+import type { MissionDraftIntent } from "@t3tools/client-runtime/missions";
 import {
   addProjectRemoteSourceLabel,
   addProjectRemoteSourcePathHint,

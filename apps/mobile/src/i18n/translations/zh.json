@@ -5682,5 +5682,22 @@
   "58aa5059cf714786": "{status, select, inProgress {正在列出任务的会话} completed {已列出任务的会话} failed {未能列出任务的会话} declined {已拒绝列出任务的会话} stopped {已停止列出任务的会话} other {正在列出任务的会话}}",
   "ce059975145aa8c1": "{status, select, inProgress {正在将会话添加到任务} completed {已将会话添加到任务} failed {未能将会话添加到任务} declined {已拒绝将会话添加到任务} stopped {已停止将会话添加到任务} other {正在将会话添加到任务}}",
   "c5b456a231ea6b6d": "{status, select, inProgress {正在让会话离开任务} completed {已让会话离开任务} failed {未能让会话离开任务} declined {已拒绝让会话离开任务} stopped {已停止让会话离开任务} other {正在让会话离开任务}}",
-  "7c80cb764b3df506": "{status, select, inProgress {正在标记会话的任务} completed {已标记会话的任务} failed {未能标记会话的任务} declined {已拒绝标记会话的任务} stopped {已停止标记会话的任务} other {正在标记会话的任务}}"
+  "7c80cb764b3df506": "{status, select, inProgress {正在标记会话的任务} completed {已标记会话的任务} failed {未能标记会话的任务} declined {已拒绝标记会话的任务} stopped {已停止标记会话的任务} other {正在标记会话的任务}}",
+  "7671402affa732e1": "已在任务中",
+  "40acdf448ff6ddab": "没有来自 {machine} 的链接",
+  "93ecfc2b6717ab09": "需要完全访问链接",
+  "380a8495b3872071": "此处不允许",
+  "1534e3e2d7fe1e6d": "任务",
+  "c14823b109f213cc": "在此任务中新建会话",
+  "32bb9fa25796a9eb": "编辑任务提示词…",
+  "03d266b5e18e221e": "新的主会话",
+  "e41e604f2ab02e67": "选择会话…",
+  "41ed219e17bd8470": "删除任务",
+  "76a0f477c383d3a2": "包含会话",
+  "05c3f1ee25e600fa": "从此线程开始任务",
+  "eb84c6df689a435c": "此处不支持",
+  "57b98f569f27871b": "离开任务",
+  "b96040bc31b81189": "添加到任务",
+  "0155f1feb7b83800": "还没有任务",
+  "902d29ef248677bb": "已添加 {added} 个，拒绝 {refused} 个：{reasons}"
 }

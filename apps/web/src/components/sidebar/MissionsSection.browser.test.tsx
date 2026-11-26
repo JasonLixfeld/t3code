@@ -50,7 +50,7 @@ import {
 } from "./missionDraftStore";
 import { MissionPromptDialog } from "./MissionsSection";
 import { SidebarProvider } from "../ui/sidebar";
-import type { MissionHost } from "./missions.logic";
+import type { MissionHost } from "@t3tools/client-runtime/missions";
 
 const LOCAL = EnvironmentId.make("local");
 const LAPTOP = EnvironmentId.make("env-laptop");

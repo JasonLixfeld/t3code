@@ -5679,5 +5679,22 @@
   "58aa5059cf714786": "{status, select, inProgress {미션의 스레드 나열 중} completed {미션의 스레드를 나열함} failed {미션의 스레드를 나열하지 못함} declined {미션의 스레드 나열을 거부함} stopped {미션의 스레드 나열을 중지함} other {미션의 스레드 나열 중}}",
   "ce059975145aa8c1": "{status, select, inProgress {미션에 스레드 추가 중} completed {미션에 스레드를 추가함} failed {미션에 스레드를 추가하지 못함} declined {미션에 스레드 추가를 거부함} stopped {미션에 스레드 추가를 중지함} other {미션에 스레드 추가 중}}",
   "c5b456a231ea6b6d": "{status, select, inProgress {스레드를 미션에서 나가게 하는 중} completed {스레드가 미션에서 나감} failed {스레드를 미션에서 나가게 하지 못함} declined {스레드가 미션에서 나가는 것을 거부함} stopped {스레드를 미션에서 나가게 하는 것을 중지함} other {스레드를 미션에서 나가게 하는 중}}",
-  "7c80cb764b3df506": "{status, select, inProgress {스레드의 미션 표시 중} completed {스레드의 미션을 표시함} failed {스레드의 미션을 표시하지 못함} declined {스레드의 미션 표시를 거부함} stopped {스레드의 미션 표시를 중지함} other {스레드의 미션 표시 중}}"
+  "7c80cb764b3df506": "{status, select, inProgress {스레드의 미션 표시 중} completed {스레드의 미션을 표시함} failed {스레드의 미션을 표시하지 못함} declined {스레드의 미션 표시를 거부함} stopped {스레드의 미션 표시를 중지함} other {스레드의 미션 표시 중}}",
+  "7671402affa732e1": "미션에 속함",
+  "40acdf448ff6ddab": "{machine}에서 오는 링크 없음",
+  "93ecfc2b6717ab09": "전체 액세스 링크 필요",
+  "380a8495b3872071": "여기서는 허용되지 않음",
+  "1534e3e2d7fe1e6d": "미션",
+  "c14823b109f213cc": "이 미션에 새 스레드",
+  "32bb9fa25796a9eb": "미션 프롬프트 편집…",
+  "03d266b5e18e221e": "새 리드",
+  "e41e604f2ab02e67": "스레드 선택…",
+  "41ed219e17bd8470": "미션 삭제",
+  "76a0f477c383d3a2": "스레드가 있음",
+  "05c3f1ee25e600fa": "이 스레드로 미션 시작",
+  "eb84c6df689a435c": "여기서는 지원되지 않음",
+  "57b98f569f27871b": "미션에서 나가기",
+  "b96040bc31b81189": "미션에 추가",
+  "0155f1feb7b83800": "아직 미션이 없습니다",
+  "902d29ef248677bb": "{added}개 추가, {refused}개 거부: {reasons}"
 }

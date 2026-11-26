@@ -53,9 +53,13 @@ import { InlineButton } from "../ui/button";
 import { DraftProjectName } from "./DraftProjectName";
 import { TriageDraftHero } from "./TriageDraftHero";
 import { useDraftMissionChoice, useDraftProjectMachines } from "./DraftMissionSelect";
-import { MISSION_SLOT, PROJECT_SLOT, splitDraftHeroSentence } from "./draftHeroSentence";
+import {
+  MISSION_SLOT,
+  PROJECT_SLOT,
+  splitDraftHeroSentence,
+} from "@t3tools/client-runtime/draft-hero-sentence";
 import { missionDraftOf, moveMissionDraft } from "../sidebar/missionDraftStore";
-import { missionScratchHome } from "../sidebar/missions.logic";
+import { missionScratchHome } from "@t3tools/client-runtime/missions";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import {

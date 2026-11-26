@@ -246,7 +246,7 @@ import {
 } from "./CommandPaletteLookups";
 import { markMissionDraft } from "./sidebar/missionDraftStore";
 import { useMissionHosts, useMissionStartMachines } from "./sidebar/MissionsSection";
-import { missionDraftMachines, missionScratchHome } from "./sidebar/missions.logic";
+import { missionDraftMachines, missionScratchHome } from "@t3tools/client-runtime/missions";
 import {
   buildNewThreadInProjectItems,
   buildProjectSearchItems,

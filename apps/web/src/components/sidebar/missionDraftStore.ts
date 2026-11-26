@@ -3,7 +3,7 @@ import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 
 import type { DraftId } from "../../composerDraftStore";
-import { type MissionDraftIntent, newMissionId } from "./missions.logic";
+import { type MissionDraftIntent, newMissionId } from "@t3tools/client-runtime/missions";
 
 export interface MissionDraft {
   readonly intent: MissionDraftIntent;

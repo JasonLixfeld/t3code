@@ -1,7 +1,7 @@
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   type ContextMenuItem,
   type EnvironmentId,
+  type ExecutionEnvironmentDescriptor,
   type Mission,
   type MissionMember,
   type MissionsSnapshot,
@@ -9,10 +9,35 @@ import {
   threadHasMessages,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import { msg } from "gt-react";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
-import { m, type MessageResolver } from "../../i18n/messages";
-import type { SidebarThreadSummary } from "../../types";
+import { scopedThreadKey, scopeThreadRef } from "./environment/scoped.ts";
+import type { EnvironmentThreadShell } from "./state/models.ts";
+
+/**
+ * The key `missionsLiveAcross` reads: each connected server this session may read, once its
+ * config is known, and whether it can omit prompts from the list.
+ */
+export function missionsLiveKey(input: {
+  readonly enabled: boolean;
+  readonly connected: ReadonlyArray<EnvironmentId>;
+  readonly readable: ReadonlySet<EnvironmentId>;
+  readonly descriptorOf: (
+    environmentId: EnvironmentId,
+  ) => Pick<ExecutionEnvironmentDescriptor, "capabilities"> | undefined;
+}): string {
+  // A fork server from before the capability serves Missions too, with prompts in the list.
+  const asked = input.enabled
+    ? input.connected.flatMap((environmentId) => {
+        const descriptor = input.descriptorOf(environmentId);
+        return input.readable.has(environmentId) && descriptor !== undefined
+          ? [[environmentId, descriptor.capabilities.missions === true] as const]
+          : [];
+      })
+    : [];
+  return JSON.stringify(asked);
+}
 
 export interface MissionHost {
   readonly environmentId: EnvironmentId;
@@ -82,7 +107,7 @@ export function parseMissionTarget(id: MissionMenuId): {
   };
 }
 
-type MissionBlock = "in-mission" | "no-link" | "fenced" | "not-allowed";
+export type MissionBlock = "in-mission" | "no-link" | "fenced" | "not-allowed";
 
 export const claimHere = (thread: MissionThread, hosts: ReadonlyArray<MissionHost>) =>
   hosts
@@ -111,7 +136,7 @@ export function missionLeaveId(
     : null;
 }
 
-function missionBlock(
+export function missionBlock(
   thread: MissionCandidate,
   host: MissionHost,
   hosts: ReadonlyArray<MissionHost>,
@@ -124,7 +149,7 @@ function missionBlock(
   return link.fullAccess ? null : "fenced";
 }
 
-function blockLabel(block: MissionBlock, hostLabel: string, resolve: MessageResolver) {
+export function blockLabel(block: MissionBlock, hostLabel: string, resolve: MFunctionType) {
   switch (block) {
     case "in-mission":
       return resolve(msg("In a mission"));
@@ -144,7 +169,7 @@ export function missionRowItems(
     readonly leadGone: boolean;
     readonly canChange: boolean;
   },
-  resolve: MessageResolver = m,
+  resolve: MFunctionType = mFallback,
 ): ReadonlyArray<ContextMenuItem<MissionMenuId>> {
   const target = `${input.host}:${input.mission.missionId}`;
   const members = input.mission.members.filter(
@@ -192,7 +217,7 @@ export function buildMissionMenuItems(
   hosts: ReadonlyArray<MissionHost>,
   machineLabel: (environmentId: EnvironmentId) => string,
   canChangeOn: (environmentId: EnvironmentId) => boolean,
-  resolve: MessageResolver = m,
+  resolve: MFunctionType = mFallback,
 ): ReadonlyArray<ContextMenuItem<MissionMenuId>> {
   const inMission = threads.some((thread) => claimHere(thread, hosts) !== undefined);
   const missions = hosts.flatMap((host) =>
@@ -302,7 +327,7 @@ export async function addEachToMission<T>(
 
 export function missionAddSummary(
   outcome: MissionAddOutcome<unknown>,
-  resolve: MessageResolver = m,
+  resolve: MFunctionType = mFallback,
 ): string | null {
   if (outcome.refused.length === 0) return null;
   return resolve(
@@ -329,7 +354,7 @@ export interface SidebarMission<T> {
 }
 
 type ListedThread = Pick<
-  SidebarThreadSummary,
+  EnvironmentThreadShell,
   "environmentId" | "id" | "projectId" | "settledOverride" | "archivedAt"
 >;
 
@@ -343,7 +368,7 @@ const HOLD: Record<MissionMember["state"], number> = {
   deleted: -1,
 };
 
-const isJoined = (member: MissionMember) =>
+export const isJoined = (member: MissionMember) =>
   member.state === "active" || member.state === "offline" || member.state === "release-refused";
 
 function missionHolders(hosts: ReadonlyArray<MissionHost>) {
@@ -478,90 +503,8 @@ export function missionScratchHome(
   return [...machines].find((environmentId) => scratchRootFor(environmentId) !== null) ?? null;
 }
 
-export function missionDragKeys(missions: ReadonlyArray<SidebarMission<unknown>>) {
-  return new Set(
-    missions.flatMap((mission) =>
-      mission.members.flatMap((entry) =>
-        entry.thread !== null && isJoined(entry.member) ? [scopedThreadKey(entry.member.ref)] : [],
-      ),
-    ),
-  );
-}
-
-export interface MissionDrop {
-  readonly kind: "add" | "release";
-  readonly mission: string;
-  readonly host: EnvironmentId;
-  readonly missionId: string;
-  readonly refusal: string | null;
-}
-
-export function resolveMissionDrop(input: {
-  readonly dragged: string;
-  readonly threads: ReadonlyArray<MissionCandidate>;
-  readonly over: string | null;
-  readonly missions: ReadonlyArray<SidebarMission<unknown>>;
-  readonly hosts: ReadonlyArray<MissionHost>;
-  readonly machineLabel: (environmentId: EnvironmentId) => string;
-  readonly canChangeOn: (environmentId: EnvironmentId) => boolean;
-  readonly source?: { readonly host: EnvironmentId; readonly missionId: string } | null;
-  readonly resolve?: MessageResolver;
-}): MissionDrop | null {
-  const resolve = input.resolve ?? m;
-  const from = input.missions.find((mission) =>
-    mission.members.some((entry) => scopedThreadKey(entry.member.ref) === input.dragged),
-  );
-  if (input.over === null || input.over === from?.key) return null;
-  const notAllowed = (host: EnvironmentId) =>
-    input.canChangeOn(host) ? null : blockLabel("not-allowed", "", resolve);
-  if (input.over === "list") {
-    const ref = from?.members.find((entry) => scopedThreadKey(entry.member.ref) === input.dragged)
-      ?.member.ref;
-    const moved =
-      input.source != null &&
-      from !== undefined &&
-      (input.source.host !== from.host || input.source.missionId !== from.mission.missionId);
-    return from === undefined || ref === undefined
-      ? null
-      : {
-          kind: "release",
-          mission: from.key,
-          host: from.host,
-          missionId: from.mission.missionId,
-          refusal: moved
-            ? resolve(msg("This thread moved to another mission."))
-            : missionLeaveId(
-                  { environmentId: ref.environmentId, id: ref.threadId },
-                  from,
-                  input.hosts,
-                  input.canChangeOn,
-                  from.mission.missionId,
-                ) === null
-              ? blockLabel("not-allowed", "", resolve)
-              : null,
-        };
-  }
-  const target = input.missions.find((mission) => mission.key === input.over);
-  const host = input.hosts.find((candidate) => candidate.environmentId === target?.host);
-  if (target === undefined || host === undefined) return null;
-  const block = input.threads
-    .map((thread) => missionBlock(thread, host, input.hosts))
-    .find((reason) => reason !== null);
-  return {
-    kind: "add",
-    mission: target.key,
-    host: target.host,
-    missionId: target.mission.missionId,
-    refusal:
-      notAllowed(target.host) ??
-      (block === undefined || block === null
-        ? null
-        : blockLabel(block, input.machineLabel(target.host), resolve)),
-  };
-}
-
 export function missionLeadCandidates<
-  T extends MissionCandidate & Pick<SidebarThreadSummary, "archivedAt" | "title">,
+  T extends MissionCandidate & Pick<EnvironmentThreadShell, "archivedAt" | "title">,
 >(
   threads: ReadonlyArray<T>,
   mission: { readonly host: EnvironmentId; readonly missionId: string },
@@ -575,7 +518,7 @@ export function missionLeadCandidates<
         threadHasMessages(thread) &&
         (claimHere(thread, hosts)?.missionId ?? mission.missionId) === mission.missionId,
     )
-    .toSorted((left, right) =>
+    .sort((left, right) =>
       (right.latestUserMessageAt ?? "").localeCompare(left.latestUserMessageAt ?? ""),
     );
 }

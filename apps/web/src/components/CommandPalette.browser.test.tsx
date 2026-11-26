@@ -18,7 +18,7 @@ import { type EnvironmentPresentation, useEnvironments } from "../state/environm
 import { CommandPalette } from "./CommandPalette";
 import { clearMissionDraft, markMissionDraft, missionDraftOf } from "./sidebar/missionDraftStore";
 import { useMissionHosts, useMissionMenu } from "./sidebar/MissionsSection";
-import { buildMissionMenuItems, type MissionHost } from "./sidebar/missions.logic";
+import { buildMissionMenuItems, type MissionHost } from "@t3tools/client-runtime/missions";
 import type { LocalApi, Mission } from "@t3tools/contracts";
 import { __setClientSettingsForTests } from "../hooks/useSettings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";

@@ -5701,5 +5701,22 @@
   "58aa5059cf714786": "{status, select, inProgress {Listar uppdragets trådar} completed {Listade uppdragets trådar} failed {Kunde inte lista uppdragets trådar} declined {Avböjde att lista uppdragets trådar} stopped {Slutade lista uppdragets trådar} other {Listar uppdragets trådar}}",
   "ce059975145aa8c1": "{status, select, inProgress {Lägger till en tråd i uppdraget} completed {Lade till en tråd i uppdraget} failed {Kunde inte lägga till en tråd i uppdraget} declined {Avböjde att lägga till en tråd i uppdraget} stopped {Slutade lägga till en tråd i uppdraget} other {Lägger till en tråd i uppdraget}}",
   "c5b456a231ea6b6d": "{status, select, inProgress {Låter en tråd lämna uppdraget} completed {En tråd lämnade uppdraget} failed {Kunde inte låta en tråd lämna uppdraget} declined {Avböjde att låta en tråd lämna uppdraget} stopped {Slutade låta en tråd lämna uppdraget} other {Låter en tråd lämna uppdraget}}",
-  "7c80cb764b3df506": "{status, select, inProgress {Markerar en tråds uppdrag} completed {Markerade en tråds uppdrag} failed {Kunde inte markera en tråds uppdrag} declined {Avböjde att markera en tråds uppdrag} stopped {Slutade markera en tråds uppdrag} other {Markerar en tråds uppdrag}}"
+  "7c80cb764b3df506": "{status, select, inProgress {Markerar en tråds uppdrag} completed {Markerade en tråds uppdrag} failed {Kunde inte markera en tråds uppdrag} declined {Avböjde att markera en tråds uppdrag} stopped {Slutade markera en tråds uppdrag} other {Markerar en tråds uppdrag}}",
+  "7671402affa732e1": "I ett uppdrag",
+  "40acdf448ff6ddab": "Ingen länk från {machine}",
+  "93ecfc2b6717ab09": "Kräver länk med full åtkomst",
+  "380a8495b3872071": "Inte tillåtet här",
+  "1534e3e2d7fe1e6d": "Uppdrag",
+  "c14823b109f213cc": "Ny tråd i det här uppdraget",
+  "32bb9fa25796a9eb": "Redigera uppdragsprompt…",
+  "03d266b5e18e221e": "Ny ledande tråd",
+  "e41e604f2ab02e67": "Välj en tråd…",
+  "41ed219e17bd8470": "Ta bort uppdrag",
+  "76a0f477c383d3a2": "Har trådar",
+  "05c3f1ee25e600fa": "Starta uppdrag från den här tråden",
+  "eb84c6df689a435c": "Stöds inte här",
+  "57b98f569f27871b": "Lämna uppdraget",
+  "b96040bc31b81189": "Lägg till i uppdrag",
+  "0155f1feb7b83800": "Inga uppdrag än",
+  "902d29ef248677bb": "{added} tillagda, {refused} nekade: {reasons}"
 }
