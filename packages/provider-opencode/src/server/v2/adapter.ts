@@ -398,6 +398,7 @@ interface ThreadState {
     | { readonly name: string; readonly directory: string; readonly credential: string }
     | undefined;
   instructions: string | undefined;
+  instructedMcp: boolean | undefined;
 }
 
 type TurnTerminal =
@@ -968,6 +969,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       externalPrompts: new Map(),
       mcp: undefined,
       instructions: undefined,
+      instructedMcp: undefined,
     });
 
     const rootOf = (state: ThreadState): ThreadState => {
@@ -4582,6 +4584,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           value: instructions,
         });
         state.instructions = instructions;
+        state.instructedMcp = mcpAvailable;
       }
     });
 
@@ -4709,7 +4712,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
     ) {
       const ensured = yield* ensureMcp(state, turnInput);
-      if (ensured.mcp === "failed") {
+      if (ensured.mcp === "failed" || (ensured.mcp === "ready" && state.instructedMcp === false)) {
         yield* writeInstructions(state, turnInput, ensured).pipe(
           Effect.timeout(REQUEST_REPLY_TIMEOUT),
           Effect.ignore({ log: true }),

@@ -5988,9 +5988,39 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         : [],
     );
 
-  it.effect.each(["connects", "fails"] as const)(
-    "re-adds T3 MCP for a wake after OpenCode dropped it, and the add %s",
-    (outcome) =>
+  const failedTwice = [
+    ...mcpAdded,
+    ...mcpFailed,
+    ...mcpRemoved,
+    ...mcpAdded,
+    ...mcpFailed,
+    ...mcpRemoved,
+  ];
+  it.effect.each([
+    {
+      name: "OpenCode dropped it and the add connects",
+      first: [...mcpAdded, ...mcpConnected],
+      wake: [...mcpListed(), ...mcpAdded, ...mcpConnected, ...mcpRemoved],
+      notices: [],
+      written: [true],
+    },
+    {
+      name: "OpenCode dropped it and the add fails",
+      first: [...mcpAdded, ...mcpConnected],
+      wake: [...mcpListed(), ...failedTwice, ...putInstructions],
+      notices: [OPENCODE_2_MCP_UNAVAILABLE],
+      written: [true, false],
+    },
+    {
+      name: "an earlier turn could not add it",
+      first: failedTwice,
+      wake: [...mcpAdded, ...mcpConnected, ...putInstructions, ...mcpRemoved],
+      notices: [],
+      written: [false, true],
+    },
+  ])(
+    "repairs T3 MCP and its instructions for a wake after $name",
+    ({ first, wake, notices, written }) =>
       Effect.gen(function* () {
         yield* useThreadMcp;
         const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
@@ -5998,8 +6028,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         const instructions: Array<string> = [];
         const { runtime, thread } = yield* resumed(
           [
-            ...mcpAdded,
-            ...mcpConnected,
+            ...first,
             ...backgroundLaunch(CHILD),
             event("session.execution.succeeded", { sessionID: SESSION }),
             event("session.execution.succeeded", { sessionID: CHILD }),
@@ -6013,18 +6042,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               text: "REPLY",
             }),
             event("session.execution.succeeded", { sessionID: SESSION }),
-            ...mcpListed(),
-            ...(outcome === "connects"
-              ? [...mcpAdded, ...mcpConnected, ...mcpRemoved]
-              : [
-                  ...mcpAdded,
-                  ...mcpFailed,
-                  ...mcpRemoved,
-                  ...mcpAdded,
-                  ...mcpFailed,
-                  ...mcpRemoved,
-                  ...putInstructions,
-                ]),
+            ...wake,
           ],
           {
             version: "2.2.6",
@@ -6038,13 +6056,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           runtime,
           runtime.startTurn(continuationTurn(thread, offers[0]!)),
         );
-        assert.deepEqual(
-          noticesOf(woken),
-          outcome === "connects" ? [] : [OPENCODE_2_MCP_UNAVAILABLE],
-        );
+        assert.deepEqual(noticesOf(woken), notices);
         assert.deepEqual(
           instructions.map((value) => value.includes("t3_background_wait")),
-          outcome === "connects" ? [true] : [true, false],
+          written,
         );
       }),
   );
