@@ -5720,5 +5720,14 @@
   "57b98f569f27871b": "Leave mission",
   "b96040bc31b81189": "Add to mission",
   "0155f1feb7b83800": "No missions yet",
-  "902d29ef248677bb": "{added} added, {refused} refused: {reasons}"
+  "902d29ef248677bb": "{added} added, {refused} refused: {reasons}",
+  "61e59f5f8e2bc483": "Missions",
+  "861a9dd7d8e9969f": "Group the threads of each mission under its lead thread, above the other threads. When off, every thread shows in the usual lists and no mission menu items show.",
+  "3d6edd658013bb3d": "Missions heading",
+  "b80215ba24305e7d": "Show a Missions heading above the missions.",
+  "72aa8bcdc692b4bd": "Threads heading",
+  "3a977d0eb3b73dbe": "Show a Threads heading above the threads that are not in a mission, when there are missions.",
+  "c04f18bd7d23a342": "missions",
+  "44746576ce27c022": "missions heading",
+  "bb64979e956b4bab": "threads heading"
 }

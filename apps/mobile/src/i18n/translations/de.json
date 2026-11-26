@@ -5718,5 +5718,14 @@
   "57b98f569f27871b": "Mission verlassen",
   "b96040bc31b81189": "Zur Mission hinzufügen",
   "0155f1feb7b83800": "Noch keine Missionen",
-  "902d29ef248677bb": "{added} hinzugefügt, {refused} abgelehnt: {reasons}"
+  "902d29ef248677bb": "{added} hinzugefügt, {refused} abgelehnt: {reasons}",
+  "61e59f5f8e2bc483": "Missionen",
+  "861a9dd7d8e9969f": "Die Threads jeder Mission unter ihrem leitenden Thread bündeln, über den anderen Threads. Wenn aus, erscheint jeder Thread in den üblichen Listen und es gibt keine Menüeinträge für Missionen.",
+  "3d6edd658013bb3d": "Überschrift „Missionen“",
+  "b80215ba24305e7d": "Eine Überschrift „Missionen“ über den Missionen zeigen.",
+  "72aa8bcdc692b4bd": "Überschrift „Threads“",
+  "3a977d0eb3b73dbe": "Eine Überschrift „Threads“ über den Threads zeigen, die in keiner Mission sind, sofern es Missionen gibt.",
+  "c04f18bd7d23a342": "missionen",
+  "44746576ce27c022": "überschrift missionen",
+  "bb64979e956b4bab": "überschrift threads"
 }

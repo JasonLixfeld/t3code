@@ -5712,5 +5712,14 @@
   "57b98f569f27871b": "Quitter la mission",
   "b96040bc31b81189": "Ajouter à la mission",
   "0155f1feb7b83800": "Aucune mission pour l’instant",
-  "902d29ef248677bb": "{added} ajoutés, {refused} refusés : {reasons}"
+  "902d29ef248677bb": "{added} ajoutés, {refused} refusés : {reasons}",
+  "61e59f5f8e2bc483": "Missions",
+  "861a9dd7d8e9969f": "Regroupe les fils de chaque mission sous son fil principal, au-dessus des autres fils. Si désactivé, chaque fil apparaît dans les listes habituelles et aucun élément de menu de mission n’est affiché.",
+  "3d6edd658013bb3d": "En-tête Missions",
+  "b80215ba24305e7d": "Affiche un en-tête Missions au-dessus des missions.",
+  "72aa8bcdc692b4bd": "En-tête Conversations",
+  "3a977d0eb3b73dbe": "Affiche un en-tête Conversations au-dessus des fils qui ne sont dans aucune mission, quand il y a des missions.",
+  "c04f18bd7d23a342": "missions",
+  "44746576ce27c022": "en-tête missions",
+  "bb64979e956b4bab": "en-tête conversations"
 }

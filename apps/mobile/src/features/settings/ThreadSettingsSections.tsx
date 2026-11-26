@@ -19,6 +19,7 @@ import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useEnvironments } from "../../state/environments";
+import { useMissionPreferences, useMissionsAdvertised } from "../../state/missions";
 import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -239,6 +240,55 @@ export function WorkingSectionSettings() {
         </T>
       </Text>
     </View>
+  );
+}
+
+export function MissionsSettingsSection() {
+  const gt = useGT();
+  const savePreferences = useAtomCommand(saveMobilePreferences);
+  const missions = useMissionPreferences();
+  const advertised = useMissionsAdvertised();
+  if (!advertised) return null;
+
+  return (
+    <SettingsSection>
+      <SettingsSwitchRow
+        icon="flowchart"
+        label={gt("Missions")}
+        subtitle={gt(
+          "Group the threads of each mission under its lead thread, above the other threads. When off, every thread shows in the usual lists and no mission menu items show.",
+        )}
+        value={missions.enabled}
+        disabled={!missions.loaded}
+        onValueChange={(value) => {
+          void savePreferences({ missionsEnabled: value });
+        }}
+      />
+      {missions.enabled ? (
+        <SettingsSwitchRow
+          icon="text.alignleft"
+          label={gt("Missions heading")}
+          subtitle={gt("Show a Missions heading above the missions.")}
+          value={missions.headerVisible}
+          disabled={!missions.loaded}
+          onValueChange={(value) => {
+            void savePreferences({ missionsHeaderVisible: value });
+          }}
+        />
+      ) : null}
+      <SettingsSwitchRow
+        icon="text.alignleft"
+        label={gt("Threads heading")}
+        subtitle={gt(
+          "Show a Threads heading above the threads that are not in a mission, when there are missions.",
+        )}
+        value={missions.threadsHeaderVisible}
+        disabled={!missions.loaded}
+        onValueChange={(value) => {
+          void savePreferences({ threadsHeaderVisible: value });
+        }}
+      />
+    </SettingsSection>
   );
 }
 

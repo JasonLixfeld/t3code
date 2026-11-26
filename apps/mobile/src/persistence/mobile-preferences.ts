@@ -173,6 +173,9 @@ export interface Preferences {
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly toolCallVisibility?: ToolCallVisibility;
   readonly workingShelfEnabled?: boolean;
+  readonly missionsEnabled?: boolean;
+  readonly missionsHeaderVisible?: boolean;
+  readonly threadsHeaderVisible?: boolean;
   /** The kind of question the Workflows tab's Needs you list was last narrowed to. */
   readonly workflowQuestionKind?: string;
   readonly useLastProjectForNewThreads?: boolean;
@@ -267,6 +270,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingMode?: SidebarProjectGroupingMode;
     toolCallVisibility?: ToolCallVisibility;
     workingShelfEnabled?: boolean;
+    missionsEnabled?: boolean;
+    missionsHeaderVisible?: boolean;
+    threadsHeaderVisible?: boolean;
     workflowQuestionKind?: string;
     useLastProjectForNewThreads?: boolean;
     lastThreadProject?: typeof ThreadProject.Type;
@@ -415,6 +421,15 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.workingShelfEnabled === "boolean") {
     preferences.workingShelfEnabled = parsed.workingShelfEnabled;
+  }
+  if (typeof parsed.missionsEnabled === "boolean") {
+    preferences.missionsEnabled = parsed.missionsEnabled;
+  }
+  if (typeof parsed.missionsHeaderVisible === "boolean") {
+    preferences.missionsHeaderVisible = parsed.missionsHeaderVisible;
+  }
+  if (typeof parsed.threadsHeaderVisible === "boolean") {
+    preferences.threadsHeaderVisible = parsed.threadsHeaderVisible;
   }
   if (typeof parsed.workflowQuestionKind === "string") {
     preferences.workflowQuestionKind = parsed.workflowQuestionKind;

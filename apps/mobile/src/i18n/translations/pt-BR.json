@@ -5712,5 +5712,14 @@
   "57b98f569f27871b": "Sair da missão",
   "b96040bc31b81189": "Adicionar à missão",
   "0155f1feb7b83800": "Nenhuma missão ainda",
-  "902d29ef248677bb": "{added} adicionadas, {refused} recusadas: {reasons}"
+  "902d29ef248677bb": "{added} adicionadas, {refused} recusadas: {reasons}",
+  "61e59f5f8e2bc483": "Missões",
+  "861a9dd7d8e9969f": "Agrupa as threads de cada missão sob a thread principal, acima das outras threads. Quando desativado, todas as threads aparecem nas listas de sempre e nenhum item de menu de missão aparece.",
+  "3d6edd658013bb3d": "Título Missões",
+  "b80215ba24305e7d": "Mostra um título Missões acima das missões.",
+  "72aa8bcdc692b4bd": "Título Threads",
+  "3a977d0eb3b73dbe": "Mostra um título Threads acima das threads que não estão em uma missão, quando há missões.",
+  "c04f18bd7d23a342": "missões",
+  "44746576ce27c022": "título missões",
+  "bb64979e956b4bab": "título threads"
 }

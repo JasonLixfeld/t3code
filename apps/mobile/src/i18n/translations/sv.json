@@ -5718,5 +5718,14 @@
   "57b98f569f27871b": "Lämna uppdraget",
   "b96040bc31b81189": "Lägg till i uppdrag",
   "0155f1feb7b83800": "Inga uppdrag än",
-  "902d29ef248677bb": "{added} tillagda, {refused} nekade: {reasons}"
+  "902d29ef248677bb": "{added} tillagda, {refused} nekade: {reasons}",
+  "61e59f5f8e2bc483": "Uppdrag",
+  "861a9dd7d8e9969f": "Samla trådarna i varje uppdrag under dess ledande tråd, ovanför de andra trådarna. När det är av visas varje tråd i de vanliga listorna och inga menyval för uppdrag visas.",
+  "3d6edd658013bb3d": "Rubriken Uppdrag",
+  "b80215ba24305e7d": "Visa rubriken Uppdrag ovanför uppdragen.",
+  "72aa8bcdc692b4bd": "Rubriken Trådar",
+  "3a977d0eb3b73dbe": "Visa rubriken Trådar ovanför trådarna som inte ingår i ett uppdrag, när det finns uppdrag.",
+  "c04f18bd7d23a342": "uppdrag",
+  "44746576ce27c022": "rubriken uppdrag",
+  "bb64979e956b4bab": "rubriken trådar"
 }

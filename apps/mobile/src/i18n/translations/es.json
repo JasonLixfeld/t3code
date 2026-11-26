@@ -5712,5 +5712,14 @@
   "57b98f569f27871b": "Salir de la misión",
   "b96040bc31b81189": "Añadir a la misión",
   "0155f1feb7b83800": "Aún no hay misiones",
-  "902d29ef248677bb": "{added} añadidos, {refused} rechazados: {reasons}"
+  "902d29ef248677bb": "{added} añadidos, {refused} rechazados: {reasons}",
+  "61e59f5f8e2bc483": "Misiones",
+  "861a9dd7d8e9969f": "Agrupa los hilos de cada misión bajo su hilo principal, encima de los demás hilos. Si está desactivado, cada hilo aparece en las listas habituales y no se muestran opciones de misión en los menús.",
+  "3d6edd658013bb3d": "Encabezado Misiones",
+  "b80215ba24305e7d": "Muestra un encabezado Misiones encima de las misiones.",
+  "72aa8bcdc692b4bd": "Encabezado Hilos",
+  "3a977d0eb3b73dbe": "Muestra un encabezado Hilos encima de los hilos que no están en una misión, cuando hay misiones.",
+  "c04f18bd7d23a342": "misiones",
+  "44746576ce27c022": "encabezado misiones",
+  "bb64979e956b4bab": "encabezado hilos"
 }
