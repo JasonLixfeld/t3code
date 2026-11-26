@@ -37,6 +37,10 @@ public class T3ReviewDiffModule: Module {
         view.setCollapsedCommentIdsJson(collapsedCommentIdsJson)
       }
 
+      Prop("searchHighlightsJson") { (view: T3ReviewDiffView, searchHighlightsJson: String) in
+        view.setSearchHighlightsJson(searchHighlightsJson)
+      }
+
       Prop("appearanceScheme") { (view: T3ReviewDiffView, appearanceScheme: String) in
         view.setAppearanceScheme(appearanceScheme)
       }
@@ -98,6 +102,10 @@ public class T3ReviewDiffModule: Module {
 
       AsyncFunction("scrollToTop") { (view: T3ReviewDiffView, animated: Bool) in
         view.scrollToTop(animated: animated)
+      }
+
+      AsyncFunction("scrollToMatch") { (view: T3ReviewDiffView, rowId: String, start: Int, end: Int, animated: Bool) in
+        view.scrollToMatch(rowId, start: start, end: end, animated: animated)
       }
 
       // Large, frequently changing JSON values cannot be regular Fabric props. Expo's

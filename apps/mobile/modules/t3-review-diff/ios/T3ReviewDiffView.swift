@@ -32,6 +32,27 @@ private struct ReviewDiffNativeWordDiffRange: Decodable, Sendable {
   let end: Int
 }
 
+private struct ReviewDiffNativeSearchHighlights: Decodable {
+  struct Active: Decodable {
+    let rowId: String
+    let start: Int
+    let end: Int
+  }
+
+  let ranges: [String: [[Int]]]
+  let active: Active?
+}
+
+private struct ReviewDiffSearchMatch: Equatable {
+  let rowId: String
+  let range: NSRange
+}
+
+private struct ReviewDiffPendingMatch {
+  let match: ReviewDiffSearchMatch
+  let animated: Bool
+}
+
 private struct ReviewDiffNativeToken: Decodable, Sendable {
   let content: String
   let color: String?
@@ -355,6 +376,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
   private var lastVisibleFileId: String?
   private var pendingScrollFileId: String?
   private var pendingScrollAnimated = false
+  private var pendingMatch: ReviewDiffPendingMatch?
   private var isProgrammaticScrollActive = false
   private var rowsDecodeGeneration = 0
   private var rowsDecodeCancellation: ReviewDiffRowPreparation?
@@ -433,6 +455,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     // A direct gesture takes ownership from any interrupted programmatic jump.
     // Resume visible-file events immediately so the inspector follows the finger.
     isProgrammaticScrollActive = false
+    pendingMatch = nil
     contentView.isVerticalScrollActive = true
   }
 
@@ -649,6 +672,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     contentView.rows = []
     hasAppliedInitialRowIndex = false
     pendingScrollFileId = initialFileId
+    pendingMatch = nil
     isProgrammaticScrollActive = false
     scrollView.setContentOffset(CGPoint(x: 0, y: -scrollView.contentInset.top), animated: false)
     updateContentMetrics()
@@ -661,7 +685,8 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     let nextCollapsedFileIds = decodeFileIdSet(collapsedFileIdsJson)
     let changedFileIds = contentView.collapsedFileIds.symmetricDifference(nextCollapsedFileIds)
     let scrollAnchor: ReviewDiffScrollAnchor?
-    if changedFileIds.count == 1, let changedFileId = changedFileIds.first {
+    // A match jump waiting for this fold to open places the viewport itself.
+    if pendingMatch == nil, changedFileIds.count == 1, let changedFileId = changedFileIds.first {
       scrollAnchor = contentView.scrollAnchor(forFileId: changedFileId)
     } else {
       scrollAnchor = nil
@@ -690,6 +715,33 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
 
   func setSelectedRowIdsJson(_ selectedRowIdsJson: String) {
     contentView.selectedRowIds = decodeFileIdSet(selectedRowIdsJson)
+  }
+
+  func setSearchHighlightsJson(_ searchHighlightsJson: String) {
+    guard let data = searchHighlightsJson.data(using: .utf8), !data.isEmpty else {
+      contentView.setSearchHighlights([:], active: nil)
+      return
+    }
+    do {
+      let payload = try JSONDecoder().decode(ReviewDiffNativeSearchHighlights.self, from: data)
+      let ranges = payload.ranges.mapValues { pairs in
+        pairs.compactMap { pair -> NSRange? in
+          guard pair.count == 2, pair[0] >= 0, pair[1] > pair[0] else { return nil }
+          return NSRange(location: pair[0], length: pair[1] - pair[0])
+        }
+      }
+      let active = payload.active.flatMap { active -> ReviewDiffSearchMatch? in
+        guard active.start >= 0, active.end > active.start else { return nil }
+        return ReviewDiffSearchMatch(
+          rowId: active.rowId,
+          range: NSRange(location: active.start, length: active.end - active.start)
+        )
+      }
+      contentView.setSearchHighlights(ranges, active: active)
+    } catch {
+      contentView.setSearchHighlights([:], active: nil)
+      emitDebug("search-highlights-decode-failed", ["error": error.localizedDescription])
+    }
   }
 
   func setCollapsedCommentIdsJson(_ collapsedCommentIdsJson: String) {
@@ -896,8 +948,20 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
   }
 
   func scrollToFile(_ fileId: String, animated: Bool) {
+    pendingMatch = nil
     pendingScrollFileId = fileId
     pendingScrollAnimated = animated
+    applyPendingScrollIfNeeded()
+  }
+
+  /// Waits for the row to be decoded and its file open, since JS opens a fold just before this.
+  func scrollToMatch(_ rowId: String, start: Int, end: Int, animated: Bool) {
+    guard start >= 0, end > start else { return }
+    pendingScrollFileId = nil
+    pendingMatch = ReviewDiffPendingMatch(
+      match: ReviewDiffSearchMatch(rowId: rowId, range: NSRange(location: start, length: end - start)),
+      animated: animated
+    )
     applyPendingScrollIfNeeded()
   }
 
@@ -914,6 +978,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
   func scrollToTop(animated: Bool) {
     pendingScrollFileId = nil
     pendingScrollAnimated = false
+    pendingMatch = nil
     setVerticalContentOffset(0, animated: animated)
   }
 
@@ -965,7 +1030,27 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     emitVisibleFileIfNeeded()
   }
 
+  private func applyPendingMatchIfNeeded() {
+    guard let pending = pendingMatch, bounds.height > 0,
+          let rect = contentView.revealSearchMatch(pending.match) else {
+      return
+    }
+    pendingMatch = nil
+    let top = scrollView.contentInset.top
+    let bottom = scrollView.contentInset.bottom
+    let headerHeight = contentView.style.fileHeaderHeight
+    let visibleMinY = scrollView.contentOffset.y + top + headerHeight
+    let visibleMaxY = scrollView.contentOffset.y + bounds.height - bottom
+    if rect.minY >= visibleMinY, rect.maxY <= visibleMaxY {
+      return
+    }
+    let visibleHeight = bounds.height - top - bottom
+    let screenY = max(headerHeight, (visibleHeight - rect.height) * 0.3)
+    setVerticalContentOffset(rect.minY - screenY, animated: pending.animated)
+  }
+
   private func applyPendingScrollIfNeeded() {
+    applyPendingMatchIfNeeded()
     guard let fileId = pendingScrollFileId,
           bounds.height > 0 else {
       return
@@ -1171,6 +1256,73 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       setNeedsDisplayForVisibleBounds()
     }
   }
+  private var searchRangesByRowId: [String: [NSRange]] = [:]
+  private var activeSearchMatch: ReviewDiffSearchMatch?
+  private static let searchMatchColor = UIColor.systemYellow.withAlphaComponent(0.35)
+  private static let activeSearchMatchColor = UIColor.systemOrange.withAlphaComponent(0.65)
+
+  /// Paint-only: row geometry does not depend on search highlights.
+  func setSearchHighlights(_ ranges: [String: [NSRange]], active: ReviewDiffSearchMatch?) {
+    searchRangesByRowId = ranges
+    activeSearchMatch = active
+    codeDecorationVersion += 1
+    setNeedsDisplayForVisibleBounds()
+  }
+
+  private func codeHighlights(for row: ReviewDiffNativeRow) -> [ReviewDiffCodeHighlight] {
+    var highlights: [ReviewDiffCodeHighlight] = []
+    let change = row.change ?? "context"
+    if change == "add" || change == "delete" {
+      let color = (change == "add" ? theme.addBar : theme.deleteBar).withAlphaComponent(0.28)
+      for range in row.wordDiffRanges ?? [] where range.start >= 0 && range.end > range.start {
+        highlights.append(ReviewDiffCodeHighlight(
+          range: NSRange(location: range.start, length: range.end - range.start), color: color
+        ))
+      }
+    }
+    for range in searchRangesByRowId[row.id] ?? [] {
+      highlights.append(ReviewDiffCodeHighlight(range: range, color: Self.searchMatchColor))
+    }
+    if let active = activeSearchMatch, active.rowId == row.id {
+      highlights.append(ReviewDiffCodeHighlight(range: active.range, color: Self.activeSearchMatchColor))
+    }
+    return highlights
+  }
+
+  /// Scrolls the match's file horizontally into view and returns the match's rect in content
+  /// coordinates, or nil while its row is not laid out or its file is folded.
+  func revealSearchMatch(_ match: ReviewDiffSearchMatch) -> CGRect? {
+    guard let index = rows.firstIndex(where: { $0.id == match.rowId }),
+          let rowFrame = frameForRow(at: index), rowFrame.height > 0 else {
+      return nil
+    }
+    let row = rows[index]
+    let rect: CGRect
+    if let layout = codeLayoutsByRowId[row.id], let textRect = layout.rect(for: match.range) {
+      rect = textRect.offsetBy(dx: 0, dy: rowFrame.minY)
+    } else {
+      let lineStarts = ReviewDiffCodeLineStarts(
+        length: (row.content ?? "").utf16.count, columns: codeWrapColumns
+      )
+      let line = min(match.range.location / lineStarts.columns, lineStarts.count - 1)
+      let column = match.range.location - lineStarts[line]
+      rect = CGRect(
+        x: CGFloat(column) * codeCharacterWidth,
+        y: rowFrame.minY + CGFloat(line) * codeWrapLineHeight,
+        width: CGFloat(max(1, min(match.range.length, lineStarts.columns - column))) * codeCharacterWidth,
+        height: line == 0 ? max(style.rowHeight, codeWrapLineHeight) : codeWrapLineHeight
+      )
+    }
+    let fileId = resolvedFileId(for: row)
+    let offset = horizontalOffset(for: fileId)
+    let visibleWidth = max(0, viewportWidth - codeStartX - style.codePadding)
+    if rect.minX < offset || rect.maxX > offset + visibleWidth {
+      let maxOffset = maxHorizontalOffset(for: (fileId: fileId, kind: .code))
+      setHorizontalOffset(min(max(0, rect.minX - visibleWidth / 3), maxOffset), for: fileId)
+    }
+    return rect
+  }
+
   var style = ReviewDiffNativeStyle.resolve(nil) {
     didSet {
       codeDecorationVersion += 1
@@ -2584,13 +2736,9 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       let text = tokensByRowId[row.id].map {
         tokenAttributedString(rowId: row.id, tokens: $0, fallbackColor: theme.text, font: codeFont)
       } ?? NSAttributedString(string: row.content ?? "", attributes: [.foregroundColor: theme.text])
-      let highlights = (change == "add" || change == "delete") ? (row.wordDiffRanges ?? []) : []
       layout.decorate(
         text: text,
-        highlights: highlights.filter { $0.start >= 0 && $0.end > $0.start }.map {
-          NSRange(location: $0.start, length: $0.end - $0.start)
-        },
-        color: (change == "add" ? theme.addBar : theme.deleteBar).withAlphaComponent(0.28),
+        highlights: codeHighlights(for: row),
         note: row.noteStart.map {
           ReviewDiffCodeNote(
             range: NSRange(location: $0, length: max(0, text.length - $0)),
@@ -2610,11 +2758,10 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     let lineStarts = ReviewDiffCodeLineStarts(
       length: (row.content ?? "").utf16.count, columns: codeWrapColumns
     )
-    drawWordDiffRanges(
-      row,
+    drawHighlights(
+      codeHighlights(for: row),
       lineStarts: lineStarts,
       firstLineRect: firstLineRect,
-      context: context,
       horizontalOffset: horizontalOffset
     )
     if let tokens = tokensByRowId[row.id], !tokens.isEmpty {
@@ -2674,41 +2821,26 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     context.fill(CGRect(x: 0, y: rect.minY, width: max(style.changeBarWidth, 4), height: rect.height))
   }
 
-  private func drawWordDiffRanges(
-    _ row: ReviewDiffNativeRow,
+  private func drawHighlights(
+    _ highlights: [ReviewDiffCodeHighlight],
     lineStarts: ReviewDiffCodeLineStarts,
     firstLineRect: CGRect,
-    context: CGContext,
     horizontalOffset: CGFloat
   ) {
-    guard let ranges = row.wordDiffRanges, !ranges.isEmpty else {
+    guard !highlights.isEmpty else {
       return
     }
 
-    let change = row.change ?? "context"
-    guard change == "add" || change == "delete" else {
-      return
-    }
-
-    let fillColor: UIColor
-    if change == "add" {
-      fillColor = theme.addBar.withAlphaComponent(0.28)
-    } else {
-      fillColor = theme.deleteBar.withAlphaComponent(0.28)
-    }
     let highlightHeight = max(4, min(firstLineRect.height - 4, codeFont.lineHeight))
     let highlightY = firstLineRect.midY - highlightHeight / 2
 
-    fillColor.setFill()
-    for range in ranges {
-      guard range.end > range.start else {
-        continue
-      }
-
+    for highlight in highlights {
+      highlight.color.setFill()
+      let range = highlight.range
       for (line, lineStart) in lineStarts.enumerated() {
         let lineEnd = line + 1 < lineStarts.count ? lineStarts[line + 1] : Int.max
-        let start = max(range.start, lineStart)
-        let end = min(range.end, lineEnd)
+        let start = max(range.location, lineStart)
+        let end = min(NSMaxRange(range), lineEnd)
         guard end > start else {
           continue
         }
