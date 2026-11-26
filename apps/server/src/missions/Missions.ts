@@ -773,110 +773,111 @@ const make = Effect.gen(function* () {
       .withLock(row.missionId, Effect.flatMap(reachOf(row.missionId, row.actor, row), send))
       .pipe(Effect.asVoid, Effect.catchTags({ MissionError: (error) => refuse(error.message) }));
 
-  const refreshMachine = (environmentId: EnvironmentId) =>
-    machineLocks.withLock(
-      environmentId,
-      Effect.gen(function* () {
-        // Each row stands alone: a refusal marks that row and the next goes. Only a machine
-        // that does not answer ends the sweep of it.
-        for (const release of yield* store.pendingReleases) {
-          if (release.environmentId !== environmentId || release.refusal !== undefined) continue;
+  const refreshMachine = Effect.fn("Missions.refreshMachine")(
+    function* (environmentId: EnvironmentId) {
+      // Each row stands alone: a refusal marks that row and the next goes. Only a machine
+      // that does not answer ends the sweep of it.
+      for (const release of yield* store.pendingReleases) {
+        if (release.environmentId !== environmentId || release.refusal !== undefined) continue;
+        yield* sendPending(
+          release,
+          (reach) => sendRelease(release, reach),
+          (refusal) => store.refusePendingRelease(release, refusal),
+        );
+      }
+      const missions = yield* store.missions;
+      for (const add of yield* store.pendingAdds) {
+        const mission = missions.find((candidate) => candidate.missionId === add.missionId);
+        if (add.environmentId !== environmentId || add.refusal !== null) continue;
+        if (mission === undefined) yield* store.clearPendingAdd(add);
+        else {
+          const stale = yield* staleAdd(add);
+          if (stale !== undefined) {
+            yield* store.setPendingAdd({ ...add, refusal: stale });
+            continue;
+          }
           yield* sendPending(
-            release,
-            (reach) => sendRelease(release, reach),
-            (refusal) => store.refusePendingRelease(release, refusal),
+            add,
+            (reach) => sendJoin(mission, add, reach),
+            (refusal) => store.setPendingAdd({ ...add, refusal }),
           );
         }
-        const missions = yield* store.missions;
-        for (const add of yield* store.pendingAdds) {
-          const mission = missions.find((candidate) => candidate.missionId === add.missionId);
-          if (add.environmentId !== environmentId || add.refusal !== null) continue;
-          if (mission === undefined) yield* store.clearPendingAdd(add);
-          else {
-            const stale = yield* staleAdd(add);
-            if (stale !== undefined) {
-              yield* store.setPendingAdd({ ...add, refusal: stale });
-              continue;
-            }
-            yield* sendPending(
-              add,
-              (reach) => sendJoin(mission, add, reach),
-              (refusal) => store.setPendingAdd({ ...add, refusal }),
-            );
-          }
-        }
-        const check = (yield* store.tombstoneChecks).find(
-          (candidate) => candidate.environmentId === environmentId,
+      }
+      const check = (yield* store.tombstoneChecks).find(
+        (candidate) => candidate.environmentId === environmentId,
+      );
+      const askedAt = DateTime.toEpochMillis(yield* DateTime.now);
+      // Every sweep of a machine that answers lists it, since its list is what wakes a lead.
+      let held = yield* onMember(environmentId, { kind: "list" }).pipe(
+        Effect.tapError(() =>
+          check === undefined
+            ? Effect.void
+            : store.setTombstoneCheck(environmentId, afterMiss(check, askedAt)),
+        ),
+      );
+      // A claim on a Mission deleted here may have landed after the delete, from an add whose
+      // answer never came. Any list, for whatever reason it was asked, releases each as any
+      // member is released. A claim made under an old link owner, before a re-pair, is not
+      // listed here; Leave mission on that machine frees it.
+      const deleted = yield* store.deletedMissionIds;
+      for (const claim of held) {
+        if (!deleted.has(claim.missionId)) continue;
+        // The lead machine's own upkeep of a Mission no one leads now: the user's reach.
+        yield* sendRelease({ environmentId, ...claim }, USER_REACH).pipe(
+          Effect.catchTags({
+            MissionError: (error) => Effect.logInfo("A deleted mission's claim stayed", error),
+          }),
         );
-        const askedAt = DateTime.toEpochMillis(yield* DateTime.now);
-        // Every sweep of a machine that answers lists it, since its list is what wakes a lead.
-        let held = yield* onMember(environmentId, { kind: "list" }).pipe(
-          Effect.tapError(() =>
-            check === undefined
-              ? Effect.void
-              : store.setTombstoneCheck(environmentId, afterMiss(check, askedAt)),
-          ),
-        );
-        // A claim on a Mission deleted here may have landed after the delete, from an add whose
-        // answer never came. Any list, for whatever reason it was asked, releases each as any
-        // member is released. A claim made under an old link owner, before a re-pair, is not
-        // listed here; Leave mission on that machine frees it.
-        const deleted = yield* store.deletedMissionIds;
-        for (const claim of held) {
-          if (!deleted.has(claim.missionId)) continue;
-          // The lead machine's own upkeep of a Mission no one leads now: the user's reach.
-          yield* sendRelease({ environmentId, ...claim }, USER_REACH).pipe(
-            Effect.catchTags({
-              MissionError: (error) => Effect.logInfo("A deleted mission's claim stayed", error),
-            }),
-          );
+      }
+      held = held.filter((claim) => !deleted.has(claim.missionId));
+      // A refused release whose claim is gone from the list has nothing left to release.
+      for (const release of yield* store.pendingReleases) {
+        if (
+          release.environmentId === environmentId &&
+          release.refusal !== undefined &&
+          !held.some(
+            (claim) =>
+              claim.threadId === release.threadId &&
+              claim.missionId === release.missionId &&
+              claim.generation === release.generation,
+          )
+        ) {
+          yield* store.clearPendingRelease(release);
         }
-        held = held.filter((claim) => !deleted.has(claim.missionId));
-        // A refused release whose claim is gone from the list has nothing left to release.
-        for (const release of yield* store.pendingReleases) {
-          if (
-            release.environmentId === environmentId &&
-            release.refusal !== undefined &&
-            !held.some(
-              (claim) =>
-                claim.threadId === release.threadId &&
-                claim.missionId === release.missionId &&
-                claim.generation === release.generation,
-            )
-          ) {
-            yield* store.clearPendingRelease(release);
-          }
+      }
+      yield* noteRemoteDetails(environmentId, held);
+      // A rename below answers claims without their detail.
+      const listed = held;
+      if (check !== undefined) {
+        yield* store.setTombstoneCheck(environmentId, afterAnswer(check, askedAt));
+      }
+      // A member's claim, and so its tag, carries the Mission's name. A lead renamed since is
+      // sent to the member's machine here, as often as it still answers with the old name.
+      for (const mission of missions) {
+        if (
+          held.some((claim) => claim.missionId === mission.missionId && claim.name !== mission.name)
+        ) {
+          const before = held;
+          // A machine that refuses, as one without renames does, keeps the old name.
+          held = yield* onMember(environmentId, {
+            kind: "rename",
+            missionId: mission.missionId,
+            name: mission.name,
+          }).pipe(Effect.catchTags({ MissionError: () => Effect.succeed(before) }));
         }
-        yield* noteRemoteDetails(environmentId, held);
-        // A rename below answers claims without their detail.
-        const listed = held;
-        if (check !== undefined) {
-          yield* store.setTombstoneCheck(environmentId, afterAnswer(check, askedAt));
-        }
-        // A member's claim, and so its tag, carries the Mission's name. A lead renamed since is
-        // sent to the member's machine here, as often as it still answers with the old name.
-        for (const mission of missions) {
-          if (
-            held.some(
-              (claim) => claim.missionId === mission.missionId && claim.name !== mission.name,
-            )
-          ) {
-            const before = held;
-            // A machine that refuses, as one without renames does, keeps the old name.
-            held = yield* onMember(environmentId, {
-              kind: "rename",
-              missionId: mission.missionId,
-              name: mission.name,
-            }).pipe(Effect.catchTags({ MissionError: () => Effect.succeed(before) }));
-          }
-        }
-        yield* store.setKnownClaims(environmentId, held);
-        // Only once the list is kept: a slow or failed follow-up must not undo it.
-        yield* fetchOmittedWorkspaces(environmentId, listed);
-      }).pipe(
-        Effect.catch((error) => Effect.logInfo("A mission member machine did not answer", error)),
+      }
+      yield* store.setKnownClaims(environmentId, held);
+      // Only once the list is kept: a slow or failed follow-up must not undo it.
+      yield* fetchOmittedWorkspaces(environmentId, listed);
+    },
+    (effect, environmentId) =>
+      machineLocks.withLock(
+        environmentId,
+        effect.pipe(
+          Effect.catch((error) => Effect.logInfo("A mission member machine did not answer", error)),
+        ),
       ),
-    );
+  );
 
   /**
    * Remembers what a listing machine said its members are doing, in one step for that machine,
