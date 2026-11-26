@@ -5452,7 +5452,32 @@ it("mission lead cases fail a lead that speaks, asks half a question or reports 
   );
 
   assert.isFalse(
+    passes("mission-question-stands-alone", {
+      text: `${preface} Per device lets attackers switch devices, and per account can lock a user out. I recommend per account.`,
+    }),
+  );
+  assert.isFalse(
+    passes("mission-question-stands-alone", {
+      text: preface,
+      calls: [
+        ask("Count failed sign-ins per device or per account? I recommend per account.", [
+          ["Per account", "Can lock a user out for 15 minutes."],
+          ["Per device", "The simpler option."],
+        ]),
+      ],
+    }),
+  );
+  assert.isTrue(
+    passes("mission-question-stands-alone", {
+      text: `${preface} Per device lets attackers switch devices, and per account can lock a user out. I recommend per account. Which do you want?`,
+    }),
+  );
+
+  assert.isFalse(
     passes("mission-pull-request-merged-speaks", { text: "PR #41 is not merged yet." }),
+  );
+  assert.isFalse(
+    passes("mission-pull-request-merged-speaks", { text: "PR #41 hasn't merged yet." }),
   );
   assert.isTrue(
     passes("mission-pull-request-merged-speaks", {
