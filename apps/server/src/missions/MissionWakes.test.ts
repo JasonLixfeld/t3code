@@ -492,6 +492,56 @@ it.effect.each(["starts", "never starts"] as const)(
   },
 );
 
+it.effect.each(["interrupted", "completed"] as const)(
+  "a run that completes while the next is queued is told once, when the next one is %s",
+  (next) => {
+    const world = makeWorld();
+    return withWakes(
+      world,
+      Effect.gen(function* () {
+        world.set(first, { status: "queued", latestRunId: "f2" });
+        yield* world.runThenWaitForMemberShellRead(
+          first,
+          world.event(first, "run.updated", { id: "f1", status: "completed" }),
+        );
+        yield* world.run(first, "f2", "running");
+        yield* world.run(first, "f2", next);
+        assert.equal(
+          yield* nextText(world),
+          told(["member 1 on this machine finished its turn and is idle."]),
+        );
+        yield* world.leadRead;
+        yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+        yield* world.run(second, "s1", "failed");
+        assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
+        assert.equal(world.sent.length, 2);
+      }),
+    );
+  },
+);
+
+it.effect("a failure ends an owed completion, so a later stopped run does not revive it", () => {
+  const world = makeWorld();
+  return withWakes(
+    world,
+    Effect.gen(function* () {
+      world.set(first, { pendingBackgroundTasks: [subagent] });
+      yield* world.runThenWaitForMemberShellRead(first, world.run(first, "f1", "completed"));
+      world.set(first, { pendingBackgroundTasks: [] });
+      yield* world.runThenWaitForMemberShellRead(first, world.run(first, "f2", "running"));
+      yield* world.run(first, "f2", "failed");
+      assert.equal(yield* nextText(world), told(["member 1 on this machine failed."]));
+      yield* world.leadRead;
+      yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+      yield* world.run(first, "f3", "running");
+      yield* world.run(first, "f3", "interrupted");
+      yield* world.run(second, "s1", "failed");
+      assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
+      assert.equal(world.sent.length, 2);
+    }),
+  );
+});
+
 it.effect(
   "a held completion is told once the member is idle, though a newer run was stopped",
   () => {
