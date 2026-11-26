@@ -34,6 +34,7 @@ import {
   type FakeDriver,
 } from "../../../test/fakeEnvironment";
 import { act, render } from "../../../test/render";
+import { DraftHeroHeadline } from "./DraftHeroHeadline";
 
 // The socket is the only fake layer; see test/appScenarios.renders.tsx.
 vi.mock(
@@ -115,7 +116,10 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   trackRpcRequestSent: () => {},
 }));
 
-const missionTrigger = () => page.getByRole("button", { name: /^(Mission: .*|Add to a mission)$/ });
+const missionTrigger = () =>
+  page.getByRole("button", {
+    name: /^(Mission: .*|Add to a mission|New mission|New lead for .*)$/,
+  });
 
 it("the new-thread project picker follows the manual sidebar project order", async () => {
   using _environment = installFakeEnvironment([], {
@@ -366,8 +370,13 @@ it("a new thread's Mission choice marks its draft to join that mission, or none"
   await expect
     .element(page.getByRole("heading", { level: 1 }))
     .toHaveTextContent("What should we build in render?");
-  await userEvent.click(trigger);
-  await page.getByRole("menuitemradio", { name: "Ship v2" }).click();
+  // The trigger moves between the footer and the heading, and keyboard focus moves with it.
+  (trigger.element() as HTMLElement).focus();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByRole("menuitemradio", { name: "Ship v2" })).toBeVisible();
+  await userEvent.keyboard("S");
+  await expect.element(page.getByRole("menuitemradio", { name: "Ship v2" })).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
   expect(missionDraftOf(draftId)).toMatchObject({
     intent: { kind: "member", host: ENVIRONMENT_ID, missionId: "ba9876543210", name: "Ship v2" },
     thread: { environmentId: ENVIRONMENT_ID, threadId },
@@ -376,9 +385,14 @@ it("a new thread's Mission choice marks its draft to join that mission, or none"
   await expect
     .element(page.getByRole("heading", { level: 1 }))
     .toHaveTextContent("What should we build in render, in mission Ship v2?");
-  await userEvent.click(trigger);
-  await page.getByRole("menuitemradio", { name: "None" }).click();
+  await expect.element(page.getByRole("button", { name: "Mission: Ship v2" })).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByRole("menuitemradio", { name: "None" })).toBeVisible();
+  await userEvent.keyboard("{Home}");
+  await expect.element(page.getByRole("menuitemradio", { name: "None" })).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
   expect(missionDraftOf(draftId)).toBeUndefined();
+  await expect.element(page.getByRole("button", { name: "Add to a mission" })).toHaveFocus();
 
   // A new mission it leads fixes the choice.
   await userEvent.click(trigger);
@@ -602,18 +616,25 @@ it.each([
   [
     "starts a new mission",
     { kind: "new" },
-    "a new mission",
+    "What should we build in render, in a new mission?",
+    "New mission",
     "Sending starts a new mission led by this thread",
   ],
-  ["leads a mission", leadIntent, "Old work", 'Sending makes this thread the lead of "Old work"'],
+  [
+    "leads a mission",
+    leadIntent,
+    "What should we build in render, as the new lead for Old work?",
+    "New lead for Old work",
+    'Sending makes this thread the lead of "Old work"',
+  ],
 ] as const)(
   "a draft that %s shows its mission fixed, and says why",
-  async (_, intent, shown, notice) => {
+  async (_, intent, heading, name, notice) => {
     using _environment = installFakeEnvironment([]);
     listMissions([hostWith(ENVIRONMENT_ID)]);
     await using _app = await openDraft("draft-fixed-mission", intent);
-    const trigger = missionTrigger();
-    await expect.element(trigger).toMatchTextContent(new RegExp(`${shown}$`));
+    const trigger = page.getByRole("button", { name });
+    await expect.element(page.getByRole("heading", { level: 1 })).toHaveTextContent(heading);
     await expect.element(trigger).toHaveAttribute("aria-disabled", "true");
     await expect.element(page.getByText(notice)).toBeVisible();
     // The pointer lands on the tooltip's wrapper, as it does with the app's styles.
@@ -637,6 +658,33 @@ it("with Missions off, a new thread shows the Project picker and no Mission pick
   await using _app = await openDraft("draft-missions-off", undefined, false);
   await expect.element(page.getByRole("combobox", { name: "Project: render" })).toBeVisible();
   expect(document.querySelector("[data-draft-mission-trigger]")).toBeNull();
+});
+
+it("keeps a chosen mission's control while the draft's project title loads", async () => {
+  using _environment = installFakeEnvironment([]);
+  listMissions([hostWith(ENVIRONMENT_ID)]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-title-loading");
+  const projectRef = scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID);
+  useComposerDraftStore.getState().setProjectDraftThreadId(projectRef, draftId);
+  const threadId = useComposerDraftStore.getState().getDraftSession(draftId)!.threadId;
+  markMissionDraft(draftId, {
+    intent: { kind: "member", host: ENVIRONMENT_ID, missionId: shipV2.missionId, name: "Ship v2" },
+    thread: { environmentId: ENVIRONMENT_ID, threadId },
+  });
+  onTestFinished(() => clearMissionDraft(draftId));
+  await using _screen = await render(
+    <DraftHeroHeadline draftId={draftId} activeProjectRef={projectRef} activeProjectTitle={null} />,
+  );
+  await expect
+    .element(page.getByRole("heading", { level: 1 }))
+    .toHaveTextContent("Choose a project to start");
+  await expect
+    .element(page.getByRole("button", { name: "Mission: Ship v2" }))
+    .toHaveTextContent("Mission: Ship v2");
 });
 
 it("a Project pick retargets the draft as the headline link did", async () => {
@@ -689,7 +737,7 @@ it("a fixed Mission choice takes keyboard focus and says why, without opening a 
   await using _app = await openDraft("draft-fixed-keyboard", { kind: "new" });
   document.querySelector<HTMLElement>("[data-draft-project-trigger]")!.focus();
   await userEvent.tab();
-  const trigger = page.getByRole("button", { name: "Mission: a new mission" });
+  const trigger = page.getByRole("button", { name: "New mission" });
   await expect.element(trigger).toHaveFocus();
   await expect.element(trigger).toHaveAttribute("aria-disabled", "true");
   await expect
@@ -811,6 +859,7 @@ it("while No project is preparing, the draft cannot send and its pickers are dis
   await pickNoProject();
   const project = page.getByRole("combobox", { name: "Project: No project…" });
   await expect.element(project).toHaveAttribute("data-disabled");
+  await expect.element(project.getByRole("status", { name: "Loading" })).toBeVisible();
   await expect.element(missionTrigger()).toHaveAttribute("data-disabled");
   await expect.element(page.getByRole("button", { name: "Preparing No project…" })).toBeDisabled();
   await finish();

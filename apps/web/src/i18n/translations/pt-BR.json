@@ -13124,5 +13124,30 @@
     "?"
   ],
   "30b3991c046d1ab2": "uma nova missão",
-  "16e888c38a7cda4e": "Adicionar a uma missão"
+  "16e888c38a7cda4e": "Adicionar a uma missão",
+  "cb010196f71a98c4": [
+    "No que vamos trabalhar como nova thread principal de ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "?"
+  ],
+  "214eefadc3233ef8": [
+    "O que vamos construir em ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", como nova thread principal de ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "?"
+  ],
+  "93fb497fbfe34f9e": "Nova thread principal para {mission}"
 }

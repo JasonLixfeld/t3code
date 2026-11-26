@@ -13124,5 +13124,30 @@
     " ?"
   ],
   "30b3991c046d1ab2": "une nouvelle mission",
-  "16e888c38a7cda4e": "Ajouter à une mission"
+  "16e888c38a7cda4e": "Ajouter à une mission",
+  "cb010196f71a98c4": [
+    "Sur quoi travaille-t-on en tant que nouveau fil principal de ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ?"
+  ],
+  "214eefadc3233ef8": [
+    "Que devons-nous construire dans ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", en tant que nouveau fil principal de ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " ?"
+  ],
+  "93fb497fbfe34f9e": "Nouveau fil principal pour {mission}"
 }

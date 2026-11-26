@@ -13119,5 +13119,30 @@
     "?"
   ],
   "30b3991c046d1ab2": "una misión nueva",
-  "16e888c38a7cda4e": "Añadir a una misión"
+  "16e888c38a7cda4e": "Añadir a una misión",
+  "cb010196f71a98c4": [
+    "¿En qué trabajamos como nuevo hilo principal de ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "?"
+  ],
+  "214eefadc3233ef8": [
+    "¿Qué construimos en ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", como nuevo hilo principal de ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "?"
+  ],
+  "93fb497fbfe34f9e": "Nuevo hilo principal para {mission}"
 }

@@ -34,7 +34,7 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
 }));
 
 function MissionWord(props: { readonly draftId: DraftId }) {
-  return useDraftMissionChoice(props.draftId, LOCAL)?.word ?? null;
+  return useDraftMissionChoice(props.draftId, LOCAL)?.standalone ?? null;
 }
 
 function Banner(props: { readonly draftId: DraftId }) {

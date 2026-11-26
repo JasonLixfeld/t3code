@@ -1,6 +1,6 @@
 import type { EnvironmentId, Mission } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
-import type { ReactElement } from "react";
+import { type ReactElement, useRef } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -49,7 +49,8 @@ export function useDraftProjectMachines(draftId: DraftId | null) {
 
 export interface DraftMissionChoice {
   readonly kind: "none" | "member" | "new" | "lead";
-  readonly word: ReactElement;
+  readonly inSentence: ReactElement;
+  readonly standalone: ReactElement;
 }
 
 export function useDraftMissionChoice(
@@ -63,6 +64,8 @@ export function useDraftMissionChoice(
     draftId === null ? undefined : state.drafts.get(draftId),
   );
   const preparingScratch = useScratchPending(draftId);
+  // A pick can move the trigger between the heading and the line under it, which remounts it.
+  const refocusTrigger = useRef(false);
   const threadId = useComposerDraftStore((store) =>
     draftId === null ? null : (store.getDraftSession(draftId)?.threadId ?? null),
   );
@@ -102,23 +105,34 @@ export function useDraftMissionChoice(
       : marked?.intent.kind === "lead"
         ? marked.intent.name
         : (items.find((item) => item.value === joining) ?? items[0]!).label;
+  const label =
+    marked?.intent.kind === "new"
+      ? gt("New mission")
+      : marked?.intent.kind === "lead"
+        ? gt("New lead for {mission}", { mission: marked.intent.name })
+        : gt("Mission: {mission}", { mission: shown });
   const fixed = kind === "new" || kind === "lead";
-  const trigger = (
-    <InlineButton
-      tone={kind === "none" ? "muted" : "picker"}
-      className={`min-w-0 max-w-full align-baseline ${fixed ? "pointer-events-none" : "pointer-events-auto"}`}
-      data-draft-mission-trigger=""
-      {...(kind === "none" ? {} : { "aria-label": gt("Mission: {mission}", { mission: shown }) })}
-      // Fixed, it stays focusable; the pointer passes through it to the tooltip's wrapper.
-      {...(fixed ? { "aria-disabled": true } : {})}
-    >
-      {kind === "none" ? <T>Add to a mission</T> : <DraftProjectName value={shown} singleLine />}
-    </InlineButton>
-  );
-  if (fixed) {
-    return {
-      kind,
-      word: (
+  const wordFor = (text: string) => {
+    const trigger = (
+      <InlineButton
+        ref={(node: HTMLButtonElement | null) => {
+          if (node === null || !refocusTrigger.current) return;
+          refocusTrigger.current = false;
+          node.focus();
+        }}
+        tone={kind === "none" ? "muted" : "picker"}
+        className={`min-w-0 max-w-full align-baseline ${fixed ? "pointer-events-none" : "pointer-events-auto"}`}
+        data-draft-mission-trigger=""
+        data-draft-word=""
+        {...(kind === "none" ? {} : { "aria-label": label })}
+        // Fixed, it stays focusable; the pointer passes through it to the tooltip's wrapper.
+        {...(fixed ? { "aria-disabled": true } : {})}
+      >
+        {kind === "none" ? <T>Add to a mission</T> : <DraftProjectName value={text} singleLine />}
+      </InlineButton>
+    );
+    if (fixed) {
+      return (
         <Tooltip>
           <TooltipTrigger render={<span className="pointer-events-auto inline-flex min-w-0" />}>
             {trigger}
@@ -130,18 +144,19 @@ export function useDraftMissionChoice(
             </T>
           </TooltipPopup>
         </Tooltip>
-      ),
-    };
-  }
-  return {
-    kind,
-    word: (
+      );
+    }
+    return (
       <Menu>
         <MenuTrigger render={trigger} disabled={preparingScratch} />
         <MenuPopup align="center" className="w-64">
           <MenuRadioGroup
             value={joining}
             onValueChange={(value) => {
+              refocusTrigger.current = true;
+              requestAnimationFrame(() => {
+                refocusTrigger.current = false;
+              });
               const thread = { environmentId, threadId };
               if (value === NEW_MISSION) {
                 return markMissionDraft(draftId, { intent: { kind: "new" }, thread });
@@ -178,6 +193,7 @@ export function useDraftMissionChoice(
           </MenuRadioGroup>
         </MenuPopup>
       </Menu>
-    ),
+    );
   };
+  return { kind, inSentence: wordFor(shown), standalone: wordFor(label) };
 }

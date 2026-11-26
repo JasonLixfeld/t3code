@@ -12,7 +12,7 @@ import { useDraftMissionChoice } from "./DraftMissionSelect";
 const LOCAL = EnvironmentId.make("local");
 
 function MissionWord(props: { draftId: DraftId; environmentId: EnvironmentId }) {
-  return useDraftMissionChoice(props.draftId, props.environmentId)?.word ?? null;
+  return useDraftMissionChoice(props.draftId, props.environmentId)?.standalone ?? null;
 }
 
 it("with the app's styles, a pointer over the fixed Mission choice shows why it is fixed", async () => {
@@ -27,7 +27,7 @@ it("with the app's styles, a pointer over the fixed Mission choice shows why it 
   });
   onTestFinished(() => clearMissionDraft(draftId));
   await using screen = await render(<MissionWord draftId={draftId} environmentId={LOCAL} />);
-  const trigger = screen.getByRole("button", { name: "Mission: a new mission" });
+  const trigger = screen.getByRole("button", { name: "New mission" });
   await expect.element(trigger).toBeVisible();
   // The disabled look lets the pointer through, so over the button it lands on the tooltip's
   // wrapper. Hovering the button itself is refused for that reason; a user's pointer is not.

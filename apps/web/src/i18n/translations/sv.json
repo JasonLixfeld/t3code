@@ -13131,5 +13131,30 @@
     "?"
   ],
   "30b3991c046d1ab2": "ett nytt uppdrag",
-  "16e888c38a7cda4e": "Lägg till i ett uppdrag"
+  "16e888c38a7cda4e": "Lägg till i ett uppdrag",
+  "cb010196f71a98c4": [
+    "Vad ska vi jobba med som ny ledande tråd för ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "?"
+  ],
+  "214eefadc3233ef8": [
+    "Vad ska vi bygga i ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", som ny ledande tråd för ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "?"
+  ],
+  "93fb497fbfe34f9e": "Ny ledande tråd för {mission}"
 }

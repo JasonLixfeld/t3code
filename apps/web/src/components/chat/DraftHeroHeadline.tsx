@@ -346,6 +346,7 @@ export function DraftHeroHeadline({
               render={<InlineButton tone="picker" />}
               aria-label={gt("Project: {project}", { project: projectValue })}
               data-draft-project-trigger=""
+              data-draft-word=""
               disabled={preparingScratch}
               className="pointer-events-auto min-w-0 max-w-full align-baseline"
             />
@@ -435,20 +436,27 @@ export function DraftHeroHeadline({
     );
   }
 
-  const missionWord = mission?.word;
-  const inMission = mission?.kind === "member" || mission?.kind === "lead";
-  const inNewMission = mission?.kind === "new";
+  const missionInHeading =
+    mission !== null && mission.kind !== "none" && (isScratchDraft || activeProjectTitle !== null);
+  const missionWord = mission?.inSentence;
+  const headingMission = missionInHeading ? mission.kind : "none";
+  const footerMission = mission !== null && !missionInHeading ? mission.standalone : null;
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
-      <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl [@media(max-height:28rem)]:text-base">
+    <div className="mx-auto flex w-full max-w-5xl flex-col items-center [@media(max-height:28rem)]:flex-row [@media(max-height:28rem)]:flex-wrap [@media(max-height:28rem)]:justify-center [@media(max-height:28rem)]:gap-x-3 [@media(max-height:28rem)]:[&_[data-draft-word]]:max-w-44 [@media(max-height:28rem)]:[&_[data-draft-word]]:text-sm">
+      {/* Short windows keep only the words, so the heading stays on one line above the composer. */}
+      <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl [@media(max-height:28rem)]:w-auto [@media(max-height:28rem)]:text-[length:0] [@media(max-height:28rem)]:[&_[data-draft-word]]:mx-1">
         {isScratchDraft ? (
-          inMission ? (
+          headingMission === "member" ? (
             <T>
               What should we work on in mission <Var>{missionWord}</Var>?
             </T>
-          ) : inNewMission ? (
+          ) : headingMission === "new" ? (
             <T>
               What should we work on in <Var>{missionWord}</Var>?
+            </T>
+          ) : headingMission === "lead" ? (
+            <T>
+              What should we work on as the new lead for <Var>{missionWord}</Var>?
             </T>
           ) : (
             <T>What should we work on?</T>
@@ -457,14 +465,19 @@ export function DraftHeroHeadline({
           <T>
             <Var>{projectSelector}</Var> to start
           </T>
-        ) : inMission ? (
+        ) : headingMission === "member" ? (
           <T>
             What should we build in <Var>{projectSelector}</Var>, in mission{" "}
             <Var>{missionWord}</Var>?
           </T>
-        ) : inNewMission ? (
+        ) : headingMission === "new" ? (
           <T>
             What should we build in <Var>{projectSelector}</Var>, in <Var>{missionWord}</Var>?
+          </T>
+        ) : headingMission === "lead" ? (
+          <T>
+            What should we build in <Var>{projectSelector}</Var>, as the new lead for{" "}
+            <Var>{missionWord}</Var>?
           </T>
         ) : (
           <T>
@@ -472,10 +485,12 @@ export function DraftHeroHeadline({
           </T>
         )}
       </h1>
-      <p className="mt-2 flex h-6 w-full items-center justify-center gap-3 text-sm">
-        {isScratchDraft ? projectSelector : null}
-        {mission?.kind === "none" ? mission.word : null}
-      </p>
+      {isScratchDraft || footerMission !== null ? (
+        <p className="mt-2 flex h-6 w-full items-center justify-center gap-3 text-sm [@media(max-height:28rem)]:mt-0 [@media(max-height:28rem)]:w-auto">
+          {isScratchDraft ? projectSelector : null}
+          {footerMission}
+        </p>
+      ) : null}
     </div>
   );
 }

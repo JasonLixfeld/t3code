@@ -13124,5 +13124,30 @@
     " bauen?"
   ],
   "30b3991c046d1ab2": "einer neuen Mission",
-  "16e888c38a7cda4e": "Zu einer Mission hinzufügen"
+  "16e888c38a7cda4e": "Zu einer Mission hinzufügen",
+  "cb010196f71a98c4": [
+    "Woran sollen wir als neue Leitung für ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " arbeiten?"
+  ],
+  "214eefadc3233ef8": [
+    "Was sollen wir in ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " bauen, als neue Leitung für ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "?"
+  ],
+  "93fb497fbfe34f9e": "Neue Leitung für {mission}"
 }
