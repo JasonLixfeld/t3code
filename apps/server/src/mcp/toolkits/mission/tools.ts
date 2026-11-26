@@ -1,8 +1,10 @@
 import {
   clampedPositiveInt,
   EnvironmentId,
-  MissionId,
-  MissionName,
+  ListedWorkspace,
+  MemberStatus,
+  MissionClaimResult,
+  MissionTagInput,
   NonNegativeInt,
   OrchestratorMcpFailure,
   ThreadId,
@@ -12,13 +14,8 @@ import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
-import { ListedWorkspace, MemberWorkspaces } from "../../../missions/MemberWorkspaces.ts";
-import { MissionClaimKind, MissionClaims } from "../../../missions/MissionClaims.ts";
-import {
-  MemberDetail,
-  MemberStatus,
-  WORKSPACES_PER_CALL,
-} from "../../../missions/missionStatus.ts";
+import { MemberWorkspaces } from "../../../missions/MemberWorkspaces.ts";
+import { MissionClaims } from "../../../missions/MissionClaims.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -29,34 +26,6 @@ const shownOnlyToLinks = (): boolean => {
     fiber && Context.getOrUndefined(fiber.context, McpInvocationContext.McpInvocationContext);
   return scope?.client?.linked === true;
 };
-
-const MissionTagInput = Schema.Struct({
-  kind: MissionClaimKind,
-  threadId: Schema.optional(ThreadId),
-  missionId: Schema.optional(MissionId),
-  name: Schema.optional(MissionName),
-  generation: Schema.optional(Schema.String),
-  intentId: Schema.optional(Schema.String),
-  members: Schema.optional(
-    Schema.Array(Schema.Struct({ threadId: ThreadId, generation: Schema.String })).check(
-      Schema.isMaxLength(WORKSPACES_PER_CALL),
-    ),
-  ),
-});
-
-export const MissionClaimResult = Schema.Struct({
-  claims: Schema.Array(
-    Schema.Struct({
-      threadId: ThreadId,
-      missionId: Schema.String,
-      name: Schema.String,
-      role: Schema.Literals(["lead", "member"]),
-      generation: Schema.String,
-      /** Absent from machines that predate it. */
-      detail: Schema.optional(MemberDetail),
-    }),
-  ),
-});
 
 /** Omit `environmentId` for a thread on this machine. */
 const MissionThreadRef = Schema.Struct({

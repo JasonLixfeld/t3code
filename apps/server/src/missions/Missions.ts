@@ -2,13 +2,16 @@ import {
   type EnvironmentId,
   isMissionTag,
   linkOriginIsFenced,
+  type MemberDetail,
   type Mission,
+  MissionClaimResult,
   MissionError,
   type MissionMember,
   type OrchestrationV2Command,
   OrchestrationV2DispatchCommandError,
   missionNameFromTitle,
   type MissionsSnapshot,
+  MISSION_WORKSPACES_PER_CALL,
   type ScopedThreadRef,
   threadHasMessages,
   type ThreadId,
@@ -32,7 +35,6 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { MissionClaimResult } from "../mcp/toolkits/mission/tools.ts";
 import { assertTargetWithinLimits } from "../mcp/threadAccess.ts";
 import type { DispatchModes } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -43,7 +45,6 @@ import * as Project from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { MissionClaims, type ThreadAccess } from "./MissionClaims.ts";
 import {
-  type MemberDetail,
   markOf,
   memberDetail,
   memberStatusOf,
@@ -51,7 +52,6 @@ import {
   missionStatusText,
   type RosterMember,
   FOLLOW_UPS_PER_SWEEP,
-  WORKSPACES_PER_CALL,
 } from "./missionStatus.ts";
 import { MemberWorkspaces } from "./MemberWorkspaces.ts";
 import { MissionTurnContexts } from "./MissionTurnContexts.ts";
@@ -817,7 +817,7 @@ const make = Effect.gen(function* () {
       (a, b) => (fetched.get(keyOf(a)) ?? 0) - (fetched.get(keyOf(b)) ?? 0),
     );
     for (let call = 0; call < FOLLOW_UPS_PER_SWEEP && left.length > 0; call += 1) {
-      const batch = left.slice(0, WORKSPACES_PER_CALL);
+      const batch = left.slice(0, MISSION_WORKSPACES_PER_CALL);
       const answered = yield* onMember(environmentId, { kind: "workspaces", members: batch }).pipe(
         // Peers without `workspaces` refuse this call. Keep the preceding list.
         Effect.catchTags({

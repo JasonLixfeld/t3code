@@ -17,7 +17,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 
 import { DispatchModeLimit } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
@@ -25,14 +24,6 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import { MemberWorkspaces } from "./MemberWorkspaces.ts";
 import * as MissionStore from "./MissionStore.ts";
 import type { MissionClaim, MissionRecord } from "./MissionStore.ts";
-
-export const MissionClaimKind = Schema.Literals([
-  "join",
-  "release",
-  "list",
-  "rename",
-  "workspaces",
-]);
 
 export const linkOwner = (sessionId: string) => `link:${sessionId}`;
 

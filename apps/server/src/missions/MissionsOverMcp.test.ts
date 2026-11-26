@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  MissionClaimResult,
   type MissionsSnapshot,
   type OrchestrationProjectShell,
   ProjectId,
@@ -25,7 +26,7 @@ import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as MissionHandlers from "../mcp/toolkits/mission/handlers.ts";
-import { MissionClaimResult, MissionToolkit } from "../mcp/toolkits/mission/tools.ts";
+import { MissionToolkit } from "../mcp/toolkits/mission/tools.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";

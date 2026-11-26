@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type MemberDetail,
   MessageId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
@@ -21,7 +22,6 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import { MissionStore, type MissionRecord, numberKey } from "./MissionStore.ts";
 import { Missions } from "./Missions.ts";
 import {
-  type MemberDetail,
   markOf,
   ATTENTION_LINES,
   missionUpdateText,

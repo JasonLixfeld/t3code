@@ -1,4 +1,7 @@
 import type {
+  ListedWorkspace,
+  MemberDetail,
+  MemberStatus,
   OrchestrationV2Run,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2ThreadShell,
@@ -8,37 +11,13 @@ import type {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 
 import { secretRequestAsPendingInput } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as Project from "../project/ProjectService.ts";
-import { ListedWorkspace, MemberWorkspaces } from "./MemberWorkspaces.ts";
+import { MemberWorkspaces } from "./MemberWorkspaces.ts";
 
-export const MemberStatus = Schema.Literals([
-  "awaiting-input",
-  "pending-approval",
-  "failed",
-  "working",
-  "idle",
-]);
-export type MemberStatus = typeof MemberStatus.Type;
 export type RosterStatus = MemberStatus | "offline";
-
-export const MemberDetail = Schema.Struct({
-  status: MemberStatus,
-  title: Schema.String,
-  project: Schema.String,
-  /** The latest run and its status. Absent from machines that predate it. */
-  run: Schema.optional(Schema.Struct({ id: Schema.String, status: Schema.String })),
-  /** The requests and input cards it waits on. Absent from machines that predate it. */
-  requests: Schema.optional(
-    Schema.Array(Schema.Struct({ id: Schema.String, kind: Schema.String })),
-  ),
-  /** Its checkouts, branches and pull requests, as data for the roster only. Absent from older machines. */
-  workspace: Schema.optional(ListedWorkspace),
-});
-export type MemberDetail = typeof MemberDetail.Type;
 
 export type MissionUpdateEvent =
   | "awaiting-input"
@@ -226,7 +205,6 @@ const PROMPT_CUT_NOTE = "\n\n[The mission prompt was cut here to fit 4,000 bytes
 const bytes = (text: string) => Buffer.byteLength(text, "utf8");
 
 export const LISTED_WORKSPACE_MAX_BYTES = 48_000;
-export const WORKSPACES_PER_CALL = 8;
 export const FOLLOW_UPS_PER_SWEEP = 2;
 
 export const withinWorkspaceRoom = <

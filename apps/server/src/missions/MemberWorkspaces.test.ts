@@ -21,6 +21,7 @@ import { normalizeThreadPullRequestKey } from "../sourceControl/threadPullReques
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as TaskFolderStore from "../workspace/TaskFolderStore.ts";
 import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
+import type { MemberRepository } from "@t3tools/contracts";
 import * as MemberWorkspaces from "./MemberWorkspaces.ts";
 
 const projectId = ProjectId.make("project:app");
@@ -193,8 +194,8 @@ const repository = (
   repositoryPath: string,
   branch: string | null,
   remote: string | null,
-  pullRequests: MemberWorkspaces.MemberRepository["pullRequests"] = [],
-): MemberWorkspaces.MemberRepository => ({
+  pullRequests: MemberRepository["pullRequests"] = [],
+): MemberRepository => ({
   name: repositoryPath.split("/").at(-1)!,
   path,
   repositoryPath,

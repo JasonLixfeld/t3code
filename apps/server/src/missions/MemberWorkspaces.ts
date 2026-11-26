@@ -1,9 +1,9 @@
-import {
-  type OrchestrationV2ThreadShell,
-  type ProjectId,
-  PullRequestState,
-  type RepositoryIdentity,
-  type ThreadId,
+import type {
+  MemberWorkspace,
+  OrchestrationV2ThreadShell,
+  ProjectId,
+  RepositoryIdentity,
+  ThreadId,
 } from "@t3tools/contracts";
 import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
 import { withoutRemoteUrlCredentials } from "@t3tools/shared/cloneUrl";
@@ -16,7 +16,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as Project from "../project/ProjectService.ts";
@@ -32,40 +31,6 @@ const WORKSPACE_CACHE_TTL = Duration.seconds(15);
 const PROJECT_SCAN_CACHE_TTL = Duration.seconds(30);
 const SHARED_CHECKOUT_BRANCH_CACHE_TTL = Duration.seconds(30);
 export const CACHE_ENTRIES_MAX = 512;
-
-const MemberPullRequest = Schema.Struct({
-  number: Schema.Number,
-  state: Schema.Union([PullRequestState, Schema.Literal("unknown")]),
-  url: Schema.String,
-});
-
-export const MemberRepository = Schema.Struct({
-  name: Schema.String,
-  path: Schema.String,
-  repositoryPath: Schema.String,
-  branch: Schema.NullOr(Schema.String),
-  branchSource: Schema.Literals(["live", "recorded"]),
-  remote: Schema.NullOr(Schema.String),
-  pullRequests: Schema.Array(MemberPullRequest),
-});
-export type MemberRepository = typeof MemberRepository.Type;
-
-export const MemberWorkspace = Schema.Struct({
-  kind: Schema.Literals(["project", "worktree", "task-folder"]),
-  repositories: Schema.Array(MemberRepository),
-  truncated: Schema.Boolean,
-  otherPullRequests: Schema.Array(
-    Schema.Struct({ ...MemberPullRequest.fields, repository: Schema.String }),
-  ),
-  stale: Schema.Boolean,
-});
-export type MemberWorkspace = typeof MemberWorkspace.Type;
-
-export const ListedWorkspace = Schema.Union([
-  MemberWorkspace,
-  Schema.Literals(["pending", "omitted", "tooLarge"]),
-]);
-export type ListedWorkspace = typeof ListedWorkspace.Type;
 
 type WorkspaceShell = Pick<
   OrchestrationV2ThreadShell,

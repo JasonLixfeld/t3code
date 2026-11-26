@@ -6,6 +6,9 @@ import {
   type AuthMcpClientAccess,
   CommandId,
   EnvironmentId,
+  type MemberDetail,
+  type MemberRepository,
+  type MemberWorkspace,
   type Mission,
   type OrchestrationV2ThreadShell,
   ProviderInstanceId,
@@ -62,19 +65,9 @@ import {
   type DispatchModes,
   exceededDispatchModeLimit,
 } from "../orchestration-v2/DispatchModeLimit.ts";
-import {
-  MEMBER_REPOSITORIES_MAX,
-  type MemberRepository,
-  type MemberWorkspace,
-  MemberWorkspaces,
-} from "./MemberWorkspaces.ts";
+import { MEMBER_REPOSITORIES_MAX, MemberWorkspaces } from "./MemberWorkspaces.ts";
 import * as MissionClaims from "./MissionClaims.ts";
-import {
-  type MemberDetail,
-  memberStatusOf,
-  missionPromptText,
-  withinWorkspaceRoom,
-} from "./missionStatus.ts";
+import { memberStatusOf, missionPromptText, withinWorkspaceRoom } from "./missionStatus.ts";
 import * as MissionTurnContexts from "./MissionTurnContexts.ts";
 import { releaseDeletedThreads } from "./MissionThreadDeletions.ts";
 import { afterAnswer, afterMiss, newTombstoneCheck } from "./tombstoneChecks.ts";

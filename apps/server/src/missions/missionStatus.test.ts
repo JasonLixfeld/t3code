@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, type MemberDetail, ThreadId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 
 import { MEMBER_REPOSITORIES_MAX } from "./MemberWorkspaces.ts";
@@ -8,7 +8,6 @@ import {
   MISSION_PROMPT_MAX_BYTES,
   MISSION_STATUS_MAX_BYTES,
   markOf,
-  type MemberDetail,
   memberStatusOf,
   missionPromptText,
   missionStatusText,

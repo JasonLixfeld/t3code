@@ -70,6 +70,7 @@ export * from "./scheduledTask.ts";
 export * from "./milestones.ts";
 export * from "./workflow.ts";
 export * from "./mission.ts";
+export * from "./missionPeer.ts";
 export * from "./worktreeMcp.ts";
 export * from "./resourceTelemetry.ts";
 export * from "./rpc.ts";
