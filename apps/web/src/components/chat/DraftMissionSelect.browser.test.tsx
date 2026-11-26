@@ -7,9 +7,13 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { clearMissionDraft, markMissionDraft } from "../sidebar/missionDraftStore";
-import { DraftMissionSelect } from "./DraftMissionSelect";
+import { useDraftMissionChoice } from "./DraftMissionSelect";
 
 const LOCAL = EnvironmentId.make("local");
+
+function MissionWord(props: { draftId: DraftId; environmentId: EnvironmentId }) {
+  return useDraftMissionChoice(props.draftId, props.environmentId)?.word ?? null;
+}
 
 it("with the app's styles, a pointer over the fixed Mission choice shows why it is fixed", async () => {
   const draftId = DraftId.make("fixed-mission-hover");
@@ -22,8 +26,8 @@ it("with the app's styles, a pointer over the fixed Mission choice shows why it 
     thread: { environmentId: LOCAL, threadId },
   });
   onTestFinished(() => clearMissionDraft(draftId));
-  await using screen = await render(<DraftMissionSelect draftId={draftId} environmentId={LOCAL} />);
-  const trigger = screen.getByRole("button", { name: "Mission: New mission" });
+  await using screen = await render(<MissionWord draftId={draftId} environmentId={LOCAL} />);
+  const trigger = screen.getByRole("button", { name: "Mission: a new mission" });
   await expect.element(trigger).toBeVisible();
   // The disabled look lets the pointer through, so over the button it lands on the tooltip's
   // wrapper. Hovering the button itself is refused for that reason; a user's pointer is not.

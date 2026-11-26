@@ -1,5 +1,6 @@
 import type { EnvironmentId, Mission } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
+import type { ReactElement } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -18,7 +19,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
-import { SelectButton } from "../ui/select";
+import { InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { DraftProjectName } from "./DraftProjectName";
 import { useScratchPending } from "./pendingScratchStore";
@@ -46,24 +47,31 @@ export function useDraftProjectMachines(draftId: DraftId | null) {
   return enabled ? (missionDraftMachines(marked.intent, hosts) ?? pinned) : pinned;
 }
 
+export interface DraftMissionChoice {
+  readonly kind: "none" | "member" | "new" | "lead";
+  readonly word: ReactElement;
+}
+
 /**
- * Which Mission on the draft's machine its thread joins once sent, or none, or a new one it leads.
- * A draft that starts or leads a Mission already belongs to one, so its choice is fixed.
+ * Which Mission on the draft's machine its thread joins once sent, or none, or a new one it leads,
+ * as a word for the draft's headline. A draft that starts or leads a Mission already belongs to
+ * one, so its word is fixed.
  */
-export function DraftMissionSelect(props: {
-  readonly draftId: DraftId;
-  readonly environmentId: EnvironmentId;
-}) {
+export function useDraftMissionChoice(
+  draftId: DraftId | null,
+  environmentId: EnvironmentId | null,
+): DraftMissionChoice | null {
   const gt = useGT();
-  const { draftId, environmentId } = props;
   const enabled = useClientSettings((settings) => settings.sidebarMissionsEnabled);
   const hosts = useMissionHosts();
-  const marked = useMissionDrafts((state) => state.drafts.get(draftId));
-  const preparingScratch = useScratchPending(draftId);
-  const threadId = useComposerDraftStore(
-    (store) => store.getDraftSession(draftId)?.threadId ?? null,
+  const marked = useMissionDrafts((state) =>
+    draftId === null ? undefined : state.drafts.get(draftId),
   );
-  if (!enabled || threadId === null) return null;
+  const preparingScratch = useScratchPending(draftId);
+  const threadId = useComposerDraftStore((store) =>
+    draftId === null ? null : (store.getDraftSession(draftId)?.threadId ?? null),
+  );
+  if (!enabled || draftId === null || environmentId === null || threadId === null) return null;
   const missionOn = (host: EnvironmentId) =>
     hosts.find((candidate) => candidate.environmentId === host)?.snapshot.missions ?? [];
   const keyOf = (host: EnvironmentId, missionId: string) => `${host}:${missionId}`;
@@ -92,88 +100,89 @@ export function DraftMissionSelect(props: {
         : { value: joining, label: mission.name, host, mission },
     );
   }
-  const fixed =
+  const kind = marked?.intent.kind ?? "none";
+  const shown =
     marked?.intent.kind === "new"
-      ? gt("New mission")
+      ? gt("a new mission")
       : marked?.intent.kind === "lead"
-        ? gt("New lead for {mission}", { mission: marked.intent.name })
-        : null;
-  const selected = items.find((item) => item.value === joining) ?? items[0]!;
-  const shown = fixed ?? selected.label;
+        ? marked.intent.name
+        : (items.find((item) => item.value === joining) ?? items[0]!).label;
+  const fixed = kind === "new" || kind === "lead";
   const trigger = (
-    <SelectButton
-      className="pointer-events-auto w-auto min-w-0 max-w-72"
-      aria-label={gt("Mission: {mission}", { mission: shown })}
+    <InlineButton
+      tone={kind === "none" ? "muted" : "picker"}
+      className={`min-w-0 max-w-full align-baseline ${fixed ? "pointer-events-none" : "pointer-events-auto"}`}
       data-draft-mission-trigger=""
-      // Fixed, it stays focusable; its disabled look passes the pointer to the tooltip's wrapper.
-      {...(fixed === null ? {} : { "aria-disabled": true, "data-disabled": "" })}
+      {...(kind === "none" ? {} : { "aria-label": gt("Mission: {mission}", { mission: shown }) })}
+      // Fixed, it stays focusable; the pointer passes through it to the tooltip's wrapper.
+      {...(fixed ? { "aria-disabled": true } : {})}
     >
-      <span className="flex min-w-0 items-center gap-1.5">
-        <span className="text-muted-foreground text-xs">
-          <T>Mission</T>
-        </span>
-        <DraftProjectName value={shown} singleLine />
-      </span>
-    </SelectButton>
+      {kind === "none" ? <T>Add to a mission</T> : <DraftProjectName value={shown} singleLine />}
+    </InlineButton>
   );
-  // A draft that leads its Mission has no other choice, so its trigger only says why.
-  if (fixed !== null) {
-    return (
-      <Tooltip>
-        <TooltipTrigger render={<span className="pointer-events-auto inline-flex min-w-0" />}>
-          {trigger}
-        </TooltipTrigger>
-        <TooltipPopup side="top">
-          <T>
-            This thread leads its mission, so it cannot join another. Send it as a plain thread to
-            undo this.
-          </T>
-        </TooltipPopup>
-      </Tooltip>
-    );
+  if (fixed) {
+    return {
+      kind,
+      word: (
+        <Tooltip>
+          <TooltipTrigger render={<span className="pointer-events-auto inline-flex min-w-0" />}>
+            {trigger}
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            <T>
+              This thread leads its mission, so it cannot join another. Send it as a plain thread to
+              undo this.
+            </T>
+          </TooltipPopup>
+        </Tooltip>
+      ),
+    };
   }
-  return (
-    <Menu>
-      <MenuTrigger render={trigger} disabled={preparingScratch} />
-      <MenuPopup align="center" className="w-64">
-        <MenuRadioGroup
-          value={joining}
-          onValueChange={(value) => {
-            const thread = { environmentId, threadId };
-            if (value === NEW_MISSION) {
-              return markMissionDraft(draftId, { intent: { kind: "new" }, thread });
-            }
-            const item = items.find((candidate) => candidate.value === value);
-            if (item?.mission === undefined || item.host === undefined) {
-              return clearMissionDraft(draftId);
-            }
-            markMissionDraft(draftId, {
-              intent: {
-                kind: "member",
-                host: item.host,
-                missionId: item.mission.missionId,
-                name: item.mission.name,
-              },
-              thread,
-            });
-          }}
-        >
-          {items.map((item) => (
-            <MenuRadioItem
-              key={item.value}
-              value={item.value}
-              disabled={item.value !== NO_MISSION && item.mission === undefined}
-              closeOnClick
-            >
-              <span className="min-w-0 truncate">{item.label}</span>
+  return {
+    kind,
+    word: (
+      <Menu>
+        <MenuTrigger render={trigger} disabled={preparingScratch} />
+        <MenuPopup align="center" className="w-64">
+          <MenuRadioGroup
+            value={joining}
+            onValueChange={(value) => {
+              const thread = { environmentId, threadId };
+              if (value === NEW_MISSION) {
+                return markMissionDraft(draftId, { intent: { kind: "new" }, thread });
+              }
+              const item = items.find((candidate) => candidate.value === value);
+              if (item?.mission === undefined || item.host === undefined) {
+                return clearMissionDraft(draftId);
+              }
+              markMissionDraft(draftId, {
+                intent: {
+                  kind: "member",
+                  host: item.host,
+                  missionId: item.mission.missionId,
+                  name: item.mission.name,
+                },
+                thread,
+              });
+            }}
+          >
+            {items.map((item) => (
+              <MenuRadioItem
+                key={item.value}
+                value={item.value}
+                disabled={item.value !== NO_MISSION && item.mission === undefined}
+                closeOnClick
+              >
+                <span className="min-w-0 truncate">{item.label}</span>
+              </MenuRadioItem>
+            ))}
+            <MenuSeparator />
+            <MenuRadioItem value={NEW_MISSION} closeOnClick>
+              <T>New mission (this thread leads)</T>
             </MenuRadioItem>
-          ))}
-          <MenuSeparator />
-          <MenuRadioItem value={NEW_MISSION} closeOnClick>
-            <T>New mission (this thread leads)</T>
-          </MenuRadioItem>
-        </MenuRadioGroup>
-      </MenuPopup>
-    </Menu>
-  );
+          </MenuRadioGroup>
+        </MenuPopup>
+      </Menu>
+    ),
+  };
 }

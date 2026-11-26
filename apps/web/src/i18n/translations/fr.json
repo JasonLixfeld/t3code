@@ -3611,7 +3611,6 @@
   "6df4c22a9ae17336": "Gérer l’utilisation",
   "0469747f4bb9caac": "{additions} ajouts, {deletions} suppressions",
   "a0e0e2640219f1b0": "Choisir un projet",
-  "5a405f15d9985bd6": "Que construit-on ?",
   "613f8257a433cec4": "Médias",
   "e3baa1d5c822a835": "Afficher la capture d’écran",
   "267cc83b60e5e771": "Afficher le JSON d’accessibilité",
@@ -13021,7 +13020,6 @@
   "03d266b5e18e221e": "Nouveau fil principal",
   "adc33705dea3b406": "Aucune",
   "1534e3e2d7fe1e6d": "Mission",
-  "f6b851950eb5f92e": "Mission",
   "41f48cbd3b002668": "L’envoi ajoute ce fil à « {mission} »",
   "8959a2d6d612223f": "Impossible d’ajouter ce fil à la mission",
   "22998b93dbed774f": "Non ajouté à la mission",
@@ -13033,7 +13031,6 @@
   "76a0f477c383d3a2": "A des fils",
   "37257c17dca73555": "Mission indisponible",
   "4b0d2cbf2e3df416": "Ce fil ne rejoindra aucune mission tant que vous n’en choisissez pas une.",
-  "93fb497fbfe34f9e": "Nouveau fil principal pour {mission}",
   "581f3f0dcdc38894": "Nouvelle mission (ce fil la dirige)",
   "7798814fecf728c1": "Ce fil dirige sa mission, il ne peut donc pas en rejoindre une autre. Envoyez-le comme fil normal pour annuler.",
   "7003a748a9d9671a": "L’envoi démarre une nouvelle mission dirigée par ce fil",
@@ -13060,5 +13057,72 @@
   "ce059975145aa8c1": "{status, select, inProgress {Ajout d’un fil à la mission} completed {Fil ajouté à la mission} failed {Échec de l’ajout d’un fil à la mission} declined {Ajout d’un fil à la mission refusé} stopped {Ajout d’un fil à la mission arrêté} other {Ajout d’un fil à la mission}}",
   "c5b456a231ea6b6d": "{status, select, inProgress {Un fil quitte la mission} completed {Un fil a quitté la mission} failed {Échec du départ d’un fil de la mission} declined {Départ d’un fil de la mission refusé} stopped {Départ d’un fil de la mission arrêté} other {Un fil quitte la mission}}",
   "7c80cb764b3df506": "{status, select, inProgress {Marquage de la mission d’un fil} completed {Mission d’un fil marquée} failed {Échec du marquage de la mission d’un fil} declined {Marquage de la mission d’un fil refusé} stopped {Marquage de la mission d’un fil arrêté} other {Marquage de la mission d’un fil}}",
-  "99f9a58a916a5c12": "Ce fil est passé à une autre mission."
+  "99f9a58a916a5c12": "Ce fil est passé à une autre mission.",
+  "2a6385e6e21dee74": [
+    "Sur quoi travaille-t-on dans la mission ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ?"
+  ],
+  "75d3ca92759d7b2e": [
+    "Sur quoi travaille-t-on dans ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ?"
+  ],
+  "b8e0e89c83a639fa": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " pour commencer"
+  ],
+  "67ecb04d9ec1a324": [
+    "Que devons-nous construire dans ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", dans la mission ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " ?"
+  ],
+  "588cd35eaad37a50": [
+    "Que devons-nous construire dans ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", dans ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " ?"
+  ],
+  "58a09ef6a22c1e6e": [
+    "Que devons-nous construire dans ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ?"
+  ],
+  "30b3991c046d1ab2": "une nouvelle mission",
+  "16e888c38a7cda4e": "Ajouter à une mission"
 }

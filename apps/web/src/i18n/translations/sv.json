@@ -3611,7 +3611,6 @@
   "6df4c22a9ae17336": "Hantera användning",
   "0469747f4bb9caac": "{additions} tillägg, {deletions} borttagningar",
   "a0e0e2640219f1b0": "Välj ett projekt",
-  "5a405f15d9985bd6": "Vad ska vi bygga?",
   "613f8257a433cec4": "Media",
   "e3baa1d5c822a835": "Visa skärmbild",
   "267cc83b60e5e771": "Visa tillgänglighets-JSON",
@@ -13028,7 +13027,6 @@
   "03d266b5e18e221e": "Ny ledande tråd",
   "adc33705dea3b406": "Inget",
   "1534e3e2d7fe1e6d": "Uppdrag",
-  "f6b851950eb5f92e": "Uppdrag",
   "41f48cbd3b002668": "När du skickar läggs den här tråden till i ”{mission}”",
   "8959a2d6d612223f": "Det gick inte att lägga till tråden i uppdraget",
   "22998b93dbed774f": "Inte tillagd i uppdraget",
@@ -13040,7 +13038,6 @@
   "76a0f477c383d3a2": "Har trådar",
   "37257c17dca73555": "Uppdraget är inte tillgängligt",
   "4b0d2cbf2e3df416": "Den här tråden går inte med i något uppdrag om du inte väljer ett.",
-  "93fb497fbfe34f9e": "Ny ledande tråd för {mission}",
   "581f3f0dcdc38894": "Nytt uppdrag (den här tråden leder)",
   "7798814fecf728c1": "Den här tråden leder sitt uppdrag och kan därför inte gå med i ett annat. Skicka den som vanlig tråd för att ångra.",
   "7003a748a9d9671a": "När du skickar startar ett nytt uppdrag som den här tråden leder",
@@ -13067,5 +13064,72 @@
   "ce059975145aa8c1": "{status, select, inProgress {Lägger till en tråd i uppdraget} completed {Lade till en tråd i uppdraget} failed {Kunde inte lägga till en tråd i uppdraget} declined {Avböjde att lägga till en tråd i uppdraget} stopped {Slutade lägga till en tråd i uppdraget} other {Lägger till en tråd i uppdraget}}",
   "c5b456a231ea6b6d": "{status, select, inProgress {Låter en tråd lämna uppdraget} completed {En tråd lämnade uppdraget} failed {Kunde inte låta en tråd lämna uppdraget} declined {Avböjde att låta en tråd lämna uppdraget} stopped {Slutade låta en tråd lämna uppdraget} other {Låter en tråd lämna uppdraget}}",
   "7c80cb764b3df506": "{status, select, inProgress {Markerar en tråds uppdrag} completed {Markerade en tråds uppdrag} failed {Kunde inte markera en tråds uppdrag} declined {Avböjde att markera en tråds uppdrag} stopped {Slutade markera en tråds uppdrag} other {Markerar en tråds uppdrag}}",
-  "99f9a58a916a5c12": "Den här tråden flyttade till ett annat uppdrag."
+  "99f9a58a916a5c12": "Den här tråden flyttade till ett annat uppdrag.",
+  "2a6385e6e21dee74": [
+    "Vad ska vi jobba med i uppdraget ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "?"
+  ],
+  "75d3ca92759d7b2e": [
+    "Vad ska vi jobba med i ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "?"
+  ],
+  "b8e0e89c83a639fa": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " för att starta"
+  ],
+  "67ecb04d9ec1a324": [
+    "Vad ska vi bygga i ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", i uppdraget ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "?"
+  ],
+  "588cd35eaad37a50": [
+    "Vad ska vi bygga i ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", i ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "?"
+  ],
+  "58a09ef6a22c1e6e": [
+    "Vad ska vi bygga i ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "?"
+  ],
+  "30b3991c046d1ab2": "ett nytt uppdrag",
+  "16e888c38a7cda4e": "Lägg till i ett uppdrag"
 }

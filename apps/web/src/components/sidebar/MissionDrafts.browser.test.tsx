@@ -10,7 +10,7 @@ import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useThreadShell } from "../../state/entities";
 import { makeThreadFixture } from "../../test-fixtures";
 import { toastManager } from "../ui/toast";
-import { DraftMissionSelect } from "../chat/DraftMissionSelect";
+import { useDraftMissionChoice } from "../chat/DraftMissionSelect";
 import { markMissionDraft, missionDraftOf, moveMissionDraft } from "./missionDraftStore";
 import { MissionDraftCoordinator, useMissionDraftBanner } from "./MissionDrafts";
 import { useMissionHosts } from "./MissionsSection";
@@ -32,6 +32,10 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: ((_command: never, label: string) => commandFor(label)) as never,
 }));
+
+function MissionWord(props: { readonly draftId: DraftId }) {
+  return useDraftMissionChoice(props.draftId, LOCAL)?.word ?? null;
+}
 
 function Banner(props: { readonly draftId: DraftId }) {
   const items = useMissionDraftBanner(props.draftId);
@@ -119,11 +123,8 @@ it("starts a mission led by a draft once sent, when its Mission choice picked a 
     .getState()
     .setProjectDraftThreadId(scopeProjectRef(LOCAL, ProjectId.make("project")), draftId);
   const threadId = useComposerDraftStore.getState().getDraftSession(draftId)!.threadId;
-  await using screen = await renderDraft(
-    draftId,
-    <DraftMissionSelect draftId={draftId} environmentId={LOCAL} />,
-  );
-  await userEvent.click(page.getByRole("button", { name: "Mission: None" }));
+  await using screen = await renderDraft(draftId, <MissionWord draftId={draftId} />);
+  await userEvent.click(page.getByRole("button", { name: "Add to a mission" }));
   await page.getByRole("menuitemradio", { name: "New mission (this thread leads)" }).click();
   await screen.stream("sent");
   await vi.waitFor(() =>

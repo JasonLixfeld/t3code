@@ -3611,7 +3611,6 @@
   "6df4c22a9ae17336": "Gestionar uso",
   "0469747f4bb9caac": "{additions} adiciones, {deletions} eliminaciones",
   "a0e0e2640219f1b0": "Elige un proyecto",
-  "5a405f15d9985bd6": "¿Qué construimos?",
   "613f8257a433cec4": "Multimedia",
   "e3baa1d5c822a835": "Mostrar captura de pantalla",
   "267cc83b60e5e771": "Mostrar JSON de accesibilidad",
@@ -13016,7 +13015,6 @@
   "03d266b5e18e221e": "Nuevo hilo principal",
   "adc33705dea3b406": "Ninguna",
   "1534e3e2d7fe1e6d": "Misión",
-  "f6b851950eb5f92e": "Misión",
   "41f48cbd3b002668": "Al enviar, este hilo se suma a «{mission}»",
   "8959a2d6d612223f": "No se pudo añadir este hilo a la misión",
   "22998b93dbed774f": "No se añadió a la misión",
@@ -13028,7 +13026,6 @@
   "76a0f477c383d3a2": "Tiene hilos",
   "37257c17dca73555": "Misión no disponible",
   "4b0d2cbf2e3df416": "Este hilo no se unirá a ninguna misión a menos que elijas una.",
-  "93fb497fbfe34f9e": "Nuevo hilo principal para {mission}",
   "581f3f0dcdc38894": "Nueva misión (este hilo la dirige)",
   "7798814fecf728c1": "Este hilo dirige su misión, así que no puede unirse a otra. Envíalo como hilo normal para deshacerlo.",
   "7003a748a9d9671a": "Al enviar, empieza una nueva misión dirigida por este hilo",
@@ -13055,5 +13052,72 @@
   "ce059975145aa8c1": "{status, select, inProgress {Añadiendo un hilo a la misión} completed {Se añadió un hilo a la misión} failed {No se pudo añadir un hilo a la misión} declined {Se rechazó añadir un hilo a la misión} stopped {Se dejó de añadir un hilo a la misión} other {Añadiendo un hilo a la misión}}",
   "c5b456a231ea6b6d": "{status, select, inProgress {Haciendo que un hilo salga de la misión} completed {Un hilo salió de la misión} failed {No se pudo hacer que un hilo saliera de la misión} declined {Se rechazó que un hilo saliera de la misión} stopped {Se dejó de hacer que un hilo saliera de la misión} other {Haciendo que un hilo salga de la misión}}",
   "7c80cb764b3df506": "{status, select, inProgress {Marcando la misión de un hilo} completed {Se marcó la misión de un hilo} failed {No se pudo marcar la misión de un hilo} declined {Se rechazó marcar la misión de un hilo} stopped {Se dejó de marcar la misión de un hilo} other {Marcando la misión de un hilo}}",
-  "99f9a58a916a5c12": "Este hilo pasó a otra misión."
+  "99f9a58a916a5c12": "Este hilo pasó a otra misión.",
+  "2a6385e6e21dee74": [
+    "¿En qué trabajamos en la misión ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "?"
+  ],
+  "75d3ca92759d7b2e": [
+    "¿En qué trabajamos en ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "?"
+  ],
+  "b8e0e89c83a639fa": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " para empezar"
+  ],
+  "67ecb04d9ec1a324": [
+    "¿Qué construimos en ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", en la misión ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "?"
+  ],
+  "588cd35eaad37a50": [
+    "¿Qué construimos en ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", en ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "?"
+  ],
+  "58a09ef6a22c1e6e": [
+    "¿Qué construimos en ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "?"
+  ],
+  "30b3991c046d1ab2": "una misión nueva",
+  "16e888c38a7cda4e": "Añadir a una misión"
 }

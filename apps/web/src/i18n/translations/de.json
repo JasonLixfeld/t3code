@@ -3612,7 +3612,6 @@
   "6df4c22a9ae17336": "Nutzung verwalten",
   "0469747f4bb9caac": "{additions} Hinzufügungen, {deletions} Löschungen",
   "a0e0e2640219f1b0": "Projekt wählen",
-  "5a405f15d9985bd6": "Was sollen wir bauen?",
   "613f8257a433cec4": "Medien",
   "e3baa1d5c822a835": "Screenshot anzeigen",
   "267cc83b60e5e771": "Barrierefreiheits-JSON anzeigen",
@@ -13021,7 +13020,6 @@
   "03d266b5e18e221e": "Neue Leitung",
   "adc33705dea3b406": "Keine",
   "1534e3e2d7fe1e6d": "Mission",
-  "f6b851950eb5f92e": "Mission",
   "41f48cbd3b002668": "Beim Senden kommt dieser Thread zu „{mission}“",
   "8959a2d6d612223f": "Dieser Thread konnte der Mission nicht hinzugefügt werden",
   "22998b93dbed774f": "Nicht zur Mission hinzugefügt",
@@ -13033,7 +13031,6 @@
   "76a0f477c383d3a2": "Hat Threads",
   "37257c17dca73555": "Mission nicht verfügbar",
   "4b0d2cbf2e3df416": "Dieser Thread tritt keiner Mission bei, solange du keine auswählst.",
-  "93fb497fbfe34f9e": "Neue Leitung für {mission}",
   "581f3f0dcdc38894": "Neue Mission (dieser Thread leitet)",
   "7798814fecf728c1": "Dieser Thread leitet seine Mission und kann daher keiner anderen beitreten. Sende ihn als normalen Thread, um das rückgängig zu machen.",
   "7003a748a9d9671a": "Beim Senden startet eine neue Mission, die dieser Thread leitet",
@@ -13060,5 +13057,72 @@
   "ce059975145aa8c1": "{status, select, inProgress {Thread wird zur Mission hinzugefügt} completed {Thread zur Mission hinzugefügt} failed {Thread konnte nicht zur Mission hinzugefügt werden} declined {Hinzufügen des Threads zur Mission abgelehnt} stopped {Hinzufügen des Threads zur Mission gestoppt} other {Thread wird zur Mission hinzugefügt}}",
   "c5b456a231ea6b6d": "{status, select, inProgress {Thread verlässt die Mission} completed {Thread hat die Mission verlassen} failed {Thread konnte die Mission nicht verlassen} declined {Verlassen der Mission abgelehnt} stopped {Verlassen der Mission gestoppt} other {Thread verlässt die Mission}}",
   "7c80cb764b3df506": "{status, select, inProgress {Mission eines Threads wird markiert} completed {Mission eines Threads markiert} failed {Mission eines Threads konnte nicht markiert werden} declined {Markieren der Mission eines Threads abgelehnt} stopped {Markieren der Mission eines Threads gestoppt} other {Mission eines Threads wird markiert}}",
-  "99f9a58a916a5c12": "Dieser Thread ist in eine andere Mission gewechselt."
+  "99f9a58a916a5c12": "Dieser Thread ist in eine andere Mission gewechselt.",
+  "2a6385e6e21dee74": [
+    "Woran sollen wir in der Mission ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " arbeiten?"
+  ],
+  "75d3ca92759d7b2e": [
+    "Woran sollen wir in ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " arbeiten?"
+  ],
+  "b8e0e89c83a639fa": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " zum Starten"
+  ],
+  "67ecb04d9ec1a324": [
+    "Was sollen wir in ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " bauen, in der Mission ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "?"
+  ],
+  "588cd35eaad37a50": [
+    "Was sollen wir in ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " bauen, in ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "?"
+  ],
+  "58a09ef6a22c1e6e": [
+    "Was sollen wir in ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " bauen?"
+  ],
+  "30b3991c046d1ab2": "einer neuen Mission",
+  "16e888c38a7cda4e": "Zu einer Mission hinzufügen"
 }

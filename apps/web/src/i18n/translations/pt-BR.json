@@ -3611,7 +3611,6 @@
   "6df4c22a9ae17336": "Gerenciar uso",
   "0469747f4bb9caac": "{additions} adições, {deletions} remoções",
   "a0e0e2640219f1b0": "Escolha um projeto",
-  "5a405f15d9985bd6": "O que vamos construir?",
   "613f8257a433cec4": "Mídia",
   "e3baa1d5c822a835": "Mostrar captura de tela",
   "267cc83b60e5e771": "Mostrar JSON de acessibilidade",
@@ -13021,7 +13020,6 @@
   "03d266b5e18e221e": "Nova thread principal",
   "adc33705dea3b406": "Nenhuma",
   "1534e3e2d7fe1e6d": "Missão",
-  "f6b851950eb5f92e": "Missão",
   "41f48cbd3b002668": "Ao enviar, esta thread entra em “{mission}”",
   "8959a2d6d612223f": "Não foi possível adicionar esta thread à missão",
   "22998b93dbed774f": "Não adicionada à missão",
@@ -13033,7 +13031,6 @@
   "76a0f477c383d3a2": "Tem threads",
   "37257c17dca73555": "Missão indisponível",
   "4b0d2cbf2e3df416": "Esta thread não vai entrar em nenhuma missão a menos que você escolha uma.",
-  "93fb497fbfe34f9e": "Nova thread principal para {mission}",
   "581f3f0dcdc38894": "Nova missão (esta thread lidera)",
   "7798814fecf728c1": "Esta thread lidera a própria missão, então não pode entrar em outra. Envie como thread comum para desfazer.",
   "7003a748a9d9671a": "Ao enviar, começa uma nova missão liderada por esta thread",
@@ -13060,5 +13057,72 @@
   "ce059975145aa8c1": "{status, select, inProgress {Adicionando uma thread à missão} completed {Adicionou uma thread à missão} failed {Falha ao adicionar uma thread à missão} declined {Recusou adicionar uma thread à missão} stopped {Parou de adicionar uma thread à missão} other {Adicionando uma thread à missão}}",
   "c5b456a231ea6b6d": "{status, select, inProgress {Fazendo uma thread sair da missão} completed {Uma thread saiu da missão} failed {Falha ao fazer uma thread sair da missão} declined {Recusou fazer uma thread sair da missão} stopped {Parou de fazer uma thread sair da missão} other {Fazendo uma thread sair da missão}}",
   "7c80cb764b3df506": "{status, select, inProgress {Marcando a missão de uma thread} completed {Marcou a missão de uma thread} failed {Falha ao marcar a missão de uma thread} declined {Recusou marcar a missão de uma thread} stopped {Parou de marcar a missão de uma thread} other {Marcando a missão de uma thread}}",
-  "99f9a58a916a5c12": "Esta thread passou para outra missão."
+  "99f9a58a916a5c12": "Esta thread passou para outra missão.",
+  "2a6385e6e21dee74": [
+    "No que vamos trabalhar na missão ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "?"
+  ],
+  "75d3ca92759d7b2e": [
+    "No que vamos trabalhar em ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "?"
+  ],
+  "b8e0e89c83a639fa": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " para começar"
+  ],
+  "67ecb04d9ec1a324": [
+    "O que vamos construir em ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", na missão ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "?"
+  ],
+  "588cd35eaad37a50": [
+    "O que vamos construir em ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", em ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "?"
+  ],
+  "58a09ef6a22c1e6e": [
+    "O que vamos construir em ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "?"
+  ],
+  "30b3991c046d1ab2": "uma nova missão",
+  "16e888c38a7cda4e": "Adicionar a uma missão"
 }

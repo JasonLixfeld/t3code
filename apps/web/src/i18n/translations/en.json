@@ -3611,7 +3611,6 @@
   "6df4c22a9ae17336": "Manage usage",
   "0469747f4bb9caac": "{additions} additions, {deletions} deletions",
   "a0e0e2640219f1b0": "Choose a project",
-  "5a405f15d9985bd6": "What should we build?",
   "613f8257a433cec4": "Media",
   "e3baa1d5c822a835": "Show screenshot",
   "267cc83b60e5e771": "Show accessibility JSON",
@@ -13030,7 +13029,6 @@
   "03d266b5e18e221e": "New lead",
   "adc33705dea3b406": "None",
   "1534e3e2d7fe1e6d": "Mission",
-  "f6b851950eb5f92e": "Mission",
   "41f48cbd3b002668": "Sending adds this thread to \"{mission}\"",
   "8959a2d6d612223f": "Could not add this thread to the mission",
   "22998b93dbed774f": "Not added to the mission",
@@ -13042,7 +13040,6 @@
   "76a0f477c383d3a2": "Has threads",
   "37257c17dca73555": "Unavailable mission",
   "4b0d2cbf2e3df416": "This thread will not join a mission unless you pick one.",
-  "93fb497fbfe34f9e": "New lead for {mission}",
   "581f3f0dcdc38894": "New mission (this thread leads)",
   "7798814fecf728c1": "This thread leads its mission, so it cannot join another. Send it as a plain thread to undo this.",
   "7003a748a9d9671a": "Sending starts a new mission led by this thread",
@@ -13069,5 +13066,73 @@
   "ce059975145aa8c1": "{status, select, inProgress {Adding a thread to the mission} completed {Added a thread to the mission} failed {Failed to add a thread to the mission} declined {Declined to add a thread to the mission} stopped {Stopped adding a thread to the mission} other {Adding a thread to the mission}}",
   "c5b456a231ea6b6d": "{status, select, inProgress {Making a thread leave the mission} completed {Made a thread leave the mission} failed {Failed to make a thread leave the mission} declined {Declined to make a thread leave the mission} stopped {Stopped making a thread leave the mission} other {Making a thread leave the mission}}",
   "7c80cb764b3df506": "{status, select, inProgress {Marking a thread's mission} completed {Marked a thread's mission} failed {Failed to mark a thread's mission} declined {Declined to mark a thread's mission} stopped {Stopped marking a thread's mission} other {Marking a thread's mission}}",
-  "99f9a58a916a5c12": "This thread moved to another mission."
+  "99f9a58a916a5c12": "This thread moved to another mission.",
+  "2a6385e6e21dee74": [
+    "What should we work on in mission ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "?"
+  ],
+  "75d3ca92759d7b2e": [
+    "What should we work on in ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "?"
+  ],
+  "b8e0e89c83a639fa": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " to start"
+  ],
+  "67ecb04d9ec1a324": [
+    "What should we build in ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", in mission",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "?"
+  ],
+  "588cd35eaad37a50": [
+    "What should we build in ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", in ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "?"
+  ],
+  "58a09ef6a22c1e6e": [
+    "What should we build in ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "?"
+  ],
+  "30b3991c046d1ab2": "a new mission",
+  "16e888c38a7cda4e": "Add to a mission"
 }

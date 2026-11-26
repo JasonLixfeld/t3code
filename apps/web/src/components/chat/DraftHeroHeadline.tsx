@@ -8,7 +8,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { T, useGT } from "gt-react";
+import { T, useGT, Var } from "gt-react";
 import { FolderPlusIcon, MessageSquareDashedIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { use, useEffect, useRef, useState } from "react";
@@ -49,10 +49,10 @@ import {
   useComboboxFilter,
 } from "../ui/combobox";
 import { Tooltip, TooltipPopup, TooltipScrollDismissArea, TooltipTrigger } from "../ui/tooltip";
-import { SelectButton } from "../ui/select";
+import { InlineButton } from "../ui/button";
 import { DraftProjectName } from "./DraftProjectName";
 import { TriageDraftHero } from "./TriageDraftHero";
-import { DraftMissionSelect, useDraftProjectMachines } from "./DraftMissionSelect";
+import { useDraftMissionChoice, useDraftProjectMachines } from "./DraftMissionSelect";
 import { missionDraftOf, moveMissionDraft } from "../sidebar/missionDraftStore";
 import { missionScratchHome } from "../sidebar/missions.logic";
 import { Spinner } from "../ui/spinner";
@@ -109,6 +109,7 @@ export function DraftHeroHeadline({
   const { canPinProjectGroup, toggleProjectGroupPin } = useProjectPin();
   // A Mission draft offers only the projects on machines where its Mission can take it.
   const missionMachines = useDraftProjectMachines(draftId);
+  const mission = useDraftMissionChoice(draftId, activeProjectRef?.environmentId ?? null);
 
   const environmentLabelById = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
@@ -342,27 +343,16 @@ export function DraftHeroHeadline({
         <TooltipTrigger
           render={
             <ComboboxTrigger
-              render={<SelectButton className="w-auto min-w-0 max-w-72" />}
+              render={<InlineButton tone="picker" />}
               aria-label={gt("Project: {project}", { project: projectValue })}
               data-draft-project-trigger=""
               disabled={preparingScratch}
-              className="pointer-events-auto"
+              className="pointer-events-auto min-w-0 max-w-full align-baseline"
             />
           }
         >
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="text-muted-foreground text-xs">
-              <T>Project</T>
-            </span>
-            {preparingScratch ? (
-              <Spinner size="md" tone="muted" />
-            ) : isScratchDraft ? (
-              <MessageSquareDashedIcon className="size-4" />
-            ) : activeProjectGroup ? (
-              <ProjectFavicon project={activeProjectGroup} className="size-4" />
-            ) : null}
-            <DraftProjectName value={projectValue} singleLine />
-          </span>
+          {preparingScratch ? <Spinner size="md" tone="muted" /> : null}
+          <DraftProjectName value={projectValue} singleLine />
         </TooltipTrigger>
         {activeProjectTitle && !isScratchDraft ? (
           <TooltipPopup side="top">{activeProjectTitle}</TooltipPopup>
@@ -445,17 +435,47 @@ export function DraftHeroHeadline({
     );
   }
 
+  const missionWord = mission?.word;
+  const inMission = mission?.kind === "member" || mission?.kind === "lead";
+  const inNewMission = mission?.kind === "new";
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
-      <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl [@media(max-height:28rem)]:sr-only">
-        {gt("What should we build?")}
+      <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl [@media(max-height:28rem)]:text-base">
+        {isScratchDraft ? (
+          inMission ? (
+            <T>
+              What should we work on in mission <Var>{missionWord}</Var>?
+            </T>
+          ) : inNewMission ? (
+            <T>
+              What should we work on in <Var>{missionWord}</Var>?
+            </T>
+          ) : (
+            <T>What should we work on?</T>
+          )
+        ) : activeProjectTitle === null ? (
+          <T>
+            <Var>{projectSelector}</Var> to start
+          </T>
+        ) : inMission ? (
+          <T>
+            What should we build in <Var>{projectSelector}</Var>, in mission{" "}
+            <Var>{missionWord}</Var>?
+          </T>
+        ) : inNewMission ? (
+          <T>
+            What should we build in <Var>{projectSelector}</Var>, in <Var>{missionWord}</Var>?
+          </T>
+        ) : (
+          <T>
+            What should we build in <Var>{projectSelector}</Var>?
+          </T>
+        )}
       </h1>
-      <div className="mt-4 flex w-full flex-wrap items-center justify-center gap-2">
-        {projectSelector}
-        {draftId && activeProjectRef ? (
-          <DraftMissionSelect draftId={draftId} environmentId={activeProjectRef.environmentId} />
-        ) : null}
-      </div>
+      <p className="mt-2 flex h-6 w-full items-center justify-center gap-3 text-sm">
+        {isScratchDraft ? projectSelector : null}
+        {mission?.kind === "none" ? mission.word : null}
+      </p>
     </div>
   );
 }

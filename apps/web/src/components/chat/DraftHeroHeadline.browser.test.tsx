@@ -115,7 +115,7 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   trackRpcRequestSent: () => {},
 }));
 
-const missionTrigger = () => page.getByRole("button", { name: /^Mission: / });
+const missionTrigger = () => page.getByRole("button", { name: /^(Mission: .*|Add to a mission)$/ });
 
 it("the new-thread project picker follows the manual sidebar project order", async () => {
   using _environment = installFakeEnvironment([], {
@@ -361,9 +361,11 @@ it("a new thread's Mission choice marks its draft to join that mission, or none"
     router: false,
   });
   const trigger = missionTrigger();
-  await expect.element(page.getByRole("button", { name: "Mission: None" })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Add to a mission" })).toBeVisible();
   await expect.element(page.getByRole("combobox", { name: "Project: render" })).toBeVisible();
-  await expect.element(trigger).toMatchTextContent(/None$/);
+  await expect
+    .element(page.getByRole("heading", { level: 1 }))
+    .toHaveTextContent("What should we build in render?");
   await userEvent.click(trigger);
   await page.getByRole("menuitemradio", { name: "Ship v2" }).click();
   expect(missionDraftOf(draftId)).toMatchObject({
@@ -371,6 +373,9 @@ it("a new thread's Mission choice marks its draft to join that mission, or none"
     thread: { environmentId: ENVIRONMENT_ID, threadId },
   });
   await expect.element(trigger).toMatchTextContent(/Ship v2$/);
+  await expect
+    .element(page.getByRole("heading", { level: 1 }))
+    .toHaveTextContent("What should we build in render, in mission Ship v2?");
   await userEvent.click(trigger);
   await page.getByRole("menuitemradio", { name: "None" }).click();
   expect(missionDraftOf(draftId)).toBeUndefined();
@@ -382,7 +387,10 @@ it("a new thread's Mission choice marks its draft to join that mission, or none"
     intent: { kind: "new" },
     thread: { environmentId: ENVIRONMENT_ID, threadId },
   });
-  await expect.element(trigger).toMatchTextContent(/New mission$/);
+  await expect.element(trigger).toMatchTextContent(/a new mission$/);
+  await expect
+    .element(page.getByRole("heading", { level: 1 }))
+    .toHaveTextContent("What should we build in render, in a new mission?");
   await expect.element(trigger).toHaveAttribute("aria-disabled", "true");
   await expect
     .element(page.getByText("Sending starts a new mission led by this thread"))
@@ -594,15 +602,10 @@ it.each([
   [
     "starts a new mission",
     { kind: "new" },
-    "New mission",
+    "a new mission",
     "Sending starts a new mission led by this thread",
   ],
-  [
-    "leads a mission",
-    leadIntent,
-    "New lead for Old work",
-    'Sending makes this thread the lead of "Old work"',
-  ],
+  ["leads a mission", leadIntent, "Old work", 'Sending makes this thread the lead of "Old work"'],
 ] as const)(
   "a draft that %s shows its mission fixed, and says why",
   async (_, intent, shown, notice) => {
@@ -686,7 +689,7 @@ it("a fixed Mission choice takes keyboard focus and says why, without opening a 
   await using _app = await openDraft("draft-fixed-keyboard", { kind: "new" });
   document.querySelector<HTMLElement>("[data-draft-project-trigger]")!.focus();
   await userEvent.tab();
-  const trigger = page.getByRole("button", { name: "Mission: New mission" });
+  const trigger = page.getByRole("button", { name: "Mission: a new mission" });
   await expect.element(trigger).toHaveFocus();
   await expect.element(trigger).toHaveAttribute("aria-disabled", "true");
   await expect
