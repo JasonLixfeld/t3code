@@ -43,8 +43,8 @@ describe("createMissionEdgeScroll", () => {
     runFrame(5);
     expect(list.scrollTop).toBe(10);
     scroll.hold(list, 90, onScroll);
-    runFrame(10);
-    expect(list.scrollTop).toBe(15);
+    runFrame(25);
+    expect(list.scrollTop).toBe(30);
     expect(onScroll).toHaveBeenCalledTimes(2);
   });
 
