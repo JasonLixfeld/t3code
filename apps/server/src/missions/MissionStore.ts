@@ -375,6 +375,7 @@ export class MissionStore extends Context.Service<
       readonly missionId: string;
       readonly lead: ThreadId;
       readonly machines: ReadonlyArray<EnvironmentId>;
+      readonly owner: string;
       readonly checkedLocalMembers: ReadonlyArray<ThreadId>;
     }) => Effect.Effect<void, MissionError>;
     readonly join: (
@@ -585,6 +586,7 @@ const make = Effect.gen(function* () {
     readonly missionId: string;
     readonly lead: ThreadId;
     readonly machines: ReadonlyArray<EnvironmentId>;
+    readonly owner: string;
     readonly checkedLocalMembers: ReadonlyArray<ThreadId>;
   }) {
     const asked = DateTime.toEpochMillis(yield* DateTime.now);
@@ -611,7 +613,7 @@ const make = Effect.gen(function* () {
         `;
         const members = yield* sql<ClaimRow>`
           SELECT thread_id, mission_id, mission_name, role, owner, generation, intent_id FROM claims
-          WHERE mission_id = ${input.missionId} AND role = 'member'
+          WHERE mission_id = ${input.missionId} AND role = 'member' AND owner = ${input.owner}
         `;
         const settled = new Set<string>(input.checkedLocalMembers);
         if (held !== undefined || members.some((member) => !settled.has(member.thread_id))) {

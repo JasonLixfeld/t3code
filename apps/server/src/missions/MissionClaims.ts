@@ -13,6 +13,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
@@ -87,11 +88,14 @@ export class MissionClaims extends Context.Service<
         readonly previous: ThreadId;
       },
     ) => Effect.Effect<MissionRecord, MissionError>;
-    readonly deleteMission: (input: {
-      readonly missionId: string;
-      readonly lead: ThreadId;
-      readonly machines: ReadonlyArray<EnvironmentId>;
-    }) => Effect.Effect<void, MissionError>;
+    readonly deleteMission: (
+      owner: string,
+      input: {
+        readonly missionId: string;
+        readonly lead: ThreadId;
+        readonly machines: ReadonlyArray<EnvironmentId>;
+      },
+    ) => Effect.Effect<void, MissionError>;
     readonly join: <E = never>(
       owner: string,
       input: JoinInput,
@@ -127,7 +131,7 @@ export class MissionClaims extends Context.Service<
 
 const fail = (message: string) => Effect.fail(new MissionError({ message }));
 
-const END_ATTEMPTS = 8;
+export const END_WAIT = Duration.seconds(10);
 const END_BUSY = "Its threads stayed busy, so this mission was not ended. Try again.";
 
 const withEachLock = <A, E, R>(
@@ -271,13 +275,16 @@ const make = Effect.gen(function* () {
     return yield* locks.withLock(first!, locks.withLock(second!, swap));
   });
 
-  const deleteMission = Effect.fn("MissionClaims.deleteMission")(function* (input: {
-    readonly missionId: string;
-    readonly lead: ThreadId;
-    readonly machines: ReadonlyArray<EnvironmentId>;
-  }) {
-    const membersNow = Effect.map(store.allClaims, (all) =>
-      all.flatMap((claim) =>
+  const deleteMission = Effect.fn("MissionClaims.deleteMission")(function* (
+    owner: string,
+    input: {
+      readonly missionId: string;
+      readonly lead: ThreadId;
+      readonly machines: ReadonlyArray<EnvironmentId>;
+    },
+  ) {
+    const membersNow = Effect.map(store.claimsOf(owner), (held) =>
+      held.flatMap((claim) =>
         claim.missionId === input.missionId && claim.role === "member" ? [claim.threadId] : [],
       ),
     );
@@ -286,7 +293,10 @@ const make = Effect.gen(function* () {
       locks,
       claimed,
       Effect.gen(function* () {
-        const members = (yield* membersNow).filter((threadId) => claimed.includes(threadId));
+        const members = (yield* membersNow).filter(
+          (threadId) => threadId !== input.lead && claimed.includes(threadId),
+        );
+        const threadKeys = [input.lead, ...members];
         const recheckAndReleaseSettledMembers = Effect.gen(function* () {
           for (const threadId of members) {
             const shell = yield* readThread(threadId);
@@ -294,21 +304,27 @@ const make = Effect.gen(function* () {
               return yield* fail(MissionStore.MISSION_NOT_ENDED);
             }
           }
-          yield* store.deleteMission({ ...input, checkedLocalMembers: members });
+          yield* store.deleteMission({ ...input, owner, checkedLocalMembers: members });
         });
-        let ended = false;
-        for (let attempt = 0; attempt < END_ATTEMPTS && !ended; attempt++) {
+        const deadline = (yield* Clock.currentTimeMillis) + Duration.toMillis(END_WAIT);
+        const untilDeadline = Effect.flatMap(Clock.currentTimeMillis, (now) =>
+          Effect.sleep(Duration.millis(Math.max(0, deadline - now))),
+        );
+        for (;;) {
           const tried = yield* withAllLocksIfAvailable(
             threadCommands,
-            [input.lead, ...members],
+            threadKeys,
             recheckAndReleaseSettledMembers,
           );
-          if (tried.held) ended = true;
-          else yield* threadCommands.withLock(tried.busy, Effect.void);
+          if (tried.held) break;
+          const freed = yield* Effect.raceFirst(
+            threadCommands.withLock(tried.busy, Effect.succeed(true)),
+            Effect.as(untilDeadline, false),
+          );
+          if (!freed) return yield* fail(END_BUSY);
         }
-        if (!ended) return yield* fail(END_BUSY);
         for (const threadId of members) yield* workspaces.forget(threadId);
-        for (const threadId of [input.lead, ...members]) yield* syncTags(threadId);
+        for (const threadId of threadKeys) yield* syncTags(threadId);
       }),
     );
   });

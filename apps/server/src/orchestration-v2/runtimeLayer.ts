@@ -337,7 +337,10 @@ const layerWorkflowsProvided = WorkflowRuntime.layer.pipe(
 );
 const layerMissionsProvided = Layer.mergeAll(
   Missions.layer,
-  MissionThreadDeletions.layer.pipe(Layer.provide(layerOrchestratorProvided)),
+  MissionThreadDeletions.layer.pipe(
+    Layer.provide(Missions.layer),
+    Layer.provide(layerOrchestratorProvided),
+  ),
   MissionWakes.layer.pipe(Layer.provide(Missions.layer), Layer.provide(layerOrchestratorProvided)),
 ).pipe(
   Layer.provide(MissionTurnContexts.layer),
