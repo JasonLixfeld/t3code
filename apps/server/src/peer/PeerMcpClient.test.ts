@@ -48,7 +48,6 @@ const toolkit = Toolkit.make(
   }),
 );
 
-/** The client of a linked peer at a remote address, answered by `http`. */
 const clientThrough = Effect.fn(function* (http: HttpClient.HttpClient) {
   const box = descriptorOf("environment-box", "Box");
   const context = yield* Layer.build(
@@ -90,7 +89,6 @@ const probeCall = {
   success: Result,
 } as const;
 
-/** One `probe` call to a linked peer at a remote address, answered by `http`. */
 const probeThrough = (http: HttpClient.HttpClient) =>
   Effect.map(clientThrough(http), (client) => client.call(probeCall));
 
@@ -273,7 +271,6 @@ it.effect("tells a peer that refused apart from one that no longer accepts the l
         environmentId: box.environmentId,
         tool: "refuse",
       });
-      // Whatever its code, the tool's own refusal is an answer.
       expect(refused).toMatchObject({ _tag: "Failure", failure: { code: busy.code } });
 
       const revoked = HttpClient.make((request) =>
@@ -293,7 +290,6 @@ it.effect(
       Effect.gen(function* () {
         const handlers = McpToolAccess.toLayer(toolkit, {
           probe: McpToolAccess.reads(() => Effect.succeed({ modes: "" })),
-          // As a mission store failure there reaches the MCP server: a defect, not a refusal.
           hold: McpToolAccess.reads(() => Effect.die(new Error("database is locked"))),
           refuse: McpToolAccess.reads(() => Effect.fail(refusal)),
         });

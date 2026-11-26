@@ -24,21 +24,14 @@ const threadId = ThreadId.make("thread:member");
 interface Machine {
   readonly tags: Array<string>;
   failTags: boolean;
-  /** Tag writes this refuses, while it says so. */
   refuses: (tag: string) => boolean;
-  /** Runs at each read of the thread, before it is read. */
   onRead: Effect.Effect<void>;
-  /** Reads of the thread fail while it says so. */
   readFails: boolean;
-  /** Every tag write that landed, to wait on. */
   readonly written: Queue.Queue<string>;
-  /** The orchestrator's lock on each thread, which a mode change there takes. */
   readonly threadCommands: ThreadCommandExecutor.ThreadCommandExecutor["Service"];
-  /** What happened to the thread, in order. */
   readonly events: Array<string>;
 }
 
-/** One machine's claims over one thread, whose tags `failTags` can stop being written. */
 const onMachine = <A, E>(
   use: (claims: MissionClaims.MissionClaims["Service"], machine: Machine) => Effect.Effect<A, E>,
 ) =>
@@ -116,7 +109,6 @@ const onMachine = <A, E>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 const join = (missionId: string) => ({ threadId, missionId, name: missionId.toUpperCase() });
-/** The claim a join made, in a test where its add cannot have been spent. */
 const claimOf = (joined: MissionClaim | "intent-spent") => {
   if (joined === "intent-spent") throw new Error("the add was already spent");
   return joined;
@@ -185,11 +177,9 @@ it.effect("leaving spends every add that stood behind the claim, and only those"
     Effect.gen(function* () {
       const add = (intentId: string) => claims.join("link:a", { ...join("aaaa"), intentId });
       const first = yield* add("one");
-      // A second add of the thread while it is in takes the same claim over.
       assert.deepEqual(yield* add("two"), first);
       yield* claims.leaveHere(threadId);
       assert.deepEqual([yield* add("one"), yield* add("two")], ["intent-spent", "intent-spent"]);
-      // The same lead under a new link session is another owner, and its copy is as spent.
       assert.equal(
         yield* claims.join("link:b", { ...join("aaaa"), intentId: "one" }),
         "intent-spent",
@@ -203,13 +193,11 @@ it.effect("leaving spends every add that stood behind the claim, and only those"
 it.effect("a mode change waits while a join checks its caller and writes the claim", () =>
   onMachine((claims, machine) =>
     Effect.gen(function* () {
-      // How the orchestrator changes a thread's mode: under its own lock on that thread.
       const raiseMode = machine.threadCommands.withLock(
         threadId,
         Effect.sync(() => machine.events.push("mode raised")),
       );
       const raising: Array<Fiber.Fiber<number>> = [];
-      // The caller passes the check, and the user raises the mode at that very moment.
       yield* claims.join("link:a", join("aaaa"), () =>
         raiseMode.pipe(
           Effect.forkChild({ startImmediately: true }),
@@ -239,7 +227,6 @@ it.effect("a tag that fails to write is written again by this machine, never by 
       assert.deepEqual(machine.tags, ["mission:aaaa:AAAA"]);
       machine.failTags = false;
       yield* TestClock.adjust(MissionClaims.TAG_REPAIR_INTERVAL);
-      // The release mark lands before the live tag goes.
       assert.deepEqual(yield* Queue.takeN(machine.written, 2), [
         "mission-was:aaaa:AAAA",
         "mission:aaaa:AAAA",
@@ -257,7 +244,6 @@ it.effect("a rename that lands while tags are written is still written once it f
       machine.failTags = false;
       machine.refuses = (tag) => tag.endsWith(":Renamed");
       const renaming: Array<Fiber.Fiber<unknown>> = [];
-      // The rename arrives while the repair holds the thread and has read its old name.
       machine.onRead = Effect.suspend(() => {
         machine.onRead = Effect.void;
         return claims.rename("link:a", { missionId: "aaaa", name: "Renamed" }).pipe(
@@ -291,7 +277,6 @@ it.effect("a rename skips a thread it cannot read, leaving its name and tags as 
         answered.map((claim) => claim.name),
         ["AAAA"],
       );
-      // Nothing is left for the repair to write either.
       yield* TestClock.adjust(MissionClaims.TAG_REPAIR_INTERVAL);
       assert.deepEqual(machine.tags, ["mission:aaaa:AAAA"]);
       assert.equal(yield* Queue.size(machine.written), 1);
@@ -354,7 +339,6 @@ it.effect("only a release or leave that drops the claim forgets what was read of
       const generation = typeof joined === "string" ? "" : joined.generation;
       yield* claims.release("env-lead", { threadId, missionId: "ship", generation });
       yield* claims.join("env-lead", { threadId, missionId: "ship", name: "Ship" });
-      // A late release of the first join leaves the new claim, and what was read of it.
       yield* claims.release("env-lead", { threadId, missionId: "ship", generation });
       yield* claims.leaveHere(threadId);
       assert.deepEqual(

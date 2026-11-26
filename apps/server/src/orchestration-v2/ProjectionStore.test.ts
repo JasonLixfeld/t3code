@@ -2174,7 +2174,6 @@ const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
     occurredAt: now,
     payload: { ...deleted, deletedAt: now },
   });
-  // The shell hides a deleted thread; its own row, with its lineage, stays readable.
   assert.isNull(yield* store.getThreadShell(deleted.id));
   assert.deepEqual((yield* store.findThread(deleted.id))?.lineage, deleted.lineage);
 

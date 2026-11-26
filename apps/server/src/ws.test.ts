@@ -3197,7 +3197,6 @@ it.effect("a socket leave meant for one mission keeps a claim that moved to anot
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ws-mission-" });
-    // Built into this test's scope, so the database stays open for the whole test.
     const store = yield* Layer.build(
       MissionStore.layerFromPath(path.join(directory, MissionStore.MISSIONS_DATABASE_FILE)),
     ).pipe(Effect.flatMap((context) => Effect.provide(MissionStore.MissionStore, context)));
@@ -3251,7 +3250,6 @@ it.effect("a socket leave meant for one mission keeps a claim that moved to anot
               Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
               Layer.mock(ServerEnvironment.ServerEnvironment)({}),
               Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
-              // The store decides, so the request must reach it with the mission it names.
               Layer.mock(Missions.Missions)({
                 leaveHere: (threadId, missionId) => store.leave(threadId, missionId),
               }),

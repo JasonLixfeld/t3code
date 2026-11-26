@@ -16,13 +16,11 @@ import type { MissionUpdateEvent } from "./missionStatus.ts";
 import { newTombstoneCheck, type TombstoneCheck } from "./tombstoneChecks.ts";
 
 /**
- * Missions keep their own database and migration history. The main database's migrator skips
- * every id up to the highest recorded one, so a fork migration there would collide with
- * upstream's next id after a rebase.
+ * Effect's SQL migrator skips IDs up to the last applied one. A separate database keeps fork and
+ * upstream migration IDs from colliding.
  */
 export const MISSIONS_DATABASE_FILE = "missions.sqlite";
 
-/** Every migration by id. Tests open a database as an older build left it with a prefix of these. */
 export const MIGRATIONS = {
   "1_Missions": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -34,7 +32,6 @@ export const MIGRATIONS = {
         created_at TEXT NOT NULL
       )
     `;
-    // The primary key is the thread, so a thread here belongs to at most one Mission.
     yield* sql`
       CREATE TABLE claims (
         thread_id TEXT PRIMARY KEY,
@@ -83,12 +80,10 @@ export const MIGRATIONS = {
         PRIMARY KEY (environment_id, thread_id)
       )
     `;
-    // The machines a lead asks are now those with a known claim, a pending add or a pending release.
     yield* sql`DROP TABLE known_machines`;
   }),
   "4_AddIntents": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    // One row per thread and Mission now, so an add to one Mission never replaces another's.
     yield* sql`ALTER TABLE pending_adds RENAME TO pending_adds_by_thread`;
     yield* sql`
       CREATE TABLE pending_adds (
@@ -125,8 +120,6 @@ export const MIGRATIONS = {
   }),
   "6_MissionTombstones": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    // Every machine a Mission sent an add or a release to. A claim there may outlive the
-    // Mission, so a deleted one's machines are asked again and their claims released.
     yield* sql`
       CREATE TABLE mission_machines (
         mission_id TEXT NOT NULL,
@@ -142,12 +135,9 @@ export const MIGRATIONS = {
       UNION SELECT mission_id, environment_id FROM pending_releases
       UNION SELECT mission_id, environment_id FROM known_claims
     `;
-    // A deleted Mission's id is never taken again, so a late add cannot bring it back, and a
-    // claim on it is released whenever its machine lists one.
     yield* sql`
       CREATE TABLE deleted_missions (mission_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL)
     `;
-    // The machines asked again for a deleted Mission's claims, and when.
     yield* sql`
       CREATE TABLE tombstone_checks (
         environment_id TEXT PRIMARY KEY,
@@ -160,14 +150,9 @@ export const MIGRATIONS = {
   "7_MissionLeadPrompt": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`ALTER TABLE missions ADD COLUMN prompt TEXT NOT NULL DEFAULT ''`;
-    // Who asked for an add or a release: the lead thread whose agent asked, whose reach is read
-    // again before each send, or null for the user.
     yield* sql`ALTER TABLE pending_adds ADD COLUMN actor TEXT`;
     yield* sql`ALTER TABLE pending_releases ADD COLUMN actor TEXT`;
     yield* sql`ALTER TABLE pending_releases ADD COLUMN refusal TEXT`;
-    // What the lead has not been told yet, one row per run, request or card it came from.
-    // `delivery_key` and `delivery_lead` mark the rows of a wake under way to that lead, so a
-    // restart sends that wake again; `attempt` counts the wakes the orchestrator turned down.
     yield* sql`
       CREATE TABLE mission_updates (
         mission_id TEXT NOT NULL,
@@ -181,7 +166,6 @@ export const MIGRATIONS = {
         PRIMARY KEY (mission_id, environment_id, thread_id, source)
       )
     `;
-    // The names a lead's status and wakes use for members and machines, which no one else sets.
     yield* sql`
       CREATE TABLE member_numbers (
         mission_id TEXT NOT NULL,
@@ -192,7 +176,6 @@ export const MIGRATIONS = {
       )
     `;
     yield* sql`CREATE TABLE machine_numbers (environment_id TEXT PRIMARY KEY, number INTEGER NOT NULL)`;
-    // What each member on another machine last said it was doing, so a restart compares with it.
     yield* sql`
       CREATE TABLE member_marks (
         environment_id TEXT NOT NULL,
@@ -201,12 +184,8 @@ export const MIGRATIONS = {
         PRIMARY KEY (environment_id, thread_id)
       )
     `;
-    // Every thread that ever led a Mission here, so one that stops leading is told so.
     yield* sql`CREATE TABLE former_leads (thread_id TEXT PRIMARY KEY)`;
     yield* sql`INSERT OR IGNORE INTO former_leads SELECT lead_thread_id FROM missions`;
-    // Each thread a lead started asks to join its Mission: a replayed start finds the request
-    // here, with the add's intent, which the member's machine refuses once that add is spent,
-    // and `released` when the thread was released since, which a replay must not undo.
     yield* sql`
       CREATE TABLE started_joins (
         environment_id TEXT NOT NULL,
@@ -221,8 +200,6 @@ export const MIGRATIONS = {
   }),
   "8_JoinedWithPriorWork": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    // A member draft's add, or a thread its lead started: when it lands, its lead hears no
-    // "joined with prior work".
     yield* sql`ALTER TABLE pending_adds ADD COLUMN no_brief INTEGER NOT NULL DEFAULT 0`;
     yield* sql`
       UPDATE pending_adds SET no_brief = 1 WHERE EXISTS (
@@ -230,7 +207,6 @@ export const MIGRATIONS = {
           AND started_joins.intent_id = pending_adds.intent_id
       )
     `;
-    // The claim a member's lead last heard it join with, so it hears each join once.
     yield* sql`ALTER TABLE member_numbers ADD COLUMN joined_generation TEXT`;
   }),
 };
@@ -262,20 +238,14 @@ interface PendingReleaseRow {
   readonly mission_id: string;
 }
 
-/** A Mission led by a thread on this machine. */
 export interface MissionRecord {
   readonly missionId: string;
   readonly name: string;
   readonly leadThreadId: ThreadId;
   readonly createdAt: string;
-  /** The Mission's own prompt for its lead; empty uses the Settings default. */
   readonly prompt: string;
 }
 
-/**
- * A member's change its lead has not been told about yet. `source` names the run, request or
- * card it came from, so each is told once and a newer one is never cleared in its place.
- */
 interface MissionUpdate {
   readonly missionId: string;
   readonly environmentId: EnvironmentId;
@@ -284,7 +254,6 @@ interface MissionUpdate {
   readonly event: MissionUpdateEvent;
 }
 
-/** A thread on this machine held by a Mission. `generation` names the join that made the claim. */
 export interface MissionClaim {
   readonly threadId: ThreadId;
   readonly missionId: string;
@@ -293,33 +262,23 @@ export interface MissionClaim {
   readonly generation: string;
 }
 
-/**
- * An add this lead means to make, written before its join is sent. `intentId` names this one add
- * in every copy of the join. `refusal` is why the member's machine turned it down, once it
- * answered; the row then stays until the user dismisses it.
- */
 export interface PendingAdd {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly missionId: string;
   readonly intentId: string;
-  /** The link to the thread's machine when the add was made. A link made again is another one. */
   readonly linkId: string;
   readonly addedAt: string;
   readonly refusal: string | null;
-  /** The lead thread whose agent asked for it. Absent: the user. */
   readonly actor?: ThreadId | undefined;
   readonly noBrief?: true | undefined;
 }
 
 type AddKey = Pick<PendingAdd, "environmentId" | "threadId" | "missionId">;
 
-/** How long a member's machine remembers an add whose claim was dropped. */
 const SPENT_INTENT_DAYS = 30;
-/** How long a lead remembers it asked for a started thread to join. */
 const STARTED_JOIN_DAYS = 30;
 
-/** A thread a lead started, and the Mission it asked to join. */
 interface StartedThread {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -327,24 +286,19 @@ interface StartedThread {
 }
 
 interface Numbers {
-  /** By `numberKey`. */
   readonly member: ReadonlyMap<string, number>;
   readonly machine: ReadonlyMap<EnvironmentId, number>;
 }
 
-/** The key `numbersOf` gives each member's number under. */
 export const numberKey = (ref: { readonly environmentId: string; readonly threadId: string }) =>
   `${ref.environmentId}\u0000${ref.threadId}`;
 
-/** A release this lead sent that the member's machine has not answered yet. */
 export interface PendingRelease {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly generation: string;
   readonly missionId: string;
-  /** The lead thread whose agent asked for it. Absent: the user. */
   readonly actor?: ThreadId | undefined;
-  /** Why it is no longer sent, once refused. */
   readonly refusal?: string | undefined;
 }
 
@@ -354,22 +308,14 @@ interface ClaimInput {
   readonly name: string;
   readonly owner: string;
   readonly generation: string;
-  /** The lead's add this join belongs to. Absent for a lead's own claim and a join made here. */
   readonly intentId?: string | undefined;
-  /** The Mission is led here, so it must still be here when the claim is written. */
   readonly ledHere?: boolean | undefined;
-  /** A new claim of a Mission led here tells its lead the member joined with prior work. */
   readonly announce?: boolean | undefined;
 }
 
 const actorOf = (row: { readonly actor: string | null }) =>
   row.actor === null ? {} : { actor: ThreadId.make(row.actor) };
 
-/**
- * The same updates for the same lead make the same key (FNV-1a over them), so a wake sent again
- * after a stop is the same command, to the same thread. A source is told once, and a wake the
- * orchestrator turned down counts up its `attempt`, so no other wake gets that key.
- */
 const deliveryKey = (
   lead: ThreadId,
   rows: ReadonlyArray<MissionUpdate & { readonly attempt: number }>,
@@ -412,66 +358,31 @@ const heldElsewhere = (held: ClaimRow) =>
 
 const now = Effect.map(DateTime.now, DateTime.formatIso);
 
-/**
- * Every claim change also lists the thread in `unsynced_tags`, in the same transaction, until its
- * tags are written. The claim methods are called only under MissionClaims' per-thread lock.
- */
+/** Claim methods run only under MissionClaims' per-thread lock. */
 export class MissionStore extends Context.Service<
   MissionStore,
   {
-    /** Publishes after every change, so watchers read again. */
     readonly changes: PubSub.PubSub<void>;
-    /** The Missions led here, oldest first. */
     readonly missions: Effect.Effect<ReadonlyArray<MissionRecord>>;
-    /**
-     * Adds the Mission and its lead thread's claim together, or neither. Refuses a thread that
-     * has any claim. Asking again with the same id and lead returns the Mission it already made.
-     */
     readonly createMission: (lead: ClaimInput) => Effect.Effect<MissionRecord, MissionError>;
-    /**
-     * Makes a thread the Mission's lead, and drops the old lead's claim, both or neither. A
-     * member of this Mission here keeps its claim, which becomes the lead's. Refuses a thread
-     * any other Mission or owner holds, and refuses when the lead is no longer `previous`, since
-     * only `previous` is locked.
-     */
     readonly setLead: (
       lead: ClaimInput & { readonly previous: ThreadId },
     ) => Effect.Effect<MissionRecord, MissionError>;
-    /**
-     * Ends a Mission with no members, dropping its lead's claim with it. Refuses while any member
-     * claim, add or release is known, and when the lead is no longer `lead`, the one locked.
-     */
     readonly deleteMission: (input: {
       readonly missionId: string;
       readonly lead: ThreadId;
-      /** Machines to ask for its claims besides those it sent adds or releases to. */
       readonly machines: ReadonlyArray<EnvironmentId>;
     }) => Effect.Effect<void, MissionError>;
-    /**
-     * The claim this owner already holds for this Mission, or a new one. Refuses any other claim.
-     * `intent-spent`: the claim this add made was dropped since, so the add may not make another.
-     */
     readonly join: (
       input: ClaimInput,
     ) => Effect.Effect<MissionClaim | "intent-spent", MissionError>;
-    /** Drops the member claim that one join made, if this owner still holds it. */
-    /** Whether a claim was dropped: a late release of an earlier join drops nothing. */
     readonly release: (input: Omit<ClaimInput, "name">) => Effect.Effect<boolean>;
-    /** Drops the thread's claim, whoever holds it, if it is `missionId`'s. Refuses a lead's claim. */
     readonly leave: (threadId: ThreadId, missionId?: string) => Effect.Effect<void, MissionError>;
-    /**
-     * Names a Mission led here again, from the title of `lead`, unless its lead changed since.
-     * Answers the name it has now. Its claims follow through `renameClaims`.
-     */
     readonly renameMission: (input: {
       readonly missionId: string;
       readonly lead: ThreadId;
       readonly name: string;
     }) => Effect.Effect<string>;
-    /**
-     * Gives this owner's claim on one thread the Mission's new name, and marks its tags unsynced
-     * with it. Answers whether it changed. Called only under that thread's lock.
-     */
     readonly renameClaim: (input: {
       readonly threadId: ThreadId;
       readonly owner: string;
@@ -481,7 +392,6 @@ export class MissionStore extends Context.Service<
     readonly claim: (threadId: ThreadId) => Effect.Effect<MissionClaim | undefined>;
     readonly claimsOf: (owner: string) => Effect.Effect<ReadonlyArray<MissionClaim>>;
     readonly allClaims: Effect.Effect<ReadonlyArray<MissionClaim>>;
-    /** Threads whose claim changed since their tags were last written. */
     readonly unsyncedTags: Effect.Effect<ReadonlyArray<ThreadId>>;
     readonly tagsSynced: (threadId: ThreadId) => Effect.Effect<void>;
     readonly pendingReleases: Effect.Effect<ReadonlyArray<PendingRelease>>;
@@ -490,68 +400,43 @@ export class MissionStore extends Context.Service<
       release: Omit<PendingRelease, "missionId">,
     ) => Effect.Effect<void>;
     readonly pendingAdds: Effect.Effect<ReadonlyArray<PendingAdd>>;
-    /** Records the add, or what became of it. One row per thread and Mission. */
     readonly setPendingAdd: (add: PendingAdd) => Effect.Effect<void>;
-    /** Every Mission deleted here. Kept for good: a claim on one is released wherever seen. */
     readonly deletedMissionIds: Effect.Effect<ReadonlySet<string>>;
-    /** The machines still asked for deleted Missions' claims. */
     readonly tombstoneChecks: Effect.Effect<ReadonlyArray<TombstoneCheck>>;
-    /** Records when to ask a machine next; null stops asking it. */
     readonly setTombstoneCheck: (
       environmentId: EnvironmentId,
       check: TombstoneCheck | null,
     ) => Effect.Effect<void>;
     readonly clearPendingAdd: (add: AddKey) => Effect.Effect<void>;
-    /** Replaces a pending add with the claim its join made, both or neither. */
-    /** With `announce`, its lead hears it joined with prior work, once for that claim. */
     readonly settleAdd: (
       add: AddKey,
       claim: MissionClaim,
       announce: boolean,
     ) => Effect.Effect<void>;
-    /**
-     * What each linked machine last said it holds for this lead. A copy to show while a machine
-     * is away: only that machine's answer is the truth.
-     */
     readonly knownClaims: Effect.Effect<ReadonlyMap<EnvironmentId, ReadonlyArray<MissionClaim>>>;
-    /** Replaces what a machine last said. */
     readonly setKnownClaims: (
       environmentId: EnvironmentId,
       claims: ReadonlyArray<MissionClaim>,
     ) => Effect.Effect<void>;
     readonly forgetClaim: (release: Omit<PendingRelease, "missionId">) => Effect.Effect<void>;
-    /** Drops what this lead waits for and last knew about one thread, in one Mission only. */
     readonly forgetThread: (thread: AddKey) => Effect.Effect<void>;
     readonly setPrompt: (input: {
       readonly missionId: string;
       readonly prompt: string;
     }) => Effect.Effect<void, MissionError>;
-    /** Each untold update once: one already recorded from the same source is not added again. */
     readonly addMissionUpdate: (update: MissionUpdate) => Effect.Effect<void>;
-    /**
-     * Marks an update the lead heard another way: one not told yet, or one recorded later, is
-     * never told. One a wake already took stays with that wake.
-     */
     readonly markMissionUpdateHeard: (update: MissionUpdate) => Effect.Effect<void>;
-    /** The Missions with updates not told yet. */
     readonly missionsWithUpdates: Effect.Effect<ReadonlyArray<string>>;
-    /**
-     * The next wake of a Mission: the one under way, if a stop cut it off, else every update not
-     * told yet, marked with a key made from their sources. The same updates get the same key.
-     */
     readonly takeMissionUpdates: (
       missionId: string,
       lead: ThreadId,
     ) => Effect.Effect<{ readonly key: string; readonly updates: ReadonlyArray<MissionUpdate> }>;
-    /** Puts a wake the orchestrator turned down back with the untold, to go under a new key. */
     readonly rekeyMissionUpdates: (missionId: string, key: string) => Effect.Effect<void>;
-    /** Drops the updates of one wake. Updates recorded since stay for the next. */
     readonly clearMissionUpdates: (
       missionId: string,
       key: string,
       held?: ReadonlyArray<Pick<MissionUpdate, "environmentId" | "threadId" | "source">>,
     ) => Effect.Effect<void>;
-    /** What a member on another machine last said; undefined if it never said. */
     readonly memberMark: (member: {
       readonly environmentId: EnvironmentId;
       readonly threadId: ThreadId;
@@ -560,13 +445,7 @@ export class MissionStore extends Context.Service<
       member: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId },
       mark: string,
     ) => Effect.Effect<void>;
-    /** Whether the thread ever led a Mission here. */
     readonly ledBefore: (threadId: ThreadId) => Effect.Effect<boolean>;
-    /**
-     * Records that a thread a lead started asks to join its Mission with the add `intentId`.
-     * `requested`: a start of it asked before, with the intent it gives back. `released`: and it
-     * was released since. Requests older than 30 days are forgotten.
-     */
     readonly startJoin: (
       thread: StartedThread,
       intentId: string,
@@ -574,18 +453,11 @@ export class MissionStore extends Context.Service<
       readonly state: "first" | "requested" | "released";
       readonly intentId: string;
     }>;
-    /** A started thread was deleted: nothing can replay its start. */
     readonly forgetStartedJoin: (thread: {
       readonly environmentId: EnvironmentId;
       readonly threadId: ThreadId;
     }) => Effect.Effect<void>;
-    /** A started thread was released from its Mission, so a replayed start may not bring it back. */
     readonly startedReleased: (thread: StartedThread) => Effect.Effect<void>;
-    /**
-     * Gives each member and its machine the number a lead's status and wakes name it by, the
-     * first time it is seen, and keeps it. This machine has none; others count from 2. Writes
-     * only when one of them has none yet.
-     */
     readonly numbersOf: (
       missionId: string,
       members: ReadonlyArray<{
@@ -594,9 +466,7 @@ export class MissionStore extends Context.Service<
       }>,
       here: EnvironmentId,
     ) => Effect.Effect<Numbers>;
-    /** The numbers given so far, read only. */
     readonly numbersKnown: (missionId: string) => Effect.Effect<Numbers>;
-    /** Keeps a release that may no longer be sent, with why, until the user forgets it. */
     readonly refusePendingRelease: (
       release: PendingRelease,
       refusal: string,
@@ -611,7 +481,6 @@ const make = Effect.gen(function* () {
   const changes = yield* PubSub.unbounded<void>();
   const changed = PubSub.publish(changes, undefined);
 
-  /** One transaction. A refusal is returned out of it, so it has written nothing. */
   const change = <A>(body: Effect.Effect<A | MissionError, SqlError.SqlError>) =>
     sql.withTransaction(body).pipe(
       Effect.orDie,
@@ -628,7 +497,6 @@ const make = Effect.gen(function* () {
       WHERE thread_id = ${threadId}
     `.pipe(Effect.map((rows) => rows[0]));
 
-  /** The add that made this claim may not make another. Old entries go, so the table stays small. */
   const spendIntent = Effect.fn("MissionStore.spendIntent")(function* (held: ClaimRow) {
     if (held.intent_id === null) return;
     const spentAt = yield* DateTime.now;
@@ -742,8 +610,6 @@ const make = Effect.gen(function* () {
             "Its threads must leave this mission, and its pending adds must be cleared, before you delete it.",
           );
         }
-        // A refused release whose claim is still listed held the delete back above; one whose
-        // claim is gone holds nothing, and goes with the Mission.
         yield* sql`DELETE FROM pending_adds WHERE mission_id = ${input.missionId}`;
         yield* sql`DELETE FROM pending_releases WHERE mission_id = ${input.missionId}`;
         yield* sql`DELETE FROM mission_updates WHERE mission_id = ${input.missionId}`;
@@ -762,7 +628,6 @@ const make = Effect.gen(function* () {
           ...input.machines,
           ...sentTo.map((row) => EnvironmentId.make(row.environment_id)),
         ]);
-        // Each is asked from now on, until it answers, as if no delete had come before.
         for (const environmentId of machines) {
           yield* writeTombstoneCheck(newTombstoneCheck(environmentId, asked));
         }
@@ -783,7 +648,6 @@ const make = Effect.gen(function* () {
         `;
         if (mission === undefined) return refuse("That mission was not found.");
         const previous = ThreadId.make(mission.lead_thread_id);
-        // Asked again after it took effect, as a retry whose answer was lost is.
         if (previous === lead.threadId) return toMission(mission);
         if (previous !== lead.previous) {
           return new MissionError({
@@ -818,7 +682,6 @@ const make = Effect.gen(function* () {
           WHERE mission_id = ${lead.missionId}
         `;
         yield* sql`INSERT OR IGNORE INTO former_leads (thread_id) VALUES (${lead.threadId})`;
-        // The new lead is no member to tell itself about.
         yield* sql`
           DELETE FROM mission_updates
           WHERE mission_id = ${lead.missionId} AND thread_id = ${lead.threadId}
@@ -829,10 +692,6 @@ const make = Effect.gen(function* () {
     );
   });
 
-  /**
-   * Records a numbered member's "joined" update unless its lead already heard of this claim: in
-   * the transaction that writes the claim.
-   */
   const announceJoin = Effect.fn("MissionStore.announceJoin")(function* (
     claim: Pick<MissionClaim, "missionId" | "threadId" | "generation"> & {
       readonly environmentId: EnvironmentId;
@@ -861,7 +720,6 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { intentId } = input;
         if (intentId !== undefined) {
-          // Whoever sends it: a lead that was linked again is another owner with the same add.
           const spent = yield* sql`
             SELECT 1 FROM spent_intents
             WHERE mission_id = ${input.missionId} AND intent_id = ${intentId}
@@ -887,7 +745,6 @@ const make = Effect.gen(function* () {
         if (held.owner !== input.owner || held.mission_id !== input.missionId) {
           return heldElsewhere(held);
         }
-        // A later add of a thread already in takes the claim over, so a drop spends both adds.
         if (intentId !== undefined && held.intent_id !== intentId) {
           yield* spendIntent(held);
           yield* sql`UPDATE claims SET intent_id = ${intentId} WHERE thread_id = ${input.threadId}`;
@@ -1162,7 +1019,6 @@ const make = Effect.gen(function* () {
     Effect.orDie,
   );
 
-  // A member is numbered when its claim is first written, so its lead's first wake names it.
   const insertKnownClaim = (environmentId: EnvironmentId, held: MissionClaim) =>
     sql`
       INSERT OR REPLACE INTO known_claims
@@ -1238,7 +1094,6 @@ const make = Effect.gen(function* () {
     );
   });
 
-  /** The delivery mark of an update the lead heard by other means, which no wake takes. */
   const HEARD = "heard";
   const updateRows = (missionId: string) =>
     sql<{
@@ -1300,7 +1155,6 @@ const make = Effect.gen(function* () {
           const rows = yield* updateRows(missionId);
           const underWay = rows.filter((row) => row.delivery_key !== null);
           const replay = underWay[0];
-          // A wake a stop cut off goes again only to the lead it was for, with its own key.
           if (replay !== undefined && replay.delivery_lead === lead) {
             return {
               key: replay.delivery_key!,
@@ -1309,7 +1163,6 @@ const make = Effect.gen(function* () {
                 .map(toUpdate),
             };
           }
-          // A wake for another lead is for this one now, with what came since: never its key.
           const updates = rows.map((row) => ({ ...toUpdate(row), attempt: row.attempt }));
           const key = deliveryKey(lead, updates);
           if (updates.length > 0) {
@@ -1453,7 +1306,6 @@ const make = Effect.gen(function* () {
         FROM member_numbers WHERE mission_id = ${missionId}
       `;
     if (!remote) return;
-    // This machine is the first, so others count from 2.
     yield* sql`
         INSERT OR IGNORE INTO machine_numbers (environment_id, number)
         SELECT ${ref.environmentId}, COALESCE(MAX(number), 1) + 1 FROM machine_numbers

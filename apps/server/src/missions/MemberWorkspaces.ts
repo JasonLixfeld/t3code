@@ -27,63 +27,40 @@ import * as TaskFolderStore from "../workspace/TaskFolderStore.ts";
 import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 
 export const MEMBER_REPOSITORIES_MAX = 32;
-/** How long one background read of a thread's checkouts may take before it is given up. */
 export const WORKSPACE_READ_DEADLINE = Duration.seconds(10);
 const WORKSPACE_CACHE_TTL = Duration.seconds(15);
 const PROJECT_SCAN_CACHE_TTL = Duration.seconds(30);
 const SHARED_CHECKOUT_BRANCH_CACHE_TTL = Duration.seconds(30);
-/** Entries kept in each cache; the least recently used goes first. */
 export const CACHE_ENTRIES_MAX = 512;
 
 const MemberPullRequest = Schema.Struct({
   number: Schema.Number,
-  /** `unknown`: no saved snapshot of the pull request. */
   state: Schema.Union([PullRequestState, Schema.Literal("unknown")]),
   url: Schema.String,
 });
 
-/** A repository a member's checkout covers, as its own machine reads it. */
 export const MemberRepository = Schema.Struct({
   name: Schema.String,
-  /** Where the member works in it. */
   path: Schema.String,
-  /** The repository on that machine `path` is a checkout of. */
   repositoryPath: Schema.String,
   branch: Schema.NullOr(Schema.String),
-  /** `live`: read from the shared checkout. `recorded`: the branch the thread's record names. */
   branchSource: Schema.Literals(["live", "recorded"]),
-  /**
-   * The key pull requests are matched by: its origin's, else its own, such as
-   * `github.com/owner/name`, `dev.azure.com/org/project/_git/repo` or, for a server on an
-   * explicit HTTP port, `tfs.example.com:8443/tfs/collection/project/_git/repo`. Null with no remote.
-   */
   remote: Schema.NullOr(Schema.String),
   pullRequests: Schema.Array(MemberPullRequest),
 });
 export type MemberRepository = typeof MemberRepository.Type;
 
-/**
- * Where a member works. `project`: the project's own checkout, shared. `worktree`: one checkout of
- * its own. `task-folder`: a folder of its own with a worktree of each repository it chose.
- */
 export const MemberWorkspace = Schema.Struct({
   kind: Schema.Literals(["project", "worktree", "task-folder"]),
   repositories: Schema.Array(MemberRepository),
-  /** It has more than `MEMBER_REPOSITORIES_MAX` repositories, and the rest are left out. */
   truncated: Schema.Boolean,
-  /** Pull requests linked to the thread from no repository it checks out, such as a review. */
   otherPullRequests: Schema.Array(
     Schema.Struct({ ...MemberPullRequest.fields, repository: Schema.String }),
   ),
-  /** Read a while ago; a new read is under way. */
   stale: Schema.Boolean,
 });
 export type MemberWorkspace = typeof MemberWorkspace.Type;
 
-/**
- * `pending`: not read yet. `omitted`: left out to keep a list answer small; a follow-up sends it.
- * `tooLarge`: bigger than a whole answer may be, so it is never sent.
- */
 export const ListedWorkspace = Schema.Union([
   MemberWorkspace,
   Schema.Literals(["pending", "omitted", "tooLarge"]),
@@ -98,20 +75,14 @@ type WorkspaceShell = Pick<
 export class MemberWorkspaces extends Context.Service<
   MemberWorkspaces,
   {
-    /** Never waits: a missing or old read is started in the background. */
     readonly cached: (shell: WorkspaceShell) => Effect.Effect<MemberWorkspace | "pending">;
-    /** Drops what is known of a thread. A read of it still under way then stores nothing. */
     readonly forget: (threadId: ThreadId) => Effect.Effect<void>;
   }
 >()("t3/missions/MemberWorkspaces") {}
 
 const keyOf = (key: string) => sourceControlDefinitions.canonicalRepositoryKey(key);
 
-/**
- * A repository's key as a saved pull request key spells it: an HTTP remote's explicit port is
- * kept, as a pull request URL's is. An SSH remote names no HTTP port, so its key has none, and
- * it matches only pull requests whose URL names no port either.
- */
+/** An SSH port is not a forge HTTP port. Keep only HTTP ports in pull request keys. */
 const repositoryKeyOf = (canonicalKey: string, remoteUrl: string | undefined) => {
   const remote = remoteUrl === undefined ? null : parseGitRemoteHost(remoteUrl);
   const [host = "", ...path] = canonicalKey.split("/");
@@ -130,7 +101,6 @@ const repositoryKeysOf = (identity: RepositoryIdentity) => [
   repositoryKeyOf(identity.canonicalKey, identity.locator.remoteUrl),
 ];
 
-/** Reads an entry as the most recently used. */
 const recall = <K, V>(cache: Map<K, V>, key: K) => {
   const value = cache.get(key);
   if (value !== undefined) {
@@ -185,7 +155,6 @@ const make = Effect.gen(function* () {
     ThreadId,
     { readonly at: number; readonly place: string; readonly probed: Probed }
   >();
-  // The read under way for each thread. A read stores its result only while it is still this one.
   const reading = new Map<ThreadId, symbol>();
 
   const branchOf = Effect.fn("MemberWorkspaces.branchOf")(function* (cwd: string) {
@@ -300,7 +269,6 @@ const make = Effect.gen(function* () {
     return probed;
   });
 
-  // The pull requests come from the thread as it is now, so an unlinked one never lingers.
   const workspaceOf = (probed: Probed, shell: WorkspaceShell, stale: boolean): MemberWorkspace => {
     const links = visibleThreadPullRequests(shell.pullRequests ?? []).map((link) => ({
       key: keyOf(`${link.host}/${link.repository}`),
@@ -312,7 +280,6 @@ const make = Effect.gen(function* () {
       },
     }));
     const live = probed.kind === "project";
-    // A pull request two checkouts both match belongs to neither.
     const ownerOf = (key: string) => {
       const owners = probed.checkouts.filter((checkout) => checkout.keys.has(key));
       return owners.length === 1 ? owners[0] : undefined;

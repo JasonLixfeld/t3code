@@ -15,7 +15,6 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as Project from "../project/ProjectService.ts";
 import { ListedWorkspace, MemberWorkspaces } from "./MemberWorkspaces.ts";
 
-/** What a member is doing, as its own machine reads it. */
 export const MemberStatus = Schema.Literals([
   "awaiting-input",
   "pending-approval",
@@ -24,13 +23,8 @@ export const MemberStatus = Schema.Literals([
   "idle",
 ]);
 export type MemberStatus = typeof MemberStatus.Type;
-/** `offline`: its machine does not answer, or has not said yet. */
 export type RosterStatus = MemberStatus | "offline";
 
-/**
- * A member's own machine sends this with each claim it lists, so its lead can show it. `run` and
- * `requests` name what the lead is woken for, so a turn or a request between two lists is seen.
- */
 export const MemberDetail = Schema.Struct({
   status: MemberStatus,
   title: Schema.String,
@@ -46,7 +40,6 @@ export const MemberDetail = Schema.Struct({
 });
 export type MemberDetail = typeof MemberDetail.Type;
 
-/** What wakes a lead: a member that needs it, or one that finished a turn. */
 export type MissionUpdateEvent =
   | "awaiting-input"
   | "pending-approval"
@@ -56,10 +49,8 @@ export type MissionUpdateEvent =
 
 export interface RosterMember {
   readonly ref: ScopedThreadRef;
-  /** The lead's own names, "member 3" on "this machine" or "machine 2", which no one else sets. */
   readonly member: string;
   readonly place: string;
-  /** Names, for the roster tool's data only. */
   readonly machine: string;
   readonly project: string;
   readonly status: RosterStatus;
@@ -80,10 +71,8 @@ const INPUT_REQUESTS: ReadonlySet<string> = new Set([
   "auth_refresh",
 ]);
 
-/** A request or input card the member waits on, as its thread shows it. */
 const waitedOn = (shell: Pick<OrchestrationV2ThreadShell, "pendingRuntimeRequest">) => {
   const request = shell.pendingRuntimeRequest;
-  // A question the run keeps working past, or T3's own tool call, needs no one.
   return request !== null && request.blocking !== false && request.kind !== "dynamic_tool_call"
     ? request
     : null;
@@ -108,7 +97,6 @@ export const memberStatusOf = (
 export const needsAttention = (status: RosterStatus) =>
   status === "awaiting-input" || status === "pending-approval" || status === "failed";
 
-/** Only a move into a state that needs the lead wakes it, so a member starting work never does. */
 export const updateFor = (
   before: MemberStatus | undefined,
   after: MemberStatus,
@@ -118,16 +106,11 @@ export const updateFor = (
   return after;
 };
 
-/** One thing a lead is told about: `source` names the run, request or card it came from. */
 export interface SourcedUpdate {
   readonly source: string;
   readonly event: MissionUpdateEvent;
 }
 
-/**
- * What a member's own event says it needs: a request it waits on, an input card such as a secret
- * request, or a turn that ended. Events of the same source may be written again.
- */
 export const updateFromEvent = (
   event:
     | { readonly type: "run.updated"; readonly payload: Pick<OrchestrationV2Run, "id" | "status"> }
@@ -144,7 +127,6 @@ export const updateFromEvent = (
       : undefined;
   }
   if (event.type === "turn-item.updated") {
-    // The projection's own test for a card that blocks on the user.
     const card =
       event.payload.status === "waiting" ? secretRequestAsPendingInput(event.payload) : null;
     return card === null ? undefined : { source: `request:${card.id}`, event: "awaiting-input" };
@@ -154,7 +136,6 @@ export const updateFromEvent = (
   return { source: `request:${request.id}`, event: eventForRequest(request.kind) };
 };
 
-/** What the lead keeps of a remote member between lists, and across a restart. */
 interface Mark {
   readonly status: MemberStatus;
   readonly run?: { readonly id: string; readonly status: string } | undefined;
@@ -168,12 +149,7 @@ export const markOf = (detail: MemberDetail): string =>
     requests: detail.requests?.map((request) => request.id),
   } satisfies Mark);
 
-/**
- * What a remote member's list says since its mark: a run that ended, by its id, and each request
- * not seen before, by its id. A machine that predates them is compared by status, each change its
- * own source. With no mark yet, a member idle or working needs no one, and one that needs the lead
- * is told all it lists, since none of it was told.
- */
+/** Older peers send status without run or request IDs. Compare their statuses instead. */
 export const remoteUpdates = (
   before: string | undefined,
   detail: MemberDetail,
@@ -207,7 +183,6 @@ export const remoteUpdates = (
   return updates;
 };
 
-/** What a thread's shell says it is doing, as a lead compares it between looks. */
 export const shellDetail = (
   shell: Pick<
     OrchestrationV2ThreadShell,
@@ -224,7 +199,6 @@ export const shellDetail = (
   };
 };
 
-/** A thread here, as its lead sees it. Undefined when it is gone or cannot be read. */
 export const memberDetail = Effect.fn("missionStatus.memberDetail")(function* (threadId: ThreadId) {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* Project.ProjectService;
@@ -251,21 +225,10 @@ const PROMPT_CUT_NOTE = "\n\n[The mission prompt was cut here to fit 4,000 bytes
 
 const bytes = (text: string) => Buffer.byteLength(text, "utf8");
 
-/**
- * The most workspace detail one answer to a lead carries, so it stays one small message. It
- * counts the UTF-8 bytes of the workspaces' JSON only, not the claims, statuses or titles.
- */
 export const LISTED_WORKSPACE_MAX_BYTES = 48_000;
-/** How many members' workspaces a lead asks for in one follow-up to a list. */
 export const WORKSPACES_PER_CALL = 8;
-/** Follow-ups to one machine per sweep, so a slow machine holds a sweep for two calls at most. */
 export const FOLLOW_UPS_PER_SWEEP = 2;
 
-/**
- * In list order: a workspace past the room left is `omitted`, and one past a whole answer's room
- * is `tooLarge`. The first that fits a whole answer is always kept, so an answer to a follow-up
- * for any workspace that is not `tooLarge` carries at least one.
- */
 export const withinWorkspaceRoom = <
   Listed extends { readonly threadId: ThreadId; readonly detail?: MemberDetail | undefined },
 >(
@@ -285,7 +248,6 @@ export const withinWorkspaceRoom = <
   });
 };
 
-/** Whole code points only, so a cut never splits a character. */
 export const cutToBytes = (text: string, max: number) => {
   let kept = "";
   let size = 0;
@@ -307,10 +269,6 @@ const MISSION_LEAD_GUIDANCE = [
   "- When a member joins with prior work, get its brief before giving it new work.",
 ];
 
-/**
- * The header, then the user's prompt, which acts as instructions. The header names the Mission by
- * its id only: its name is the lead's title, which any agent allowed to rename threads can set.
- */
 export const missionPromptText = (missionId: string, prompt: string) => {
   const header = [
     `You lead a mission (id ${missionId}). You orchestrate its threads. If the user asks for something different in a message, the message wins.`,
@@ -330,11 +288,6 @@ const STATUS_LABELS: Record<RosterStatus, string> = {
   offline: "offline",
 };
 
-/**
- * Names members and machines by the lead's own numbers, never by an id, title or label another
- * machine or agent can set, and has no times, so it changes only when a member's status does. The
- * roster tool maps the numbers to ids and names, as data.
- */
 export const missionStatusText = (members: ReadonlyArray<RosterMember>) => {
   const count = (statuses: ReadonlyArray<RosterStatus>) =>
     members.filter((member) => statuses.includes(member.status)).length;
@@ -367,14 +320,9 @@ const UPDATE_TEXT: Record<MissionUpdateEvent, string> = {
   joined: "joined with prior work",
 };
 
-/** How a lead gets a member's brief: the same words in its wake and in t3_mission_add's answer. */
 export const GET_THE_BRIEF =
   'Get its brief before giving it new work: queue a message asking for it with t3_thread_send (mode "queue", outputSchema a JSON Schema object with additionalProperties false whose required "brief" property is a string with maxLength 4000), then call t3_thread_wait with the runId it returned and untilOutput: true. If the send is refused or the member is settled, read it with t3_thread_read (limit: 2, runLimit: 1, maxCharsPerItem: 4000) instead.';
 
-/**
- * Names each member by the lead's own numbers, as the status does. A joined member's `status` is
- * the lead's own view of it, "settled" for one settled or archived.
- */
 export const missionUpdateText = (
   updates: ReadonlyArray<{
     readonly member: string;

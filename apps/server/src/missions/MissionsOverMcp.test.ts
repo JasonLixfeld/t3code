@@ -65,7 +65,6 @@ const LINK_TOKEN = "desk-link-token";
 const LINK_SESSION = "desk-link-session";
 const TAG = "mission:0123456789ab:One";
 
-/** One machine's threads: each id maps to the tags it carries. */
 const threadsWith = (tags: Map<string, Array<string>>) =>
   Layer.mock(ThreadManagement.ThreadManagementService)({
     getThreadShell: (threadId) =>
@@ -90,12 +89,6 @@ const threadsWith = (tags: Map<string, Array<string>>) =>
       }),
   });
 
-/**
- * Real on both machines: Missions, MissionClaims and MissionStore. Real between them: the peer
- * MCP client, HTTP, and the laptop's `/mcp` transport with its tool registration, argument
- * validation and thread access checks. Faked: each machine's threads, the link record and its
- * token (`PeerLinks`), and who a bearer token is (`McpClientAuthenticator`).
- */
 it.effect("join, list, release and leave go through the laptop's real /mcp", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -217,8 +210,6 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
 
     yield* Effect.gen(function* () {
       const missions = yield* Missions.Missions;
-      // A build that predates a kind refuses it as a bad request, the way an older member's
-      // build answers `rename`. The lead takes that as a refusal, not as a machine gone away.
       const unknownKind = yield* (yield* PeerMcpClient.PeerMcpClient)
         .call({
           environmentId: LAPTOP,
@@ -248,7 +239,6 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
       yield* missions.addMember({ missionId: mission.missionId, member: added });
       assert.deepEqual(laptopTags.get("added"), [TAG]);
 
-      // A claim this lead holds there but has not heard of: only `list` can show it.
       yield* laptopClaims.join(MissionClaims.linkOwner(LINK_SESSION), {
         threadId: found.threadId,
         missionId: mission.missionId,
@@ -273,7 +263,6 @@ it.effect("join, list, release and leave go through the laptop's real /mcp", () 
       yield* missions.releaseMember({ missionId: mission.missionId, member: added });
       assert.deepEqual(laptopTags.get("added"), ["mission-was:0123456789ab:One"]);
 
-      // The laptop's own user leaves the other thread; the lead hears of it when it lists again.
       yield* laptopClaims.leaveHere(found.threadId);
       assert.deepEqual(yield* membersWhen((threadIds) => !threadIds.includes("found")), ["lead"]);
     }).pipe(Effect.provide(desk));

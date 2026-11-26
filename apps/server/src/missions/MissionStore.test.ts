@@ -196,8 +196,6 @@ it.effect(
 it.effect("upgrades a database an earlier build left, keeping a given-up add's machine", () =>
   withDatabase((filename) =>
     Effect.gen(function* () {
-      // The database as the build before tombstones left it: five migrations, a Mission, and
-      // an add to the laptop it gave up on.
       yield* Effect.provide(
         Effect.gen(function* () {
           const earlier = Object.fromEntries(
@@ -220,7 +218,6 @@ it.effect("upgrades a database an earlier build left, keeping a given-up add's m
             VALUES ('env-laptop', ${member}, 'm1', 'i1',
               'This add waited more than 7 days for the thread''s machine.', 'link', '2026-01-01')
           `;
-          // A claim last seen on the desk, and a release the box never answered.
           yield* sql`
             INSERT INTO known_claims
               (environment_id, thread_id, mission_id, mission_name, generation)
@@ -236,7 +233,6 @@ it.effect("upgrades a database an earlier build left, keeping a given-up add's m
       yield* usingStore(filename, (store) =>
         Effect.gen(function* () {
           assert.equal((yield* store.pendingAdds)[0]?.refusal?.startsWith("This add waited"), true);
-          // Both are forgotten, so only the upgrade's record still names those machines.
           for (const [environmentId, threadId] of [
             ["env-desk", "desk-thread"],
             ["env-box", "box-thread"],
@@ -248,7 +244,6 @@ it.effect("upgrades a database an earlier build left, keeping a given-up add's m
             });
           }
           yield* store.deleteMission({ missionId: "m1", lead, machines: [] });
-          // The deleted Mission still asks the laptop, which its old add may have reached.
           assert.deepEqual(
             (yield* store.tombstoneChecks).map((check) => check.environmentId).toSorted(),
             ["env-box", "env-desk", "env-laptop"],
@@ -286,7 +281,6 @@ it.effect("upgrades a version-6 database: its missions get an empty prompt that 
             [""],
           );
           yield* store.setPrompt({ missionId: "m1", prompt: "Ship the release." });
-          // The lead of a Mission from before the upgrade counts as one that led.
           assert.isTrue(yield* store.ledBefore(lead));
           assert.isFalse(yield* store.ledBefore(member));
           const missing = yield* store
@@ -319,19 +313,16 @@ it.effect(
         const first = yield* usingStore(filename, (store) =>
           Effect.gen(function* () {
             yield* store.addMissionUpdate(of("run:r1"));
-            // The same source written again is the same update.
             yield* store.addMissionUpdate(of("run:r1"));
             yield* store.addMissionUpdate(of("request:q1", "awaiting-input"));
             const taken = yield* store.takeMissionUpdates("m1", lead);
             assert.deepEqual(taken.updates, [of("run:r1"), of("request:q1", "awaiting-input")]);
-            // A second turn of the same member ends while the wake is being sent.
             yield* store.addMissionUpdate(of("run:r2"));
             return taken;
           }),
         );
         yield* usingStore(filename, (store) =>
           Effect.gen(function* () {
-            // A stop before the clear: the same wake comes back, with the same key.
             assert.deepEqual(yield* store.takeMissionUpdates("m1", lead), first);
             yield* store.clearMissionUpdates("m1", first.key);
             const next = yield* store.takeMissionUpdates("m1", lead);
@@ -366,9 +357,7 @@ it.effect(
           const moved = yield* store.takeMissionUpdates("m1", next);
           assert.deepEqual(moved.updates, [of("run:r1"), of("run:r2")]);
           assert.notEqual(moved.key, old.key);
-          // Taken again for the same lead, it is the same wake.
           assert.deepEqual(yield* store.takeMissionUpdates("m1", next), moved);
-          // Turned down: the same updates go again under a key no wake had.
           yield* store.rekeyMissionUpdates("m1", moved.key);
           const again = yield* store.takeMissionUpdates("m1", next);
           assert.deepEqual(again.updates, moved.updates);
@@ -421,7 +410,6 @@ it.effect(
               state: "first",
               intentId: "i1",
             });
-            // A replay gets the first intent back, whatever it was given.
             assert.deepEqual(yield* store.startJoin(started, "i2"), {
               state: "requested",
               intentId: "i1",
@@ -429,7 +417,6 @@ it.effect(
             yield* store.setMemberMark(started, "mark-1");
             yield* store.startJoin(other, "i3");
             yield* store.startJoin({ ...other, missionId: "m2" }, "i4");
-            // A release from one mission leaves the other's request as it was.
             yield* store.startedReleased(other);
           }),
         );
@@ -442,7 +429,6 @@ it.effect(
               "requested",
             );
             assert.equal(yield* store.memberMark(started), "mark-1");
-            // Deleted on one machine: the same id on another keeps its request.
             yield* store.startJoin(
               { ...started, environmentId: EnvironmentId.make("env-b") },
               "i6",
@@ -493,7 +479,6 @@ it.effect("upgrades a version-7 database: its waiting adds keep, and say no draf
           if (add === undefined) return assert.fail("The add was not kept.");
           assert.equal(add.intentId, "i1");
           assert.isUndefined(add.noBrief);
-          // A thread its lead started joins without a "joined with prior work".
           assert.deepEqual([started?.intentId, started?.noBrief], ["i-start", true]);
           yield* store.setPendingAdd({ ...add, threadId: lead, intentId: "i2", noBrief: true });
           assert.deepEqual(

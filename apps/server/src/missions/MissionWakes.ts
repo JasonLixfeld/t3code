@@ -31,13 +31,8 @@ import {
   updateFromEvent,
 } from "./missionStatus.ts";
 
-/** A lead is woken at most this often. What happens in between goes in its next wake. */
 export const WAKE_INTERVAL = Duration.seconds(30);
 
-/**
- * The message a wake sends: a background notification, as a delegated result is, so it keeps
- * the lead's snooze. The same wake is the same command.
- */
 export const missionWakeCommand = (input: {
   readonly missionId: string;
   readonly key: string;
@@ -61,7 +56,6 @@ export const missionWakeCommand = (input: {
   creationSource: "server" as const,
 });
 
-/** Sources already recorded, since a run's ending may be written again after it was told. */
 const TOLD_KEPT = 1_000;
 
 const parked = (lead: OrchestrationV2ThreadShell | null) =>
@@ -71,11 +65,6 @@ const parked = (lead: OrchestrationV2ThreadShell | null) =>
   lead.settledAt !== null ||
   lead.settledOverride === "settled";
 
-/**
- * Wakes a mission's lead when a member needs it or ends a turn, as delegated results reach their
- * parent: in one message once the lead is idle, at most once per WAKE_INTERVAL. Starting work wakes
- * no one, so the lead's own sends cannot loop. Untold updates stay on disk across a restart.
- */
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const missions = yield* Missions;
@@ -85,7 +74,6 @@ export const layer = Layer.effectDiscard(
     const here = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
     const scope = yield* Effect.scope;
 
-    // By lead thread: a new lead is a new reader, and its first wake need not wait.
     const lastWake = new Map<ThreadId, number>();
     const timed = new Set<string>();
     const told = new Set<string>();
@@ -110,7 +98,6 @@ export const layer = Layer.effectDiscard(
       if (fresh.length > 0) yield* Queue.offer(due, missionId);
     });
 
-    /** Compared with what the member last showed, kept on disk, so a restart misses nothing. */
     const observe = Effect.fn("MissionWakes.observe")(function* (
       missionId: string,
       ref: ScopedThreadRef,
@@ -121,11 +108,6 @@ export const layer = Layer.effectDiscard(
       yield* store.setMemberMark(ref, markOf(detail));
     });
 
-    /**
-     * A member here the lead has no mark for, as when it just joined or before marks were kept, is
-     * looked at once, as a remote member's first list is: what waits on the user wakes the lead.
-     * The mark stays, so a restart looks no more. What changes later comes as its own events.
-     */
     const seeLocalMembers = Effect.gen(function* () {
       const led = new Set((yield* store.missions).map((mission) => mission.missionId));
       for (const claim of yield* store.claimsOf(here)) {
@@ -138,7 +120,6 @@ export const layer = Layer.effectDiscard(
       }
     });
 
-    /** The Mission led here that a thread here belongs to, and how. */
     const missionOf = Effect.fn("MissionWakes.missionOf")(function* (threadId: ThreadId) {
       const claim = yield* store.claim(threadId);
       if (claim === undefined) return undefined;
@@ -151,7 +132,6 @@ export const layer = Layer.effectDiscard(
     const onThreadEvent = Effect.fn("MissionWakes.onThreadEvent")(function* (
       event: OrchestrationV2DomainEvent,
     ) {
-      // A lead no longer settled or archived hears what it missed while it was.
       if (event.type === "thread.unsettled" || event.type === "thread.unarchived") {
         const claim = yield* missionOf(event.threadId);
         if (claim?.role === "lead") yield* Queue.offer(due, claim.missionId);
@@ -164,21 +144,15 @@ export const layer = Layer.effectDiscard(
       ) {
         return;
       }
-      // Read first: most turn items are text, and they cost no lookup.
       const update = updateFromEvent(event);
       if (update === undefined && event.type !== "run.updated") return;
       const claim = yield* missionOf(event.threadId);
       if (claim === undefined) return;
-      // A lead whose run ended may now hear what waited for it.
       if (claim.role === "lead") return yield* Queue.offer(due, claim.missionId);
       if (update === undefined) return;
       yield* record(claim.missionId, { environmentId: here, threadId: event.threadId }, [update]);
     });
 
-    /**
-     * Puts away every update of a Mission whose lead may not be woken, but a member's join: the
-     * lead hears that once it may be woken again.
-     */
     const dropUpdates = (missionId: string, lead: ThreadId): Effect.Effect<void> =>
       Effect.flatMap(store.takeMissionUpdates(missionId, lead), ({ key, updates }) => {
         if (updates.length === 0) return Effect.void;
@@ -189,7 +163,6 @@ export const layer = Layer.effectDiscard(
         );
       });
 
-    /** Each joined member's status as the lead sees it, "settled" for one settled or archived. */
     const joinedStatuses = Effect.fn("MissionWakes.joinedStatuses")(function* (
       missionId: string,
       updates: ReadonlyArray<ScopedThreadRef & { readonly event: string }>,
@@ -198,7 +171,6 @@ export const layer = Layer.effectDiscard(
       if (!updates.some((update) => update.event === "joined")) return statuses;
       for (const row of yield* missions.memberStatuses(missionId)) {
         if (row.ref.environmentId !== here) {
-          // Its machine has not listed it to this lead yet.
           const listed = (yield* store.memberMark(row.ref)) !== undefined;
           statuses.set(numberKey(row.ref), listed ? row.status : "unknown");
           continue;
@@ -209,7 +181,6 @@ export const layer = Layer.effectDiscard(
       return statuses;
     });
 
-    /** Runs under the Mission's lock, so the lead it names stays the lead until it is sent. */
     const deliverTo = Effect.fn("MissionWakes.deliverTo")(function* (mission: MissionRecord) {
       const { missionId, leadThreadId } = mission;
       const lead = yield* shellOf(leadThreadId);
@@ -228,7 +199,6 @@ export const layer = Layer.effectDiscard(
         );
         return;
       }
-      // A wake a stop cut off comes back with its key, so the orchestrator replays it once.
       const { key, updates } = yield* store.takeMissionUpdates(missionId, leadThreadId);
       if (updates.length === 0) return;
       const names = yield* missions.numbers(missionId, updates);
@@ -248,26 +218,18 @@ export const layer = Layer.effectDiscard(
             ),
           }),
         )
-        .pipe(
-          // A lead settled since the read above stays settled; its updates go with this one.
-          Effect.provideService(Orchestrator.UnlessParked, true),
-          Effect.result,
-        );
+        .pipe(Effect.provideService(Orchestrator.UnlessParked, true), Effect.result);
       if (Result.isFailure(sent)) {
-        // Turned down: sending the same command again would only replay that. Its updates go
-        // with the next wake, under a new key.
         yield* store.rekeyMissionUpdates(missionId, key);
         return yield* sent.failure;
       }
       lastWake.set(leadThreadId, now);
-      // What the wake left out stays, and goes in the next one.
       const held = updates.slice(ATTENTION_LINES);
       yield* store.clearMissionUpdates(missionId, key, held);
       if (held.length > 0) yield* Queue.offer(due, missionId);
     });
 
     for (const missionId of yield* store.missionsWithUpdates) yield* Queue.offer(due, missionId);
-    // Subscribed before the first look, so a join in between is not missed.
     const storeChanges = yield* PubSub.subscribe(store.changes);
 
     const logged = (message: string) =>

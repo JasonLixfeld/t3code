@@ -8,11 +8,6 @@ import * as Ref from "effect/Ref";
 type MissionContext = NonNullable<ProviderAdapterV2TurnInput["missionContext"]>;
 type Read = (threadId: ThreadId) => Effect.Effect<MissionContext | undefined>;
 
-/**
- * Turns start below the orchestrator that Missions is built on, so they read a lead's context
- * through this one shared slot, which Missions fills once it is built. Until then, and in builds
- * without Missions, a turn gets none.
- */
 export class MissionTurnContexts extends Context.Service<
   MissionTurnContexts,
   {

@@ -85,12 +85,10 @@ const HERE = EnvironmentId.make("env-here");
 const LAPTOP = EnvironmentId.make("env-laptop");
 const FENCED = EnvironmentId.make("env-fenced");
 const DESK = EnvironmentId.make("env-desk");
-/** A test may link one more machine, for itself only, before it makes its world. */
 const LINKS: Array<{ id: EnvironmentId; label: string; access: AuthMcpClientAccess }> = [
   { id: LAPTOP, label: "Laptop", access: "full-access" },
   { id: FENCED, label: "Fenced box", access: "auto" },
 ];
-/** How the laptop knows this lead: by the link session it calls with. */
 const LEAD_ON_LAPTOP = MissionClaims.linkOwner("lead-session");
 
 const ref = (environmentId: EnvironmentId, threadId: string): ScopedThreadRef => ({
@@ -108,14 +106,11 @@ const WAS_TAG = "mission-was:0123456789ab:One";
 type Claims = MissionClaims.MissionClaims["Service"];
 type ClaimKind = "join" | "release" | "list" | "rename" | "workspaces";
 
-/** Every machine's threads and tags, and how the laptop answers this lead. */
 const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   const tags = new Map(threads.map((thread) => [keyOf(thread), [] as Array<string>]));
-  /** Every thread is titled "One" and has messages, unless a test says otherwise. */
   const titles = new Map<string, string>();
   const empty = new Set<string>();
   const archived = new Set<string>();
-  /** Each thread's run state, idle unless a test says otherwise. */
   const activity = new Map<string, Record<string, unknown>>();
   const dispatched: Array<string> = [];
   const workspaces = new Map<string, MemberWorkspace | "pending">();
@@ -128,16 +123,9 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       ),
     forget: () => Effect.void,
   });
-  /** What Settings tells every mission's lead. */
   const settings = { missionDefaultPrompt: "" };
   const laptop = {
     claims: undefined as Claims | undefined,
-    /**
-     * `offline`: refuses to connect. `hanging`: never answers. `lostReply`: acts, then drops the
-     * reply. `actsThenHangs`: acts, then never replies. `revoked`: answers HTTP 401 to the link.
-     * `denies`: its tool refuses the call. `heldThenOffline`: answers this call once `letGo` is
-     * done, then is offline. `watchedOnly`: up only for calls made under `Watched`.
-     */
     mode: "up" as
       | "up"
       | "offline"
@@ -148,41 +136,25 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       | "denies"
       | "heldThenOffline"
       | "watchedOnly",
-    /** Answers `rename` as a build from before renames does: a refusal of the kind. */
     predatesRename: false,
     letGo: undefined as Deferred.Deferred<void> | undefined,
-    /** The link session this lead calls with, and when the link was made. Both change on a re-pair. */
     session: "lead-session",
     linkedAt: "2026-01-01T00:00:00.000Z",
-    /** Every call this lead made to the laptop, in order. */
     calls: [] as Array<ClaimKind>,
-    /** The modes each join and release to the laptop was sent with, in order. */
     limits: [] as Array<unknown>,
-    /** The same calls, to wait on: each is offered as it starts, under the mode set by then. */
     started: undefined as Queue.Queue<ClaimKind> | undefined,
-    /** The calls the laptop answered, each offered once its answer is ready. */
     answered: undefined as Queue.Queue<ClaimKind> | undefined,
-    /** The calls the laptop carried out, whether or not its reply got through. */
     acted: undefined as Queue.Queue<ClaimKind> | undefined,
-    /** The lead's link to the laptop has run out. */
     linkExpired: false,
-    /** Calls of these kinds its tool refuses, whatever the mode. */
     deniedKinds: [] as Array<ClaimKind>,
-    /** Its list leaves out these threads' workspaces, as when they do not fit. */
     omits: new Set<ThreadId>(),
-    /** Calls of these kinds it never answers, whatever the mode. */
     hangingKinds: [] as Array<ClaimKind>,
-    /** How long each list takes it to answer. */
     listTakes: undefined as Duration.Input | undefined,
-    /** Lists it is answering now, and the most it ever answered at once. */
     listsRunning: 0,
     mostListsAtOnce: 0,
-    /** How long each workspaces follow-up takes it, and whether it omits as its list does. */
     followUpTakes: undefined as Duration.Input | undefined,
     followUpsOmit: false,
-    /** The members each workspaces follow-up asked for, in order. */
     followUps: [] as Array<ReadonlyArray<ThreadId>>,
-    /** Its tool refuses a join or release of a thread above the modes it was sent with. */
     enforcesLimits: false,
   };
   const threadsOn = (environmentId: EnvironmentId) =>
@@ -249,7 +221,6 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
       readonly members: ReadonlyArray<{ readonly threadId: ThreadId; readonly generation: string }>;
     };
     const owner = MissionClaims.linkOwner(laptop.session);
-    // As the laptop's /mcp answers: each claim with what its thread is doing.
     const detailOf = (threadId: ThreadId, listing: boolean): MemberDetail => {
       const shell = {
         status: "idle",
@@ -427,70 +398,50 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   });
   const world = {
     tags: (thread: ScopedThreadRef) => tags.get(keyOf(thread)),
-    /** The thread's own user deletes it. */
     remove: (thread: ScopedThreadRef) => tags.delete(keyOf(thread)),
     retitle: (thread: ScopedThreadRef, title: string) => titles.set(keyOf(thread), title),
-    /** The thread's own user archives it. */
     archive: (thread: ScopedThreadRef) => archived.add(keyOf(thread)),
-    /** The thread has no messages yet, as a new draft thread. */
     empty: (thread: ScopedThreadRef) => empty.add(keyOf(thread)),
-    /** Sets fields of the thread's shell, such as its run status. */
     shell: (thread: ScopedThreadRef, fields: Record<string, unknown>) =>
       activity.set(keyOf(thread), { ...activity.get(keyOf(thread)), ...fields }),
     settings,
     laptop,
-    /** The next calls this lead starts on the laptop, waiting for each. */
     nextCalls: (count: number) => Queue.takeN(laptop.started!, count),
-    /** Waits until the laptop has answered a call of this kind. */
     untilAnswered: (kind: ClaimKind): Effect.Effect<void> =>
       Effect.flatMap(Queue.take(laptop.answered!), (answered) =>
         answered === kind ? Effect.void : world.untilAnswered(kind),
       ),
-    /** Waits until this lead has started a call of this kind on the laptop. */
     untilStarted: (kind: ClaimKind): Effect.Effect<void> =>
       Effect.flatMap(Queue.take(laptop.started!), (started) =>
         started === kind ? Effect.void : world.untilStarted(kind),
       ),
-    /** Waits until the laptop has carried out a call of this kind, reply or no reply. */
     untilActed: (kind: ClaimKind): Effect.Effect<void> =>
       Effect.flatMap(Queue.take(laptop.acted!), (acted) =>
         acted === kind ? Effect.void : world.untilActed(kind),
       ),
-    /** Runs after each read of the lead's known claims, in the fiber that read them. */
     afterKnownClaimsRead: Effect.void as Effect.Effect<void>,
-    /** Runs once, after the lead has stopped and before it starts again. */
     whileStopped: Effect.void as Effect.Effect<void>,
-    /** Writes the lead's database before it first starts, as an earlier build left it. */
     leadDatabase: Effect.void as Effect.Effect<
       void,
       Migrator.MigrationError | SqlError.SqlError,
       SqlClient.SqlClient
     >,
-    /** Runs before each read of a thread, on any machine. */
     beforeShellRead: (_threadId: ThreadId): Effect.Effect<void> => Effect.void,
-    /** Runs before the lead's next read of its missions; a test holds a snapshot open with it. */
     beforeMissionsRead: Effect.void as Effect.Effect<void>,
-    /** Runs before the lead reads the releases it waits on, as an add does under its lock. */
     beforeReleasesRead: Effect.void as Effect.Effect<void>,
-    /** How many thread rows the fork lineage walk read. */
     lineageReads: 0,
-    /** How many times a turn gave members numbers, which writes when one has none. */
     numberings: 0,
     dispatched,
     workspaces,
     workspacesLayer,
-    /** Runs before a mission's new lead is written, under the lock the write takes. */
     beforeLeadWrite: Effect.void as Effect.Effect<void>,
-    /** Runs after a remote join settles, as a stop right then would. */
     afterSettle: Effect.void as Effect.Effect<void>,
-    /** Runs after the lead renames a mission, before its claims follow. */
     afterMissionRenamed: Effect.void as Effect.Effect<void>,
     threadsOn,
     layer: Layer.mergeAll(
       peers,
       links,
       Layer.mock(ServerEnvironment.ServerEnvironment)({ getEnvironmentId: Effect.succeed(HERE) }),
-      // A thread's row stays after a delete, with its lineage, as the projection keeps it.
       Layer.mock(ProjectionStore.ProjectionStoreV2)({
         findThread: (threadId) =>
           Effect.sync(() => {
@@ -512,12 +463,9 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   return world;
 };
 
-/** Set around a turn's read of its context, so the store can tell its calls from others. */
 const InTurn = Context.Reference<boolean>("test/InTurn", { defaultValue: () => false });
-/** Set around the calls a test watches, so its hooks skip the reads the service makes alone. */
 const Watched = Context.Reference<boolean>("test/Watched", { defaultValue: () => false });
 
-/** Runs each session on a freshly started lead, over the same files and the same laptop. */
 const withMissions = <A, E>(
   world: ReturnType<typeof makeWorld>,
   ...sessions: ReadonlyArray<
@@ -625,7 +573,6 @@ const createOne = Effect.flatMap(Missions.Missions, (missions) =>
   missions.create({ missionId: "0123456789ab", leadThreadId: lead.threadId }),
 );
 
-/** Waits for a snapshot that matches, starting with the one a new client gets at once. */
 const eventually = (matches: (snapshot: MissionsSnapshot) => boolean) =>
   Effect.flatMap(Missions.Missions, (missions) =>
     missions
@@ -633,10 +580,6 @@ const eventually = (matches: (snapshot: MissionsSnapshot) => boolean) =>
       .pipe(Stream.filter(matches), Stream.runHead, Effect.asVoid),
   );
 
-/**
- * A client that keeps watching, as an open sidebar does. Answers a wait for the next snapshot
- * that matches. While it watches, only the interval and unknown outcomes ask the laptop again.
- */
 const openSidebar = Effect.gen(function* () {
   const missions = yield* Missions.Missions;
   const seen = yield* Queue.unbounded<MissionsSnapshot>();
@@ -680,7 +623,6 @@ it.effect(
             ["Fenced box", false],
           ],
         );
-        // A session that may not read access sees the same Missions, without the links.
         const unlinked = yield* missions.watch({ links: false, prompts: true }).pipe(
           Stream.runHead,
           Effect.map((first) => Option.getOrThrow(first)),
@@ -732,7 +674,6 @@ it.effect("a mission is named for its lead's title, and its members' tags follow
         [[renamed], [renamed], [renamed]],
       );
 
-      // A released member keeps the name the mission had when it left.
       yield* missions.releaseMember({ missionId: mission.missionId, member: laptopMember });
       assert.deepEqual(world.tags(laptopMember), ["mission-was:0123456789ab:Two"]);
     }),
@@ -747,7 +688,6 @@ it.effect("an add that a rename overtakes joins under the new name", () => {
       const missions = yield* Missions.Missions;
       const until = yield* openSidebar;
       const mission = yield* createOne;
-      // The add has read the mission; the lead is renamed before its join is sent.
       world.beforeReleasesRead = Effect.suspend(() => {
         world.beforeReleasesRead = Effect.void;
         world.retitle(lead, "Two");
@@ -770,7 +710,6 @@ it.effect("claims here that missed a rename take the name on the next sweep", ()
       const until = yield* openSidebar;
       const mission = yield* createOne;
       yield* missions.addMember({ missionId: mission.missionId, member: localMember });
-      // The server stops between renaming the mission and renaming its claims.
       world.afterMissionRenamed = Effect.suspend(() => {
         world.afterMissionRenamed = Effect.void;
         return Effect.die("stopped");
@@ -798,7 +737,6 @@ it.effect("a member's build without renames keeps the old name and stays reachab
       world.retitle(lead, "Two");
       yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
       yield* world.untilStarted("rename");
-      // The next sweep's first call shows the one before it is done.
       yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
       yield* world.untilStarted("list");
       const snapshot = yield* listed;
@@ -876,9 +814,7 @@ it.effect("a member becomes the lead, keeps the others, and the mission takes it
         ],
       );
       assert.deepEqual(world.tags(localMember), [renamed]);
-      // The old lead leaves with the name the mission had.
       assert.deepEqual(world.tags(lead), [WAS_TAG]);
-      // The laptop's claim stays; its tag takes the new name when the laptop is next asked.
       assert.equal((yield* world.laptop.claims!.list(LEAD_ON_LAPTOP)).length, 1);
     }),
   );
@@ -892,7 +828,6 @@ it.effect("two new leads asked at once: one wins, and every claim and tag follow
     Effect.gen(function* () {
       const missions = yield* Missions.Missions;
       const mission = yield* createOne;
-      // Both read the mission, still led by `lead`, and their thread before either takes a lock.
       const bothRead = yield* Deferred.make<void>();
       let reads = 0;
       world.beforeShellRead = (threadId) => {
@@ -946,10 +881,8 @@ it.effect("an ask that saw an older lead is refused, and one already done answer
       const ask = (next: ScopedThreadRef) =>
         missions.setLead({ missionId: mission.missionId, lead: next, expectedLead: lead.threadId });
       yield* ask(b);
-      // Another window, or a menu opened before B took over, still saw the old lead.
       const stale = yield* ask(c).pipe(Effect.flip);
       assert.equal(stale.reason, "lead-changed");
-      // The answer to B's own ask was lost, and it asks again.
       const again = yield* ask(b);
       assert.deepEqual(membersOf(again), [[keyOf(b), "active"]]);
       assert.deepEqual([world.tags(b), world.tags(c)], [[TAG], []]);
@@ -972,7 +905,6 @@ it.effect("a title read before a new lead took over does not rename the mission"
         lead: fresh,
         expectedLead: lead.threadId,
       });
-      // A sweep that read the old lead's title before the swap writes it after.
       const named = yield* store.renameMission({
         missionId: mission.missionId,
         lead: lead.threadId,
@@ -1010,7 +942,6 @@ it.effect("a mission with a member is not deleted; once released, its lead stays
       const after = yield* listed;
       assert.deepEqual(after.missions, []);
       assert.deepEqual(after.claims, []);
-      // The lead thread is kept, and its tag says which mission it led.
       assert.deepEqual(world.tags(lead), [WAS_TAG]);
       assert.include(yield* deleteRefusal(mission.missionId), "not found");
     }),
@@ -1026,7 +957,6 @@ it.effect(
       Effect.gen(function* () {
         const missions = yield* Missions.Missions;
         const mission = yield* createOne;
-        // The add reads its thread, and waits there while the mission is deleted.
         const reading = yield* Deferred.make<void>();
         const letGo = yield* Deferred.make<void>();
         world.beforeShellRead = (threadId) => {
@@ -1038,7 +968,6 @@ it.effect(
           missions.addMember({ missionId: mission.missionId, member: localMember }),
         );
         yield* Deferred.await(reading);
-        // The delete waits for the add, which holds the Mission's lock, so no claim outlives it.
         const deleting = yield* Effect.forkChild(
           missions.deleteMission({ missionId: mission.missionId }).pipe(Effect.flip),
         );
@@ -1054,7 +983,6 @@ it.effect(
   },
 );
 
-/** The claims this lead holds on the laptop, as the laptop itself keeps them. */
 const laptopClaims = (world: ReturnType<typeof makeWorld>) =>
   Effect.suspend(() => world.laptop.claims!.list(LEAD_ON_LAPTOP));
 
@@ -1066,11 +994,9 @@ it.effect("a join that landed unanswered is released once its deleted mission's 
       const missions = yield* Missions.Missions;
       const mission = yield* createOne;
       const member = { missionId: mission.missionId, member: laptopMember };
-      // The laptop makes the claim, but its answers are lost, so the lead forgets the add.
       world.laptop.mode = "lostReply";
       yield* missions.addMember(member);
       yield* missions.forgetMember(member);
-      // Nothing shows, so the mission can go.
       yield* missions.deleteMission({ missionId: mission.missionId });
       assert.equal((yield* laptopClaims(world)).length, 1);
       world.laptop.mode = "up";
@@ -1078,7 +1004,6 @@ it.effect("a join that landed unanswered is released once its deleted mission's 
       yield* world.untilAnswered("release");
       assert.deepEqual(yield* laptopClaims(world), []);
       assert.deepEqual(world.tags(laptopMember), [WAS_TAG]);
-      // A new add to it is refused at once, and so is its id.
       assert.include(
         yield* missions.addMember(member).pipe(
           Effect.flip,
@@ -1123,8 +1048,6 @@ it.effect("a machine that never answered is still asked after the lead was down 
 
 it.effect("an add an earlier build forgot is found through the full-access link on delete", () => {
   const world = makeWorld([lead, laptopMember]);
-  // The database as the build before tombstones left it: the add to the laptop was forgotten,
-  // so nothing here says the laptop was ever sent anything.
   world.leadDatabase = Effect.gen(function* () {
     const earlier = Object.fromEntries(
       Object.entries(MissionStore.MIGRATIONS).filter(([id]) => Number(id.split("_")[0]) <= 5),
@@ -1144,7 +1067,6 @@ it.effect("an add an earlier build forgot is found through the full-access link 
     world,
     Effect.gen(function* () {
       const missions = yield* Missions.Missions;
-      // The forgotten add did land on the laptop.
       yield* world.laptop.claims!.join(LEAD_ON_LAPTOP, {
         threadId: laptopMember.threadId,
         missionId: "0123456789ab",
@@ -1169,7 +1091,6 @@ it.effect(
         const mission = yield* createOne;
         world.laptop.mode = "offline";
         yield* missions.deleteMission({ missionId: mission.missionId });
-        // Which of the sweeps, every 15 seconds, asked the laptop.
         const askedAt = (seconds: number) =>
           Effect.gen(function* () {
             const asked: Array<number> = [];
@@ -1180,9 +1101,7 @@ it.effect(
             }
             return asked;
           });
-        // Before any answer: 15 seconds, then each wait doubles, up to 10 minutes.
         assert.deepEqual(yield* askedAt(1560), [15, 30, 60, 120, 240, 480, 960, 1560]);
-        // It answers when next asked, 10 minutes on, and then 5 minutes after that.
         world.laptop.mode = "up";
         assert.deepEqual(yield* askedAt(600), [600]);
         assert.deepEqual(yield* askedAt(360), [300]);
@@ -1236,16 +1155,13 @@ it.effect(
         yield* missions.deleteMission({ missionId: mission.missionId });
         yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
         yield* world.untilAnswered("list");
-        // Its checks run out, as 14 days after that answer, so no check asks the laptop again.
         yield* store.setTombstoneCheck(LAPTOP, null);
         assert.deepEqual(yield* store.tombstoneChecks, []);
-        // A join still on its way lands on the laptop after all that.
         yield* world.laptop.claims!.join(LEAD_ON_LAPTOP, {
           threadId: laptopMember.threadId,
           missionId: mission.missionId,
           name: "One",
         });
-        // A client opens the sidebar, which lists the laptop for the other mission's member.
         yield* openSidebar;
         yield* world.untilAnswered("release");
         assert.deepEqual(
@@ -1289,7 +1205,6 @@ it.effect("a release goes to the live claim, not to a refusal the view hides beh
       const mission = yield* createOne;
       const member = { missionId: mission.missionId, member: laptopMember };
       yield* missions.addMember(member);
-      // An older add of the same thread was refused, and its row is still kept.
       yield* store.setPendingAdd({
         ...laptopMember,
         missionId: mission.missionId,
@@ -1357,7 +1272,6 @@ it.effect(
         const store = yield* MissionStore.MissionStore;
         const started = { ...localMember, missionId: mission.missionId };
         yield* store.startJoin(started, "intent-1");
-        // As a delete, or T3 dropping an unused side chat, reports them.
         yield* releaseDeletedThreads(
           Stream.make(
             { type: "thread.deleted", threadId: localMember.threadId },
@@ -1369,9 +1283,7 @@ it.effect(
           (yield* listed).claims.map((claim) => claim.threadId),
           [lead.threadId],
         );
-        // A member's tag says where it was, as on release.
         assert.deepEqual(world.tags(localMember), ["mission-was:0123456789ab:One"]);
-        // Its start can never be replayed, so the request it made is forgotten.
         assert.equal((yield* store.startJoin(started, "intent-2")).state, "first");
       }),
     );
@@ -1453,7 +1365,6 @@ it.effect("a thread behind a link below full access is refused before anything i
         .addMember({ missionId: mission.missionId, member: fenced })
         .pipe(Effect.flip);
       assert.include(refused.message, "The link to Fenced box has auto access");
-      // A session that may not read access is refused without the link's access level.
       const withheld = yield* missions
         .addMember({ missionId: mission.missionId, member: fenced }, undefined, false)
         .pipe(Effect.flip);
@@ -1507,14 +1418,12 @@ it.effect("a join whose reply was lost is listed once the laptop answers again",
       const mission = yield* createOne;
       world.laptop.mode = "lostReply";
       yield* missions.addMember({ missionId: mission.missionId, member: laptopMember });
-      // The join is sent again at once, and that reply is lost as well.
       assert.deepEqual(yield* world.nextCalls(2), ["join", "join"]);
       assert.equal(stateOf(yield* listed, laptopMember), "add-pending");
 
       world.laptop.mode = "up";
       yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
       yield* until((snapshot) => stateOf(snapshot, laptopMember) === "active");
-      // Every one of those joins found the claim the first one made.
       assert.equal((yield* world.laptop.claims!.list(LEAD_ON_LAPTOP)).length, 1);
     }),
   );
@@ -1536,10 +1445,8 @@ it.effect(
         world.laptop.mode = "up";
       }),
       Effect.gen(function* () {
-        // The laptop answers the restarted lead, and the join that timed out has not landed there.
         yield* openSidebar;
         yield* world.untilAnswered("list");
-        // Only now does that join land.
         yield* world.laptop.claims!.join(LEAD_ON_LAPTOP, {
           threadId: laptopMember.threadId,
           missionId: member.missionId,
@@ -1566,7 +1473,6 @@ it.effect("an add the laptop turns down once it is back says why, until it is di
       world.laptop.mode = "offline";
       yield* missions.addMember(member);
       yield* until((snapshot) => stateOf(snapshot, laptopMember) === "add-pending");
-      // Another lead takes the thread before the laptop is back.
       yield* world.laptop.claims!.join("link:another-lead", {
         threadId: laptopMember.threadId,
         missionId: "ffffffffffff",
@@ -1605,12 +1511,10 @@ it.effect.each([
         const member = { missionId: mission.missionId, member: laptopMember };
         if (waitsOn === "a release") {
           yield* missions.addMember(member);
-          // Only a thread that waits on its machine can be forgotten.
           yield* missions.forgetMember(member).pipe(Effect.flip);
         }
         world.laptop.mode = "offline";
         yield* waitsOn === "an add" ? missions.addMember(member) : missions.releaseMember(member);
-        // What was sent, and sent again at once.
         assert.deepEqual(yield* world.nextCalls(sentBefore.length), [...sentBefore]);
 
         yield* missions.forgetMember(member);
@@ -1619,7 +1523,6 @@ it.effect.each([
         yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
         yield* missions.addMember(member);
         yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
-        // The laptop is listed again only now, after the new add, and nothing was sent in between.
         yield* world.untilAnswered("list");
         if (settled.length > 0) yield* world.untilAnswered("list");
         assert.deepEqual(world.laptop.calls, [...sentBefore, ...settled, "join", "list"]);
@@ -1640,7 +1543,6 @@ it.effect("an add cut off after the laptop made the claim is still there after a
       world.laptop.mode = "actsThenHangs";
       const adding = yield* Effect.forkChild((yield* Missions.Missions).addMember(member));
       yield* world.untilActed("join");
-      // The client that asked goes away before any reply or timeout.
       yield* Fiber.interrupt(adding);
       world.laptop.mode = "offline";
     }),
@@ -1663,12 +1565,10 @@ it.effect("a join sent again after the thread left is turned down, so the thread
       const member = { missionId: mission.missionId, member: laptopMember };
       world.laptop.mode = "lostReply";
       yield* missions.addMember(member);
-      // The join landed twice over: the add, and the copy sent again at once. No reply got back.
       yield* world.untilActed("join");
       yield* world.untilActed("join");
       assert.equal((yield* world.laptop.claims!.list(LEAD_ON_LAPTOP)).length, 1);
 
-      // The laptop's user takes the thread out, and the lead still sends the join again.
       yield* world.laptop.claims!.leaveHere(laptopMember.threadId);
       world.laptop.mode = "up";
       yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
@@ -1677,7 +1577,6 @@ it.effect("a join sent again after the thread left is turned down, so the thread
       assert.deepEqual(world.tags(laptopMember), [WAS_TAG]);
       yield* eventually((snapshot) => stateOf(snapshot, laptopMember) === undefined);
 
-      // A new add by the user is a new intent, so it brings the thread in again.
       yield* missions.addMember(member);
       assert.equal(stateOf(yield* listed, laptopMember), "active");
     }),
@@ -1709,7 +1608,6 @@ it.effect("forgetting a thread in one mission leaves another mission's claim on 
       const after = yield* listed;
       assert.deepEqual(membersOf(after.missions[1]), [["env-here/other-lead", "active"]]);
       assert.equal(stateOf(after, laptopMember), "offline");
-      // The laptop still holds a known claim, so it is still asked.
       world.laptop.mode = "up";
       yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
       yield* eventually((snapshot) => stateOf(snapshot, laptopMember) === "active");
@@ -1729,14 +1627,12 @@ it.effect(
         yield* openSidebar;
         const mission = yield* createOne;
         const member = { missionId: mission.missionId, member: laptopMember };
-        // Another member there keeps the laptop among the machines the lead asks.
         yield* missions.addMember({ missionId: mission.missionId, member: kept });
         world.laptop.mode = "offline";
         yield* missions.addMember(member);
         yield* missions.forgetMember(member);
         assert.equal(stateOf(yield* listed, laptopMember), undefined);
 
-        // The claim is real once the join lands, so the lead lists it again.
         yield* world.laptop.claims!.join(LEAD_ON_LAPTOP, {
           threadId: laptopMember.threadId,
           missionId: mission.missionId,
@@ -1792,14 +1688,11 @@ it.effect("an add made under one link is not sent again once the machine is link
       const member = { missionId: mission.missionId, member: laptopMember };
       world.laptop.mode = "lostReply";
       yield* missions.addMember(member);
-      // The join landed, and so did the copy sent again at once. No reply got back.
       yield* world.untilActed("join");
       yield* world.untilActed("join");
 
-      // The laptop revokes the link, and its user takes the thread out of the mission.
       world.laptop.mode = "revoked";
       yield* world.laptop.claims!.leaveHere(laptopMember.threadId);
-      // The two machines are linked again with full access: a new link, a new session there.
       world.laptop.linkedAt = "2026-02-01T00:00:00.000Z";
       world.laptop.session = "lead-session-after-relink";
       world.laptop.mode = "up";
@@ -1809,7 +1702,6 @@ it.effect("an add made under one link is not sent again once the machine is link
       const row = (yield* listed).missions[0]!.members[1];
       assert.equal(row?.state, "add-refused");
       assert.include(row?.detail, "The link to Laptop was made again since this add");
-      // Reading the laptop's claims is fine. No join went out after the two at the start.
       assert.equal(world.laptop.calls.filter((kind) => kind === "join").length, 2);
       assert.deepEqual(yield* world.laptop.claims!.list("link:lead-session-after-relink"), []);
       assert.deepEqual(world.tags(laptopMember), [WAS_TAG]);
@@ -1835,7 +1727,6 @@ it.effect("an add that waited a week is not sent again", () => {
       const row = (yield* listed).missions[0]!.members[1];
       assert.equal(row?.state, "add-refused");
       assert.include(row?.detail, "waited more than 7 days");
-      // Reading the laptop's claims is fine. No join went out after the two at the start.
       assert.equal(world.laptop.calls.filter((kind) => kind === "join").length, 2);
       assert.deepEqual(yield* world.laptop.claims!.list(LEAD_ON_LAPTOP), []);
     }),
@@ -1854,9 +1745,7 @@ it.effect("a second client's release waits for the first, which it then finds do
       world.laptop.mode = "heldThenOffline";
       const first = yield* Effect.forkChild(missions.releaseMember(member));
       assert.deepEqual(yield* world.nextCalls(2), ["join", "release"]);
-      // A second client releases the member too. It reads the claim under the same locks.
       const second = yield* Effect.forkChild(missions.releaseMember(member).pipe(Effect.flip));
-      // The laptop answers the first release and is gone before the second could be sent.
       yield* Deferred.succeed(world.laptop.letGo!, undefined);
       assert.equal(yield* Fiber.join(first), "released");
       assert.include((yield* Fiber.join(second)).message, "not in this mission");
@@ -1878,7 +1767,6 @@ it.effect("a link this machine can no longer use leaves its members as last know
       world.laptop.linkExpired = true;
       yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
       yield* until((snapshot) => stateOf(snapshot, laptopMember) === "offline");
-      // Nothing was sent over a link that had run out.
       assert.deepEqual(world.laptop.calls, ["join"]);
       const refused = yield* missions
         .addMember({ missionId: mission.missionId, member: ref(LAPTOP, "another") })
@@ -1899,7 +1787,6 @@ it.effect("a new watcher never gets an older snapshot after a newer one", () => 
       for (const member of [a, b, c]) {
         yield* missions.addMember({ missionId: mission.missionId, member });
       }
-      // One snapshot is held open after it read the members and before it reads the missions.
       const held = yield* Deferred.make<void>();
       const letGo = yield* Deferred.make<void>();
       world.beforeMissionsRead = Effect.suspend(() => {
@@ -1908,7 +1795,6 @@ it.effect("a new watcher never gets an older snapshot after a newer one", () => 
       });
       yield* missions.leaveHere(c.threadId);
       yield* Deferred.await(held);
-      // A member leaves while that snapshot is open, and a client starts watching.
       yield* missions.leaveHere(b.threadId);
       const seen = yield* Queue.unbounded<ReturnType<typeof membersOf>>();
       yield* missions.watch({ links: true, prompts: true }).pipe(
@@ -1973,7 +1859,6 @@ it.effect("threads with one id on two machines, and in two missions, are told ap
 
       world.laptop.mode = "offline";
       yield* missions.releaseMember({ missionId: mission.missionId, member: sameLaptop });
-      // The release, then the check that follows it at once.
       assert.deepEqual(yield* world.nextCalls(3), ["join", "release", "release"]);
       assert.deepEqual(
         [stateOf(yield* listed, sameLaptop), stateOf(yield* listed, sameHere)],
@@ -2009,7 +1894,6 @@ it.effect(
         yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
         yield* until((snapshot) => stateOf(snapshot, laptopMember) === "active");
 
-        // On the laptop, its own user leaves; the lead's link plays no part.
         yield* world.laptop.claims!.leaveHere(laptopMember.threadId);
         assert.deepEqual(world.tags(laptopMember), [WAS_TAG]);
         yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
@@ -2037,7 +1921,6 @@ it.effect(
         yield* TestClock.adjust(Missions.MEMBER_CALL_DEADLINE);
         yield* Fiber.join(releasing);
         yield* until((snapshot) => stateOf(snapshot, laptopMember) === "release-pending");
-        // The release, then the check that follows it at once, which hangs as well.
         assert.deepEqual(yield* world.nextCalls(3), ["join", "release", "release"]);
         assert.equal((yield* world.laptop.claims!.list(LEAD_ON_LAPTOP)).length, 1);
 
@@ -2070,8 +1953,6 @@ it.effect("a thread added again keeps its claim when the release sent before arr
       const releasing = yield* Effect.forkChild(missions.releaseMember(member));
       yield* TestClock.adjust(Missions.MEMBER_CALL_DEADLINE);
       yield* Fiber.join(releasing);
-      // The release, and the retry that follows it at once and hangs as well. The retry at the
-      // next interval is refused a connection, so the laptop still holds the claim.
       world.laptop.mode = "offline";
       yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
       assert.deepEqual(yield* world.nextCalls(4), ["join", "release", "release", "release"]);
@@ -2080,7 +1961,6 @@ it.effect("a thread added again keeps its claim when the release sent before arr
 
       world.laptop.mode = "up";
       yield* missions.addMember(member);
-      // Only now does the release that timed out reach the laptop.
       yield* world.laptop.claims!.release(LEAD_ON_LAPTOP, {
         threadId: laptopMember.threadId,
         missionId: mission.missionId,
@@ -2180,7 +2060,6 @@ it.effect("a leave meant for one mission keeps the thread in the mission it move
       yield* missions.addMember({ missionId: second.missionId, member: localMember });
       const tags = world.tags(localMember);
 
-      // A stale row under the first mission asks to leave it.
       const refused = yield* missions
         .leaveHere(localMember.threadId, first.missionId)
         .pipe(Effect.flip);
@@ -2227,7 +2106,6 @@ it.effect("only a session that may operate threads can leave a mission over the 
         Effect.provide(Layer.merge(handler, RpcAuthorization.layer(scopes))),
       );
     const input = { threadId: ThreadId.make("thread") };
-    // A socket session that only reads is refused.
     const reader = yield* clientWith([AuthOrchestrationReadScope]);
     assert.equal(
       (yield* reader[WS_METHODS.missionsLeave](input).pipe(Effect.flip))._tag,
@@ -2290,7 +2168,6 @@ it.effect("a client cannot set or clear mission tags through the generic tag com
   }),
 );
 
-/** Bytes on the wire for one snapshot, as the socket sends it. */
 const wireBytes = (snapshot: MissionsSnapshot) =>
   new TextEncoder().encode(JSON.stringify(snapshot)).length;
 
@@ -2301,7 +2178,6 @@ it.effect("the list a client watches stays small, however long a mission's promp
     Effect.gen(function* () {
       const missions = yield* Missions.Missions;
       const mission = yield* createOne;
-      // A client that asks for the list without prompts, as this build's clients do.
       const seen = yield* Queue.unbounded<MissionsSnapshot>();
       yield* missions.watch({ links: true, prompts: false }).pipe(
         Stream.runForEach((snapshot) => Queue.offer(seen, snapshot)),
@@ -2322,7 +2198,6 @@ it.effect("the list a client watches stays small, however long a mission's promp
       assert.isBelow(wireBytes(update), 800);
       assert.isUndefined(update.missions[0]?.prompt);
       assert.equal((yield* missions.prompt(mission.missionId)).prompt.length, 10_000);
-      // A client that does not ask, as an older one, still reads each prompt from the list.
       assert.equal((yield* listed).missions[0]?.prompt?.length, MISSION_PROMPT_MAX_LENGTH);
     }),
   );
@@ -2382,7 +2257,6 @@ it.effect(
         assert.deepEqual(yield* turnContextOf(lead), { role: "former-lead" });
         assert.deepInclude(yield* turnContextOf(localMember), { role: "lead" });
       }),
-      // After a restart the old lead is still told it no longer leads.
       Effect.gen(function* () {
         assert.deepEqual(yield* turnContextOf(lead), { role: "former-lead" });
         assert.isUndefined(yield* turnContextOf(laptopMember));
@@ -2404,7 +2278,6 @@ it.effect("with no client watching, a lead still hears its members on another ma
         Stream.runCollect,
         Effect.forkScoped,
       );
-      // With nothing busy there, the laptop is asked every IDLE_POLL_INTERVALS intervals.
       const idleWait = Duration.times(Missions.REFRESH_INTERVAL, Missions.IDLE_POLL_INTERVALS);
       yield* TestClock.adjust(idleWait);
       yield* world.untilAnswered("list");
@@ -2417,7 +2290,6 @@ it.effect("with no client watching, a lead still hears its members on another ma
       assert.deepEqual(world.laptop.calls, []);
       yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
       yield* world.untilAnswered("list");
-      // A member waiting there is busy, so the laptop is asked every interval again.
       world.laptop.calls.length = 0;
       yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
       yield* world.untilAnswered("list");
@@ -2464,7 +2336,6 @@ const mcpClient = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 
-/** The lead's agent calls a lead tool over this machine's own /mcp tools. */
 const leadTool = (world: ReturnType<typeof makeWorld>, name: string, args: object) =>
   Effect.gen(function* () {
     const services = Layer.mergeAll(
@@ -2489,7 +2360,6 @@ const leadTool = (world: ReturnType<typeof makeWorld>, name: string, args: objec
     return result.content.map((part) => (part.type === "text" ? part.text : "")).join("");
   });
 
-/** The lead thread is mid-turn, as when its agent calls a tool, in these modes. */
 const leadRuns = (world: ReturnType<typeof makeWorld>, fields: Record<string, unknown> = {}) =>
   world.shell(lead, { activeRunId: "run-lead", providerInstanceId: "codex", ...fields });
 
@@ -2500,14 +2370,12 @@ it.effect("a lead agent adds and releases with its own modes, here and on the la
     Effect.gen(function* () {
       yield* createOne;
       leadRuns(world, { runtimeMode: "auto-accept-edits" });
-      // A thread here above the lead's modes stays out, though the user could add it.
       const above = yield* leadTool(world, "t3_mission_add", {
         threadRef: { threadId: localMember.threadId },
       });
       assert.include(above, "capability_denied");
       assert.include(above, "above this caller's auto-accept-edits/default limit");
       assert.deepEqual(world.tags(localMember), []);
-      // Its modes rise after the first look: the check under the claim's locks refuses it.
       world.shell(localMember, { runtimeMode: "auto-accept-edits" });
       let looks = 0;
       world.beforeShellRead = (threadId) =>
@@ -2522,7 +2390,6 @@ it.effect("a lead agent adds and releases with its own modes, here and on the la
       );
       assert.deepEqual(world.tags(localMember), []);
       world.beforeShellRead = () => Effect.void;
-      // On the laptop the join carries the lead's modes, also when it is sent again.
       world.laptop.mode = "offline";
       assert.include(
         yield* leadTool(world, "t3_mission_add", { threadRef: laptopMember }),
@@ -2565,12 +2432,10 @@ it.effect(
           (yield* listed).missions[0]?.members.map((member) => member.ref.threadId),
           [lead.threadId],
         );
-        // The link's own thread joins.
         assert.include(
           yield* leadTool(world, "t3_mission_add", { threadRef: { threadId: "linked" } }),
           "joined",
         );
-        // The UI keeps the user's authority.
         assert.equal(
           yield* missions.addMember({ missionId: "0123456789ab", member: localMember }),
           "joined",
@@ -2590,7 +2455,6 @@ it.effect(
       Effect.gen(function* () {
         const missions = yield* Missions.Missions;
         yield* createOne;
-        // The server stops after the join was asked for and before its claim was written.
         world.beforeShellRead = (threadId) =>
           threadId === localMember.threadId ? Effect.die("the server stopped") : Effect.void;
         assert.isTrue(
@@ -2601,13 +2465,10 @@ it.effect(
       }),
       Effect.gen(function* () {
         const missions = yield* Missions.Missions;
-        // The launch is retried: its replay finds the request, and no claim, so it joins.
         assert.equal(yield* missions.joinStarted(started, lead.threadId), "joined");
-        // A replay of a join that was made adds nothing.
         assert.isUndefined(yield* missions.joinStarted(started, lead.threadId));
         assert.equal(yield* missions.releaseMember(started, lead.threadId), "released");
       }),
-      // A retry of the same launch, after a restart even, returns the same thread.
       Effect.gen(function* () {
         const missions = yield* Missions.Missions;
         assert.isUndefined(
@@ -2645,7 +2506,6 @@ it.effect("a lead title an agent wrote never reaches the lead's prompt entry", (
   );
 });
 
-/** What the lead's machine still owes the laptop, refused or not. */
 const owed = Effect.flatMap(MissionStore.MissionStore, (store) =>
   Effect.all({ adds: store.pendingAdds, releases: store.pendingReleases }),
 );
@@ -2663,7 +2523,6 @@ it.effect("a lead's add sent again after its modes fell goes with the modes it h
         yield* leadTool(world, "t3_mission_add", { threadRef: laptopMember }),
         '"pending"',
       );
-      // The user lowers the lead's modes while the laptop is away.
       leadRuns(world, { runtimeMode: "auto-accept-edits" });
       world.laptop.mode = "up";
       yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
@@ -2728,7 +2587,6 @@ it.effect(
         const { missionId } = yield* createOne;
         yield* missions.addMember({ missionId, member: localMember });
         leadRuns(world);
-        // The user's add of another thread holds this machine's and the Mission's locks.
         const reading = yield* Deferred.make<void>();
         const letGo = yield* Deferred.make<void>();
         world.beforeShellRead = (threadId) =>
@@ -2737,7 +2595,6 @@ it.effect(
             : Effect.void;
         const holding = yield* Effect.forkChild(missions.addMember({ missionId, member: blocker }));
         yield* Deferred.await(reading);
-        // The lead's add, past its tool's checks, waits for the locks, and so does the handoff.
         const adding = yield* Effect.forkChild(
           leadTool(world, "t3_mission_add", { threadRef: { threadId: target.threadId } }),
         );
@@ -2839,7 +2696,6 @@ it.effect(
           yield* leadTool(world, "t3_mission_release", { threadRef: laptopMember }),
           '"pending"',
         );
-        // The user lowers the lead's modes, and the lead adds the thread again.
         leadRuns(world, { runtimeMode: "auto-accept-edits" });
         world.laptop.mode = "up";
         world.laptop.limits.length = 0;
@@ -2848,7 +2704,6 @@ it.effect(
           "refused",
         );
         const leadModes = { runtimeMode: "auto-accept-edits", interactionMode: "default" };
-        // Neither went with the user's reach, so the laptop refused both and its claim stays.
         assert.deepEqual(world.laptop.limits, [leadModes, leadModes]);
         assert.include((yield* owed).releases[0]?.refusal, "above this caller's limit");
         assert.lengthOf(yield* laptopClaims(world), 1);
@@ -2869,14 +2724,12 @@ it.effect(
         const missions = yield* Missions.Missions;
         const store = yield* MissionStore.MissionStore;
         const { missionId } = yield* createOne;
-        // Another mission's lead started a thread, which joined that mission.
         const other = "bbbbbbbbbbbb";
         yield* missions.create({ missionId: other, leadThreadId: otherLead.threadId });
         assert.equal(
           yield* missions.joinStarted({ missionId: other, member: started }, otherLead.threadId),
           "joined",
         );
-        // This mission's add of a laptop thread was refused.
         world.laptop.mode = "offline";
         yield* missions.addMember({ missionId, member: laptopMember });
         world.laptop.mode = "up";
@@ -2889,12 +2742,10 @@ it.effect(
           threadRef: { threadId: started.threadId },
         });
         assert.include(elsewhere, "That thread is not in this mission.");
-        // The other mission's start still stands.
         assert.equal(
           (yield* store.startJoin({ ...started, missionId: other }, "replay")).state,
           "requested",
         );
-        // A lead that may not use this machine's links may not put the laptop's refusal away.
         leadRuns(world, { linkOrigin: desk });
         const fenced = yield* leadTool(world, "t3_mission_release", { threadRef: laptopMember });
         assert.include(fenced, "use this environment's links");
@@ -2922,7 +2773,6 @@ it.effect(
         for (const member of [laptopMember, second]) {
           yield* leadTool(world, "t3_mission_release", { threadRef: member });
         }
-        // The lead is handed on, so its releases are refused when the laptop is back.
         yield* missions.setLead({ missionId, lead: localMember, expectedLead: lead.threadId });
         world.laptop.mode = "up";
         yield* sweepLaptop(world);
@@ -2934,11 +2784,9 @@ it.effect(
           [laptopMember, second],
         );
         assert.include(shown?.[0]?.detail, "no longer leads this mission");
-        // Dismiss: the refusal goes, the thread stays in the mission.
         yield* missions.forgetMember({ missionId, member: laptopMember });
         assert.equal(stateOf(yield* listed, laptopMember), "active");
         assert.lengthOf(yield* laptopClaims(world), 2);
-        // Retry: the user sends the release again, with the user's reach.
         assert.equal(yield* missions.releaseMember({ missionId, member: second }), "released");
         assert.equal(stateOf(yield* listed, second), undefined);
         assert.deepEqual(
@@ -2966,7 +2814,6 @@ it.effect("a refused release whose thread left since holds no delete back", () =
       world.laptop.mode = "up";
       yield* sweepLaptop(world);
       assert.equal(stateOf(yield* listed, laptopMember), "release-refused");
-      // Someone on the laptop takes the thread out with Leave mission.
       yield* world.laptop.claims!.leaveHere(laptopMember.threadId);
       yield* sweepLaptop(world);
       assert.equal(stateOf(yield* listed, laptopMember), undefined);
@@ -2985,12 +2832,10 @@ it.effect("a replayed launch after its member left on its machine does not join 
       const { missionId } = yield* createOne;
       const started = { missionId, member: laptopMember };
       assert.equal(yield* missions.joinStarted(started, lead.threadId), "joined");
-      // Someone on the laptop takes the thread out with Leave mission, and the lead sees it.
       yield* world.laptop.claims!.leaveHere(laptopMember.threadId);
       yield* listed;
       yield* world.untilAnswered("list");
       assert.equal(stateOf(yield* listed, laptopMember), undefined);
-      // The launch is retried: its add is the one the laptop spent, so the laptop refuses it.
       assert.isUndefined(yield* missions.joinStarted(started, lead.threadId));
       assert.deepEqual(yield* laptopClaims(world), []);
     }),
@@ -3022,7 +2867,6 @@ it.effect(
     const otherLead = ref(HERE, "other-lead");
     const onLaptop = laptopMember;
     const onDesk = ref(DESK, "desk-thread");
-    // The world's one peer answers for both machines, so the desk's thread is kept with it.
     const world = makeWorld([lead, otherLead, onLaptop, ref(LAPTOP, onDesk.threadId)]);
     return withMissions(
       world,
@@ -3031,7 +2875,6 @@ it.effect(
         const { missionId: first } = yield* createOne;
         const second = "bbbbbbbbbbbb";
         yield* missions.create({ missionId: second, leadThreadId: otherLead.threadId });
-        // Each thread is in one mission, and its release from it waits for its machine.
         yield* missions.addMember({ missionId: second, member: onLaptop });
         yield* missions.addMember({ missionId: first, member: onDesk });
         world.laptop.mode = "offline";
@@ -3043,9 +2886,7 @@ it.effect(
           yield* missions.releaseMember({ missionId: first, member: onDesk }),
           "pending",
         );
-        // Up for the two adds only, so no sweep sends the releases before they do.
         world.laptop.mode = "watchedOnly";
-        // Both adds read the releases they must finish before either sends one.
         let arrived = 0;
         const both = yield* Deferred.make<void>();
         world.beforeReleasesRead = Effect.flatMap(Watched, (watched) => {
@@ -3116,7 +2957,6 @@ it.effect("a wake waits for a lead change, which holds the mission's lock while 
         missions.setLead({ missionId, lead: localMember, expectedLead: lead.threadId }),
       );
       yield* Deferred.await(writing);
-      // The wake starts while the new lead is being written: it may not read the mission yet.
       const reading = yield* Deferred.make<void>();
       world.beforeMissionsRead = Effect.flatMap(Watched, (watched) =>
         watched ? Deferred.succeed(reading, undefined).pipe(Effect.asVoid) : Effect.void,
@@ -3145,7 +2985,6 @@ it.effect("a lead handed on and back leaves each of them known as a former lead"
       yield* missions.addMember({ missionId, member: localMember });
       yield* missions.setLead({ missionId, lead: localMember, expectedLead: lead.threadId });
       yield* missions.setLead({ missionId, lead, expectedLead: localMember.threadId });
-      // The thread that led only after the change is told it no longer leads.
       assert.deepEqual(yield* turnContextOf(localMember), { role: "former-lead" });
     }),
   );
@@ -3165,8 +3004,6 @@ it.effect("a started thread released before its join landed is not joined by a r
       world.laptop.deniedKinds = ["join"];
       yield* sweepLaptop(world);
       assert.equal(stateOf(yield* listed, laptopMember), "add-refused");
-      // The user puts the refusal away, which releases the thread, and the laptop would now
-      // take the add, whose intent it never spent.
       assert.equal(yield* missions.releaseMember(started), "released");
       world.laptop.deniedKinds = [];
       assert.isUndefined(yield* missions.joinStarted(started, lead.threadId));
@@ -3196,7 +3033,6 @@ it.effect(
         const { missionId } = yield* createOne;
         yield* missions.addMember({ missionId, member: localMember });
         yield* missions.setLead({ missionId, lead: localMember, expectedLead: lead.threadId });
-        // The old lead is forked from a turn before it was told it no longer leads.
         world.shell(fork, forkedFrom(lead));
         world.shell(forkOfFork, forkedFrom(fork));
         world.shell(forkOfLead, forkedFrom(localMember));
@@ -3204,7 +3040,6 @@ it.effect(
           assert.deepEqual(yield* turnContextOf(thread), { role: "former-lead" });
           assert.isUndefined(yield* missions.ledBy(thread.threadId));
         }
-        // A thread forked from one that never led anything gets nothing.
         world.shell(fork, forkedFrom(ref(HERE, "never-led")));
         assert.isUndefined(yield* turnContextOf(fork));
       }),
@@ -3229,7 +3064,6 @@ it.effect("a fork whose fork between was deleted is still told it leads none", (
       });
       world.shell(forkOfLead, forkOf(lead));
       world.shell(forkOfFork, forkOf(forkOfLead));
-      // B is deleted, and C compacts: its next turn reads its context afresh.
       world.remove(forkOfLead);
       assert.deepEqual(yield* turnContextOf(forkOfFork), { role: "former-lead" });
     }),
@@ -3243,7 +3077,6 @@ it.effect("a long fork chain is followed only so far, a thread row at a time", (
     world,
     Effect.gen(function* () {
       yield* createOne;
-      // fork-0 is a fork of fork-1, and so on, and fork-99 a fork of the lead, past the cap.
       chain.forEach((thread, index) =>
         world.shell(thread, {
           lineage: {
@@ -3580,7 +3413,6 @@ it.effect("two servers on one host, on two ports, are two groups in the roster",
   );
 });
 
-/** About 25 KB of workspace JSON: one fits an answer, two do not. */
 const workspaceOf25Kb = (name: string) =>
   workspaceOf("worktree", [
     repository(
@@ -3628,7 +3460,6 @@ it.effect(
         const missions = yield* Missions.Missions;
         const { missionId, name } = yield* createOne;
         yield* missions.addMember({ missionId, member: laptopMember });
-        // It joined on the laptop, so only the laptop's list says so.
         yield* world.laptop.claims!.join(LEAD_ON_LAPTOP, {
           threadId: fresh.threadId,
           missionId,
@@ -3636,13 +3467,11 @@ it.effect(
         });
         yield* listed;
         yield* world.untilStarted("workspaces");
-        // Lists from now on never answer, so only the follow-up could change what is known.
         world.laptop.hangingKinds.push("list");
         const statuses = Effect.map(missions.roster(missionId), (rows) =>
           rows.map((row) => `${row.ref.threadId} ${row.status}`),
         );
         const listedNow = [`${laptopMember.threadId} idle`, `${fresh.threadId} idle`];
-        // Kept while the follow-up still waits, and after it gives up.
         assert.deepEqual(yield* statuses, listedNow);
         yield* TestClock.adjust(Missions.MEMBER_CALL_DEADLINE);
         assert.deepEqual(yield* statuses, listedNow);
@@ -3689,7 +3518,6 @@ it.effect(
 
 const laptopMembers = (count: number) =>
   Array.from({ length: count }, (_, index) => ref(LAPTOP, `laptop-${index + 1}`));
-/** Members whose workspaces the laptop's list leaves out, each small enough to send in a follow-up. */
 const omittedOnTheLaptop = (
   world: ReturnType<typeof makeWorld>,
   members: ReadonlyArray<ScopedThreadRef>,
@@ -3714,17 +3542,14 @@ it.effect(
         const missions = yield* Missions.Missions;
         const { missionId } = yield* createOne;
         for (const member of members) yield* missions.addMember({ missionId, member });
-        // Each follow-up answers just inside the deadline.
         world.laptop.followUpTakes = "9 seconds";
         const sweep = Effect.andThen(listed, world.untilStarted("workspaces"));
         yield* sweep;
-        // A member on another machine is added while the laptop is still answering.
         assert.equal(yield* missions.addMember({ missionId, member: localMember }), "joined");
         yield* TestClock.adjust("30 seconds");
         assert.deepEqual(world.laptop.followUps, [ids(0, 8), ids(8, 16)]);
         yield* sweep;
         yield* TestClock.adjust("30 seconds");
-        // The next sweep's two follow-ups, whatever sweeps come after.
         assert.deepEqual(world.laptop.followUps.slice(2, 4), [
           [...ids(16, 20), ...ids(0, 4)],
           ids(4, 12),
@@ -3834,7 +3659,6 @@ it.effect("each roster page groups only its own members by repository", () => {
   );
 });
 
-/** What the lead's next wake tells, taken as a delivered wake takes it. */
 const joinedUpdates = Effect.gen(function* () {
   const store = yield* MissionStore.MissionStore;
   const { key, updates } = yield* store.takeMissionUpdates("0123456789ab", lead.threadId);
@@ -3931,7 +3755,6 @@ it.effect(
           [localMember.threadId, "joined"],
           [laptopMember.threadId, "joined"],
         ]);
-        // Its lead heard of both. The add is retried, and each thread keeps its claim.
         for (const member of [localMember, laptopMember]) {
           yield* missions.addMember({ missionId, member }, lead.threadId);
         }
@@ -4060,7 +3883,6 @@ it.effect(
         yield* Fiber.join(yield* missions.heardInWait(lead.threadId, localMember, "r9"));
         yield* Fiber.join(yield* missions.heardInWait(lead.threadId, localMember, "r7"));
         yield* Fiber.join(yield* missions.heardInWait(localMember.threadId, localMember, "r4"));
-        // A linked member's completion its machine lists only after the wait returned.
         yield* Fiber.join(yield* missions.heardInWait(lead.threadId, laptopMember, "r10"));
         yield* update(laptopMember, "r10", "completed");
         const left = ["local run:r2", "local run:r4", "other run:r7"];
@@ -4068,7 +3890,6 @@ it.effect(
           updates.map((row) => `${row.threadId} ${row.source}`),
         );
         assert.deepEqual(yield* told, left);
-        // A wake that took it already tells it.
         yield* Fiber.join(yield* missions.heardInWait(lead.threadId, localMember, "r4"));
         assert.deepEqual(yield* told, left);
       }),
@@ -4090,7 +3911,6 @@ it.effect("a wait answered as its lead handed over keeps the completion for the 
         source: "run:r1",
         event: "completed",
       });
-      // The marking fiber's second read is the one under the lock, after it looked up the lead.
       let marking: Fiber.Fiber<void> | undefined;
       let reads = 0;
       world.beforeMissionsRead = Effect.withFiber((fiber) =>
@@ -4152,7 +3972,6 @@ it.effect("a lead's wait does not wait on the mission lock to mark what it saw",
       yield* Fiber.join(Option.getOrThrow(marking));
       const { updates } = yield* store.takeMissionUpdates(missionId, lead.threadId);
       assert.deepEqual(updates, []);
-      // A mark it cannot write is logged, not failed.
       world.beforeMissionsRead = Effect.die("The mission store is unreadable.");
       yield* Fiber.join(yield* missions.heardInWait(lead.threadId, localMember, "r2"));
       world.beforeMissionsRead = Effect.void;

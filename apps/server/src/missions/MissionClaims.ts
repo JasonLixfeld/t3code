@@ -34,19 +34,10 @@ export const MissionClaimKind = Schema.Literals([
   "workspaces",
 ]);
 
-/**
- * Who holds a claim: this machine's environment id for a lead here, else the link session that
- * asked. A member's machine knows a linked lead only by its session, never by an id it sends.
- */
 export const linkOwner = (sessionId: string) => `link:${sessionId}`;
 
-/** How often this machine writes again the mission tags that an earlier write left behind. */
 export const TAG_REPAIR_INTERVAL = Duration.minutes(1);
 
-/**
- * Refuses a caller that may not change this thread. It runs just before the claim changes, under
- * the orchestrator's lock on the thread, so the thread's modes cannot rise in between.
- */
 export type ThreadAccess<E> = (thread: OrchestrationV2ThreadShell) => Effect.Effect<void, E>;
 
 const wasTagOf = (liveTag: string) => {
@@ -55,11 +46,6 @@ const wasTagOf = (liveTag: string) => {
   return missionWasTag(rest.slice(0, split), rest.slice(split + 1));
 };
 
-/**
- * The edits that make a thread's tags say what its claim says: the claim's `mission:` tag, and
- * every other `mission:` tag turned into `mission-was:`. The claim's tag under an older name is
- * replaced, not kept as `mission-was:`. Adds come first, so a release marks before it unmarks.
- */
 const planMissionTags = (tags: ReadonlyArray<string>, claim: MissionClaim | undefined) => {
   const ofClaim = (prefix: string) =>
     claim === undefined ? [] : tags.filter((tag) => tag.startsWith(`${prefix}${claim.missionId}:`));
@@ -85,30 +71,18 @@ interface JoinInput {
   readonly threadId: ThreadId;
   readonly missionId: string;
   readonly name: string;
-  /** Names one add on the lead, the same in every copy of its join. */
   readonly intentId?: string | undefined;
-  /** The Mission is led here: its record must still be here when the claim is written. */
   readonly ledHere?: boolean | undefined;
   readonly announce?: boolean | undefined;
 }
 
-/**
- * The claims on threads here, which no other machine can change. Every change to a thread's
- * claim, and the tag write that follows it, runs under that thread's one lock. The tags are this
- * machine's own record of the claim, so it writes them itself, whoever asked for the change.
- */
 export class MissionClaims extends Context.Service<
   MissionClaims,
   {
-    /** Starts a Mission led by a thread here. Asking again with the same id and lead returns it. */
     readonly create: (
       owner: string,
       input: { readonly missionId: string; readonly name: string; readonly leadThreadId: ThreadId },
     ) => Effect.Effect<MissionRecord, MissionError>;
-    /**
-     * Makes a thread here the lead of a Mission led here, in place of `previous`. The thread must
-     * have messages. Its tags and the old lead's follow.
-     */
     readonly setLead: (
       owner: string,
       input: {
@@ -118,22 +92,16 @@ export class MissionClaims extends Context.Service<
         readonly previous: ThreadId;
       },
     ) => Effect.Effect<MissionRecord, MissionError>;
-    /** Ends a Mission led here that has no members. Its lead keeps a `mission-was:` tag. */
     readonly deleteMission: (input: {
       readonly missionId: string;
       readonly lead: ThreadId;
       readonly machines: ReadonlyArray<EnvironmentId>;
     }) => Effect.Effect<void, MissionError>;
-    /**
-     * Joining again into the same Mission for the same owner returns the claim it already has.
-     * `intent-spent`: the claim this add made was dropped here since, so the thread stays out.
-     */
     readonly join: <E = never>(
       owner: string,
       input: JoinInput,
       access?: ThreadAccess<E>,
     ) => Effect.Effect<MissionClaim | "intent-spent", MissionError | E>;
-    /** Drops the member claim that one join made, if this owner still holds it. Else a no-op. */
     readonly release: <E = never>(
       owner: string,
       input: {
@@ -143,22 +111,15 @@ export class MissionClaims extends Context.Service<
       },
       access?: ThreadAccess<E>,
     ) => Effect.Effect<void, MissionError | E>;
-    /**
-     * Gives the owner's claims in a Mission its new name, then answers the owner's claims. Each
-     * thread is renamed as a claim change, under its locks and `access`. A thread the caller may
-     * no longer change keeps the old name.
-     */
     readonly rename: <E = never>(
       owner: string,
       input: { readonly missionId: string; readonly name: string },
       access?: ThreadAccess<E>,
     ) => Effect.Effect<ReadonlyArray<MissionClaim>>;
-    /** The local user frees a thread here from whichever Mission holds it. A lead thread stays. */
     readonly leaveHere: (
       threadId: ThreadId,
       missionId?: string,
     ) => Effect.Effect<void, MissionError>;
-    /** The owner's claims here. Reads only. */
     readonly list: (owner: string) => Effect.Effect<ReadonlyArray<MissionClaim>>;
   }
 >()("t3/missions/MissionClaims") {}
@@ -171,14 +132,10 @@ const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const workspaces = yield* MemberWorkspaces;
   const locks = yield* KeyedLock.make<ThreadId>();
-  // The orchestrator's lock on a thread, which a mode change takes too. It is not reentrant, and a
-  // tag write dispatches under it, so it is held only across an access check and its claim write.
+  // Never dispatch a tag write while holding the orchestrator's thread lock. It is not reentrant.
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
 
-  /**
-   * Call only while holding the thread's lock: it reads the claim it writes the tags for. A write
-   * that fails leaves the thread unsynced, for the repair below.
-   */
+  /** Call only under the mission claim lock. */
   const writeTags = Effect.fn("MissionClaims.writeTags")(
     function* (threadId: ThreadId) {
       const claim = yield* store.claim(threadId);
@@ -200,7 +157,6 @@ const make = Effect.gen(function* () {
       Effect.logWarning("A mission tag was not written; this machine writes it again later", cause),
     ),
   );
-  /** The caller's mode limit is dropped, because the claim change already passed its access check. */
   const syncTags = (threadId: ThreadId) =>
     writeTags(threadId).pipe(Effect.provideService(DispatchModeLimit, undefined));
 
@@ -281,7 +237,6 @@ const make = Effect.gen(function* () {
       if (previous !== leadThreadId) yield* syncTags(previous);
       return mission;
     });
-    // Both threads' claims change, so both are held, always in the same order.
     if (previous === leadThreadId) return yield* locks.withLock(leadThreadId, swap);
     const [first, second] = [leadThreadId, previous].toSorted();
     return yield* locks.withLock(first!, locks.withLock(second!, swap));
@@ -335,7 +290,6 @@ const make = Effect.gen(function* () {
           return yield* store.release({ ...input, owner });
         }),
       );
-      // A thread no longer claimed is no longer listed, so what was read of it goes.
       if (dropped) yield* workspaces.forget(input.threadId);
       yield* syncTags(input.threadId);
     },
@@ -366,7 +320,6 @@ const make = Effect.gen(function* () {
           const renamed = yield* threadCommands.withLock(
             threadId,
             Effect.gen(function* () {
-              // A thread that cannot be read is not checked, so it keeps its name and tags.
               const read = yield* threads.getThreadShell(threadId).pipe(Effect.option);
               if (Option.isNone(read)) return false;
               const shell = read.value;
@@ -377,11 +330,9 @@ const make = Effect.gen(function* () {
                 );
                 if (!allowed) return false;
               }
-              // Checked again inside its transaction: the claim may have changed hands since.
               return yield* store.renameClaim({ ...input, threadId, owner });
             }),
           );
-          // The caller's mode limit stays: the orchestrator checks it again for each tag write.
           if (renamed) yield* writeTags(threadId);
         }),
       );
@@ -403,7 +354,6 @@ const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(MissionClaims, make);
 
-/** The one instance /mcp and the lead's own calls share: the same layer value is built once. */
 export const layerLive = layer.pipe(
   Layer.provideMerge(MissionStore.layer),
   // The same layer value the orchestrator is built with, so both take the one lock per thread.

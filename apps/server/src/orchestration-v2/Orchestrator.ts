@@ -571,11 +571,6 @@ export interface OrchestratorV2Shape {
   readonly streamDomainEvents: Stream.Stream<OrchestrationV2DomainEvent, OrchestratorV2Error>;
 }
 
-/**
- * A server wake: a settled, archived or deleted thread is left as it is, and sent nothing. Only
- * server code sets it, around its own dispatch, so no client command can carry it. Dispatch
- * reads it once and removes it, so nothing that command dispatches in turn sees it.
- */
 export const UnlessParked = Context.Reference<boolean>("t3/orchestration-v2/UnlessParked", {
   defaultValue: () => false,
 });
@@ -16580,8 +16575,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (shell !== null) yield* refuseAboveDispatchModeLimit(command, threadId, shell);
     }
 
-    // A wake for a parked thread is checked under its lock, before any queue upkeep, and does
-    // nothing at all; its receipt makes a replay do nothing too.
     const parked =
       unlessParked &&
       command.type === "message.dispatch" &&
@@ -17469,7 +17462,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     awaitRestartContinuation: Effect.fn("OrchestratorV2.awaitRestartContinuation")(function (run) {
       return effectOutbox.awaitSettled(`effect:restart-continuation:${run.id}`).pipe(Effect.ignore);
     }),
-    // Only the wake's own command reads UnlessParked: it is removed before anything runs.
     dispatch: Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
       const unlessParked = yield* UnlessParked;
       return yield* dispatchWithReceipt(command, unlessParked).pipe(

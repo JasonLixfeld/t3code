@@ -35,7 +35,6 @@ const link = (
   state: "open" | "merged" | null,
   source: ThreadPullRequestLink["source"] = "manual",
 ): ThreadPullRequestLink => {
-  // Keyed as a saved link is, its URL's explicit port kept.
   const key = normalizeThreadPullRequestKey(
     sourceControlDefinitions.parseChangeRequestUrl(url)!.link,
   );
@@ -104,9 +103,7 @@ const settled = (workspaces: Service, shell: Parameters<Service["cached"]>[0]) =
 
 interface Machine {
   readonly projectRoot?: string;
-  /** The folders the project tracks besides its root. */
   readonly tracked?: ReadonlyArray<ReturnType<typeof folder>>;
-  /** The folders with a `.git` in them. */
   readonly repositories?: ReadonlyArray<string>;
   readonly identities?: Readonly<Record<string, RepositoryIdentity>>;
   readonly resolve?: (cwd: string) => Effect.Effect<RepositoryIdentity | null>;
@@ -365,7 +362,6 @@ it.effect(
       const readAll = Effect.forEach(members, (member) => workspaces.cached(member));
       assert.deepEqual(yield* readAll, ["pending", "pending", "pending"]);
       yield* TestClock.adjust(READ_STEP);
-      // A read under way is shared, not started again.
       assert.deepEqual(yield* readAll, ["pending", "pending", "pending"]);
       yield* TestClock.adjust(READ_STEP);
       assert.equal(probes, 3);
@@ -517,7 +513,6 @@ it.effect(
             "/code/app/b": identity(
               "https://tfs.example.com:9443/tfs/DefaultCollection/Proj/_git/Repo",
             ),
-            // An SSH remote names no HTTP port, so it is only the repository on none.
             "/code/app/ssh": identity(
               "ssh://tfs.example.com:22/tfs/DefaultCollection/Proj/_git/Repo",
             ),
@@ -545,7 +540,6 @@ it.effect("a read that ends after its thread is forgotten stores nothing", () =>
     yield* TestClock.adjust(READ_STEP);
     yield* workspaces.forget(threadId);
     yield* Deferred.succeed(gate, undefined);
-    // The read wakes, sleeps once more on the test clock, and has ended once the adjust returns.
     yield* TestClock.adjust(READ_STEP);
     assert.equal(yield* workspaces.cached(inProject()), "pending");
   }).pipe(
@@ -565,7 +559,6 @@ it.effect("past its cap the cache drops the thread read least recently", () =>
     for (let index = 0; index < MemberWorkspaces.CACHE_ENTRIES_MAX; index += 1) {
       yield* settled(workspaces, thread(index));
     }
-    // Read again, so the second is now the oldest.
     yield* settled(workspaces, thread(0));
     yield* settled(workspaces, thread(MemberWorkspaces.CACHE_ENTRIES_MAX));
     assert.notEqual(yield* workspaces.cached(thread(0)), "pending");

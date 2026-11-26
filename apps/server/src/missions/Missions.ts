@@ -65,61 +65,32 @@ import {
 } from "./MissionStore.ts";
 import { afterAnswer, afterMiss } from "./tombstoneChecks.ts";
 
-/** How long a lead waits on a member's machine before it treats the outcome as unknown. */
 export const MEMBER_CALL_DEADLINE = Duration.seconds(10);
-/** How often a lead asks its linked machines again, while a client watches or a release waits. */
 export const REFRESH_INTERVAL = Duration.seconds(15);
-/** With no client watching and no remote member busy, members are asked this many intervals apart. */
 export const IDLE_POLL_INTERVALS = 4;
-/**
- * How long an add may wait for its machine before the lead stops sending it. Well inside the time
- * a member's machine remembers a spent add, so a lead restored from a backup cannot replay one.
- */
 export const PENDING_ADD_DAYS = 7;
-/** How many forks back a thread's history is followed to a lead it came from. */
 export const FORK_WALK_HOPS = 64;
-/** How soon a roster that shows an unfinished workspace may ask that member's machine again. */
 const WORKSPACE_ASK_AGAIN_GAP = Duration.seconds(5);
 
 export class Missions extends Context.Service<
   Missions,
   {
-    /**
-     * The Missions here, now and after each change. With `links`, also the links that can reach
-     * member threads, which only a session that may read access gets. With `prompts`, also each
-     * Mission's prompt, which older clients read from the list.
-     */
     readonly watch: (options: {
       readonly links: boolean;
       readonly prompts: boolean;
     }) => Stream.Stream<MissionsSnapshot>;
-    /**
-     * Starts a Mission led by a thread here, named for its title. Refuses a thread with no
-     * messages. Asking again with the same id returns that Mission.
-     */
     readonly create: (input: {
       readonly missionId: string;
       readonly leadThreadId: ThreadId;
     }) => Effect.Effect<Mission, MissionError>;
-    /**
-     * Makes a thread on this machine the Mission's lead, named for its title. A member of the
-     * Mission becomes its lead; the other members stay. Refuses when the lead is no longer
-     * `expectedLead`, and answers the Mission as it is when `lead` already leads it.
-     */
     readonly setLead: (input: {
       readonly missionId: string;
       readonly lead: ScopedThreadRef;
       readonly expectedLead: ThreadId;
     }) => Effect.Effect<Mission, MissionError>;
-    /** Ends a Mission that has no members. Its lead stays a thread, tagged as it was. */
     readonly deleteMission: (input: {
       readonly missionId: string;
     }) => Effect.Effect<void, MissionError>;
-    /**
-     * Leaves the add pending when the member's machine does not say what became of it. `asLead`:
-     * a lead thread's agent asks, with that thread's reach, read again before every send.
-     * Without it the user asks, with the user's.
-     */
     readonly addMember: (
       input: {
         readonly missionId: string;
@@ -127,56 +98,36 @@ export class Missions extends Context.Service<
         readonly noBrief?: true | undefined;
       },
       asLead?: ThreadId,
-      /** False for a session that may not read access, which is not told a link's access level. */
       seesAccess?: boolean,
     ) => Effect.Effect<"joined" | "pending", MissionError>;
-    /** A thread on another machine counts as having some: its lead cannot see its messages. */
     readonly hasPriorWork: (
       mission: Pick<MissionRecord, "leadThreadId">,
       member: ScopedThreadRef,
     ) => Effect.Effect<boolean>;
-    /** Leaves the release pending when the member's machine cannot be reached. */
     readonly releaseMember: (
       input: { readonly missionId: string; readonly member: ScopedThreadRef },
       asLead?: ThreadId,
     ) => Effect.Effect<"released" | "pending", MissionError>;
-    /** Stops waiting on a thread whose add or release its machine has not answered. Sends nothing. */
     readonly forgetMember: (input: {
       readonly missionId: string;
       readonly member: ScopedThreadRef;
     }) => Effect.Effect<void, MissionError>;
-    /**
-     * The local user frees a thread on this machine from its Mission, whichever machine leads it.
-     * The lead thread of a Mission here stays. With `missionId`, only a thread still in that one.
-     */
     readonly leaveHere: (
       threadId: ThreadId,
       missionId?: string,
     ) => Effect.Effect<void, MissionError>;
-    /** The Mission a thread here leads, if it leads one. */
     readonly ledBy: (threadId: ThreadId) => Effect.Effect<MissionRecord | undefined>;
-    /**
-     * A lead's t3_thread_wait returned a member's run as completed, so the wake for that run would
-     * tell it again. Marks it heard in the background, without the wait taking the lock. The fiber
-     * is for tests to join.
-     */
     readonly heardInWait: (
       lead: ThreadId,
       member: ScopedThreadRef,
       runId: string,
     ) => Effect.Effect<Fiber.Fiber<void>>;
-    /**
-     * The Mission's members, without the lead, as this machine last knew them. Asks no other
-     * machine: those on other machines are as the last sweep heard them.
-     */
     readonly roster: (
       missionId: string,
     ) => Effect.Effect<ReadonlyArray<RosterMember>, MissionError>;
-    /** The members and what each is doing, as a turn reads them: no names, and no new asks. */
     readonly memberStatuses: (
       missionId: string,
     ) => Effect.Effect<ReadonlyArray<RosterMember>, MissionError>;
-    /** The members' numbers and places, for a wake to name them by. */
     readonly numbers: (
       missionId: string,
       members: ReadonlyArray<ScopedThreadRef>,
@@ -185,32 +136,20 @@ export class Missions extends Context.Service<
       readonly missionId: string;
       readonly prompt: string;
     }) => Effect.Effect<void, MissionError>;
-    /** The Mission's own prompt, read where it is edited. The list a client watches leaves it out. */
     readonly prompt: (
       missionId: string,
     ) => Effect.Effect<{ readonly prompt: string }, MissionError>;
-    /** Members on other machines whose detail a sweep heard change, or heard for the first time. */
     readonly remoteChanges: Stream.Stream<{
       readonly missionId: string;
       readonly ref: ScopedThreadRef;
       readonly detail: MemberDetail;
     }>;
-    /**
-     * A thread its lead started joins the lead's Mission, once: a replayed start that returns it
-     * again, after a release say, does not. Undefined when it was started before.
-     */
     readonly joinStarted: (
       input: { readonly missionId: string; readonly member: ScopedThreadRef },
       asLead: ThreadId,
     ) => Effect.Effect<"joined" | "pending" | undefined, MissionError>;
-    /** Each Mission whose lead was replaced. */
     readonly leadChanges: Stream.Stream<string>;
-    /** Missions a member just joined with prior work, whose lead has an update to hear. */
     readonly joinedWithPriorWork: Stream.Stream<string>;
-    /**
-     * Runs `use` with the Mission as it is now, under the lock its lead changes take, so the lead
-     * it is given stays the lead until it is done. Undefined when the Mission is gone.
-     */
     readonly withLead: <A, E, R>(
       missionId: string,
       use: (mission: MissionRecord) => Effect.Effect<A, E, R>,
@@ -218,10 +157,6 @@ export class Missions extends Context.Service<
   }
 >()("t3/missions/Missions") {}
 
-/**
- * What one send may do, read when it is sent: the modes it goes out with, and the check a thread
- * here must pass, before its claim is written and again under its locks.
- */
 interface Reach {
   readonly limits: DispatchModes;
   readonly mayChange?: ThreadAccess<MissionError>;
@@ -229,10 +164,8 @@ interface Reach {
 
 const denied = (message: string) => new MissionError({ message, reason: "denied" });
 
-/** The user's own reach, which the lead machine's bookkeeping calls go out with. */
 const USER_REACH: Reach = { limits: { runtimeMode: "full-access", interactionMode: "default" } };
 
-/** The member's machine did not answer in time: the call may or may not have happened there. */
 class Unreachable extends Schema.TaggedError<Unreachable>()("MissionMemberUnreachable", {
   environmentId: Schema.String,
   cause: Schema.optional(Schema.Defect()),
@@ -266,7 +199,6 @@ type ClaimCall =
       readonly members: ReadonlyArray<{ readonly threadId: ThreadId; readonly generation: string }>;
     };
 
-/** The claims a machine holds for this lead, as it last said. */
 interface Machine {
   readonly claims: ReadonlyArray<MissionClaim>;
   readonly reachable: boolean;
@@ -276,13 +208,11 @@ const memberKey = (ref: ScopedThreadRef) => JSON.stringify([ref.environmentId, r
 const sameSnapshot = (a: MissionsSnapshot, b: MissionsSnapshot) =>
   JSON.stringify(a) === JSON.stringify(b);
 
-/** A snapshot with its place in the order they were read, so a watcher can drop an older one. */
 interface Published {
   readonly version: number;
   readonly snapshot: MissionsSnapshot;
 }
 
-/** What this lead still waits to hear from other machines. */
 interface Waiting {
   readonly releases: ReadonlyArray<PendingRelease>;
   readonly adds: ReadonlyArray<PendingAdd>;
@@ -303,23 +233,15 @@ const make = Effect.gen(function* () {
   >();
   const here = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
   const background = yield* Effect.scope;
-  // One call at a time per machine, so what is remembered of it follows the order of its answers.
   const machineLocks = yield* KeyedLock.make<EnvironmentId>();
-  // Empty after a restart: a machine counts as away until it answers again.
   const answering = yield* Ref.make<ReadonlySet<EnvironmentId>>(new Set());
   const watchers = yield* Ref.make(0);
-  // The adds whose first join is on its way now. Their rows exist already, and are not shown as
-  // pending until that call ends without an answer.
   const sending = yield* Ref.make<ReadonlySet<string>>(new Set());
   type RemoteDetail = {
     readonly missionId: string;
     readonly generation: string;
     readonly detail: MemberDetail;
   };
-  /**
-   * A machine that left a workspace out, or has not read it yet, keeps the one it last sent for
-   * the same claim, marked stale.
-   */
   const keptWorkspace = (
     detail: MemberDetail,
     last: RemoteDetail | undefined,
@@ -330,8 +252,6 @@ const make = Effect.gen(function* () {
     typeof last.detail.workspace === "object"
       ? { ...detail, workspace: { ...last.detail.workspace, stale: true } }
       : detail;
-  // What each member on another machine was doing when its machine last listed it, and the claim
-  // it was listed under: its workspace is shown only while that claim holds.
   const remoteDetails = yield* Ref.make<
     ReadonlyMap<EnvironmentId, ReadonlyMap<ThreadId, RemoteDetail>>
   >(new Map());
@@ -342,7 +262,6 @@ const make = Effect.gen(function* () {
   }>();
   const leadChanged = yield* PubSub.unbounded<string>();
   const joined = yield* PubSub.unbounded<string>();
-  // Held across a lead change, a delete, and the wake that names a Mission's lead.
   const missionLocks = yield* KeyedLock.make<string>();
 
   const setAnswering = (environmentId: EnvironmentId, answers: boolean) =>
@@ -382,24 +301,12 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  /**
-   * A Mission's members are computed, never stored: the claims each machine holds for it. A claim
-   * for a Mission this lead does not know is left alone, because a lead restored from a backup
-   * would otherwise free valid members. Claims made under an earlier link session stop appearing
-   * here after a re-pair; the member's own Leave frees those.
-   */
-  /** Deleted here, or never here. A thread that cannot be read is not taken for gone. */
   const threadGone = (threadId: ThreadId) =>
     threads.getThreadShell(threadId).pipe(
       Effect.map((shell) => shell === null || shell.deletedAt !== null),
       Effect.orElseSucceed(() => false),
     );
 
-  /**
-   * Lets go of member claims here whose threads are gone, as a delete does when its event is seen.
-   * Run on start and on every sweep, so a delete missed while stopped is caught. A lead keeps its
-   * claim, so its Mission can take a new lead.
-   */
   const letGoOfGoneMembers = Effect.gen(function* () {
     for (const claim of yield* store.allClaims) {
       if (claim.role !== "member" || !(yield* threadGone(claim.threadId))) continue;
@@ -415,8 +322,6 @@ const make = Effect.gen(function* () {
     waiting: Waiting,
   ) {
     const lead = { environmentId: here, threadId: mission.leadThreadId };
-    // A lead thread that cannot be read is not taken for a deleted one. An archived lead is gone
-    // from every list a client reads, so it shows as deleted too.
     const leadDeleted = yield* threads.getThreadShell(mission.leadThreadId).pipe(
       Effect.map(
         (shell) =>
@@ -436,7 +341,6 @@ const make = Effect.gen(function* () {
     for (const [environmentId, machine] of held) {
       for (const claim of machine.claims) {
         if (claim.missionId !== mission.missionId || claim.role === "lead") continue;
-        // A member deleted here is no longer one, whether or not its claim was let go yet.
         if (environmentId === here && (yield* threadGone(claim.threadId))) continue;
         const ref = { environmentId, threadId: claim.threadId };
         const sameClaim = (release: PendingRelease) =>
@@ -452,7 +356,6 @@ const make = Effect.gen(function* () {
         );
       }
     }
-    // A release can outlive the cached claim it was sent for. It still shows, so it can be forgotten.
     for (const { environmentId, threadId } of releasing) {
       const ref = { environmentId, threadId };
       if (!members.has(memberKey(ref))) {
@@ -491,7 +394,6 @@ const make = Effect.gen(function* () {
     const views = yield* Effect.forEach(yield* store.missions, (mission) =>
       missionView(mission, held, owed),
     );
-    // Each member gets its number when the view first shows it. A turn only reads them.
     for (const view of views) {
       yield* store.numbersOf(
         view.missionId,
@@ -510,11 +412,9 @@ const make = Effect.gen(function* () {
     } satisfies MissionsSnapshot;
   });
 
-  // One fiber at a time reads and compares, so versions follow the order the snapshots were read.
   const publishing = yield* Semaphore.make(1);
   const published = yield* Ref.make<Published | undefined>(undefined);
   const views = yield* PubSub.unbounded<Published>();
-  /** The snapshot now. Watchers hear of it only when it differs from the one before. */
   const publish = Effect.gen(function* () {
     const now = yield* snapshot;
     const last = yield* Ref.get(published);
@@ -563,14 +463,9 @@ const make = Effect.gen(function* () {
         `The link to ${label} expired. Link it again with a new pairing code from ${label}.`,
       );
     }
-    // Linking a machine again makes a new record, with a new session there.
     return { label, linkId: DateTime.formatIso(link.value.linkedAt) };
   });
 
-  /**
-   * Why a pending add may not be sent any more, if so. A link made again has a new session on
-   * the thread's machine, where an add made under the old one no longer counts as spent by it.
-   */
   const staleAdd = Effect.fn("Missions.staleAdd")(function* (add: PendingAdd) {
     const now = yield* DateTime.now;
     if (add.addedAt < DateTime.formatIso(DateTime.subtract(now, { days: PENDING_ADD_DAYS }))) {
@@ -582,11 +477,6 @@ const make = Effect.gen(function* () {
       : `The link to ${link.label} was made again since this add, so it was not sent again. Add the thread again.`;
   });
 
-  /**
-   * Runs a claim call on the member's own machine. Only a refusal from that machine is a
-   * MissionError. No answer in time, or a link this machine cannot use, is Unreachable: it says
-   * nothing about the claims there.
-   */
   const onMember = Effect.fn("Missions.onMember")(function* (
     environmentId: EnvironmentId,
     call: ClaimCall,
@@ -608,13 +498,10 @@ const make = Effect.gen(function* () {
           return yield* claims.list(here);
         case "rename":
           return yield* claims.rename(here, call);
-        // A member here is read where it is, never through a list.
         case "workspaces":
           return [];
       }
     }
-    // A workspaces follow-up is optional detail: its answer, or its silence, says nothing of
-    // whether the machine answers.
     const settlesReach = call.kind !== "workspaces";
     const { label } = yield* linkTo(environmentId).pipe(
       Effect.catch((cause) =>
@@ -646,7 +533,6 @@ const make = Effect.gen(function* () {
     return reply.success.claims;
   });
 
-  /** Call only under the machine's lock. An answer settles the release, whatever it found there. */
   const sendRelease = Effect.fn("Missions.sendRelease")(function* (
     release: PendingRelease,
     reach: Reach,
@@ -677,19 +563,12 @@ const make = Effect.gen(function* () {
     return shell !== null && shell.deletedAt === null && shell.latestUserMessageAt !== null;
   });
 
-  /**
-   * Call only under the machine's lock. Any answer settles the add: the claim it made, or no
-   * claim when the thread has left since, which spends the add there. A join is safe to send
-   * again, because every copy names the same add and gets the one claim that add made.
-   */
   const sendJoin = Effect.fn("Missions.sendJoin")(function* (
     mission: MissionRecord,
     add: Omit<PendingAdd, "refusal">,
     reach: Reach,
   ) {
-    // Read again under the machine's lock: a rename since the add began must not be lost.
     const { name } = yield* missionNamed(mission.missionId);
-    // The lead hears of a new claim with the write that makes it: here or when it settles.
     const announce = add.noBrief !== true && (yield* hasPriorWork(mission, add));
     const [claim] = yield* onMember(
       add.environmentId,
@@ -703,23 +582,15 @@ const make = Effect.gen(function* () {
       },
       reach,
     );
-    // This machine's own threads have no pending row, and their claims are read, not remembered.
     if (add.environmentId !== here) {
       yield* claim === undefined
         ? store.clearPendingAdd(add)
         : store.settleAdd(add, claim, announce);
     }
     if (claim !== undefined && announce) yield* PubSub.publish(joined, mission.missionId);
-    // None: the claim this add made was dropped there since, so the thread stays out.
     return claim !== undefined;
   });
 
-  /**
-   * What a write asked by `asLead` may do now, read from the Mission and its lead thread as they
-   * are, never kept from when it was asked: that thread must still lead the Mission, and its
-   * modes and its link's fence are its own now. Run under the Mission's lock, which a lead change
-   * takes, so the lead it reads stays the lead until the write is done.
-   */
   const reachOf = Effect.fn("Missions.reachOf")(function* (
     missionId: string,
     asLead: ThreadId | undefined,
@@ -739,8 +610,6 @@ const make = Effect.gen(function* () {
       );
     }
     const limits = { runtimeMode: lead.runtimeMode, interactionMode: lead.interactionMode };
-    // As every T3 tool: work a link below full access started may change only that link's
-    // threads, and may not reach other machines through this one, whose session the peer sees.
     const fence =
       lead.linkOrigin !== undefined && linkOriginIsFenced(lead.linkOrigin)
         ? lead.linkOrigin
@@ -769,7 +638,6 @@ const make = Effect.gen(function* () {
     return { limits, mayChange } satisfies Reach;
   });
 
-  /** A thread here passes the write's check before its claim is written, and again under its locks. */
   const checkHere = Effect.fn("Missions.checkHere")(function* (
     target: ScopedThreadRef,
     reach: Reach,
@@ -781,10 +649,6 @@ const make = Effect.gen(function* () {
     if (shell !== null && shell.deletedAt === null) yield* reach.mayChange(shell);
   });
 
-  /**
-   * One pending write, with the reach of whoever asked for it, read now under its Mission's
-   * lock. A refusal marks only it. Never call it holding a Mission's lock: no code holds two.
-   */
   const sendPending = <A>(
     row: { readonly missionId: string; readonly actor?: ThreadId | undefined } & ScopedThreadRef,
     send: (reach: Reach) => Effect.Effect<A, MissionError | Unreachable>,
@@ -796,8 +660,6 @@ const make = Effect.gen(function* () {
 
   const refreshMachine = Effect.fn("Missions.refreshMachine")(
     function* (environmentId: EnvironmentId) {
-      // Each row stands alone: a refusal marks that row and the next goes. Only a machine
-      // that does not answer ends the sweep of it.
       for (const release of yield* store.pendingReleases) {
         if (release.environmentId !== environmentId || release.refusal !== undefined) continue;
         yield* sendPending(
@@ -828,7 +690,6 @@ const make = Effect.gen(function* () {
         (candidate) => candidate.environmentId === environmentId,
       );
       const askedAt = DateTime.toEpochMillis(yield* DateTime.now);
-      // Every sweep of a machine that answers lists it, since its list is what wakes a lead.
       let held = yield* onMember(environmentId, { kind: "list" }).pipe(
         Effect.tapError(() =>
           check === undefined
@@ -836,14 +697,9 @@ const make = Effect.gen(function* () {
             : store.setTombstoneCheck(environmentId, afterMiss(check, askedAt)),
         ),
       );
-      // A claim on a Mission deleted here may have landed after the delete, from an add whose
-      // answer never came. Any list, for whatever reason it was asked, releases each as any
-      // member is released. A claim made under an old link owner, before a re-pair, is not
-      // listed here; Leave mission on that machine frees it.
       const deleted = yield* store.deletedMissionIds;
       for (const claim of held) {
         if (!deleted.has(claim.missionId)) continue;
-        // The lead machine's own upkeep of a Mission no one leads now: the user's reach.
         yield* sendRelease({ environmentId, ...claim }, USER_REACH).pipe(
           Effect.catchTags({
             MissionError: (error) => Effect.logInfo("A deleted mission's claim stayed", error),
@@ -851,7 +707,6 @@ const make = Effect.gen(function* () {
         );
       }
       held = held.filter((claim) => !deleted.has(claim.missionId));
-      // A refused release whose claim is gone from the list has nothing left to release.
       for (const release of yield* store.pendingReleases) {
         if (
           release.environmentId === environmentId &&
@@ -867,13 +722,10 @@ const make = Effect.gen(function* () {
         }
       }
       yield* noteRemoteDetails(environmentId, held);
-      // A rename below answers claims without their detail.
       const listed = held;
       if (check !== undefined) {
         yield* store.setTombstoneCheck(environmentId, afterAnswer(check, askedAt));
       }
-      // A member's claim, and so its tag, carries the Mission's name. A lead renamed since is
-      // sent to the member's machine here, as often as it still answers with the old name.
       for (const mission of missions) {
         if (
           held.some((claim) => claim.missionId === mission.missionId && claim.name !== mission.name)
@@ -888,7 +740,6 @@ const make = Effect.gen(function* () {
         }
       }
       yield* store.setKnownClaims(environmentId, held);
-      // Only once the list is kept: a slow or failed follow-up must not undo it.
       yield* fetchOmittedWorkspaces(environmentId, listed);
     },
     (effect, environmentId) =>
@@ -900,10 +751,6 @@ const make = Effect.gen(function* () {
       ),
   );
 
-  /**
-   * Remembers what a listing machine said its members are doing, in one step for that machine,
-   * then tells who listens of each member whose detail changed.
-   */
   const noteRemoteDetails = Effect.fn("Missions.noteRemoteDetails")(function* (
     environmentId: EnvironmentId,
     listed: ReadonlyArray<MissionClaim & { readonly detail?: MemberDetail | undefined }>,
@@ -948,12 +795,7 @@ const make = Effect.gen(function* () {
     }
   });
 
-  // When each workspace still omitted was last asked for, by machine, then thread and claim.
   const lastFetched = new Map<EnvironmentId, Map<string, number>>();
-  /**
-   * Workspaces a list left out for room, asked for a few at a time, under the same claims, until
-   * each has come or is too large to, or this sweep's follow-ups to the machine are spent.
-   */
   const fetchOmittedWorkspaces = Effect.fn("Missions.fetchOmittedWorkspaces")(function* (
     environmentId: EnvironmentId,
     listed: ReadonlyArray<MissionClaim & { readonly detail?: MemberDetail | undefined }>,
@@ -971,15 +813,13 @@ const make = Effect.gen(function* () {
       }),
     );
     lastFetched.set(environmentId, fetched);
-    // The least recently fetched go first, so the members a sweep did not reach go first next.
     let left = omitted.toSorted(
       (a, b) => (fetched.get(keyOf(a)) ?? 0) - (fetched.get(keyOf(b)) ?? 0),
     );
     for (let call = 0; call < FOLLOW_UPS_PER_SWEEP && left.length > 0; call += 1) {
       const batch = left.slice(0, WORKSPACES_PER_CALL);
       const answered = yield* onMember(environmentId, { kind: "workspaces", members: batch }).pipe(
-        // A machine that predates the call refuses it, and its workspaces stay as they were. One
-        // that does not answer in time is asked on the next sweep.
+        // Peers without `workspaces` refuse this call. Keep the preceding list.
         Effect.catchTags({
           MissionError: () => Effect.undefined,
           MissionMemberUnreachable: () => Effect.undefined,
@@ -1007,7 +847,6 @@ const make = Effect.gen(function* () {
       const stillOmitted = new Set(
         answered.flatMap((claim) => (claim.detail?.workspace === "omitted" ? [keyOf(claim)] : [])),
       );
-      // Every answer carries at least one workspace, so each round settles one or more.
       if (stillOmitted.size === batch.length) return;
       left = [
         ...left.slice(batch.length),
@@ -1016,7 +855,6 @@ const make = Effect.gen(function* () {
     }
   });
 
-  /** The machines that owe an answer to an add or a release. They stay in every sweep. */
   const owingAnAnswer = Effect.map(
     Effect.all([waiting, store.tombstoneChecks, DateTime.now]),
     ([{ releases, adds }, checks, now]) => [
@@ -1024,21 +862,13 @@ const make = Effect.gen(function* () {
         ...releases.filter((release) => release.refusal === undefined),
         ...adds.filter((add) => add.refusal === null),
       ].map((owed) => owed.environmentId),
-      // A deleted Mission's machines that are due to be asked again.
       ...checks
         .filter((check) => check.nextAt <= DateTime.toEpochMillis(now))
         .map((check) => check.environmentId),
     ],
   );
-  // Set by whoever wants the machines' claims read again; a sweep without it only sends again
-  // what still waits for an answer.
   const discoverNext = yield* Ref.make(false);
-  // Machines a roster asked to be read again, each once, in the next sweep.
   const machinesAsked = yield* Ref.make<ReadonlySet<EnvironmentId>>(new Set());
-  /**
-   * Each Mission takes its lead thread's title as its name. The claims here are checked against
-   * it every time, so a stop between the two writes heals on the next sweep.
-   */
   const followLeadTitles = Effect.gen(function* () {
     for (const mission of yield* store.missions) {
       const shell = yield* threads
@@ -1048,7 +878,6 @@ const make = Effect.gen(function* () {
         shell === null || shell.deletedAt !== null
           ? mission.name
           : missionNameFromTitle(shell.title);
-      // A new lead may have taken over since the title was read, and its title wins.
       const named =
         name === mission.name
           ? name
@@ -1074,18 +903,15 @@ const make = Effect.gen(function* () {
       concurrency: "unbounded",
       discard: true,
     });
-    // Links, reachability and lead threads change outside the store.
     yield* publish;
   }).pipe(
     Effect.withSpan("Missions.sweep"),
     Effect.catchCause((cause) => Effect.logError("Mission claims were not read again", cause)),
   );
 
-  // One sweep at a time for the whole server. Requests made during a sweep share the next one.
   const sweepRequests = yield* Queue.sliding<void>(1);
   const retryWaiting = Queue.offer(sweepRequests, undefined).pipe(Effect.asVoid);
   const refresh = Ref.set(discoverNext, true).pipe(Effect.andThen(retryWaiting));
-  // Deletes missed while this server was stopped.
   yield* letGoOfGoneMembers.pipe(
     Effect.catchCause((cause) => Effect.logWarning("Deleted members were not let go", cause)),
     Effect.forkIn(background),
@@ -1095,8 +921,6 @@ const make = Effect.gen(function* () {
     Effect.forever,
     Effect.forkIn(background),
   );
-  // Members on other machines are asked with no one watching too, so their lead hears when one
-  // needs it: each interval while one is busy, and every IDLE_POLL_INTERVALS intervals otherwise.
   const idleTicks = yield* Ref.make(0);
   yield* Effect.sleep(REFRESH_INTERVAL).pipe(
     Effect.andThen(Effect.all([Ref.get(watchers), owingAnAnswer, store.knownClaims])),
@@ -1144,8 +968,6 @@ const make = Effect.gen(function* () {
     readonly missionId: string;
   }) {
     const mission = yield* missionNamed(input.missionId);
-    // A member whose thread is gone holds nothing back. Claims elsewhere that the lead cannot
-    // see, from adds never answered, are released by the sweeps the tombstone keeps asking.
     yield* letGoOfGoneMembers;
     // Every machine this one can add from is asked too: an older build kept no list of the
     // machines a Mission sent to, and an add forgotten there left nothing behind.
@@ -1172,7 +994,6 @@ const make = Effect.gen(function* () {
     const shell = yield* threads
       .getThreadShell(input.lead.threadId)
       .pipe(Effect.catch((error) => fail(`The thread could not be read: ${error.message}`)));
-    // The write takes the lock a wake holds, so no wake is sent to a lead replaced meanwhile.
     const record = yield* missionLocks.withLock(
       mission.missionId,
       claims.setLead(here, {
@@ -1182,14 +1003,12 @@ const make = Effect.gen(function* () {
         previous: input.expectedLead,
       }),
     );
-    // Updates belong to the Mission, so its new lead hears what its old one had not.
     if (record.leadThreadId !== input.expectedLead) {
       yield* PubSub.publish(leadChanged, record.missionId);
     }
     return yield* missionView(record, yield* machines, yield* shown);
   });
 
-  /** `intentId`: the add a replayed start made, so a machine that spent it refuses it. */
   const addWithIntent = Effect.fn("Missions.addWithIntent")(function* (
     input: {
       readonly missionId: string;
@@ -1210,10 +1029,8 @@ const make = Effect.gen(function* () {
         return next;
       });
     yield* setSending(true);
-    // A release of this thread that still waits is finished first, under its own Mission's lock
-    // and with the reach of whoever asked for it, before this add takes its Mission's lock: no
-    // code holds two Mission locks, so two adds that cross cannot wait on each other. The join
-    // then makes a new claim, which that release cannot match if an earlier copy arrives.
+    // Finish a waiting release before taking this add's Mission lock. No code holds two Mission
+    // locks, so crossed adds cannot deadlock.
     const releaseWaiting = Effect.gen(function* () {
       let answered = true;
       for (const release of yield* store.pendingReleases) {
@@ -1239,10 +1056,8 @@ const make = Effect.gen(function* () {
           missionLocks.withLock(
             mission.missionId,
             Effect.gen(function* () {
-              // Read under the Mission's lock, right before anything is written or sent.
               const reach = yield* reachOf(mission.missionId, asLead, input.member);
               yield* checkHere(input.member, reach);
-              // A link this machine cannot use refuses the add here, before anything is written.
               const linkId =
                 environmentId === here ? "" : (yield* linkTo(environmentId, seesAccess)).linkId;
               const add = {
@@ -1256,18 +1071,13 @@ const make = Effect.gen(function* () {
                 ...(input.noBrief === true ? { noBrief: true as const } : {}),
               };
               return yield* Effect.gen(function* () {
-                // Written before anything is sent. If this call is cut off, or the server stops,
-                // the add is still there to send again. This machine's own threads need none.
                 if (environmentId !== here) yield* store.setPendingAdd(add);
-                // A release its machine did not answer may yet land: the join waits with it.
                 if (!released) return yield* new Unreachable({ environmentId });
                 return (yield* sendJoin(mission, add, reach))
                   ? ("joined" as const)
                   : ("spent" as const);
               }).pipe(
                 Effect.catchTags({
-                  // Nobody knows whether the join landed. The add stays, and is sent again, until
-                  // the thread's machine says what became of it.
                   MissionMemberUnreachable: () => Effect.as(refresh, "pending" as const),
                   MissionError: (error) =>
                     store.clearPendingAdd(add).pipe(Effect.andThen(Effect.fail(error))),
@@ -1295,7 +1105,6 @@ const make = Effect.gen(function* () {
       yield* random.uuidV4().pipe(Effect.orDie),
       seesAccess,
     );
-    // A new intent was never spent, so only a replayed start meets that answer.
     return added === "spent" ? yield* fail("That thread left this mission.") : added;
   });
 
@@ -1310,8 +1119,6 @@ const make = Effect.gen(function* () {
       missionLocks.withLock(
         mission.missionId,
         Effect.gen(function* () {
-          // Who asks, and whether it may, first; then whether the thread is this Mission's.
-          // Nothing changes until both hold.
           const reach = yield* reachOf(mission.missionId, asLead, input.member);
           yield* checkHere(input.member, reach);
           const refused = (yield* store.pendingAdds).find(
@@ -1331,11 +1138,8 @@ const make = Effect.gen(function* () {
           if (claim?.role === "lead") {
             return yield* fail("A mission keeps its lead thread, so the lead cannot leave.");
           }
-          // A refusal the view hides behind a live claim must not take the release meant for it.
           if (refused !== undefined) yield* store.clearPendingAdd(refused);
-          // A thread a lead started stays out once released, whatever replays its start.
           yield* store.startedReleased({ ...input.member, missionId: mission.missionId });
-          // The thread never joined, so releasing it only puts the refusal away.
           if (claim === undefined) return "released" as const;
           const release = {
             ...input.member,
@@ -1379,16 +1183,12 @@ const make = Effect.gen(function* () {
             release.missionId === mission.missionId &&
             release.refusal !== undefined,
         );
-        // Dismissing a refused release puts only it away: the thread stays in the Mission.
         if (!waits && refusedRelease !== undefined) {
           return yield* store
             .clearPendingRelease(refusedRelease)
             .pipe(Effect.andThen(storeChanged));
         }
         if (!waits) return yield* fail("This thread is not waiting on its machine.");
-        // Nothing is sent, and only this Mission's rows for the thread go. A claim the machine
-        // still holds, or a join that lands there later, is real: it shows again whenever that
-        // machine is swept, and Leave mission there frees the thread.
         yield* store.forgetThread({ ...input.member, missionId: mission.missionId });
       }),
     );
@@ -1396,15 +1196,12 @@ const make = Effect.gen(function* () {
 
   const watchAll = Stream.unwrap(
     Effect.gen(function* () {
-      // Subscribed before the first read, so a change in between is not missed.
       const later = yield* PubSub.subscribe(views);
       const first = yield* Effect.acquireRelease(
         Ref.modify(watchers, (count) => [count === 0, count + 1]),
         () => Ref.update(watchers, (count) => count - 1),
       );
       if (first) yield* refresh;
-      // Read under the same lock as every published snapshot, so what was published before it
-      // is older and is dropped.
       const current = yield* publish;
       return Stream.concat(
         Stream.succeed(current.snapshot),
@@ -1439,10 +1236,6 @@ const make = Effect.gen(function* () {
     (named) => new Map(named.map((link) => [link.environmentId, link.label])),
   );
 
-  /**
-   * Each member's number, as "member 3", and its place, "this machine" or "machine 2". Only
-   * read: one the view has not numbered yet is "a member" on "another machine".
-   */
   const numbers = Effect.fn("Missions.numbers")(function* (
     missionId: string,
     members: ReadonlyArray<ScopedThreadRef>,
@@ -1468,9 +1261,7 @@ const make = Effect.gen(function* () {
     );
   });
 
-  // When each machine was last asked again for a workspace a roster showed unfinished.
   const askedAgain = new Map<EnvironmentId, number>();
-  /** Asks each machine again in the background, at most once per gap, so a second look finds it. */
   const askAgainSoon = Effect.fn("Missions.askAgainSoon")(function* (
     environmentIds: Iterable<EnvironmentId>,
   ) {
@@ -1484,10 +1275,6 @@ const make = Effect.gen(function* () {
     }
   });
 
-  /**
-   * The members and what each is doing, numbered. With `named`, also the titles, projects and
-   * machine labels, which only the roster tool returns, as data. A turn reads it without.
-   */
   const members = Effect.fn("Missions.members")(function* (missionId: string, named: boolean) {
     const held = yield* machines;
     const view = yield* missionView(yield* missionNamed(missionId), held, yield* shown);
@@ -1534,7 +1321,6 @@ const make = Effect.gen(function* () {
             ? "this machine"
             : (labels.get(ref.environmentId) ?? ref.environmentId),
         project: named ? (detail?.project ?? "") : "",
-        // An older member machine lists no detail, so its members read as unseen.
         status: state === "offline" || detail === undefined ? "offline" : detail.status,
         title: named ? (detail?.title ?? "") : "",
         ...(named && workspace !== undefined ? { workspace } : {}),
@@ -1559,12 +1345,10 @@ const make = Effect.gen(function* () {
   const memberStatuses = (missionId: string) => members(missionId, false);
 
   /**
-   * A fork starts from its source's history, so a fork of a thread that leads or led a Mission
-   * holds that Mission's instructions too. It is told it leads none, for its context only: its
-   * own claim, and so the lead tools, stay as they are.
+   * Claude forks copy earlier prompts. Retract inherited mission instructions without changing the
+   * fork's claim.
    */
   const forkedFromLead = Effect.fn("Missions.forkedFromLead")(function* (threadId: ThreadId) {
-    // One thread row each, deleted ones too: a deleted fork between still passes the history on.
     const lineageOf = (id: ThreadId) =>
       projections.findThread(id).pipe(
         Effect.map((thread) => thread?.lineage ?? null),
@@ -1664,7 +1448,6 @@ const make = Effect.gen(function* () {
     );
     if (started.state === "released") return undefined;
     if (started.state === "requested") {
-      // A start asked before. Its join stands, unless a stop came before it was made.
       const held = (yield* machines)
         .get(input.member.environmentId)
         ?.claims.some(
@@ -1676,7 +1459,6 @@ const make = Effect.gen(function* () {
       );
       if (held === true || asked) return undefined;
     }
-    // The same add as the first time: a machine that spent it, as the member left since, says so.
     const added = yield* addWithIntent({ ...input, noBrief: true }, asLead, started.intentId);
     return added === "spent" ? undefined : added;
   });
@@ -1723,7 +1505,6 @@ const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(Missions, make);
 
-/** Mission tags mirror claims, so a client may not set or clear them by hand. */
 export const refuseClientMissionTag = (command: OrchestrationV2Command) =>
   command.type === "thread.tag.set" && isMissionTag(command.tag)
     ? Effect.fail(

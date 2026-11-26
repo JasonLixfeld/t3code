@@ -26,7 +26,6 @@ import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { missionWakeCommand } from "../missions/MissionWakes.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
-/** What UnlessParked read as, each time the orchestrator asked this provider something. */
 const seen: Array<boolean> = [];
 const sees = <A>(answer: A) =>
   Effect.map(Orchestrator.UnlessParked, (unlessParked) => {
@@ -100,7 +99,6 @@ it.effect("a wake sent unless parked leaves a settled thread settled, and sends 
         .dispatch(wakeCommand(id))
         .pipe(Effect.provideService(Orchestrator.UnlessParked, true));
     yield* wake("1");
-    // The same command again is a replay of the first, and sends nothing either.
     yield* wake("1");
     const settled = yield* projections.getThreadProjection(threadId);
     assert.equal(settled.thread.settledOverride, "settled");
@@ -122,7 +120,6 @@ it.effect("a client's command cannot ask to be sent unless parked", () =>
   Effect.gen(function* () {
     const orchestrator = yield* settledLead;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
-    // What a client sends is decoded by the command schema, which has no such field.
     const sent = yield* decodeCommand({
       ...wakeCommand("client"),
       unlessParked: true,
@@ -159,7 +156,6 @@ it.effect("a wake to a lead settled with an unread steer leaves the steer for it
     const before = yield* projections.getThreadProjection(threadId);
     const run = before.runs[0]!;
     const now = yield* DateTime.now;
-    // The run ends, then a steer it never read is found pending, and the user settles the lead.
     yield* sink.write({
       events: [
         {
@@ -216,7 +212,6 @@ it.effect("a wake to a lead settled with an unread steer leaves the steer for it
       parked.runs.map((candidate) => candidate.userMessageId),
       [MessageId.make("first")],
     );
-    // Reopened, its next message places the steer first, as for any thread.
     yield* orchestrator.dispatch({
       type: "thread.unsettle",
       commandId: CommandId.make("unsettle-again"),

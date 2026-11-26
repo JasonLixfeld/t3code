@@ -8,11 +8,6 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as MissionClaims from "./MissionClaims.ts";
 import { MissionStore } from "./MissionStore.ts";
 
-/**
- * A member thread deleted here leaves its Mission, as Leave mission does, so its lead stops
- * listing it. An unused side chat T3 deletes on its own goes the same way. A deleted lead keeps
- * its claim: its Mission shows the lead as gone and can take a new one.
- */
 export const releaseDeletedThreads = Effect.fn("MissionThreadDeletions.releaseDeletedThreads")(
   function* <E>(
     events: Stream.Stream<{ readonly type: string; readonly threadId: ThreadId }, E>,
@@ -22,13 +17,14 @@ export const releaseDeletedThreads = Effect.fn("MissionThreadDeletions.releaseDe
     const store = yield* MissionStore;
     yield* Stream.runForEach(events, (event) =>
       event.type === "thread.deleted"
-        ? claims.leaveHere(event.threadId).pipe(
-            Effect.catchTags({ MissionError: () => Effect.void }),
-            // Its start can never be replayed now, so what it asked for is forgotten.
-            Effect.andThen(
-              store.forgetStartedJoin({ environmentId: here, threadId: event.threadId }),
-            ),
-          )
+        ? claims
+            .leaveHere(event.threadId)
+            .pipe(
+              Effect.catchTags({ MissionError: () => Effect.void }),
+              Effect.andThen(
+                store.forgetStartedJoin({ environmentId: here, threadId: event.threadId }),
+              ),
+            )
         : Effect.void,
     );
   },

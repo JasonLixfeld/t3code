@@ -45,10 +45,6 @@ export class PeerMcpClient extends Context.Service<
     readonly call: <S extends Schema.Decoder<unknown>>(
       input: PeerCallInput<S>,
     ) => Effect.Effect<S["Type"], OrchestratorMcpFailure>;
-    /**
-     * As `call`, but keeps the peer's answer apart from its silence: the tool's result or refusal
-     * succeeds, and only a call no tool there answered fails, as `PeerUnanswered`.
-     */
     readonly ask: <S extends Schema.Decoder<unknown>>(
       input: PeerCallInput<S>,
     ) => Effect.Effect<Result.Result<S["Type"], OrchestratorMcpFailure>, PeerUnanswered>;
@@ -60,12 +56,10 @@ export interface PeerCallInput<S extends Schema.Decoder<unknown>> {
   readonly tool: string;
   readonly arguments: Record<string, unknown>;
   readonly limits: PeerCallLimits;
-  /** The thread here the call is made for, sent as `T3-Sender-Thread`. */
   readonly sender?: OrchestrationV2LinkedSender;
   readonly success: S;
 }
 
-/** The call never reached a tool on the peer, or its answer never got back. */
 export class PeerUnanswered extends Schema.TaggedError<PeerUnanswered>()("PeerUnanswered", {
   environmentId: Schema.String,
   cause: OrchestratorMcpFailure,
@@ -312,8 +306,6 @@ const make = Effect.gen(function* () {
       }
       const text = body.result.content.map((part) => part.text ?? "").join("");
       if (body.result.isError === true) {
-        // A refusal keeps the peer's own code, so the agent sees why it was refused. The MCP
-        // server reports an internal failure as bare text, which says nothing of what happened.
         const refused = decodeFailure(text);
         return Result.fail(
           refused._tag === "Some"

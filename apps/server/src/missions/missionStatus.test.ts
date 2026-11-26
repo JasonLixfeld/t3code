@@ -206,7 +206,6 @@ it("a member's own events say when it needs the lead, once per request or run", 
   assert.deepEqual(request("file-change"), { source: "request:req-1", event: "pending-approval" });
   assert.isUndefined(request("user_input", "resolved"));
   assert.isUndefined(request("dynamic_tool_call"));
-  // A secret request card blocks on the user, as the thread's own projection marks it.
   const card = (status: string, nodeId: string | null = "node-1") =>
     updateFromEvent({
       type: "turn-item.updated",
@@ -235,7 +234,6 @@ const detail = (overrides: Partial<MemberDetail>): MemberDetail => ({
 it("a remote member's runs and requests are told by their ids, also between two lists", () => {
   const before = markOf(detail({}));
   assert.deepEqual(remoteUpdates(before, detail({}), 0), []);
-  // A run that started and finished between two lists reads idle both times.
   assert.deepEqual(
     remoteUpdates(before, detail({ run: { id: "run-2", status: "completed" } }), 0),
     [{ source: "run:run-2", event: "completed" }],
@@ -243,7 +241,6 @@ it("a remote member's runs and requests are told by their ids, also between two 
   assert.deepEqual(remoteUpdates(before, detail({ run: { id: "run-2", status: "failed" } }), 0), [
     { source: "run:run-2", event: "failed" },
   ]);
-  // A request answered and replaced by another of its kind between two lists is a new one.
   const asked = markOf(
     detail({ status: "pending-approval", requests: [{ id: "req-1", kind: "command" }] }),
   );
@@ -266,7 +263,6 @@ it("a remote member's runs and requests are told by their ids, also between two 
 });
 
 it("a member first seen tells what needs the lead, and nothing when it is idle or working", () => {
-  // No mark: the lead was told nothing of it, so all of what needs the lead is new.
   assert.deepEqual(
     remoteUpdates(
       undefined,
@@ -297,7 +293,6 @@ it("a member first seen tells what needs the lead, and nothing when it is idle o
     ),
     [{ source: "run:run-3", event: "failed" }],
   );
-  // An idle member's run ended before the lead knew of it.
   assert.deepEqual(remoteUpdates(undefined, detail({}), 0), []);
   const { run: _run, ...unrun } = detail({});
   assert.deepEqual(remoteUpdates(undefined, unrun, 0), []);
