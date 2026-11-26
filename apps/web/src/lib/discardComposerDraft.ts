@@ -37,7 +37,6 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
   // compression under either would recreate the draft.
   cancelPreparingComposerImages(composerTargetKey(target));
   cancelPreparingComposerImages(key);
-  // The mark would start or join a Mission when a thread with this draft's id is sent.
   const missionDraft = discardsSession ? missionDraftOf(target) : undefined;
   if (discardsSession) {
     store.clearDraftThread(target);

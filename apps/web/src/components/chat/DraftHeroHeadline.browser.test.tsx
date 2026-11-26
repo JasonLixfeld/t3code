@@ -50,14 +50,12 @@ vi.mock(
   },
 );
 
-// A machine the project could be cloned to, for a test that offers one.
 const addTargets = vi.hoisted(() => ({ offered: [] as ReadonlyArray<unknown> }));
 vi.mock(import("~/hooks/useAddProjectTargets"), async (original) => ({
   ...(await original()),
   useAddProjectTargets: (() => addTargets.offered) as never,
 }));
 
-// The Missions this machine keeps, for a test that lists some.
 const missionHosts = vi.hoisted(() => ({
   listed: [] as ReadonlyArray<unknown>,
   listeners: new Set<() => void>(),
@@ -74,7 +72,6 @@ vi.mock(import("~/components/sidebar/MissionsSection"), async (original) => {
   };
 });
 
-// A home for threads without a project, on the given machines, opened when the test says.
 const scratch = vi.hoisted(() => ({
   homes: null as ReadonlyArray<string> | null,
   root: "/scratch",
@@ -102,7 +99,6 @@ vi.mock(import("~/hooks/useScratchProject"), async (original) => {
   };
 });
 
-// The browser preview's annotation send, as the right panel hands it out.
 const annotation = vi.hoisted(() => ({
   send: null as ((annotation: unknown, image: null) => void) | null,
 }));
@@ -189,7 +185,6 @@ it("a mission draft's project picker offers only its machine's projects", async 
   useComposerDraftStore
     .getState()
     .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId);
-  // The Mission it leads lives on a machine none of these projects are on.
   markMissionDraft(draftId, {
     intent: { kind: "new" },
     thread: { environmentId: EnvironmentId.make("mission-machine"), threadId: ThreadId.make("t") },
@@ -199,14 +194,12 @@ it("a mission draft's project picker offers only its machine's projects", async 
   const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
     router: false,
   });
   await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
   expect(await projectOptions()).toEqual(["Add project"]);
 });
 
-/** The names the open Project picker offers. */
 async function projectOptions() {
   const trigger = document.querySelector<HTMLElement>("[data-draft-project-trigger]");
   if (!trigger) throw new Error("The draft project picker did not render.");
@@ -226,7 +219,6 @@ const leadIntent = {
   expectedLead: ThreadId.make("deleted-lead"),
 } as const;
 
-/** The app on an empty draft, with New thread in... picking the render project. */
 async function openApp() {
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
@@ -239,7 +231,6 @@ async function openApp() {
   const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${start}`] }));
   await router.load();
   const app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
     router: false,
   });
   await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
@@ -272,7 +263,6 @@ it("a plain new thread in a New-lead draft's project gets its own draft", async 
 
 it("a new mission from a New-lead draft starts on a draft of its own", async () => {
   using _environment = installFakeEnvironment([]);
-  // A new mission starts only on a machine that keeps missions.
   missionHosts.listed = [
     { environmentId: ENVIRONMENT_ID, snapshot: { missions: [], links: [], claims: [] } },
   ];
@@ -288,7 +278,6 @@ it("a new mission from a New-lead draft starts on a draft of its own", async () 
 });
 
 it("does not offer a mission draft another machine to run on", async () => {
-  // The app's styles show the composer's Run on control only on wider windows.
   await page.viewport(1100, 760);
   onTestFinished(() => page.viewport(414, 896));
   using _environment = installFakeEnvironment([]);
@@ -309,17 +298,14 @@ it("does not offer a mission draft another machine to run on", async () => {
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
   });
   await using _app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
     router: false,
   });
   const runOn = () => document.querySelectorAll<HTMLElement>('[aria-label="Run on"]');
-  // A plain draft offers the other machine.
   await vi.waitFor(() => expect(runOn().length).toBeGreaterThan(0));
   await userEvent.click(page.elementLocator(runOn()[0]!));
   await expect.element(page.getByRole("option", { name: "Add to another machine" })).toBeVisible();
   await userEvent.keyboard("{Escape}");
 
-  // Marked as a mission draft, it keeps to its machine.
   const threadId = useComposerDraftStore.getState().getDraftSession(plainDraft)!.threadId;
   await act(() =>
     markMissionDraft(plainDraft, {
@@ -373,7 +359,6 @@ it("a new thread's Mission choice marks its draft to join that mission, or none"
   const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
     router: false,
   });
   const trigger = missionTrigger();
@@ -382,11 +367,9 @@ it("a new thread's Mission choice marks its draft to join that mission, or none"
   await expect
     .element(page.getByRole("heading", { level: 1 }))
     .toMatchTextContent(/^What should we build in render\?/);
-  // The action under the sentence is not part of the heading's name.
   await expect
     .element(page.getByRole("heading", { level: 1 }))
     .toHaveAccessibleName("What should we build in render?");
-  // The trigger moves between the footer and the heading, and keyboard focus moves with it.
   (trigger.element() as HTMLElement).focus();
   await userEvent.keyboard("{Enter}");
   await expect.element(page.getByRole("menuitemradio", { name: "Ship v2" })).toBeVisible();
@@ -410,7 +393,6 @@ it("a new thread's Mission choice marks its draft to join that mission, or none"
   expect(missionDraftOf(draftId)).toBeUndefined();
   await expect.element(page.getByRole("button", { name: "Add to a mission" })).toHaveFocus();
 
-  // A new mission it leads fixes the choice.
   await userEvent.keyboard("{Enter}");
   await expect.element(page.getByRole("menuitemradio", { name: "None" })).toBeVisible();
   await userEvent.keyboard("{End}");
@@ -513,7 +495,6 @@ it.each([
   const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
     router: false,
   });
   await expect.element(missionTrigger()).toMatchTextContent(new RegExp(`${shown}$`));
@@ -545,7 +526,6 @@ it("the Mission choice tells apart two machines' missions that share an id", asy
     .getState()
     .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId);
   const threadId = useComposerDraftStore.getState().getDraftSession(draftId)!.threadId;
-  // New thread in this mission marked it to join the laptop's mission.
   markMissionDraft(draftId, {
     intent: { kind: "member", host: laptop, missionId: "ba9876543210", name: "Laptop work" },
     thread: { environmentId: ENVIRONMENT_ID, threadId },
@@ -554,7 +534,6 @@ it("the Mission choice tells apart two machines' missions that share an id", asy
   const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
     router: false,
   });
   const trigger = missionTrigger();
@@ -587,7 +566,6 @@ function listMissions(hosts: ReadonlyArray<unknown>) {
   });
 }
 
-/** The app on a draft of the render project, marked for a Mission when given one. */
 async function openDraft(name: string, intent?: MissionDraftIntent, missionsOn = true) {
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
@@ -608,7 +586,6 @@ async function openDraft(name: string, intent?: MissionDraftIntent, missionsOn =
   await using stack = new AsyncDisposableStack();
   const app = stack.use(
     await render(<AppRoot router={router} />, {
-      // AppRoot brings its own router.
       router: false,
     }),
   );
@@ -668,7 +645,6 @@ it.each([
     await expect.element(page.getByRole("heading", { level: 1 })).toHaveAccessibleName(heading);
     await expect.element(trigger).toHaveAttribute("aria-disabled", "true");
     await expect.element(page.getByText(notice)).toBeVisible();
-    // The pointer lands on the tooltip's wrapper, as it does with the app's styles.
     await userEvent.hover(page.elementLocator(trigger.element().parentElement!));
     await expect
       .element(
@@ -677,7 +653,6 @@ it.each([
         ),
       )
       .toBeVisible();
-    // The user picks the lead's project on the mission's machine.
     await userEvent.unhover(page.elementLocator(trigger.element().parentElement!));
     expect(await projectOptions()).toContainEqual(expect.stringMatching(/render$/));
   },
@@ -717,7 +692,6 @@ it("keeps a chosen mission's control while the draft's project title loads", asy
   const trigger = page.getByRole("button", { name: "Mission: Ship v2" });
   await expect.element(trigger).toHaveTextContent("Mission: Ship v2");
 
-  // A menu opened before the title loads stays open, and its pick still lands.
   (trigger.element() as HTMLElement).focus();
   await userEvent.keyboard("{Enter}");
   await expect.element(page.getByRole("menuitemradio", { name: "None" })).toBeVisible();
@@ -736,7 +710,6 @@ it("keeps a chosen mission's control while the draft's project title loads", asy
   await expect.element(page.getByRole("button", { name: "Add to a mission" })).toHaveFocus();
 });
 
-/** No project's home is the render project, so its drafts are No project drafts. */
 function renderIsNoProject() {
   holdScratch([ENVIRONMENT_ID]);
   scratch.root = "/workspace/render";
@@ -844,7 +817,6 @@ it.each([
     const [first, second] = controls.toSorted((a, b) => a.box.left - b.box.left);
     expect(Math.abs(first!.box.top - second!.box.top)).toBeLessThan(2);
     expect(first!.box.right).toBeLessThanOrEqual(second!.box.left);
-    // The short headline is one row, with its words hidden.
     expect(
       document.querySelector("h1")!.parentElement!.getBoundingClientRect().height,
     ).toBeLessThan(40);
@@ -865,7 +837,6 @@ it("a Project pick retargets the draft as the headline link did", async () => {
     ],
   });
   await using app = await openDraft("draft-project-pick");
-  // An empty draft opens the picked project's own draft.
   await projectOptions();
   await page.getByRole("option", { name: "beta" }).click();
   await vi.waitFor(() =>
@@ -874,7 +845,6 @@ it("a Project pick retargets the draft as the headline link did", async () => {
   const opened = DraftId.make(app.router.state.location.pathname.replace("/draft/", ""));
   expect(useComposerDraftStore.getState().getDraftSession(opened)?.projectId).toBe("project-beta");
 
-  // A draft with words in it moves to the picked project and keeps them.
   useComposerDraftStore.getState().setPrompt(opened, "Plan the launch");
   await projectOptions();
   await page.getByRole("option", { name: "alpha" }).click();
@@ -933,7 +903,6 @@ const alphaProject = {
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
 
-/** No project opens on these machines; the returned function lets the open finish. */
 function holdScratch(homes: ReadonlyArray<EnvironmentId>, usual: EnvironmentId = ENVIRONMENT_ID) {
   let finish = () => {};
   scratch.homes = homes;
@@ -1006,7 +975,6 @@ it("No project left pending does not move a mission draft that started sending",
   await using app = await openDraft("draft-scratch-then-send", { kind: "new" });
   const marked = missionDraftOf(app.draftId);
   await pickNoProject();
-  // What a send does to the draft before the server answers.
   const session = useComposerDraftStore.getState().getDraftSession(app.draftId)!;
   await act(() => {
     markPromotedDraftThreadByRef(scopeThreadRef(session.environmentId, session.threadId));
@@ -1101,7 +1069,6 @@ it("a No project request that never answers unlocks the draft after the timeout"
   await expect.element(page.getByRole("combobox", { name: "Project: render" })).toBeEnabled();
   await expect.element(missionTrigger()).not.toHaveAttribute("data-disabled");
   await expect.element(page.getByRole("button", { name: "Submit message" })).toBeEnabled();
-  // The request itself was aborted, which frees the machine's project queue.
   expect(vi.mocked(opened).mock.calls[0]?.[2]).toMatchObject({ aborted: true });
 });
 
@@ -1184,7 +1151,6 @@ it("applies No project from a machine that is still allowed after the usual home
   await act(() => useComposerDraftStore.getState().setPrompt(app.draftId, "Plan the launch"));
   await pickNoProject();
   expect(opened).toHaveBeenCalledWith(secondary, undefined, expect.any(AbortSignal));
-  // The primary reconnects, so it is the usual home again, and the picker renders with it.
   await act(() => {
     scratch.usual = ENVIRONMENT_ID;
     missionHosts.listed = [...missionHosts.listed];

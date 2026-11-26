@@ -711,7 +711,6 @@ it("refuses to send a mission draft that left its mission's machine", async () =
   useComposerDraftStore
     .getState()
     .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, { threadId });
-  // The mission waits for this thread on another machine, so the draft has moved off it.
   markMissionDraft(draftId, {
     intent: { kind: "new" },
     thread: { environmentId: EnvironmentId.make("mission-machine"), threadId },
@@ -721,7 +720,6 @@ it("refuses to send a mission draft that left its mission's machine", async () =
   const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
     router: false,
   });
   const editor = page.getByTestId("composer-editor");

@@ -1,10 +1,6 @@
 export const PROJECT_SLOT = "";
 export const MISSION_SLOT = "";
 
-/**
- * Splits a translated headline at its project and mission placeholders. A string with a placeholder
- * twice, or the mission before the project, keeps its words in one piece before both controls.
- */
 export function splitDraftHeroSentence(sentence: string) {
   const projectAt = sentence.indexOf(PROJECT_SLOT);
   const missionAt = sentence.indexOf(MISSION_SLOT);

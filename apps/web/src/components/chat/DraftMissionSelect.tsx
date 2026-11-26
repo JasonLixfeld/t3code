@@ -34,7 +34,6 @@ interface MissionItem {
   readonly mission?: Mission;
 }
 
-/** The machines a Mission draft's project can be on, or null when any will do. */
 export function useDraftProjectMachines(draftId: DraftId | null) {
   const enabled = useClientSettings((settings) => settings.sidebarMissionsEnabled);
   const hosts = useMissionHosts();
@@ -43,7 +42,6 @@ export function useDraftProjectMachines(draftId: DraftId | null) {
   );
   if (marked === undefined) return null;
   const pinned = new Set([marked.thread.environmentId]);
-  // With Missions off no machine lists its links, so the draft keeps to the machine it is on.
   return enabled ? (missionDraftMachines(marked.intent, hosts) ?? pinned) : pinned;
 }
 
@@ -66,20 +64,16 @@ export function useDraftMissionChoice(
     draftId === null ? undefined : state.drafts.get(draftId),
   );
   const preparingScratch = useScratchPending(draftId);
-  // A pick can move the trigger between the heading and the line under it, which remounts it.
   const refocusTrigger = useRef(false);
   const threadId = useComposerDraftStore((store) =>
     draftId === null ? null : (store.getDraftSession(draftId)?.threadId ?? null),
   );
   if (!enabled || draftId === null || environmentId === null || threadId === null) return null;
-  // A marked draft keeps its choice in view, so it can still be sent as a plain thread.
   const writable = startMachines.has(environmentId);
   if (!writable && marked === undefined) return null;
   const missionOn = (host: EnvironmentId) =>
     hosts.find((candidate) => candidate.environmentId === host)?.snapshot.missions ?? [];
   const keyOf = (host: EnvironmentId, missionId: string) => `${host}:${missionId}`;
-  // Options are keyed by machine and id, so a Mission on a machine linked to this one, as New
-  // thread in this mission picks, is told apart from one here.
   const items: Array<MissionItem> = [
     { value: NO_MISSION, label: gt("None", { $context: "no mission" }) },
     ...missionOn(environmentId).map((mission) => ({
@@ -96,7 +90,6 @@ export function useDraftMissionChoice(
   if (marked?.intent.kind === "member" && !items.some((item) => item.value === joining)) {
     const { host, missionId } = marked.intent;
     const mission = missionOn(host).find((candidate) => candidate.missionId === missionId);
-    // Gone from its machine's list, so nothing joins it until another pick.
     items.push(
       mission === undefined
         ? { value: joining, label: gt("Unavailable mission") }

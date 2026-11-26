@@ -328,7 +328,6 @@ export function createNewThreadHandler(router: AnyRouter) {
     if (storedDraftThreadRef && reusableStoredDraftThread === null) {
       markPromotedDraftThreadByRef(storedDraftThreadRef);
     }
-    // A Mission draft belongs to the Mission it starts or leads; every other new thread is fresh.
     const emptyStoredDraftThread =
       reusableStoredDraftThread &&
       !isMissionDraft(reusableStoredDraftThread.draftId) &&

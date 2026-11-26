@@ -320,7 +320,6 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     // `triagePrompt` is the prompt the target machine prepared for a triage draft.
     const retarget = (project: (typeof allProjects)[number], triagePrompt?: string) => {
       const currentDraft = getDraftSession(draftId);
-      // A draft marked for a Mission while the machine prepared stays on the machine it is pinned to.
       const pinnedTo = missionDraftOf(draftId)?.thread.environmentId;
       if (
         (pinnedTo !== undefined && pinnedTo !== target.environmentId) ||

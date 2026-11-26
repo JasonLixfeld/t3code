@@ -724,7 +724,6 @@ export const BranchToolbar = memo(function BranchToolbar({
   );
 
   const projectAddTargets = useAddProjectTargets(activeProject, availableEnvironments);
-  // A Mission draft stays on its Mission's machine, so it is not offered another one.
   const addTargets = useMissionDraftPinned(draftId ?? null) ? NO_ADD_TARGETS : projectAddTargets;
   const onAddToMachine = (targetEnvironmentId: EnvironmentId | null) =>
     openAddProjectToMachine({ projectRef: activeProjectRef, targetEnvironmentId });

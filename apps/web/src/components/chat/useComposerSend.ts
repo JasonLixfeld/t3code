@@ -432,7 +432,6 @@ export function useComposerSend(input: ComposerSendInput) {
     },
   ) => {
     e?.preventDefault();
-    // Every send path stops here while the draft's "No project" home is still opening.
     if (draftId !== null && isScratchPending(draftId)) {
       toastManager.add(
         stackedThreadToast({ type: "warning", title: m(msg("Preparing No project…")) }),

@@ -89,7 +89,6 @@ export function multipleModelSendBlock(input: {
   readonly isLocalDraftThread: boolean;
   readonly isGitRepo: boolean;
   readonly branch: string | null;
-  /** A Mission draft becomes one thread, its lead. */
   readonly isMissionDraft: boolean;
 }): "mission-draft" | "server-outdated" | "needs-new-git-thread" | null {
   if (input.isMissionDraft) return "mission-draft";
@@ -105,10 +104,6 @@ export function multipleModelSendBlock(input: {
   return null;
 }
 
-/**
- * A Mission draft waits for its own thread on its Mission's machine. Sent as any other, it would
- * start nothing, so the send is refused while the draft is elsewhere.
- */
 export function missionDraftMoved(
   pinned: ScopedThreadRef | undefined,
   sending: { readonly environmentId: EnvironmentId; readonly id: ThreadId },

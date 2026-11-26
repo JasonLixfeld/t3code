@@ -108,10 +108,8 @@ export function DraftHeroHeadline({
   const pickerFilter = useComboboxFilter();
   const highlightedPickerValueRef = useRef<string | null>(null);
   const { canPinProjectGroup, toggleProjectGroupPin } = useProjectPin();
-  // A Mission draft offers only the projects on machines where its Mission can take it.
   const missionMachines = useDraftProjectMachines(draftId);
   const mission = useDraftMissionChoice(draftId, activeProjectRef?.environmentId ?? null);
-  // Entering or leaving No project moves the picker between the heading and the line under it.
   const refocusProject = useRef(false);
   const refocusProjectPicker = () => {
     refocusProject.current = true;
@@ -195,10 +193,6 @@ export function DraftHeroHeadline({
   const selectedValue = isScratchDraft ? NO_PROJECT_VALUE : activeProjectKey;
   const selectedPickerItem = pickerItems.find((item) => item.value === selectedValue) ?? null;
 
-  // The request for the no-project home belongs to this picker while its draft is in front.
-  // While it is pending the draft cannot send or change project or mission. Leaving the draft,
-  // Settings or Usage opening over it, or unmounting the picker aborts it, so its reply never
-  // applies.
   const pendingScratchRef = useRef<AbortController | null>(null);
   const preparingScratch = useScratchPending(draftId);
   const inBackground = use(BackgroundThreadContext);
@@ -223,7 +217,6 @@ export function DraftHeroHeadline({
         .sendInFlight.current
     );
   };
-  // Null once the draft is sending, so a request from before the send never applies.
   const draftTargetKey = () => {
     const session = draftId ? useComposerDraftStore.getState().getDraftSession(draftId) : null;
     return session && !session.promotedTo
@@ -239,7 +232,6 @@ export function DraftHeroHeadline({
     const mark = missionDraftOf(draftId);
     if (!composerDraftHasUserContent(getComposerDraft(draftId))) {
       void openProjectDraft(projectRef).then((opened) => {
-        // A mark that changed while the project's draft opened stays on its own draft.
         if (opened !== null && mark !== undefined && missionDraftOf(draftId) === mark) {
           moveMissionDraft(
             draftId,
@@ -267,7 +259,6 @@ export function DraftHeroHeadline({
     setScratchPending(draftId, true);
     const requestedMark = missionDraftOf(draftId);
     const timeout = window.setTimeout(() => request.abort(), SCRATCH_REPLY_TIMEOUT_MS);
-    // An abort detaches at once, even from a reply that never comes.
     const aborted = new Promise<null>((resolve) => {
       request.signal.addEventListener("abort", () => resolve(null), { once: true });
     });
@@ -287,7 +278,6 @@ export function DraftHeroHeadline({
       });
       return;
     }
-    // Defence in depth: the draft cannot change while pending, but a stale reply never applies.
     if (
       !project ||
       sendInFlight() ||
@@ -296,7 +286,6 @@ export function DraftHeroHeadline({
     ) {
       return;
     }
-    // The draft's mission may no longer allow that machine, for example after a link lost access.
     const machines = readProjectMachines();
     if (machines !== null && !machines.has(home)) {
       toastManager.add({
@@ -472,10 +461,7 @@ export function DraftHeroHeadline({
           : sentenceMission === "lead"
             ? gt("What should we build in {project}, as the new lead for {mission}?", slots)
             : gt("What should we build in {project}?", slots);
-  // One string for translators; the controls sit at its placeholders, in slots that stay mounted
-  // whichever sentence shows, so a menu open on them survives the change.
   const { beforeProject, beforeMission, afterMission } = splitDraftHeroSentence(sentence);
-  // The heading reads as its sentence: the action under it and the controls' own labels stay out.
   const headingName = [
     beforeProject,
     isScratchDraft ? "" : projectValue,
@@ -485,7 +471,6 @@ export function DraftHeroHeadline({
   ].join("");
   const prose = (text: string) =>
     text ? <span className="[@media(max-height:28rem)]:sr-only">{text}</span> : null;
-  // The word or punctuation right after a control stays on its line, so "?" never wraps alone.
   const glue = (text: string): [string, string] => {
     const at = text.search(/\s/);
     return at === -1 ? [text, ""] : [text.slice(0, at), text.slice(at)];

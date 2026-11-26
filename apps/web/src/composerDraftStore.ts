@@ -3012,7 +3012,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 state.draftsByThreadKey[previousThreadKeyForLogicalProject],
               ) &&
               !draftThreadHasOpenPreview(previousDraftThread) &&
-              // An empty Mission draft still starts or leads its Mission once sent.
               !isMissionDraft(DraftId.make(previousThreadKeyForLogicalProject))
             ) {
               delete nextDraftThreadsByThreadKey[previousThreadKeyForLogicalProject];

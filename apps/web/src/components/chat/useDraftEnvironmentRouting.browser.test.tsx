@@ -414,7 +414,6 @@ it("drops a machine switch when the draft is marked for a mission while the mach
         ...input,
         automaticEnvironment: false,
         draftThread: store.getDraftSession(draftId),
-        // B does not have the project yet, so the switch first opens a home for it there.
         logicalProjectEnvironments: input.logicalProjectEnvironments.map((environment) =>
           environment.environmentId === b ? { ...environment, projectId: null } : environment,
         ),
