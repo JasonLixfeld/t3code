@@ -194,6 +194,15 @@ it("reads a member's status from its thread", () => {
     "working",
   );
   assert.equal(memberStatusOf({ ...shell, status: "failed", ...tasks("subagent") }), "failed");
+  assert.equal(
+    memberStatusOf({
+      ...shell,
+      status: "completed",
+      hasActionableProposedPlan: true,
+      ...tasks("monitor", true),
+    }),
+    "awaiting-input",
+  );
 });
 
 it("a member whose turn ended while its own work runs is told once that work ends", () => {
@@ -255,6 +264,19 @@ it("a held run first seen is owed once, and a run already told is not owed again
   const heldAgain = memberUpdates(told.mark, detail({ status: "working", held: true }), 0);
   assert.deepEqual(heldAgain.updates, []);
   assert.deepEqual(updatesOf(heldAgain.mark, detail({ held: false }), 0), []);
+});
+
+it("a plan ready is told once, and the finished run only once the plan is gone", () => {
+  const planned = memberUpdates(
+    markOf(detail({ status: "working", run: { id: "run-8", status: "running" } })),
+    detail({ status: "awaiting-input", run: { id: "run-8", status: "completed" }, plan: true }),
+    0,
+  );
+  assert.deepEqual(planned.updates, [{ source: "plan:run-8", event: "awaiting-input" }]);
+  assert.deepEqual(
+    updatesOf(planned.mark, detail({ run: { id: "run-8", status: "completed" }, plan: false }), 0),
+    [{ source: "run:run-8", event: "completed" }],
+  );
 });
 
 it("only a move into a state that needs the lead, or a finished turn, is an update", () => {
