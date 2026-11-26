@@ -24,10 +24,9 @@ import { MissionStore, type MissionRecord, numberKey } from "./MissionStore.ts";
 import { Missions } from "./Missions.ts";
 import {
   wasCompletionHeld,
-  markOf,
   ATTENTION_LINES,
   missionUpdateText,
-  remoteUpdates,
+  memberUpdates,
   shellDetail,
   type SourcedUpdate,
   updateFromEvent,
@@ -107,8 +106,9 @@ export const layer = Layer.effectDiscard(
       unseen?: string,
     ) {
       const before = (yield* store.memberMark(ref)) ?? unseen;
-      yield* record(missionId, ref, remoteUpdates(before, detail, yield* Clock.currentTimeMillis));
-      yield* store.setMemberMark(ref, markOf(detail));
+      const { updates, mark } = memberUpdates(before, detail, yield* Clock.currentTimeMillis);
+      yield* record(missionId, ref, updates);
+      yield* store.setMemberMark(ref, mark);
     });
 
     const observeRunWithoutRequests = Effect.fn("MissionWakes.observeRunWithoutRequests")(
