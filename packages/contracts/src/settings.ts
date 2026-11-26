@@ -2094,7 +2094,10 @@ export function requiredScopesForServerSettingsPatch(
     ...(changesProviders ? [AuthProvidersManageScope] : []),
     ...(changesAccess ? [AuthAccessWriteScope] : []),
     // Saving a script is choosing a command for the host to run, wherever the patch carries it.
-    ...(carriesProjectScripts(patch) ? [AuthOrchestrationOperateScope] : []),
+    // The mission prompt is what every lead agent is told to do, Full access leads among them.
+    ...(carriesProjectScripts(patch) || patch.missionDefaultPrompt !== undefined
+      ? [AuthOrchestrationOperateScope]
+      : []),
   ];
 }
 

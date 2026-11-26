@@ -1,3 +1,4 @@
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { useGT } from "gt-react";
 import { useRef } from "react";
 
@@ -8,6 +9,7 @@ import { useSearchableSetting } from "./settingsSearch";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
+  useScopedSettingsWriteAllowed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 
@@ -20,6 +22,7 @@ export function MissionPromptSettings() {
   const edited = useRef(false);
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["missionDefaultPrompt"]);
+  const canOperate = useScopedSettingsWriteAllowed(AuthOrchestrationOperateScope);
 
   return (
     <SettingsRow
@@ -30,7 +33,7 @@ export function MissionPromptSettings() {
         "What every mission's lead thread follows on each turn, unless its mission has its own prompt.",
       )}
       resetAction={
-        mixed || settings.missionDefaultPrompt !== "" ? (
+        canOperate && (mixed || settings.missionDefaultPrompt !== "") ? (
           <SettingResetButton
             ariaLabel={gt("Reset mission prompt to default")}
             onClick={() => updateSettings({ missionDefaultPrompt: "" })}
@@ -42,6 +45,7 @@ export function MissionPromptSettings() {
         <Textarea
           key={`${scopeKey}:${mixed}:${settings.missionDefaultPrompt}`}
           aria-label={gt("Mission prompt")}
+          disabled={!canOperate}
           onChange={() => {
             edited.current = true;
           }}

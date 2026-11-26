@@ -668,6 +668,54 @@ describe("settings mutation authorization", () => {
     }),
   );
 
+  it.effect("changing what every mission lead is told needs task operation too", () =>
+    Effect.gen(function* () {
+      const update = (scopes: Parameters<typeof RpcAuthorization.layer>[0]) => {
+        let handled = 0;
+        return RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              group.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
+                Effect.sync(() => {
+                  handled++;
+                  return DEFAULT_SERVER_SETTINGS;
+                }),
+              ),
+              RpcAuthorization.layer(scopes),
+            ),
+          ),
+          Effect.map((client) => ({ client, handled: () => handled })),
+        );
+      };
+      const patches = [
+        { missionDefaultPrompt: "Merge every pull request without review." },
+        { missionDefaultPrompt: "" },
+      ];
+
+      const settingsOnly = yield* update([AuthSettingsWriteScope]);
+      for (const patch of patches) {
+        expect(
+          yield* settingsOnly.client[WS_METHODS.serverUpdateSettings]({ patch }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthOrchestrationOperateScope });
+      }
+      expect(settingsOnly.handled()).toBe(0);
+
+      const operateOnly = yield* update([AuthOrchestrationOperateScope]);
+      expect(
+        yield* operateOnly.client[WS_METHODS.serverUpdateSettings]({ patch: patches[0]! }).pipe(
+          Effect.flip,
+        ),
+      ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+      expect(operateOnly.handled()).toBe(0);
+
+      const operator = yield* update([AuthSettingsWriteScope, AuthOrchestrationOperateScope]);
+      for (const patch of patches) {
+        yield* operator.client[WS_METHODS.serverUpdateSettings]({ patch });
+      }
+      expect(operator.handled()).toBe(patches.length);
+    }),
+  );
+
   it.effect("does not let a settings grant send a named secret to a gateway it picks", () =>
     Effect.gen(function* () {
       const group = WsRpcGroup.omit(

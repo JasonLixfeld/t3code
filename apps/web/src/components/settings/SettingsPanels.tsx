@@ -8,6 +8,7 @@ import { msg, T, useGT, useMessages } from "gt-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import {
+  AuthOrchestrationOperateScope,
   type DesktopUpdateChannel,
   IDLE_COMPACTION_MODES,
   type IdleCompactionMode,
@@ -63,6 +64,7 @@ import {
 import {
   useScopedSettings,
   useScopedSettingsMixed,
+  useScopedSettingsWriteAllowed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
@@ -492,6 +494,9 @@ export function useSettingsRestore(onRestored?: () => void) {
   } = useTheme();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const resetsMissionPrompt =
+    useScopedSettingsWriteAllowed(AuthOrchestrationOperateScope) &&
+    settings.missionDefaultPrompt !== DEFAULT_UNIFIED_SETTINGS.missionDefaultPrompt;
 
   const isTextGenerationModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
@@ -662,9 +667,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.threadTitleInstructions !== DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions
       ? [gt("Thread title instructions")]
       : []),
-    ...(settings.missionDefaultPrompt !== DEFAULT_UNIFIED_SETTINGS.missionDefaultPrompt
-      ? [gt("Mission prompt")]
-      : []),
+    ...(resetsMissionPrompt ? [gt("Mission prompt")] : []),
     ...getChangedBrowserSettingLabels(settings, messages),
     ...(settings.enableAgentBrowserAccess !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess
       ? [gt("Agent browser access")]
@@ -782,7 +785,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       threadTitleInstructions: DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions,
-      missionDefaultPrompt: DEFAULT_UNIFIED_SETTINGS.missionDefaultPrompt,
+      ...(resetsMissionPrompt
+        ? { missionDefaultPrompt: DEFAULT_UNIFIED_SETTINGS.missionDefaultPrompt }
+        : {}),
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
       fontFamilyCode: DEFAULT_UNIFIED_SETTINGS.fontFamilyCode,
