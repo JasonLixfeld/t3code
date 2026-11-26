@@ -1,12 +1,19 @@
 import {
   EnvironmentId,
   type ExecutionEnvironmentDescriptor,
+  MessageId,
   type Mission,
   type MissionLink,
   type MissionMember,
+  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2RunAttempt,
+  type OrchestrationV2TurnItem,
   ProjectId,
+  RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -22,6 +29,7 @@ import {
   type MissionHost,
   missionsLiveKey,
   parseMissionTarget,
+  withoutQuietMissionUpdates,
 } from "./missions.ts";
 
 const DESK = EnvironmentId.make("env-desk");
@@ -753,5 +761,149 @@ describe("missionLeadCandidates", () => {
       hosts,
     );
     expect(candidates.map((entry) => entry.id)).toEqual(["newer", "older"]);
+  });
+});
+
+describe("withoutQuietMissionUpdates", () => {
+  const at = DateTime.makeUnsafe("2026-11-26T00:00:00.000Z");
+  const LEAD = ThreadId.make("lead");
+  type Item = OrchestrationV2TurnItem;
+  const base = (run: string, id: string) => ({
+    id: TurnItemId.make(`${run}:${id}`),
+    threadId: LEAD,
+    runId: RunId.make(run),
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 0,
+    status: "completed" as const,
+    title: null,
+    startedAt: at,
+    completedAt: at,
+    updatedAt: at,
+  });
+  const wake = (run: string): Item => ({
+    ...base(run, "wake"),
+    type: "notification",
+    source: { kind: "system" },
+    outcome: "updated",
+    summary: "Mission update",
+    detail: "Mission update: member 1 is awaiting input.",
+  });
+  const tool = (run: string, toolName: string, status: Item["status"] = "completed"): Item => ({
+    ...base(run, toolName),
+    status,
+    type: "dynamic_tool",
+    toolName,
+    input: {},
+  });
+  const reply = (run: string, text: string): Item => ({
+    ...base(run, "reply"),
+    type: "assistant_message",
+    messageId: MessageId.make(`${run}:reply`),
+    text,
+    streaming: false,
+  });
+  const thought = (run: string): Item => ({
+    ...base(run, "thought"),
+    type: "reasoning",
+    text: "Checking the member.",
+    streaming: false,
+  });
+  const user = (run: string, inputIntent: "turn_start" | "steer" = "turn_start"): Item => ({
+    ...base(run, `user-${inputIntent}`),
+    type: "user_message",
+    messageId: MessageId.make(`${run}:user-${inputIntent}`),
+    createdBy: "user",
+    creationSource: "web",
+    inputIntent,
+    text: "How is it going?",
+    attachments: [],
+  });
+  const question = (run: string): Item => ({
+    ...base(run, "question"),
+    status: "waiting",
+    type: "user_input_request",
+    requestId: "question" as never,
+    questions: [],
+  });
+  const rows = (items: ReadonlyArray<Item>): Array<OrchestrationV2ProjectedTurnItem> =>
+    items.map((item, position) => ({
+      position,
+      visibility: "local",
+      sourceThreadId: LEAD,
+      sourceItemId: item.id,
+      item,
+    }));
+  const attempt = (
+    run: string,
+    status: OrchestrationV2RunAttempt["status"],
+    attemptOrdinal = 1,
+  ): Pick<OrchestrationV2RunAttempt, "runId" | "attemptOrdinal" | "status"> => ({
+    runId: RunId.make(run),
+    attemptOrdinal,
+    status,
+  });
+  const quietRun = (run: string) => [
+    wake(run),
+    thought(run),
+    tool(run, "mcp__t3-code__t3_thread_read"),
+    tool(run, "t3_mission_roster"),
+    reply(run, "  "),
+  ];
+
+  it("hides finished wakes that only read and wrote nothing, and keeps the turns around them", () => {
+    const thread = rows([
+      user("asked"),
+      reply("asked", "Started the mission."),
+      ...quietRun("quiet-1"),
+      wake("quiet-2"),
+      ...quietRun("quiet-3"),
+      wake("spoke"),
+      reply("spoke", "Member 1 needs your answer."),
+    ]);
+    const shown = withoutQuietMissionUpdates(thread, [
+      attempt("asked", "completed"),
+      attempt("quiet-1", "completed"),
+      attempt("quiet-2", "completed"),
+      attempt("quiet-3", "failed"),
+      attempt("quiet-3", "completed", 2),
+      attempt("spoke", "completed"),
+    ]);
+    expect(shown.map(({ item }) => item.id)).toEqual([
+      "asked:user-turn_start",
+      "asked:reply",
+      "spoke:wake",
+      "spoke:reply",
+    ]);
+  });
+
+  it.each([
+    ["it wrote a reply", [wake("run"), reply("run", "Nothing needs you.")], "completed"],
+    ["it acted", [wake("run"), tool("run", "mcp__t3-code__t3_thread_send")], "completed"],
+    ["it ran a tool it cannot name", [wake("run"), tool("run", "Shell")], "completed"],
+    ["a read failed", [wake("run"), tool("run", "t3_thread_read", "failed")], "completed"],
+    ["it asks a question", [wake("run"), question("run")], "completed"],
+    ["the user steered it", [wake("run"), user("run", "steer")], "completed"],
+    ["it is running", [wake("run")], "running"],
+    ["it failed", [wake("run")], "failed"],
+    ["it was interrupted", [wake("run")], "interrupted"],
+    ["its attempts are unknown", [wake("run")], null],
+    ["it was no wake", [user("run")], "completed"],
+  ] as const)("shows a mission update when %s", (_case, items, status) => {
+    const thread = rows(items);
+    expect(
+      withoutQuietMissionUpdates(thread, status === null ? undefined : [attempt("run", status)]),
+    ).toBe(thread);
+  });
+
+  it("returns the same rows for the same inputs, so a render does not loop", () => {
+    const thread = rows(quietRun("quiet"));
+    const attempts = [attempt("quiet", "completed")];
+    const shown = withoutQuietMissionUpdates(thread, attempts);
+    expect(shown).toEqual([]);
+    expect(withoutQuietMissionUpdates(thread, attempts)).toBe(shown);
   });
 });

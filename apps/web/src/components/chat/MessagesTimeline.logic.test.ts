@@ -1,6 +1,8 @@
+import { withoutQuietMissionUpdates } from "@t3tools/client-runtime/missions";
 import { ThreadId, type WorktreeSetupSnapshot } from "@t3tools/contracts";
 import {
   CheckpointRef,
+  ProviderThreadId,
   NodeId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -5259,5 +5261,92 @@ describe("workEntryReadOutput", () => {
         "/workspace/t3code",
       ),
     ).toBe("/workspace/t3code/src/app.ts\n~/.claude/CLAUDE.md\n~/.gitconfig");
+  });
+});
+
+describe("quiet mission updates", () => {
+  const at = (second: number) =>
+    DateTime.makeUnsafe(`2026-11-26T00:00:${String(second).padStart(2, "0")}.000Z`);
+  const lead = ThreadId.make("lead");
+  const item = (run: string, id: string, second: number) => ({
+    id: TurnItemId.make(`${run}:${id}`),
+    threadId: lead,
+    runId: RunId.make(run),
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: second,
+    status: "completed" as const,
+    title: null,
+    startedAt: at(second),
+    completedAt: at(second),
+    updatedAt: at(second),
+  });
+  const wake = (run: string, second: number): OrchestrationV2TurnItem => ({
+    ...item(run, "wake", second),
+    type: "notification",
+    source: { kind: "system" },
+    outcome: "updated",
+    summary: "Mission update",
+  });
+  const read = (run: string, second: number): OrchestrationV2TurnItem => ({
+    ...item(run, "read", second),
+    type: "dynamic_tool",
+    toolName: "mcp__t3-code__t3_thread_read",
+    input: { threadId: "member" },
+  });
+  const reply = (run: string, second: number, text: string): OrchestrationV2TurnItem => ({
+    ...item(run, "reply", second),
+    type: "assistant_message",
+    messageId: MessageId.make(`${run}:reply`),
+    text,
+    streaming: false,
+  });
+  const turnItems: OrchestrationV2ProjectedTurnItem[] = [
+    wake("spoke", 1),
+    read("spoke", 2),
+    reply("spoke", 3, "Member 1 needs your answer."),
+    wake("quiet", 4),
+    read("quiet", 5),
+    reply("quiet", 6, ""),
+  ].map((turnItem, position) => ({
+    position,
+    visibility: "local",
+    sourceThreadId: lead,
+    sourceItemId: turnItem.id,
+    item: turnItem,
+  }));
+  const attempts = ["spoke", "quiet"].map((run) => ({
+    id: RunAttemptId.make(`attempt:${run}`),
+    runId: RunId.make(run),
+    attemptOrdinal: 1,
+    rootNodeId: NodeId.make(`node:${run}`),
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerThreadId: ProviderThreadId.make("provider-thread"),
+    providerTurnId: null,
+    reason: "initial" as const,
+    status: "completed" as const,
+    startedAt: at(0),
+    completedAt: at(9),
+  }));
+  const rowIds = (visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>) =>
+    deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems,
+        optimisticMessages: [],
+        attempts,
+      }),
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    }).map((row) => row.id);
+
+  it("leaves out a finished wake that only read, and the turn before it keeps its rows", () => {
+    const shown = rowIds(withoutQuietMissionUpdates(turnItems, attempts));
+    expect(shown).toEqual(rowIds(turnItems.slice(0, 3)));
+    expect(shown).toContain("spoke:wake");
+    expect(shown.some((id) => id.includes("quiet"))).toBe(false);
   });
 });

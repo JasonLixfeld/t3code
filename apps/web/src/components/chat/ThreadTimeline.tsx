@@ -1,3 +1,4 @@
+import { withoutQuietMissionUpdates } from "@t3tools/client-runtime/missions";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { type ComponentProps, useLayoutEffect } from "react";
 import { useIncrementalTimelineEntries } from "../../hooks/useIncrementalTimelineEntries";
@@ -38,7 +39,7 @@ export function ThreadTimeline({
   const visibleTurnItems = useTimelineVisibleTurnItems(threadDetailRef);
   const serverEntries = useIncrementalTimelineEntries(activeThreadKey, {
     ...entriesInput,
-    visibleTurnItems,
+    visibleTurnItems: withoutQuietMissionUpdates(visibleTurnItems, entriesInput.attempts),
   });
   const entries = draftEntries ?? serverEntries;
   const displayedEntries = resolveThreadSwitchTimeline({

@@ -6,9 +6,14 @@ import {
   type MissionMember,
   type MissionsSnapshot,
   isSettledMissionMember,
+  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2RunAttempt,
+  type OrchestrationV2TurnItem,
+  type RunId,
   type ThreadId,
   threadHasMessages,
 } from "@t3tools/contracts";
+import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -558,6 +563,77 @@ export function missionScratchHome(
 ): EnvironmentId | null {
   if (machines === null || (usual !== null && machines.has(usual))) return usual;
   return [...machines].find((environmentId) => scratchRootFor(environmentId) !== null) ?? null;
+}
+
+// The wake keeps the server's own summary; its message id does not reach clients.
+const isMissionWake = (item: OrchestrationV2TurnItem) =>
+  item.type === "notification" &&
+  item.source.kind === "system" &&
+  item.summary === "Mission update";
+
+const MISSION_READ_TOOLS: ReadonlySet<string> = new Set(["t3_thread_read", "t3_mission_roster"]);
+
+function changesNothing(item: OrchestrationV2TurnItem): boolean {
+  if (item.status !== "completed" || item.deferredWork !== undefined) return false;
+  switch (item.type) {
+    case "assistant_message":
+      return !item.streaming && item.textOmitted !== true && item.text.trim() === "";
+    case "reasoning":
+      return !item.streaming;
+    case "checkpoint":
+      return item.files.length === 0 && item.filesOmitted !== true;
+    case "dynamic_tool":
+      return MISSION_READ_TOOLS.has(resolveT3McpToolId(item.toolName) ?? "");
+    default:
+      return false;
+  }
+}
+
+type AttemptStatus = Pick<OrchestrationV2RunAttempt, "runId" | "attemptOrdinal" | "status">;
+
+const quietMissionUpdates = new WeakMap<
+  ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  {
+    readonly attempts: ReadonlyArray<AttemptStatus> | undefined;
+    readonly rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
+  }
+>();
+
+/**
+ * Drops each finished mission-update run in which the lead wrote nothing and only read.
+ * Returns `rows` itself when nothing is dropped, and the same array for the same inputs.
+ */
+export function withoutQuietMissionUpdates(
+  rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  attempts: ReadonlyArray<AttemptStatus> | undefined,
+): ReadonlyArray<OrchestrationV2ProjectedTurnItem> {
+  const cached = quietMissionUpdates.get(rows);
+  if (cached !== undefined && cached.attempts === attempts) return cached.rows;
+  const latestAttempts = new Map<RunId, AttemptStatus>();
+  for (const attempt of attempts ?? []) {
+    const latest = latestAttempts.get(attempt.runId);
+    if (latest === undefined || attempt.attemptOrdinal > latest.attemptOrdinal) {
+      latestAttempts.set(attempt.runId, attempt);
+    }
+  }
+  const quiet = new Map<RunId, boolean>();
+  for (const { item } of rows) {
+    if (item.runId === null) continue;
+    const known = quiet.get(item.runId);
+    if (known === undefined) {
+      quiet.set(
+        item.runId,
+        isMissionWake(item) && latestAttempts.get(item.runId)?.status === "completed",
+      );
+    } else if (known && !changesNothing(item)) {
+      quiet.set(item.runId, false);
+    }
+  }
+  const shown = [...quiet.values()].includes(true)
+    ? rows.filter(({ item }) => item.runId === null || quiet.get(item.runId) !== true)
+    : rows;
+  quietMissionUpdates.set(rows, { attempts, rows: shown });
+  return shown;
 }
 
 export function missionLeadCandidates<
