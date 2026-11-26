@@ -1,3 +1,4 @@
+import "~/index.css";
 import { createMemoryHistory } from "@tanstack/react-router";
 import {
   scopedThreadKey,
@@ -76,6 +77,7 @@ vi.mock(import("~/components/sidebar/MissionsSection"), async (original) => {
 // A home for threads without a project, on the given machines, opened when the test says.
 const scratch = vi.hoisted(() => ({
   homes: null as ReadonlyArray<string> | null,
+  root: "/scratch",
   usual: "",
   open: null as
     | ((environmentId: string, failureTitle?: string, signal?: AbortSignal) => Promise<unknown>)
@@ -93,7 +95,7 @@ vi.mock(import("~/hooks/useScratchProject"), async (original) => {
         ...real,
         scratchEnvironmentId: () => scratch.usual as EnvironmentId,
         scratchWorkspaceRootFor: (environmentId) =>
-          environmentId !== null && homes.includes(environmentId) ? "/scratch" : null,
+          environmentId !== null && homes.includes(environmentId) ? scratch.root : null,
         openScratchProject: scratch.open as never,
       };
     },
@@ -279,6 +281,9 @@ it("a new mission from a New-lead draft starts on a draft of its own", async () 
 });
 
 it("does not offer a mission draft another machine to run on", async () => {
+  // The app's styles show the composer's Run on control only on wider windows.
+  await page.viewport(1100, 760);
+  onTestFinished(() => page.viewport(414, 896));
   using _environment = installFakeEnvironment([]);
   addTargets.offered = [
     { environmentId: EnvironmentId.make("laptop"), label: "Laptop", machine: "desktop" },
@@ -370,6 +375,10 @@ it("a new thread's Mission choice marks its draft to join that mission, or none"
   await expect
     .element(page.getByRole("heading", { level: 1 }))
     .toMatchTextContent(/^What should we build in render\?/);
+  // The action under the sentence is not part of the heading's name.
+  await expect
+    .element(page.getByRole("heading", { level: 1 }))
+    .toHaveAccessibleName("What should we build in render?");
   // The trigger moves between the footer and the heading, and keyboard focus moves with it.
   (trigger.element() as HTMLElement).focus();
   await userEvent.keyboard("{Enter}");
@@ -635,6 +644,7 @@ it.each([
     await using _app = await openDraft("draft-fixed-mission", intent);
     const trigger = page.getByRole("button", { name });
     await expect.element(page.getByRole("heading", { level: 1 })).toHaveTextContent(heading);
+    await expect.element(page.getByRole("heading", { level: 1 })).toHaveAccessibleName(heading);
     await expect.element(trigger).toHaveAttribute("aria-disabled", "true");
     await expect.element(page.getByText(notice)).toBeVisible();
     // The pointer lands on the tooltip's wrapper, as it does with the app's styles.
@@ -690,17 +700,111 @@ it("keeps a chosen mission's control while the draft's project title loads", asy
   (trigger.element() as HTMLElement).focus();
   await userEvent.keyboard("{Enter}");
   await expect.element(page.getByRole("menuitemradio", { name: "None" })).toBeVisible();
+  await userEvent.keyboard("{End}");
+  const highlighted = page.getByRole("menuitemradio", { name: "New mission (this thread leads)" });
+  await expect.element(highlighted).toHaveFocus();
   await screen.rerender(headline("render"));
   await expect
     .element(page.getByRole("heading", { level: 1 }))
     .toHaveTextContent("What should we build in render, in mission Ship v2?");
-  await expect.element(page.getByRole("menuitemradio", { name: "None" })).toBeVisible();
+  await expect.element(highlighted).toHaveFocus();
   await userEvent.keyboard("{Home}");
   await expect.element(page.getByRole("menuitemradio", { name: "None" })).toHaveFocus();
   await userEvent.keyboard("{Enter}");
   expect(missionDraftOf(draftId)).toBeUndefined();
   await expect.element(page.getByRole("button", { name: "Add to a mission" })).toHaveFocus();
 });
+
+/** No project's home is the render project, so its drafts are No project drafts. */
+function renderIsNoProject() {
+  holdScratch([ENVIRONMENT_ID]);
+  scratch.root = "/workspace/render";
+  onTestFinished(() => {
+    scratch.root = "/scratch";
+  });
+}
+
+it("leaving No project by keyboard keeps focus on the project picker", async () => {
+  renderIsNoProject();
+  using _environment = installFakeEnvironment([], {
+    extraProjects: [{ id: alphaProject.id, title: "alpha" }],
+  });
+  await using app = await openDraft("draft-leave-scratch");
+  await act(() => useComposerDraftStore.getState().setPrompt(app.draftId, "Plan the launch"));
+  const noProject = page.getByRole("combobox", { name: "Project: No project" });
+  await expect.element(noProject).toBeVisible();
+  (noProject.element() as HTMLElement).focus();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByRole("option", { name: "alpha" })).toBeVisible();
+  await userEvent.keyboard("alpha");
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() =>
+    expect(useComposerDraftStore.getState().getDraftSession(app.draftId)?.projectId).toBe(
+      alphaProject.id,
+    ),
+  );
+  await expect.element(page.getByRole("combobox", { name: "Project: alpha" })).toHaveFocus();
+});
+
+it.each([
+  ["a lead draft", "lead"],
+  ["a draft with no mission", "none"],
+  ["a No project draft", "scratch"],
+] as const)(
+  "on a 360 by 360 window, %s keeps its controls and their words on one row",
+  async (_, state) => {
+    if (state === "scratch") renderIsNoProject();
+    using _environment = installFakeEnvironment([]);
+    listMissions([hostWith(ENVIRONMENT_ID)]);
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const draftId = DraftId.make(`draft-short-${state}`);
+    const projectRef = scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID);
+    useComposerDraftStore.getState().setProjectDraftThreadId(projectRef, draftId);
+    const name = "Quarterly billing migration and cleanup";
+    if (state === "lead") {
+      const threadId = useComposerDraftStore.getState().getDraftSession(draftId)!.threadId;
+      markMissionDraft(draftId, {
+        intent: { ...leadIntent, name },
+        thread: { environmentId: ENVIRONMENT_ID, threadId },
+      });
+      onTestFinished(() => clearMissionDraft(draftId));
+    }
+    await page.viewport(360, 360);
+    onTestFinished(() => page.viewport(414, 896));
+    await using _screen = await render(
+      <DraftHeroHeadline
+        draftId={draftId}
+        activeProjectRef={projectRef}
+        activeProjectTitle="customer-onboarding-dashboard-v2"
+      />,
+    );
+    const project = page.getByRole("combobox", {
+      name:
+        state === "scratch" ? "Project: No project" : "Project: customer-onboarding-dashboard-v2",
+    });
+    const mission = page.getByRole("button", {
+      name: state === "lead" ? `New lead for ${name}` : "Add to a mission",
+    });
+    await expect.element(project).toBeVisible();
+    await expect.element(mission).toBeVisible();
+    const controls = [project.element(), mission.element()].map((control) => ({
+      box: control.getBoundingClientRect(),
+      words: control.querySelector("span")!.getBoundingClientRect(),
+    }));
+    const [first, second] = controls.toSorted((a, b) => a.box.left - b.box.left);
+    expect(Math.abs(first!.box.top - second!.box.top)).toBeLessThan(2);
+    expect(first!.box.right).toBeLessThanOrEqual(second!.box.left);
+    for (const { box, words } of controls) {
+      expect(box.left).toBeGreaterThanOrEqual(0);
+      expect(box.right).toBeLessThanOrEqual(360);
+      expect(words.left).toBeGreaterThanOrEqual(box.left - 0.5);
+      expect(words.right).toBeLessThanOrEqual(box.right + 0.5);
+    }
+  },
+);
 
 it("a Project pick retargets the draft as the headline link did", async () => {
   using _environment = installFakeEnvironment([], {

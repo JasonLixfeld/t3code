@@ -49,6 +49,7 @@ export function useDraftProjectMachines(draftId: DraftId | null) {
 
 export interface DraftMissionChoice {
   readonly kind: "none" | "member" | "new" | "lead";
+  readonly sentenceText: string;
   readonly inSentence: ReactElement;
   readonly standalone: ReactElement;
 }
@@ -128,7 +129,13 @@ export function useDraftMissionChoice(
         // Fixed, it stays focusable; the pointer passes through it to the tooltip's wrapper.
         {...(fixed ? { "aria-disabled": true } : {})}
       >
-        {kind === "none" ? <T>Add to a mission</T> : <DraftProjectName value={text} singleLine />}
+        {kind === "none" ? (
+          <span className="block min-w-0 truncate">
+            <T>Add to a mission</T>
+          </span>
+        ) : (
+          <DraftProjectName value={text} singleLine />
+        )}
       </InlineButton>
     );
     if (fixed) {
@@ -197,5 +204,5 @@ export function useDraftMissionChoice(
       </Menu>
     );
   };
-  return { kind, inSentence: wordFor(shown), standalone: wordFor(label) };
+  return { kind, sentenceText: shown, inSentence: wordFor(shown), standalone: wordFor(label) };
 }

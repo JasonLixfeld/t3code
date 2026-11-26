@@ -53,6 +53,7 @@ import { InlineButton } from "../ui/button";
 import { DraftProjectName } from "./DraftProjectName";
 import { TriageDraftHero } from "./TriageDraftHero";
 import { useDraftMissionChoice, useDraftProjectMachines } from "./DraftMissionSelect";
+import { MISSION_SLOT, PROJECT_SLOT, splitDraftHeroSentence } from "./draftHeroSentence";
 import { missionDraftOf, moveMissionDraft } from "../sidebar/missionDraftStore";
 import { missionScratchHome } from "../sidebar/missions.logic";
 import { Spinner } from "../ui/spinner";
@@ -68,8 +69,6 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 
 const ADD_PROJECT_VALUE = "add-project";
 const NO_PROJECT_VALUE = "no-project";
-const PROJECT_SLOT = "\uE000";
-const MISSION_SLOT = "\uE001";
 
 interface PickerItem {
   readonly value: string;
@@ -112,6 +111,14 @@ export function DraftHeroHeadline({
   // A Mission draft offers only the projects on machines where its Mission can take it.
   const missionMachines = useDraftProjectMachines(draftId);
   const mission = useDraftMissionChoice(draftId, activeProjectRef?.environmentId ?? null);
+  // Entering or leaving No project moves the picker between the heading and the line under it.
+  const refocusProject = useRef(false);
+  const refocusProjectPicker = () => {
+    refocusProject.current = true;
+    requestAnimationFrame(() => {
+      refocusProject.current = false;
+    });
+  };
 
   const environmentLabelById = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
@@ -299,6 +306,7 @@ export function DraftHeroHeadline({
       });
       return;
     }
+    refocusProjectPicker();
     selectProject(project, deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings));
   };
 
@@ -338,6 +346,7 @@ export function DraftHeroHeadline({
         if (!entry || item.value === activeProjectKey) {
           return;
         }
+        if (isScratchDraft) refocusProjectPicker();
         selectProject(entry.targetProject, entry.group.projectKey);
       }}
     >
@@ -345,6 +354,11 @@ export function DraftHeroHeadline({
         <TooltipTrigger
           render={
             <ComboboxTrigger
+              ref={(node: HTMLButtonElement | null) => {
+                if (node === null || !refocusProject.current) return;
+                refocusProject.current = false;
+                node.focus();
+              }}
               render={<InlineButton tone="picker" touchTarget="padded" />}
               aria-label={gt("Project: {project}", { project: projectValue })}
               data-draft-project-trigger=""
@@ -460,16 +474,24 @@ export function DraftHeroHeadline({
             : gt("What should we build in {project}?", slots);
   // One string for translators; the controls sit at its placeholders, in slots that stay mounted
   // whichever sentence shows, so a menu open on them survives the change.
-  const [beforeProject, afterProject] = sentence.includes(PROJECT_SLOT)
-    ? sentence.split(PROJECT_SLOT)
-    : ["", sentence];
-  const [beforeMission = "", afterMission = ""] = (afterProject ?? "").split(MISSION_SLOT);
+  const { beforeProject, beforeMission, afterMission } = splitDraftHeroSentence(sentence);
+  // The heading reads as its sentence: the action under it and the controls' own labels stay out.
+  const headingName = [
+    beforeProject,
+    isScratchDraft ? "" : projectValue,
+    beforeMission,
+    missionInSentence ? mission.sentenceText : "",
+    afterMission,
+  ].join("");
   const prose = (text: string) =>
     text ? <span className="[@media(max-height:28rem)]:sr-only">{text}</span> : null;
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
-      <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl [@media(max-height:28rem)]:flex [@media(max-height:28rem)]:items-center [@media(max-height:28rem)]:justify-center [@media(max-height:28rem)]:gap-3 [@media(max-height:28rem)]:text-sm">
-        {prose(beforeProject ?? "")}
+    <div className="mx-auto flex w-full max-w-5xl flex-col items-center [@media(max-height:28rem)]:flex-row [@media(max-height:28rem)]:justify-center [@media(max-height:28rem)]:gap-3">
+      <h1
+        aria-label={headingName}
+        className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl [@media(max-height:28rem)]:contents [@media(max-height:28rem)]:text-sm"
+      >
+        {prose(beforeProject)}
         {isScratchDraft ? null : (
           <span className="min-w-0 [@media(max-height:28rem)]:max-w-1/2">{projectSelector}</span>
         )}
@@ -488,7 +510,7 @@ export function DraftHeroHeadline({
         {prose(afterMission)}
       </h1>
       {isScratchDraft ? (
-        <p className="mt-2 flex h-6 w-full items-center justify-center text-sm">
+        <p className="mt-2 flex min-h-6 w-full min-w-0 items-center justify-center text-sm [@media(max-height:28rem)]:order-first [@media(max-height:28rem)]:mt-0 [@media(max-height:28rem)]:w-auto [@media(max-height:28rem)]:max-w-1/2">
           {projectSelector}
         </p>
       ) : null}
