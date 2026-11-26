@@ -563,7 +563,6 @@ it("opens find in the diff from its toolbar button and from the panel find comma
   await userEvent.keyboard("{Escape}");
   await expect.element(findInput).not.toBeInTheDocument();
   await expect.element(findToggle).toHaveAttribute("aria-pressed", "false");
-  // mod+f anywhere in the right panel dispatches the panel find command.
   findToggle.element().focus();
   await act(() => dispatchPreviewAction("find"));
   await vi.waitFor(findHasFocus);
@@ -608,7 +607,6 @@ it("lists the diff find's matches by file in Contents mode and jumps to a clicke
     expect(fileCount(fileA)).toBe("4");
     expect(fileCount(fileB)).toBe("1");
   });
-  // The diff lists lib/b.ts first, so its line holds match 1 and the a.ts addition holds 4 and 5.
   await expect
     .element(fileB.getByRole("button", { name: /retry here/ }))
     .toHaveAttribute("aria-current", "true");

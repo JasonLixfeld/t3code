@@ -54,7 +54,6 @@ function presentLine(
   const source = side === "deletions" ? fileDiff.deletionLines : fileDiff.additionLines;
   const fullText = (source[first.lineIndex] ?? "").replace(/[\r\n]+$/, "");
   const indent = fullText.length - fullText.trimStart().length;
-  // Start a long line near its first match so the match stays inside the clipped row.
   const start = Math.max(indent, first.startCharacter - LEADING_CONTEXT);
   const clipped = start > indent;
   const prefix = clipped ? "…" : "";
@@ -76,7 +75,6 @@ function presentLine(
   };
 }
 
-/** Groups the diff find's matches by file and line, in the order the diff find steps through them. */
 export function groupDiffFindMatches(
   matches: ReadonlyArray<DiffFindMatch>,
   getFileDiff: (itemId: string) => FileDiffMetadata | undefined,
