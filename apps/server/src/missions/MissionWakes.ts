@@ -33,6 +33,7 @@ import {
 } from "./missionStatus.ts";
 
 export const WAKE_INTERVAL = Duration.seconds(30);
+export const HELD_WORK_SETTLE = Duration.seconds(5);
 
 export const missionWakeCommand = (input: {
   readonly missionId: string;
@@ -75,6 +76,8 @@ export const layer = Layer.effectDiscard(
     const here = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
     const scope = yield* Effect.scope;
 
+    const logged = (message: string) =>
+      Effect.catchCause((cause) => Effect.logWarning(message, cause));
     const lastWake = new Map<ThreadId, number>();
     const timed = new Set<string>();
     const told = new Set<string>();
@@ -118,6 +121,22 @@ export const layer = Layer.effectDiscard(
         yield* observe(missionId, ref, { ...shellDetail(shell), requests: [] }, "{}");
       },
     );
+
+    // A finished subagent's continuation run is dispatched on another fiber after the subagent
+    // ends, so an idle-looking member is looked at again once that run has had time to start.
+    const settling = new Set<string>();
+    const recheckWhenSettled = (missionId: string, ref: ScopedThreadRef) => {
+      const key = numberKey(ref);
+      if (settling.has(key)) return Effect.void;
+      settling.add(key);
+      return Effect.sleep(HELD_WORK_SETTLE).pipe(
+        Effect.andThen(Effect.sync(() => settling.delete(key))),
+        Effect.andThen(observeRunWithoutRequests(missionId, ref)),
+        logged("A held member was not looked at again"),
+        Effect.forkIn(scope, { startImmediately: true }),
+        Effect.asVoid,
+      );
+    };
 
     const seeLocalMembers = Effect.gen(function* () {
       const led = new Set((yield* store.missions).map((mission) => mission.missionId));
@@ -171,8 +190,9 @@ export const layer = Layer.effectDiscard(
         return yield* observeRunWithoutRequests(claim.missionId, ref);
       if (update !== undefined) return yield* record(claim.missionId, ref, [update]);
       const mark = yield* store.memberMark(ref);
-      if (mark !== undefined && wasCompletionHeld(mark))
-        yield* observeRunWithoutRequests(claim.missionId, ref);
+      if (mark === undefined || !wasCompletionHeld(mark)) return;
+      if (run) return yield* observeRunWithoutRequests(claim.missionId, ref);
+      yield* recheckWhenSettled(claim.missionId, ref);
     });
 
     const dropUpdates = (missionId: string, lead: ThreadId): Effect.Effect<void> =>
@@ -254,8 +274,6 @@ export const layer = Layer.effectDiscard(
     for (const missionId of yield* store.missionsWithUpdates) yield* Queue.offer(due, missionId);
     const storeChanges = yield* PubSub.subscribe(store.changes);
 
-    const logged = (message: string) =>
-      Effect.catchCause((cause) => Effect.logWarning(message, cause));
     yield* Queue.take(due).pipe(
       Effect.flatMap((missionId) =>
         missions.withLead(missionId, deliverTo).pipe(logged("A mission update was not delivered")),

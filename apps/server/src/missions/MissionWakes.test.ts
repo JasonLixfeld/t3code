@@ -117,6 +117,14 @@ const makeWorld = () => {
       }),
     event: (id: ThreadId, type: string, payload: Record<string, unknown>) =>
       Effect.suspend(() => Queue.offer(session.events!, { type, threadId: id, payload })),
+    /** Waits until wakes has handled every event offered before it. */
+    drained: Effect.suspend(() =>
+      Queue.offer(session.events!, {
+        type: "run.updated",
+        threadId: lead,
+        payload: { id: `sync-${sent.length}`, status: "completed" },
+      }),
+    ).pipe(Effect.andThen(Effect.suspend(() => Queue.take(session.leadReads!)))),
     /** Runs `step`, then waits until wakes reads the member's shell after it. */
     read: <A>(id: ThreadId, step: Effect.Effect<A>) =>
       Effect.gen(function* () {
@@ -424,6 +432,8 @@ it.effect(
         yield* settle();
         world.set(first, { pendingBackgroundTasks: [] });
         yield* world.event(first, "subagent.updated", { status: "completed" });
+        yield* world.drained;
+        yield* TestClock.adjust(MissionWakes.HELD_WORK_SETTLE);
         assert.equal(
           yield* nextText(world),
           told(["member 1 on this machine finished its turn and is idle."]),
@@ -452,6 +462,31 @@ it.effect(
     );
   },
 );
+
+it.effect("a member whose subagent ends is told once, after the continuation run it starts", () => {
+  const world = makeWorld();
+  return withWakes(
+    world,
+    Effect.gen(function* () {
+      world.set(lead, busy);
+      world.set(first, { pendingBackgroundTasks: [subagent] });
+      yield* world.read(first, world.run(first, "f1", "completed"));
+      world.set(first, { pendingBackgroundTasks: [] });
+      yield* world.event(first, "subagent.updated", { status: "completed" });
+      yield* world.drained;
+      yield* world.run(first, "f2", "queued");
+      yield* world.run(first, "f2", "running");
+      yield* world.read(first, world.run(first, "f2", "completed"));
+      yield* TestClock.adjust(MissionWakes.HELD_WORK_SETTLE);
+      world.set(lead, free);
+      yield* world.run(lead, "l1", "completed");
+      assert.equal(
+        yield* nextText(world),
+        told(["member 1 on this machine finished its turn and is idle."]),
+      );
+    }),
+  );
+});
 
 it.effect(
   "a held completion is told once the member is idle, though a newer run was stopped",
@@ -493,6 +528,8 @@ it.effect("a member held by its pull request watch is told once the watch stops 
       yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
       world.set(first, { pendingBackgroundTasks: [watch] });
       yield* world.event(first, "thread.pull-request-synced", {});
+      yield* world.drained;
+      yield* TestClock.adjust(MissionWakes.HELD_WORK_SETTLE);
       assert.equal(
         yield* nextText(world),
         told(["member 1 on this machine finished its turn and is idle."]),
