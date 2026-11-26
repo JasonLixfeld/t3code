@@ -134,6 +134,19 @@ describe("MissionPromptSettings", () => {
     expect(mocks.write).not.toHaveBeenCalled();
   });
 
+  it("drops an edit for good once the servers change, even if they change back", () => {
+    mocks.targets = [target("desk", true)];
+    render();
+    mocks.input?.onChangeText("Check the tests.");
+    mocks.targets = [target("desk", true), target("laptop", true)];
+    render();
+    mocks.targets = [target("desk", true)];
+    render();
+    act(() => root.unmount());
+    root = createRoot(document.createElement("div"));
+    expect(mocks.write).not.toHaveBeenCalled();
+  });
+
   it("is read-only without the right to operate, and hidden where no machine serves Missions", () => {
     mocks.targets = [target("desk", true, "Ship it.")];
     mocks.operable = false;

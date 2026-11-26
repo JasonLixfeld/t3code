@@ -1,6 +1,6 @@
 import { AuthOrchestrationOperateScope, AuthSettingsWriteScope } from "@t3tools/contracts";
 import { useGT } from "gt-react-native";
-import { useEffect, useEffectEvent, useRef } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { View } from "react-native";
 
 import { Button } from "../../../components/ui/Button";
@@ -39,11 +39,17 @@ export function MissionPromptSettings() {
       planMobileScopedSettingsPatch(targets, false, { missionDefaultPrompt }),
     );
   const targetsKey = environments.map((target) => target.environmentId).join(",");
-  const draft = useRef<{ text: string; over: string | null; targetsKey: string } | null>(null);
+  // Each change of servers starts a new generation, so an edit never outlives one, even A, B, A.
+  const [targetsGeneration, setTargetsGeneration] = useState({ key: targetsKey, count: 0 });
+  if (targetsGeneration.key !== targetsKey) {
+    setTargetsGeneration({ key: targetsKey, count: targetsGeneration.count + 1 });
+  }
+  const generation = targetsGeneration.count;
+  const draft = useRef<{ text: string; over: string | null; generation: number } | null>(null);
   const saveDraft = () => {
     const typed = draft.current;
     draft.current = null;
-    if (typed === null || typed.over !== saved || typed.targetsKey !== targetsKey) return;
+    if (typed === null || typed.over !== saved || typed.generation !== generation) return;
     const value = typed.text.trim();
     if (saved === null || value !== saved) save(value);
   };
@@ -63,10 +69,10 @@ export function MissionPromptSettings() {
       >
         <View className="px-4 py-3">
           <AppTextInput
-            key={`${targetsKey}:${saved}`}
+            key={`${generation}:${saved}`}
             accessibilityLabel={gt("Mission prompt")}
             onChangeText={(text) => {
-              draft.current = { text, over: saved, targetsKey };
+              draft.current = { text, over: saved, generation };
             }}
             defaultValue={saved ?? ""}
             placeholder={
