@@ -120,16 +120,26 @@ export const layer = Layer.effectDiscard(
       (effect) => memberObservationLock.withPermits(1)(effect),
     );
 
-    const localDetail = (threadId: ThreadId) =>
+    const localDetail = (
+      threadId: ThreadId,
+      run?: { readonly id: string; readonly status: string },
+    ) =>
       Effect.map(shellOf(threadId), (shell) =>
-        shell === null || shell.deletedAt !== null ? undefined : shellDetail(shell),
+        shell === null || shell.deletedAt !== null ? undefined : shellDetail(shell, run),
       );
 
-    const observeRunWithoutRequests = (missionId: string, ref: ScopedThreadRef) =>
+    const observeRunWithoutRequests = (
+      missionId: string,
+      ref: ScopedThreadRef,
+      run?: { readonly id: string; readonly status: string },
+    ) =>
       observe(
         missionId,
         ref,
-        Effect.map(localDetail(ref.threadId), (detail) => detail && { ...detail, requests: [] }),
+        Effect.map(
+          localDetail(ref.threadId, run),
+          (detail) => detail && { ...detail, requests: [] },
+        ),
         "{}",
       );
 
@@ -179,12 +189,16 @@ export const layer = Layer.effectDiscard(
         return;
       }
       const ref = { environmentId: here, threadId: event.threadId };
-      if (update?.event === "completed")
-        return yield* observeRunWithoutRequests(claim.missionId, ref);
+      const ofRun =
+        event.type === "run.updated"
+          ? { id: event.payload.id, status: event.payload.status }
+          : undefined;
+      if (update !== undefined && ofRun !== undefined)
+        return yield* observeRunWithoutRequests(claim.missionId, ref, ofRun);
       if (update !== undefined) return yield* record(claim.missionId, ref, [update]);
       const mark = yield* store.memberMark(ref);
       if (mark === undefined || !wasCompletionHeld(mark)) return;
-      yield* observeRunWithoutRequests(claim.missionId, ref);
+      yield* observeRunWithoutRequests(claim.missionId, ref, ofRun);
     });
 
     const dropUpdates = (missionId: string, lead: ThreadId): Effect.Effect<void> =>
