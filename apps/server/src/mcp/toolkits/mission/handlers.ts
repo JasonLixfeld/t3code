@@ -79,24 +79,23 @@ export const layer = McpToolAccess.toLayer(
   MissionToolkit,
   Effect.gen(function* () {
     const missions = yield* Effect.serviceOption(Missions.Missions);
-    const callersMission = Effect.gen(function* () {
+    const leadsNone = () =>
+      new OrchestratorMcpFailure({ code: "invalid_request", message: Missions.LEADS_NO_MISSION });
+    const callerHere = Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const caller = yield* McpInvocationContext.requireThreadScope(scope, "This mission tool");
-      const mission = Option.isNone(missions)
-        ? undefined
-        : yield* missions.value.ledBy(caller.thread.threadId);
-      if (Option.isNone(missions) || mission === undefined) {
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message: "This thread leads no mission.",
-        });
-      }
+      if (Option.isNone(missions)) return yield* leadsNone();
       return {
         missions: missions.value,
-        mission,
         environmentId: scope.environmentId,
         lead: caller.thread.threadId,
       };
+    });
+    const callersMission = Effect.gen(function* () {
+      const caller = yield* callerHere;
+      const mission = yield* caller.missions.ledBy(caller.lead);
+      if (mission === undefined) return yield* leadsNone();
+      return { ...caller, mission };
     });
     return {
       t3_mission_tag: McpToolAccess.writesThreads(
@@ -204,15 +203,11 @@ export const layer = McpToolAccess.toLayer(
       ),
       t3_mission_add: McpToolAccess.actsAsCaller((input) =>
         Effect.gen(function* () {
-          const { missions, mission, environmentId, lead } = yield* callersMission;
-          const member = {
+          const { missions, environmentId, lead } = yield* callerHere;
+          const { state, needsBrief } = yield* missions.addAsLead(lead, {
             environmentId: input.threadRef.environmentId ?? environmentId,
             threadId: input.threadRef.threadId,
-          };
-          const { state, needsBrief } = yield* missions.addAsLead(
-            { missionId: mission.missionId, member },
-            lead,
-          );
+          });
           return needsBrief ? { state, next: PRIOR_WORK_NEXT } : { state };
         }).pipe(Effect.catchTags({ MissionError: (error) => Effect.fail(refused(error)) })),
       ),

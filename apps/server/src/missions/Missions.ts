@@ -101,8 +101,8 @@ export class Missions extends Context.Service<
       seesAccess?: boolean,
     ) => Effect.Effect<"joined" | "pending", MissionError>;
     readonly addAsLead: (
-      input: { readonly missionId: string; readonly member: ScopedThreadRef },
       lead: ThreadId,
+      member: ScopedThreadRef,
     ) => Effect.Effect<
       { readonly state: "joined" | "pending"; readonly needsBrief: boolean },
       MissionError
@@ -206,6 +206,8 @@ interface Machine {
   readonly claims: ReadonlyArray<MissionClaim>;
   readonly reachable: boolean;
 }
+
+export const LEADS_NO_MISSION = "This thread leads no mission.";
 
 const memberKey = (ref: ScopedThreadRef) => JSON.stringify([ref.environmentId, ref.threadId]);
 const sameSnapshot = (a: MissionsSnapshot, b: MissionsSnapshot) =>
@@ -1350,16 +1352,16 @@ const make = Effect.gen(function* () {
   const memberStatuses = (missionId: string) => members(missionId, false);
 
   const addAsLead = Effect.fn("Missions.addAsLead")(function* (
-    input: { readonly missionId: string; readonly member: ScopedThreadRef },
     lead: ThreadId,
+    member: ScopedThreadRef,
   ) {
-    const mission = yield* missionNamed(input.missionId);
-    const already = (yield* memberStatuses(input.missionId)).some(
-      (row) => memberKey(row.ref) === memberKey(input.member),
+    const mission = yield* ledBy(lead);
+    if (mission === undefined) return yield* fail(LEADS_NO_MISSION);
+    const already = (yield* memberStatuses(mission.missionId)).some(
+      (row) => memberKey(row.ref) === memberKey(member),
     );
-    const state = yield* addMember(input, lead);
-    const needsBrief =
-      state === "joined" && !already && (yield* hasPriorWork(mission, input.member));
+    const state = yield* addMember({ missionId: mission.missionId, member }, lead);
+    const needsBrief = state === "joined" && !already && (yield* hasPriorWork(mission, member));
     return { state, needsBrief };
   });
 

@@ -3808,21 +3808,30 @@ it.effect("the lead adding itself, or a member already in, is not nudged for a b
   );
 });
 
-it.effect("a lead's add asks for a brief only for a new member with prior work", () => {
-  const world = makeWorld([lead, localMember]);
-  return withMissions(
-    world,
-    Effect.gen(function* () {
-      const missions = yield* Missions.Missions;
-      const { missionId } = yield* createOne;
-      const add = (member: ScopedThreadRef) =>
-        missions.addAsLead({ missionId, member }, lead.threadId);
-      assert.deepEqual(yield* add(lead), { state: "joined", needsBrief: false });
-      assert.deepEqual(yield* add(localMember), { state: "joined", needsBrief: true });
-      assert.deepEqual(yield* add(localMember), { state: "joined", needsBrief: false });
-    }),
-  );
-});
+it.effect(
+  "a lead's add joins its own mission, and asks for a brief only for a new member with prior work; a thread that leads none is refused",
+  () => {
+    const world = makeWorld([lead, localMember]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const { missionId } = yield* createOne;
+        const add = (member: ScopedThreadRef) => missions.addAsLead(lead.threadId, member);
+        const refused = yield* Effect.flip(missions.addAsLead(localMember.threadId, lead));
+        assert.equal(refused.message, Missions.LEADS_NO_MISSION);
+        assert.deepEqual(yield* add(lead), { state: "joined", needsBrief: false });
+        assert.deepEqual(yield* add(localMember), { state: "joined", needsBrief: true });
+        assert.deepEqual(yield* add(localMember), { state: "joined", needsBrief: false });
+        assert.isTrue(
+          (yield* missions.memberStatuses(missionId)).some(
+            (row) => row.ref.threadId === localMember.threadId,
+          ),
+        );
+      }),
+    );
+  },
+);
 
 it.effect(
   "a roster answer stays within 30,000 bytes, resumes at the first member it left out, and lists a member too large alone without its workspace, or with its title cut",

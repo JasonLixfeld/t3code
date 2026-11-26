@@ -3,7 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
   EnvironmentId,
-  type MissionError,
+  MissionError,
   type OrchestrationProjectShell,
   ProviderInstanceId,
   ThreadId,
@@ -435,7 +435,10 @@ it.effect(
                   ),
                 roster: () => Effect.succeed([]),
                 memberStatuses: () => Effect.succeed([]),
-                addAsLead: () => Effect.succeed({ state: "joined" as const, needsBrief: false }),
+                addAsLead: (threadId) =>
+                  leads.has(threadId)
+                    ? Effect.succeed({ state: "joined" as const, needsBrief: false })
+                    : Effect.fail(new MissionError({ message: Missions.LEADS_NO_MISSION })),
                 releaseMember: () => Effect.succeed("released" as const),
               }),
             ),

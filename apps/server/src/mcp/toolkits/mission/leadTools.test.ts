@@ -153,11 +153,13 @@ const makeMissions = () => {
           row(index, index === 0 ? "pending-approval" : "idle"),
         ),
       ),
-    addAsLead: (input, asLead) =>
-      Effect.map(add(input, asLead), (state) => ({
-        state,
-        needsBrief: state === "joined" && input.member.threadId !== "here-thread",
-      })),
+    addAsLead: (asLead, member) =>
+      asLead === lead.thread.threadId
+        ? Effect.map(add({ missionId: MISSION, member }, asLead), (state) => ({
+            state,
+            needsBrief: state === "joined" && member.threadId !== "here-thread",
+          }))
+        : Effect.fail(new MissionError({ message: Missions.LEADS_NO_MISSION })),
     releaseMember: (input, asLead) =>
       Effect.suspend(() => {
         calls.push({ kind: "release", ...input, asLead });
