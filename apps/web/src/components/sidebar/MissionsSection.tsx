@@ -14,7 +14,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { ChevronDownIcon, PlusIcon, RotateCcwIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
@@ -85,7 +85,6 @@ import {
   type SidebarMissionEntry,
 } from "./missions.logic";
 import { SidebarHeading } from "./SidebarListMarkers";
-import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
 import type { SidebarMissionToggle } from "./SidebarThreadRow";
 
 /** No machine is asked for its Missions while the sidebar setting turns them off. */
@@ -696,19 +695,6 @@ const LEAD_CHOICES = 20;
  * The Missions above the thread list. Each lead's own thread row heads its Mission, and its
  * members' rows sit under it. A row this client has no thread for keeps the Mission's own row.
  */
-/** Starts a Mission: a project pick, then a draft that leads it once sent. */
-export function NewMissionButton() {
-  const gt = useGT();
-  return (
-    <SidebarHeaderIconButton
-      label={gt("New mission")}
-      onClick={() => openCommandPalette({ open: "new-thread-in", mission: { kind: "new" } })}
-    >
-      <PlusIcon />
-    </SidebarHeaderIconButton>
-  );
-}
-
 export function SidebarMissions(props: {
   readonly missions: ReadonlyArray<SidebarMission<EnvironmentThreadShell>>;
   readonly headerVisible: boolean;
@@ -728,8 +714,7 @@ export function SidebarMissions(props: {
   const missionExpandedById = useUiStateStore((state) => state.missionExpandedById);
   const setMissionExpanded = useUiStateStore((state) => state.setMissionExpanded);
   const enabled = useClientSettings((settings) => settings.sidebarMissionsEnabled);
-  // With none yet, the heading alone offers the first; without it, the sidebar header does.
-  if (!enabled || (props.missions.length === 0 && !props.headerVisible)) return null;
+  if (!enabled || props.missions.length === 0) return null;
   const row = (
     mission: SidebarMission<EnvironmentThreadShell>,
     entry: SidebarMission<EnvironmentThreadShell>["lead"],
@@ -786,9 +771,7 @@ export function SidebarMissions(props: {
   return (
     <>
       {props.headerVisible ? (
-        <SidebarHeading action={<NewMissionButton />}>
-          {gt("Missions", { $context: "sidebar section" })}
-        </SidebarHeading>
+        <SidebarHeading>{gt("Missions", { $context: "sidebar section" })}</SidebarHeading>
       ) : null}
       {props.missions.map((mission) => {
         const expanded = missionExpandedById[mission.key] ?? true;

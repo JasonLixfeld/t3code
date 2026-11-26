@@ -17,8 +17,6 @@ export interface SidebarThreadHeaderProps {
   hasProjects: boolean;
   projectScope: ReactNode;
   onNewThread: (event: ReactMouseEvent) => void;
-  /** Shown before New thread, as when Missions has no heading of its own. */
-  newMission?: ReactNode;
   newThreadDisabled: boolean;
   newThreadShortcutLabel: string | null | undefined;
   newThreadInProjectShortcutLabel: string | null | undefined;
@@ -37,7 +35,6 @@ export function SidebarThreadHeader({
   hasProjects,
   projectScope,
   onNewThread,
-  newMission,
   newThreadDisabled,
   newThreadShortcutLabel,
   newThreadInProjectShortcutLabel,
@@ -101,7 +98,6 @@ export function SidebarThreadHeader({
       </div>
       <div className="flex shrink-0 items-center">
         {hasProjects ? projectScope : null}
-        {newMission}
         <SidebarHeaderIconButton
           label={gt("New thread")}
           tooltip={

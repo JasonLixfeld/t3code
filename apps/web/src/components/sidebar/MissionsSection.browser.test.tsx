@@ -1240,47 +1240,15 @@ describe("dragging threads into and out of missions", () => {
 });
 
 describe("new missions and missing leads", () => {
-  it("starts a new mission from the plus on the Missions heading", async () => {
-    await using screen = await renderSidebar();
-    await userEvent.click(screen.getByRole("button", { name: "New mission", exact: true }));
-    expect(openCommandPalette).toHaveBeenCalledWith({
-      open: "new-thread-in",
-      mission: { kind: "new" },
-    });
-  });
-
-  it.each([
-    ["under its heading", {}, "heading"],
-    [
-      "beside New thread when Missions has no heading",
-      { sidebarMissionsHeaderVisible: false },
-      "header",
-    ],
-    ["nowhere when Missions is off", { sidebarMissionsEnabled: false }, "none"],
-  ] as const)("offers the first mission %s", async (_, settings, where) => {
+  it("shows no Missions heading and no New mission button before the first mission", async () => {
     const kept = listedMissions.splice(0);
     onTestFinished(() => {
       listedMissions.push(...kept);
     });
-    await using screen = await renderSidebar(settings);
+    await using screen = await renderSidebar();
     await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
-    const plus = screen.container.querySelector<HTMLElement>('[aria-label="New mission"]');
-    const heading = [...screen.container.querySelectorAll("h2")].find((h2) =>
-      h2.textContent?.includes("Missions"),
-    );
-    expect(screen.container.querySelector("[data-mission-drop]")).toBeNull();
-    if (where === "none") {
-      expect(plus).toBeNull();
-      expect(heading).toBeUndefined();
-      return;
-    }
-    expect(heading === undefined).toBe(where === "header");
-    expect(plus?.closest("li")?.contains(heading ?? null) ?? false).toBe(where === "heading");
-    await userEvent.click(plus!);
-    expect(openCommandPalette).toHaveBeenCalledWith({
-      open: "new-thread-in",
-      mission: { kind: "new" },
-    });
+    expect(screen.getByRole("heading").elements()).toHaveLength(0);
+    expect(screen.container.querySelector('[aria-label="New mission"]')).toBeNull();
   });
 
   it("offers a gone lead's mission a new lead, or a thread with messages in no other mission", async () => {

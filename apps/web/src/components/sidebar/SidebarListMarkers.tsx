@@ -168,8 +168,6 @@ export function SidebarSectionHeader(props: {
 /** A heading that does not fold, drawn as the shelf headers are. */
 export function SidebarHeading(props: {
   children: ReactNode;
-  /** A button at the end of the row. */
-  action?: ReactNode;
   /** A Mission member dropped on it leaves its Mission, as on the release zone. */
   releasesMembers?: boolean;
 }) {
@@ -182,7 +180,6 @@ export function SidebarHeading(props: {
         <span className="min-w-0 truncate">{props.children}</span>
         <span aria-hidden className="h-px min-w-2 flex-1 bg-sidebar-border/50" />
       </h2>
-      {props.action}
     </li>
   );
 }

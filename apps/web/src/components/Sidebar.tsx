@@ -283,7 +283,6 @@ import {
 } from "./sidebar/SidebarDraftBlock";
 import { createMissionEdgeScroll } from "./sidebar/missionEdgeScroll";
 import {
-  NewMissionButton,
   SidebarMissions,
   useMissionHosts,
   useMissionDrop,
@@ -1038,9 +1037,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const missionMenu = useMissionMenu();
   const missionHosts = useMissionHosts();
   const missionsHeaderVisible = useClientSettings((s) => s.sidebarMissionsHeaderVisible);
-  const missionsEnabled = useClientSettings((s) => s.sidebarMissionsEnabled);
-  // The Missions heading shows while Missions is on, even before the first one.
-  const missionsHeadingShown = missionsEnabled && missionsHeaderVisible;
   const threadsHeaderVisible = useClientSettings((s) => s.sidebarThreadsHeaderVisible);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
@@ -3497,9 +3493,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               newThreadDisabled={projects.length === 0}
               newThreadShortcutLabel={newThreadShortcutLabel}
               newThreadInProjectShortcutLabel={newThreadInProjectShortcutLabel}
-              {...(missionsEnabled && !missionsHeaderVisible
-                ? { newMission: <NewMissionButton /> }
-                : {})}
               showNewThreadInProjectHint={
                 !shouldCreateNewThreadInCurrentProject(
                   false,
@@ -3867,7 +3860,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             }
                           />
                         ) : null,
-                        threadsHeaderVisible && (missions.length > 0 || missionsHeadingShown) ? (
+                        threadsHeaderVisible && missions.length > 0 ? (
                           <SidebarHeading key="threads-heading" releasesMembers>
                             {gt("Threads", { $context: "sidebar section" })}
                           </SidebarHeading>
