@@ -17,6 +17,8 @@ import { ThreadId } from "@t3tools/contracts";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { adoptMissionDraft } from "../../state/mission-drafts";
+import { DraftHeroSentence, DraftMissionControl, useDraftMission } from "./DraftHeroMission";
+import { draftHeroTokens } from "./draftMission.logic";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -756,6 +758,18 @@ export function NewTaskDraftScreen(props: {
     return message.messageId;
   }
 
+  const missionDraft = useDraftMission({
+    requestId: missionRequestId,
+    thread: selectedProject
+      ? {
+          environmentId: selectedProject.environmentId,
+          threadId: ThreadId.make(creationMetadata.threadId),
+        }
+      : null,
+    environmentId: selectedProject?.environmentId ?? null,
+  });
+  const missionChoice = missionDraft.choice;
+
   // Keep the current surface until the local draft selection is ready. Publishing
   // an empty loading surface here flashes between two already-cached threads.
   if (!selectedProject) return null;
@@ -815,11 +829,33 @@ export function NewTaskDraftScreen(props: {
   const headingBreak = headingBefore.trimEnd().lastIndexOf(" ");
   const headingFirstLine = headingBreak < 0 ? headingBefore : headingBefore.slice(0, headingBreak);
   const headingLead = headingBreak < 0 ? "" : headingBefore.slice(headingBreak + 1);
+  const projectLabel = selectedProjectLabel ?? selectedProject.title;
+  const missionSentence =
+    missionChoice !== null && missionChoice.kind !== "none" ? (
+      <DraftHeroSentence
+        tokens={draftHeroTokens({ scratch: flow.isScratchDraft, mission: missionChoice.kind }, m)}
+        projectLabel={projectLabel}
+        choice={missionChoice}
+        disabled={isComposerInteractionLocked}
+        onChooseProject={chooseProject}
+        onChooseMission={missionDraft.choose}
+      />
+    ) : null;
+  const missionControl =
+    missionChoice !== null && missionChoice.kind === "none" ? (
+      <DraftMissionControl
+        choice={missionChoice}
+        disabled={isComposerInteractionLocked}
+        onChoose={missionDraft.choose}
+      />
+    ) : null;
   const hero = flow.isScratchDraft ? (
     <View className="items-center gap-2 px-6" testID="new-task-hero">
-      <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
-        <T>What should we work on?</T>
-      </Text>
+      {missionSentence ?? (
+        <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
+          <T>What should we work on?</T>
+        </Text>
+      )}
       <View className="flex-row flex-wrap items-center justify-center gap-x-1">
         <ComposerInlineControl
           accessibilityHint={gt("Opens the project picker")}
@@ -831,41 +867,51 @@ export function NewTaskDraftScreen(props: {
           onPress={chooseProject}
         />
         {environmentControl}
+        {missionControl}
       </View>
       {shareUnavailableNotice}
     </View>
   ) : (
     <View className="items-center gap-6 px-6" testID="new-task-hero">
-      <View className="w-full items-center gap-1.5">
-        <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
-          {headingFirstLine}
-        </Text>
-        <View className="max-w-full flex-row items-center justify-center">
-          <Text className="text-2xl font-t3-medium tracking-tight text-foreground">
-            {headingLead}
+      {missionSentence ?? (
+        <View className="w-full items-center gap-1.5">
+          <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
+            {headingFirstLine}
           </Text>
-          <Pressable
-            accessibilityHint={gt("Opens the project picker")}
-            accessibilityLabel={selectedProjectLabel ?? selectedProject.title}
-            accessibilityRole="button"
-            disabled={isComposerInteractionLocked}
-            onPress={chooseProject}
-            className="min-w-0 max-w-[250px] border-b border-foreground-muted active:opacity-65"
-          >
-            <Text
-              className="text-2xl font-t3-medium tracking-tight text-foreground"
-              numberOfLines={1}
-            >
-              {selectedProjectLabel ?? selectedProject.title}
+          <View className="max-w-full flex-row items-center justify-center">
+            <Text className="text-2xl font-t3-medium tracking-tight text-foreground">
+              {headingLead}
             </Text>
-          </Pressable>
-          <Text className="text-2xl font-t3-medium tracking-tight text-foreground">
-            {headingAfter}
-          </Text>
+            <Pressable
+              accessibilityHint={gt("Opens the project picker")}
+              accessibilityLabel={selectedProjectLabel ?? selectedProject.title}
+              accessibilityRole="button"
+              disabled={isComposerInteractionLocked}
+              onPress={chooseProject}
+              className="min-w-0 max-w-[250px] border-b border-foreground-muted active:opacity-65"
+            >
+              <Text
+                className="text-2xl font-t3-medium tracking-tight text-foreground"
+                numberOfLines={1}
+              >
+                {selectedProjectLabel ?? selectedProject.title}
+              </Text>
+            </Pressable>
+            <Text className="text-2xl font-t3-medium tracking-tight text-foreground">
+              {headingAfter}
+            </Text>
+          </View>
         </View>
-      </View>
+      )}
 
-      {environmentControl}
+      {missionControl === null ? (
+        environmentControl
+      ) : (
+        <View className="items-center">
+          {environmentControl}
+          {missionControl}
+        </View>
+      )}
       {shareUnavailableNotice}
     </View>
   );
@@ -949,6 +995,15 @@ export function NewTaskDraftScreen(props: {
           }
         />
       </View>
+      {missionChoice === null ? null : (
+        <View className="min-w-0 shrink">
+          <DraftMissionControl
+            choice={missionChoice}
+            disabled={isComposerInteractionLocked}
+            onChoose={missionDraft.choose}
+          />
+        </View>
+      )}
     </View>
   );
 

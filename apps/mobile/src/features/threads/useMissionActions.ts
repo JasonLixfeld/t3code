@@ -210,20 +210,20 @@ export function useMissionActions() {
         .sort((left, right) =>
           (right.latestUserMessageAt ?? "").localeCompare(left.latestUserMessageAt ?? ""),
         )[0];
-    if (home === undefined) {
-      Dialog.alert(gt("No project on this machine yet"));
-      return;
-    }
     const requestId = uuidv4();
     markMissionDraft({ requestId }, intent, newMissionId);
+    // The project is only a start: the sentence and the picker offer the mission's machines.
     selectDetail({
       name: "Thread",
       params: {
-        draft: {
-          requestId,
-          environmentId: String(home.environmentId),
-          projectId: String(home.projectId),
-        },
+        draft:
+          home === undefined
+            ? { requestId }
+            : {
+                requestId,
+                environmentId: String(home.environmentId),
+                projectId: String(home.projectId),
+              },
       },
     });
   };
