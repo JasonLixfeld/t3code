@@ -68,7 +68,7 @@ const LAPTOP = EnvironmentId.make("env-laptop");
 const FENCED = EnvironmentId.make("env-fenced");
 const MISSION = "0123456789ab";
 
-const threadScope = (threadId: string, missionLead: boolean) =>
+const threadScope = (threadId: string) =>
   ({
     environmentId: HERE,
     requestNamespace: `provider:${threadId}`,
@@ -80,10 +80,9 @@ const threadScope = (threadId: string, missionLead: boolean) =>
     client: undefined,
     capabilities: new Set(["orchestration" as const]),
     issuedAt: 0,
-    missionLead,
   }) satisfies McpInvocationContext.McpInvocationScope;
-const lead = threadScope("lead", true);
-const notLead = threadScope("member", false);
+const lead = threadScope("lead");
+const notLead = threadScope("member");
 
 const row = (index: number, status: RosterMember["status"]): RosterMember => ({
   ref: { environmentId: LAPTOP, threadId: ThreadId.make(`t${index}`) },
@@ -291,11 +290,6 @@ it.effect("add and release act on the caller's own mission, by the UI's rules", 
     );
     // Each goes as the calling lead, whose reach is read when it is sent, never as the UI.
     for (const call of missions.calls) assert.equal(call.asLead, lead.thread.threadId);
-    // A thread that leads nothing is not offered the tools.
-    const hidden = yield* callLeadTool(missions, notLead, "t3_mission_add", {
-      threadRef: { threadId: "x" },
-    }).pipe(Effect.flip);
-    assert.include(hidden.message, "Tool 't3_mission_add' not found");
   }),
 );
 
@@ -522,15 +516,15 @@ it.effect(
     }),
 );
 
-it.effect("a thread offered the lead tools that no longer leads is refused, not failed", () =>
+it.effect("a thread that leads no mission is refused each lead tool, and nothing changes", () =>
   Effect.gen(function* () {
     const missions = makeMissions();
-    const handedOn = threadScope("member", true);
     for (const [tool, args] of [
       ["t3_mission_roster", {}],
       ["t3_mission_add", { threadRef: { threadId: "x" } }],
+      ["t3_mission_release", { threadRef: { threadId: "x" } }],
     ] as const) {
-      const answer = yield* callLeadTool(missions, handedOn, tool, args);
+      const answer = yield* callLeadTool(missions, notLead, tool, args);
       assert.include(answer.text, "This thread leads no mission.");
       assert.include(answer.text, "invalid_request");
     }

@@ -134,7 +134,7 @@ export const MissionToolkit = Toolkit.make(
   })
     .annotate(Tool.Readonly, true)
     .annotate(Tool.Destructive, false)
-    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenUnlessMissionLead),
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("t3_mission_add", {
     description:
       "Add a thread to the mission you lead. A thread on a linked machine needs a full-access link. `pending`: its machine has not answered yet.",
@@ -148,7 +148,7 @@ export const MissionToolkit = Toolkit.make(
     dependencies: leadOnly,
   })
     .annotate(Tool.Destructive, false)
-    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenUnlessMissionLead),
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("t3_mission_release", {
     description:
       "Make a thread leave the mission you lead. It stays a thread. `pending`: its machine has not answered yet.",
@@ -159,5 +159,5 @@ export const MissionToolkit = Toolkit.make(
     dependencies: leadOnly,
   })
     .annotate(Tool.Destructive, true)
-    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenUnlessMissionLead),
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
 );

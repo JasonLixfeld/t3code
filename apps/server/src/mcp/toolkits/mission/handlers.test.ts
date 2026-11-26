@@ -407,7 +407,7 @@ const leadHere = {
 };
 
 it.effect(
-  "over /mcp, only a linked environment's session lists t3_mission_tag, and only a lead the lead tools",
+  "over /mcp, only a linked environment's session lists t3_mission_tag, and every agent the lead tools",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -520,14 +520,19 @@ it.effect(
           name: "tool_search",
           arguments: { query: "t3_mission_tag mission tag" },
         });
-        assert.deepEqual(searched.result?.structuredContent?.tools ?? [], []);
+        assert.notInclude(
+          (searched.result?.structuredContent?.tools ?? []).map((tool) => tool.name),
+          "t3_mission_tag",
+        );
         assert.notInclude(yield* listed("cliToken"), "t3_mission_tag");
         assert.include(yield* listed("linkToken"), "t3_mission_tag");
 
         const lead = yield* listed("leadToken");
         assert.includeMembers(lead, LEAD_TOOLS);
         assert.notInclude(lead, "t3_mission_tag");
-        for (const token of ["agentToken", "linkToken", "cliToken"]) {
+        // A thread that becomes the lead mid-session needs no new tool list.
+        assert.includeMembers(yield* listed("agentToken"), LEAD_TOOLS);
+        for (const token of ["linkToken", "cliToken"]) {
           const others = yield* listed(token);
           for (const tool of LEAD_TOOLS) assert.notInclude(others, tool);
         }
@@ -535,7 +540,7 @@ it.effect(
           name: "t3_mission_roster",
           arguments: {},
         });
-        assert.include(JSON.stringify(refused), "Tool 't3_mission_roster' not found");
+        assert.include(JSON.stringify(refused), "This thread leads no mission.");
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

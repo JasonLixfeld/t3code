@@ -168,8 +168,6 @@ export interface McpInvocationScope {
   readonly origin?: string | undefined;
   /** False when the calling thread's project is on no forge T3 reads; `/mcp` reads it per request. */
   readonly forge?: boolean;
-  /** The calling thread leads a mission here; `/mcp` reads it per request. */
-  readonly missionLead?: boolean;
 }
 
 /**
@@ -250,13 +248,6 @@ export const hiddenUnlessWorkflowEvents = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope !== undefined && scope.thread === undefined && scope.workflows === true;
-};
-
-/** `McpSchema.EnabledWhen` for tools only a mission's lead thread may see and call. */
-export const hiddenUnlessMissionLead = (): boolean => {
-  const fiber = Fiber.getCurrent();
-  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
-  return scope?.thread !== undefined && scope.missionLead === true;
 };
 
 /** `McpSchema.EnabledWhen` for tools that act on the thread's forge, hidden where it has none. */

@@ -2345,7 +2345,6 @@ const leadScope: McpInvocationContext.McpInvocationScope = {
   client: undefined,
   capabilities: new Set(["orchestration"]),
   issuedAt: 0,
-  missionLead: true,
 };
 const mcpClient = McpSchema.McpServerClient.of({
   clientId: 1,
@@ -4052,6 +4051,33 @@ it.effect("a lead's wait does not wait on the mission lock to mark what it saw",
       world.beforeMissionsRead = Effect.die("The mission store is unreadable.");
       yield* Fiber.join(yield* missions.heardInWait(lead.threadId, localMember, "r2"));
       world.beforeMissionsRead = Effect.void;
+    }),
+  );
+});
+
+it.effect("a former lead is refused each lead tool, and its old mission is left as it was", () => {
+  const other = ref(HERE, "other");
+  const fresh = ref(HERE, "fresh");
+  const world = makeWorld([lead, localMember, other, fresh]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: other });
+      yield* missions.setLead({ missionId, lead: localMember, expectedLead: lead.threadId });
+      leadRuns(world);
+      for (const [tool, args] of [
+        ["t3_mission_roster", {}],
+        ["t3_mission_add", { threadRef: { threadId: fresh.threadId } }],
+        ["t3_mission_release", { threadRef: { threadId: other.threadId } }],
+      ] as const) {
+        assert.include(yield* leadTool(world, tool, args), "This thread leads no mission.");
+      }
+      assert.deepEqual(membersOf((yield* listed).missions[0]), [
+        [keyOf(localMember), "active"],
+        [keyOf(other), "active"],
+      ]);
     }),
   );
 });
