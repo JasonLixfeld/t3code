@@ -5516,6 +5516,9 @@ it("mission lead cases fail a lead that speaks, asks half a question or reports 
     }),
   );
   assert.isFalse(
+    passes("mission-pull-request-merged-speaks", { text: "No pull request was merged." }),
+  );
+  assert.isFalse(
     passes("mission-pull-request-merged-speaks", {
       text: "PR #41 is still waiting to be merged.",
     }),
