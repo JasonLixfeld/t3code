@@ -23,7 +23,6 @@ const update = (change: (drafts: Map<DraftId, MissionDraft>) => void) =>
     return { drafts: next };
   });
 
-/** A server thread has no composer draft, so its mark is keyed by the thread itself. */
 export const serverThreadMissionDraftId = (thread: ScopedThreadRef) =>
   DraftId.make(scopedThreadKey(thread));
 
