@@ -18,6 +18,7 @@ import { MissionDraftCoordinator } from "./MissionDraftCoordinator";
 const createMission = vi.hoisted(() => vi.fn());
 const sentThreads = vi.hoisted(() => new Set<string>());
 const reportMissionFailure = vi.hoisted(() => vi.fn());
+const missions = vi.hoisted(() => ({ turnedOff: false }));
 
 vi.mock("../../state/shell", async () => {
   const { Atom } = await import("effect/reactivity");
@@ -37,7 +38,7 @@ vi.mock("../../state/entities", () => ({
 }));
 vi.mock("../../state/missions", () => {
   const noHosts: ReadonlyArray<never> = [];
-  return { useMissionHosts: () => noHosts };
+  return { useMissionHosts: () => noHosts, useMissionsTurnedOff: () => missions.turnedOff };
 });
 vi.mock("../../state/server", () => ({ serverEnvironment: {} }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => createMission }));
@@ -128,4 +129,33 @@ it("drops the late failure of an attempt whose mark was replaced, without an ale
   await act(async () => fail({ _tag: "Failure" }));
   expect(reportMissionFailure).not.toHaveBeenCalled();
   expect(missionDraftOf(thread)).toMatchObject({ missionId: "m4", step: "waiting" });
+});
+
+it("retires an unsent mark only when the user turns Missions off, and starts nothing for a sent one", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  using _globals = { [Symbol.dispose]: () => vi.unstubAllGlobals() };
+  const unsent = {
+    environmentId: EnvironmentId.make("env-off"),
+    threadId: ThreadId.make("unsent"),
+  };
+  const sent = { environmentId: EnvironmentId.make("env-off"), threadId: ThreadId.make("sent") };
+  sentThreads.add(sent.threadId);
+  createMission.mockClear();
+  missions.turnedOff = true;
+  markMissionDraft(unsent, { kind: "new" }, () => "m5");
+  markMissionDraft(sent, { kind: "new" }, () => "m6");
+  const root = createRoot(document.createElement("div"));
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  act(() =>
+    root.render(
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <MissionDraftCoordinator />
+      </RegistryContext.Provider>,
+    ),
+  );
+  expect(missionDraftOf(unsent)).toBeUndefined();
+  expect(missionDraftOf(sent)?.step).toBe("waiting");
+  expect(createMission).not.toHaveBeenCalled();
+  missions.turnedOff = false;
+  sentThreads.delete(sent.threadId);
 });

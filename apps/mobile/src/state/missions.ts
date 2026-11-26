@@ -78,6 +78,10 @@ export function useMissionsAdvertised(): boolean {
   return useAtomValue(missionAdvertisersAtom).length > 0;
 }
 
+export function useMissionsTurnedOff(): boolean {
+  return useAtomValue(missionsTurnedOffAtom);
+}
+
 export function useMissionStartMachines(): ReadonlySet<EnvironmentId> {
   return useAtomValue(missionStartMachinesAtom);
 }

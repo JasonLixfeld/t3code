@@ -15,7 +15,7 @@ import {
   settleMissionDraftAttempt,
   startMissionDraftAttempt,
 } from "../../state/mission-drafts";
-import { useMissionHosts } from "../../state/missions";
+import { useMissionHosts, useMissionsTurnedOff } from "../../state/missions";
 import { serverEnvironment } from "../../state/server";
 import { environmentShell } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -39,6 +39,7 @@ function MissionDraftWatch(props: {
   const gt = useGT();
   const shell = useThreadShell(thread);
   const hosts = useMissionHosts();
+  const turnedOff = useMissionsTurnedOff();
   const createMission = useAtomCommand(serverEnvironment.createMission, "mission create");
   const setLead = useAtomCommand(serverEnvironment.setMissionLead, "mission set lead");
   const addMember = useAtomCommand(serverEnvironment.addMissionMember, "mission add member");
@@ -93,9 +94,9 @@ function MissionDraftWatch(props: {
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts, joins or leads the mission on the server once the thread's first message lands, and again after Try again
   useEffect(() => {
-    if (done) clearMissionDraft(thread);
-    else if (draft.step === "waiting" && sent) void start();
-  }, [draft.step, done, sent, thread]);
+    if (done || (turnedOff && !sent)) clearMissionDraft(thread);
+    else if (!turnedOff && draft.step === "waiting" && sent) void start();
+  }, [draft.step, done, sent, thread, turnedOff]);
   return null;
 }
 
