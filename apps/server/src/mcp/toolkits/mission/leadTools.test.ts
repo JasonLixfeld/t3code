@@ -433,7 +433,7 @@ const callLaunch = (
         getThreadShell: (threadId) =>
           Effect.succeed({
             ...liveThreadShell(threadId),
-            ...(threadId === stamped.thread.threadId
+            ...([stamped, lead].some((scope) => scope.thread.threadId === threadId)
               ? { linkOrigin: { sessionId: "desk", label: "Desk", access: "full-access" as const } }
               : {}),
           }),
@@ -620,6 +620,11 @@ it.effect(
           { environmentId: FENCED, threadId: `launched-${FENCED}` },
         ],
       );
+      const quiet = { environmentId: LAPTOP, title: "Quiet", mission: "none" };
+      const quietLaunch = yield* callLaunch(missions, lead, quiet);
+      assert.isString(quietLaunch.threadId);
+      assert.notProperty(quietLaunch, "mission");
+      assert.lengthOf(missions.calls, 2);
     }),
 );
 

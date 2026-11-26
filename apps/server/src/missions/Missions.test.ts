@@ -2586,7 +2586,8 @@ it.effect(
 it.effect("a thread's mission is one led here, never one a linked lead keeps for it", () => {
   const remoteLed = ref(HERE, "remote-led");
   const sameId = ref(HERE, "remote-same-id");
-  const world = makeWorld([lead, localMember, remoteLed, sameId]);
+  const [otherLead, otherMember] = [ref(HERE, "other-lead"), ref(HERE, "other-member")];
+  const world = makeWorld([lead, localMember, remoteLed, sameId, otherLead, otherMember]);
   return withMissions(
     world,
     Effect.gen(function* () {
@@ -2594,17 +2595,21 @@ it.effect("a thread's mission is one led here, never one a linked lead keeps for
       const claims = yield* MissionClaims.MissionClaims;
       yield* createOne;
       yield* missions.addMember({ missionId: "0123456789ab", member: localMember });
+      yield* missions.create({ missionId: "a1b2c3d4e5f6", leadThreadId: otherLead.threadId });
+      yield* missions.addMember({ missionId: "a1b2c3d4e5f6", member: otherMember });
       for (const [thread, missionId] of [
         [remoteLed, "ba9876543210"],
         [sameId, "0123456789ab"],
       ] as const) {
         yield* claims.join(LEAD_ON_LAPTOP, { threadId: thread.threadId, missionId, name: "There" });
       }
-      for (const thread of [lead, localMember]) {
-        assert.equal(
-          (yield* missions.locallyLedMissionOf(thread.threadId))?.leadThreadId,
-          lead.threadId,
-        );
+      for (const [thread, missionId] of [
+        [lead, "0123456789ab"],
+        [localMember, "0123456789ab"],
+        [otherLead, "a1b2c3d4e5f6"],
+        [otherMember, "a1b2c3d4e5f6"],
+      ] as const) {
+        assert.equal((yield* missions.locallyLedMissionOf(thread.threadId))?.missionId, missionId);
       }
       assert.isUndefined(yield* missions.locallyLedMissionOf(remoteLed.threadId));
       assert.isUndefined(yield* missions.locallyLedMissionOf(sameId.threadId));
