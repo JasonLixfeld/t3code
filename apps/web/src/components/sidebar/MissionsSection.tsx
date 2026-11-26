@@ -691,10 +691,6 @@ async function loadThreadShell(ref: ScopedThreadRef): Promise<EnvironmentThreadS
 /** How many threads "Choose a thread…" offers, most recently written first. */
 const LEAD_CHOICES = 20;
 
-/**
- * The Missions above the thread list. Each lead's own thread row heads its Mission, and its
- * members' rows sit under it. A row this client has no thread for keeps the Mission's own row.
- */
 export function SidebarMissions(props: {
   readonly missions: ReadonlyArray<SidebarMission<EnvironmentThreadShell>>;
   readonly headerVisible: boolean;
