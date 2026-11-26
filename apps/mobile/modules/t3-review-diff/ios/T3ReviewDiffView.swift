@@ -898,6 +898,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
   }
 
   private func applyTheme() {
+    contentView.isDarkAppearance = appearanceScheme == "dark"
     contentView.theme = ReviewDiffNativeTheme.resolve(appearanceScheme, payload: themePayload)
     backgroundColor = contentView.theme.background
     scrollView.backgroundColor = contentView.theme.background
@@ -1258,8 +1259,17 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   }
   private var searchRangesByRowId: [String: [NSRange]] = [:]
   private var activeSearchMatch: ReviewDiffSearchMatch?
-  private static let searchMatchColor = UIColor.systemYellow.withAlphaComponent(0.35)
-  private static let activeSearchMatchColor = UIColor.systemOrange.withAlphaComponent(0.65)
+  /// The web diff's find colors: a translucent orange match and its modified blue at 45%.
+  /// Set before `theme`, whose change redecorates rows.
+  var isDarkAppearance = false
+  private var searchMatchColor: UIColor {
+    UIColor(red: 1, green: 150 / 255, blue: 50 / 255, alpha: isDarkAppearance ? 0x66 / 255 : 0x88 / 255)
+  }
+  private var activeSearchMatchColor: UIColor {
+    isDarkAppearance
+      ? UIColor(red: 0x69 / 255, green: 0xb1 / 255, blue: 1, alpha: 0.45)
+      : UIColor(red: 0, green: 0x9f / 255, blue: 1, alpha: 0.45)
+  }
 
   /// Paint-only: row geometry does not depend on search highlights.
   func setSearchHighlights(_ ranges: [String: [NSRange]], active: ReviewDiffSearchMatch?) {
@@ -1280,11 +1290,13 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
         ))
       }
     }
-    for range in searchRangesByRowId[row.id] ?? [] {
-      highlights.append(ReviewDiffCodeHighlight(range: range, color: Self.searchMatchColor))
+    let active = activeSearchMatch?.rowId == row.id ? activeSearchMatch?.range : nil
+    // The current match replaces its match color, as on web, instead of stacking on it.
+    for range in searchRangesByRowId[row.id] ?? [] where range != active {
+      highlights.append(ReviewDiffCodeHighlight(range: range, color: searchMatchColor))
     }
-    if let active = activeSearchMatch, active.rowId == row.id {
-      highlights.append(ReviewDiffCodeHighlight(range: active.range, color: Self.activeSearchMatchColor))
+    if let active {
+      highlights.append(ReviewDiffCodeHighlight(range: active, color: activeSearchMatchColor))
     }
     return highlights
   }

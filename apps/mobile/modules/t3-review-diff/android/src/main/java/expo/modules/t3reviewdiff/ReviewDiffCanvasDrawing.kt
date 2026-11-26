@@ -430,7 +430,13 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     // Native layouts carry word diffs as spans.
     if (lines.nativeLayout != null || row.wordDiffRanges.isEmpty() || !changed) return
     val color = if (row.change == "add") theme.addBar else theme.deleteBar
-    fillRanges(canvas, row, tokens, codeX, top, bottom, lines, style, row.wordDiffRanges, withAlpha(color, 71))
+    fillRanges(
+      canvas, row, tokens, codeX, top, bottom, lines, style, row.wordDiffRanges,
+      withAlpha(
+        color,
+        71
+      )
+    )
   }
 
   /** Paints search matches without touching the cached layouts, so geometry stays as it is. */
