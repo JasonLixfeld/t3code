@@ -74,8 +74,8 @@ vi.mock(import("../diffs/useDiffFind"), async (original) => {
   const actual = await original();
   return {
     ...actual,
-    useDiffFind: () => {
-      const diffFind = actual.useDiffFind();
+    useDiffFind: (...args: Parameters<typeof actual.useDiffFind>) => {
+      const diffFind = actual.useDiffFind(...args);
       return {
         ...diffFind,
         find: {
@@ -403,4 +403,40 @@ it("opens find in the Code tab from the workspace panel's tab bar and the Code t
   screen.container.querySelector<HTMLElement>("[data-active-tab='true'] button")!.focus();
   await pressFind();
   await vi.waitFor(() => expect(codeFind).toHaveBeenCalledTimes(2));
+  // The detail panel claims a key from inside Code, so the tab bar does not send it again.
+  const options = screen.getByRole("button", { name: "Diff options" });
+  options.element().focus();
+  await expect.element(options).toHaveFocus();
+  await pressFind();
+  await vi.waitFor(() => expect(codeFind).toHaveBeenCalledTimes(3));
+  await act(() => Promise.resolve());
+  expect(codeFind).toHaveBeenCalledTimes(3);
+});
+
+it("opens find in the Code tab by keyboard where no workspace panel wraps it, as in Workflows", async () => {
+  setup();
+  await using screen = await render(
+    <PullRequestDetailPanel
+      environmentId={environmentId}
+      reference={detail}
+      shortcutsEnabled={false}
+      getShortcutContext={() => ({
+        terminalFocus: false,
+        terminalOpen: false,
+        previewFocus: false,
+        previewOpen: false,
+        isWeb: true,
+        isDesktop: false,
+      })}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Code", exact: true }));
+  const options = screen.getByRole("button", { name: "Diff options" });
+  await expect.element(options).toBeInTheDocument();
+  options.element().focus();
+  await expect.element(options).toHaveFocus();
+  await userEvent.keyboard(
+    isMacPlatform(navigator.platform) ? "{Meta>}f{/Meta}" : "{Control>}f{/Control}",
+  );
+  await vi.waitFor(() => expect(codeFind).toHaveBeenCalledTimes(1));
 });

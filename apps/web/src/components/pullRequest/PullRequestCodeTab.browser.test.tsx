@@ -218,6 +218,7 @@ const tab = (
 ) => (
   <PullRequestCodeTab
     scrollerRef={() => {}}
+    getShortcutContext={() => ({})}
     environmentId={EnvironmentId.make("environment")}
     reference={detail}
     detail={detail}
@@ -437,6 +438,7 @@ it("keeps an unfinished inline comment when a background refresh changes another
   const reviewTab = (backgroundRefreshToken: number) => (
     <PullRequestCodeTab
       scrollerRef={() => {}}
+      getShortcutContext={() => ({})}
       environmentId={EnvironmentId.make("environment")}
       reference={reviewable}
       detail={reviewable}
@@ -536,6 +538,7 @@ it("never requests the diff of a selected commit the pull request no longer has"
   await using screen = await render(
     <PullRequestCodeTab
       scrollerRef={() => {}}
+      getShortcutContext={() => ({})}
       environmentId={EnvironmentId.make("environment")}
       reference={detail}
       detail={{
@@ -576,6 +579,7 @@ it("answers a commit's diff link only once that commit's diff is shown", async (
   const scoped = (selectedCommitOid: string | null, revealUrl?: string) => (
     <PullRequestCodeTab
       scrollerRef={() => {}}
+      getShortcutContext={() => ({})}
       environmentId={EnvironmentId.make("environment")}
       reference={detail}
       detail={withCommit}
@@ -615,6 +619,7 @@ it("hides a resolved conversation behind avatars on its line until they are clic
   const withThread = (isResolved: boolean, oldSideToo = false) => (
     <PullRequestCodeTab
       scrollerRef={() => {}}
+      getShortcutContext={() => ({})}
       environmentId={EnvironmentId.make("environment")}
       reference={detail}
       detail={{
@@ -704,6 +709,7 @@ it("keeps an unsent reply when the appearance switches between light and dark", 
   await using screen = await render(
     <PullRequestCodeTab
       scrollerRef={() => {}}
+      getShortcutContext={() => ({})}
       environmentId={EnvironmentId.make("environment")}
       reference={detail}
       detail={{
@@ -787,6 +793,7 @@ it("hands panel focus from the loading diff to the diff once the diff workers st
     <div {...workspaceAreaProps("panel", 4, "Workspace panel")} className="flex flex-1">
       <PullRequestCodeTab
         scrollerRef={() => {}}
+        getShortcutContext={() => ({})}
         environmentId={EnvironmentId.make("environment")}
         reference={detail}
         detail={withOrphan}
