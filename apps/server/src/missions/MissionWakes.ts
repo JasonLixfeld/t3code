@@ -144,12 +144,18 @@ export const layer = Layer.effectDiscard(
           localDetail(ref.threadId, run),
           (detail): Effect.Effect<MemberDetail | undefined> => {
             if (detail !== undefined) return Effect.succeed({ ...detail, requests: [] });
-            if (run?.status !== "failed") return Effect.undefined;
+            if (run?.status !== "failed" && run?.status !== "completed") return Effect.undefined;
             return Effect.as(
-              Effect.logWarning("A failed member's thread was not read; its event tells it", {
+              Effect.logWarning("A member's thread was not read; its run event tells it", {
                 threadId: ref.threadId,
               }),
-              { status: "failed", title: "", project: "", run, requests: [] },
+              {
+                status: run.status === "failed" ? "failed" : "idle",
+                title: "",
+                project: "",
+                run,
+                requests: [],
+              },
             );
           },
         ),

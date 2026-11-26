@@ -548,6 +548,28 @@ it.effect.each(["completed", "interrupted"] as const)(
   },
 );
 
+it.effect("a completion is told from its event when the member's thread cannot be read", () => {
+  const world = makeWorld();
+  return withWakes(
+    world,
+    Effect.gen(function* () {
+      world.set(first, { unreadable: true });
+      yield* world.run(first, "f1", "completed");
+      assert.equal(
+        yield* nextText(world),
+        told(["member 1 on this machine finished its turn and is idle."]),
+      );
+      yield* world.leadRead;
+      yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+      world.set(first, { unreadable: false });
+      yield* world.run(first, "f1", "completed");
+      yield* world.run(second, "s1", "failed");
+      assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
+      assert.equal(world.sent.length, 2);
+    }),
+  );
+});
+
 it.effect("a failure is told from its event when the member's thread cannot be read", () => {
   const world = makeWorld();
   return withWakes(
