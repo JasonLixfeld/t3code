@@ -384,7 +384,6 @@ export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROV
 const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
 // The SDK has no control-request deadline; the CLI waits up to 30 s per MCP server.
 const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
-const CLAUDE_T3_MCP_SERVER = "t3-code";
 const CLAUDE_BOOT_TIMEOUT = "5 minutes";
 // Claude can consume a subagent result before the launching turn ends, leaving
 // its notification with no native wake turn to answer the continuation.
@@ -2868,7 +2867,7 @@ export function claudeMcpQueryOverrides(input: {
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
-      [CLAUDE_T3_MCP_SERVER]: {
+      "t3-code": {
         type: "http",
         url: session.endpoint,
         headers: {
@@ -7014,23 +7013,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (remembered !== undefined) {
             yield* rememberProviderThread(remembered);
           }
-        });
-
-        const listedAsLead = new WeakMap<ClaudeAgentSdkQuerySession, boolean>();
-        const refreshLeadTools = Effect.fn("ClaudeAdapterV2.refreshLeadTools")(function* (
-          query: ClaudeAgentSdkQuerySession,
-          missionContext: ProviderAdapter.ProviderAdapterV2TurnInput["missionContext"],
-        ) {
-          const lead = missionContext?.role === "lead";
-          const listed = listedAsLead.get(query);
-          listedAsLead.set(query, lead);
-          if (listed === undefined || listed === lead) return;
-          yield* query.reconnectMcpServer(CLAUDE_T3_MCP_SERVER).pipe(
-            Effect.timeout(CLAUDE_MCP_REGISTRATION_TIMEOUT),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("orchestration-v2.claude-t3-mcp-reconnect-failed", cause),
-            ),
-          );
         });
 
         const rosterForNativeThread = (
@@ -14160,7 +14142,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     );
             const querySession = yield* openQuery(turnInput, nativeThreadId, queryPolicy);
             yield* applySessionTitle(querySession.query, nativeThreadId, turnInput.appThread.title);
-            yield* refreshLeadTools(querySession.query, turnInput.missionContext);
             const autoCompactWindow = yield* resolveAutoCompactWindow(
               querySession.settingsCwd,
               turnInput.modelSelection,

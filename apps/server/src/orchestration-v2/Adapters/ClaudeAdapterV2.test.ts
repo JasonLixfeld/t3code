@@ -3898,7 +3898,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       });
       const changes = yield* makeChangeSignal;
       const offeredMessages: Array<SDKUserMessage> = [];
-      const reconnects: Array<{ readonly server: string; readonly offeredBefore: number }> = [];
       const permissionModeChanges: Array<string> = [];
       const renameCalls: Array<string> = [];
       const liveSelectionChanges: Array<unknown> = [];
@@ -4005,10 +4004,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
                   mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
-                  reconnectMcpServer: (server) =>
-                    Effect.sync(() => {
-                      reconnects.push({ server, offeredBefore: offeredMessages.length });
-                    }),
+                  reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: options?.stopTask ?? (() => Effect.void),
                   interrupt: Effect.void,
@@ -4054,10 +4050,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   options?.mcp?.callMcpTool ?? (() => Effect.die("unexpected MCP tool call")),
                 mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
                 mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
-                reconnectMcpServer: (server) =>
-                  Effect.sync(() => {
-                    reconnects.push({ server, offeredBefore: offeredMessages.length });
-                  }),
+                reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                 listPermissionRules: options?.mcp?.listPermissionRules ?? Effect.succeed([]),
                 stopTask: options?.stopTask ?? (() => Effect.void),
                 interrupt: options?.interrupt ?? Effect.void,
@@ -4132,7 +4125,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         processQueues,
         offerAndWait,
         offeredMessages,
-        reconnects,
         promptUuid: (index: number) => {
           const uuid = offeredMessages[index]?.uuid;
           if (uuid === undefined) throw new Error(`No prompt offered at index ${index}.`);
@@ -7814,7 +7806,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           status("Status: 1 member."),
           "Plan it",
         ]);
-        assert.deepEqual(harness.reconnects, [{ server: "t3-code", offeredBefore: 1 }]);
         yield* finish(1);
         assert.deepEqual(yield* turn(2, "Next", lead("Status: 1 member.")), ["Next"]);
         yield* finish(2);
@@ -7856,10 +7847,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* finish(5);
         assert.deepEqual(yield* turn(6, "Hi", { role: "former-lead" }), [ended, "Hi"]);
         yield* finish(6);
-        assert.deepEqual(
-          harness.reconnects.map((reconnect) => reconnect.offeredBefore),
-          [1, harness.offeredMessages.length - 1],
-        );
         assert.deepEqual(yield* turn(7, "Still there?", { role: "former-lead" }), ["Still there?"]);
         yield* finish(7);
         // A fork of the old lead is a new session, whose first turn is told again.

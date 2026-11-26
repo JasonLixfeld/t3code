@@ -395,12 +395,7 @@ interface ThreadState {
   /** Prompts other clients queued while no T3 turn ran, shown once delivered; `leads` the next wake if no report preceded it. */
   readonly externalPrompts: Map<string, { readonly text: string; leads: boolean }>;
   mcp:
-    | {
-        readonly name: string;
-        readonly directory: string;
-        readonly credential: string;
-        readonly missionLeadAtAdd: boolean;
-      }
+    | { readonly name: string; readonly directory: string; readonly credential: string }
     | undefined;
   instructions: string | undefined;
 }
@@ -4457,18 +4452,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const wanted =
         mcpSession === undefined || connection.external
           ? undefined
-          : {
-              name,
-              directory,
-              credential: mcpSession.authorizationHeader,
-              missionLeadAtAdd: turnInput.missionContext?.role === "lead",
-            };
+          : { name, directory, credential: mcpSession.authorizationHeader };
       if (
         state.mcp !== undefined &&
         (wanted === undefined ||
           state.mcp.directory !== wanted.directory ||
-          state.mcp.credential !== wanted.credential ||
-          state.mcp.missionLeadAtAdd !== wanted.missionLeadAtAdd)
+          state.mcp.credential !== wanted.credential)
       ) {
         yield* removeMcp(state.mcp);
         state.mcp = undefined;
