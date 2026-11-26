@@ -46,8 +46,9 @@ move a draft into a project, pick the project in the **Project** picker.
 
 ### Pick a project and a mission
 
-A new thread shows two pickers under its heading. **Project** sets where the
-thread works. **Mission** sets which mission the thread joins when you send it.
+On web and desktop, a new thread shows two pickers under its heading. **Project**
+sets where the thread works. **Mission** sets which mission the thread joins when
+you send it. The mobile app has no **Mission** picker.
 It shows **None** by default and lists the missions on the thread's machine. Pick
 **New mission (this thread leads)** to start a new mission with this thread as
 its lead. A thread that starts or leads a mission shows that mission in the
