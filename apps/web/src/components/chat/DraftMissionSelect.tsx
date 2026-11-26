@@ -37,12 +37,13 @@ interface MissionItem {
 export function useDraftProjectMachines(draftId: DraftId | null) {
   const enabled = useClientSettings((settings) => settings.sidebarMissionsEnabled);
   const hosts = useMissionHosts();
+  const startMachines = useMissionStartMachines(hosts);
   const marked = useMissionDrafts((state) =>
     draftId === null ? undefined : state.drafts.get(draftId),
   );
   if (marked === undefined) return null;
-  const pinned = new Set([marked.thread.environmentId]);
-  if (!enabled || marked.intent.kind === "new") return pinned;
+  if (!enabled) return new Set([marked.thread.environmentId]);
+  if (marked.intent.kind === "new") return startMachines;
   return missionDraftMachines(marked.intent, hosts);
 }
 

@@ -658,6 +658,13 @@ it.each([
   },
 );
 
+it("a new mission draft offers no project on a machine that cannot start one", async () => {
+  using _environment = installFakeEnvironment([]);
+  listMissions([]);
+  await using _app = await openDraft("draft-new-mission-nowhere", { kind: "new" });
+  expect((await projectOptions()).some((name) => name?.endsWith("render"))).toBe(false);
+});
+
 it("with Missions off, a new thread shows the Project picker and no Mission picker", async () => {
   using _environment = installFakeEnvironment([]);
   listMissions([hostWith(ENVIRONMENT_ID)]);
@@ -931,6 +938,7 @@ it("opens No project on an allowed machine when the usual one is not the mission
     "elsewhere" as EnvironmentId,
   );
   using _environment = installFakeEnvironment([]);
+  listMissions([hostWith(ENVIRONMENT_ID)]);
   await using _app = await openDraft("draft-scratch-fallback", { kind: "new" });
   await pickNoProject();
   expect(opened).toHaveBeenCalledWith(ENVIRONMENT_ID, undefined, expect.any(AbortSignal));
@@ -972,6 +980,7 @@ it("No project left pending does not move a mission draft that started sending",
   using _environment = installFakeEnvironment([], {
     extraProjects: [{ id: alphaProject.id, title: "alpha" }],
   });
+  listMissions([hostWith(ENVIRONMENT_ID)]);
   await using app = await openDraft("draft-scratch-then-send", { kind: "new" });
   const marked = missionDraftOf(app.draftId);
   await pickNoProject();
@@ -1011,6 +1020,7 @@ it("opening another thread before No project is ready leaves the user there", as
   using _environment = installFakeEnvironment([], {
     extraProjects: [{ id: alphaProject.id, title: "alpha" }],
   });
+  listMissions([hostWith(ENVIRONMENT_ID)]);
   await using app = await openDraft("draft-scratch-then-leave", { kind: "new" });
   const marked = missionDraftOf(app.draftId);
   await pickNoProject();
