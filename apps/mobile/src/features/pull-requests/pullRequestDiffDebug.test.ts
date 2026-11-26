@@ -50,7 +50,13 @@ it.each([true, false])(
         targetFileId: "last-file",
         focusIndex: -1,
         isIos,
-        nativeView: { current: { scrollToFile, scrollToTop: vi.fn(async () => {}) } },
+        nativeView: {
+          current: {
+            scrollToFile,
+            scrollToTop: vi.fn(async () => {}),
+            scrollToMatch: vi.fn(async () => {}),
+          },
+        },
         jumpStarted: () => true,
         setJumpStarted: () => {},
         onDebug,
