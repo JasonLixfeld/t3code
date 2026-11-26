@@ -209,6 +209,21 @@ it("a member whose turn ended while its own work runs is told once that work end
     { source: "run:run-5", event: "completed" },
   ]);
   assert.deepEqual(remoteUpdates(markOf(shellDetail(shell)), shellDetail(shell), 0), []);
+
+  const asking = {
+    ...shell,
+    pendingRuntimeRequest: { id: "req-9", kind: "user_input", createdAt: "2026-01-01" } as never,
+  };
+  const askingHeld = shellDetail({
+    ...asking,
+    pendingBackgroundTasks: [{ taskId: "agent-1", kind: "subagent" }],
+  });
+  assert.deepEqual(remoteUpdates(running, askingHeld, 0), [
+    { source: "request:req-9", event: "awaiting-input" },
+  ]);
+  assert.deepEqual(remoteUpdates(markOf(askingHeld), shellDetail(asking), 0), [
+    { source: "run:run-5", event: "completed" },
+  ]);
 });
 
 it("only a move into a state that needs the lead, or a finished turn, is an update", () => {

@@ -54,6 +54,8 @@ export const MemberDetail = Schema.Struct({
   title: Schema.String,
   project: Schema.String,
   run: Schema.optional(Schema.Struct({ id: Schema.String, status: Schema.String })),
+  /** Background work the member started still holds its finished turn. */
+  held: Schema.optional(Schema.Boolean),
   requests: Schema.optional(
     Schema.Array(Schema.Struct({ id: Schema.String, kind: Schema.String })),
   ),
