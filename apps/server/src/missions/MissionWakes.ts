@@ -216,7 +216,7 @@ export const layer = Layer.effectDiscard(
       if (update !== undefined && ofRun !== undefined)
         return yield* observeRunWithoutRequests(claim.missionId, ref, ofRun);
       if (update !== undefined) return yield* record(claim.missionId, ref, [update]);
-      yield* observeRunWithoutRequests(claim.missionId, ref, ofRun, true);
+      yield* observeRunWithoutRequests(claim.missionId, ref, undefined, true);
     });
 
     const dropUpdates = (missionId: string, lead: ThreadId): Effect.Effect<void> =>
