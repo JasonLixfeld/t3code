@@ -177,7 +177,6 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       McpAppModelContext.layer,
-      // The same layer value Missions fills, so turns read the one it serves.
       MissionTurnContexts.layer,
       PreviewAgentActivity.layer,
       layerCheckpointServiceProvided,

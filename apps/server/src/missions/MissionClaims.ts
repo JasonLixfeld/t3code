@@ -385,6 +385,5 @@ export const layer = Layer.effect(MissionClaims, make);
 
 export const layerLive = layer.pipe(
   Layer.provideMerge(MissionStore.layer),
-  // The same layer value the orchestrator is built with, so both take the one lock per thread.
   Layer.provide(ThreadCommandExecutor.layer),
 );
