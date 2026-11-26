@@ -94,10 +94,6 @@ import {
 import { SidebarHeading } from "./SidebarListMarkers";
 import type { SidebarMissionToggle } from "./SidebarThreadRow";
 
-/**
- * Only a machine that keeps Missions, and lets this client read threads, is asked for them. None
- * is while the sidebar setting turns them off.
- */
 export function useMissionHosts(): ReadonlyArray<MissionHost> {
   const enabled = useClientSettings((settings) => settings.sidebarMissionsEnabled);
   const connected = useConnectedEnvironmentIds();
@@ -121,7 +117,6 @@ const missionCreatePermissionsAtom = environmentAtomList(
   serverEnvironment.createMission.permissionAtom,
 );
 
-/** The machines of `hosts` where this client may start or join a Mission. */
 export function useMissionStartMachines(
   hosts: ReadonlyArray<MissionHost>,
 ): ReadonlySet<EnvironmentId> {
@@ -143,20 +138,17 @@ function useMachineLabel(hosts: ReadonlyArray<MissionHost>) {
     environmentId;
 }
 
-/** Why a command did not run, or null when it ran. */
 function failureMessage(result: AtomCommandResult<unknown, unknown>): string | null {
   if (result._tag !== "Failure") return null;
   return thrownErrorMessage(squashAtomCommandFailure(result), m) ?? m(msg("An error occurred."));
 }
 
-/** Another ask gave the Mission a new lead first, so asking again cannot help. */
 function leadChanged(result: AtomCommandResult<unknown, unknown>): boolean {
   if (result._tag !== "Failure") return false;
   const error = squashAtomCommandFailure(result) as { readonly reason?: unknown } | null;
   return error?.reason === "lead-changed";
 }
 
-/** Reports a new-lead ask. A lead that changed first is said plainly and offers no retry. */
 export function reportLeadOutcome(
   result: AtomCommandResult<unknown, unknown>,
   retry?: () => void,
@@ -199,7 +191,6 @@ export function reportFailure(
   );
 }
 
-/** The Mission entries of a thread menu, and what choosing one does. */
 export function useMissionMenu() {
   const gt = useGT();
   const resolve = useMessages();
@@ -212,13 +203,11 @@ export function useMissionMenu() {
   const leave = useAtomCommand(serverEnvironment.leaveMission, "mission leave");
   const release = useAtomCommand(serverEnvironment.releaseMissionMember, "mission release member");
   const deleteMission = useAtomCommand(serverEnvironment.deleteMission, "mission delete");
-  // One source for single and bulk adds: the right to change Missions on the machine that keeps them.
   const canChangeOn = (environmentId: EnvironmentId) =>
     registry.get(serverEnvironment.addMissionMember.permissionAtom(environmentId));
   return {
     items: (threads: ReadonlyArray<MissionCandidate>) =>
       enabled ? buildMissionMenuItems(threads, hosts, machineLabel, canChangeOn, resolve) : [],
-    /** The menu of a Mission's own row where no thread row stands in for its lead. */
     rowItems: (host: EnvironmentId, mission: Mission, leadGone: boolean) =>
       missionRowItems({ host, mission, leadGone, canChange: canChangeOn(host) }, resolve),
     leaveId: (ref: ScopedThreadRef, heldBy: Parameters<typeof missionLeaveId>[1]) =>
@@ -229,13 +218,10 @@ export function useMissionMenu() {
         canChangeOn,
         heldBy?.mission.missionId,
       ),
-    /** The threads that got where they were sent; the rest stay selected. */
     run: async (
       id: MissionMenuId,
       threads: ReadonlyArray<ScopedThreadRef>,
-      /** Why some threads of the batch were refused before any was sent, for its one line. */
       refusedFirst: ReadonlyArray<string> = [],
-      /** A row's X and a drag act at once; a menu pick asks first. */
       options: { readonly confirm?: boolean } = {},
     ): Promise<ReadonlyArray<ScopedThreadRef>> => {
       const lead = threads[0];
@@ -260,7 +246,6 @@ export function useMissionMenu() {
           );
           if (confirmed !== true) return [];
         }
-        // Its machine checks the thread is still in this Mission, so a moved one stays put.
         const result = await leave({
           environmentId: target.environmentId,
           input: { threadId: lead.threadId, missionId: target.missionId },
@@ -332,13 +317,11 @@ export function useMissionMenu() {
   };
 }
 
-/** The Mission whose lead's prompt is being edited, from any menu that offers it. */
 const missionPromptTargetAtom = Atom.make<{
   readonly host: EnvironmentId;
   readonly mission: Mission;
 } | null>(null).pipe(Atom.keepAlive, Atom.withLabel("mission-prompt-target"));
 
-/** Edits what a Mission's lead is told on each turn. Empty goes back to the Settings default. */
 export function MissionPromptDialog() {
   const registry = useContext(RegistryContext);
   const target = useAtomValue(missionPromptTargetAtom);
@@ -415,28 +398,20 @@ function MissionPromptForm(props: {
   );
 }
 
-/** Twelve hex digits, as Mission ids in tags are. */
-
 function MemberRow(props: {
   readonly host: EnvironmentId;
   readonly missionId: string;
   readonly member: MissionMember;
   readonly machineLabel: string;
-  /** Names a lead whose thread this client has not read yet. */
   readonly missionName: string;
   readonly onOpen: (ref: ScopedThreadRef) => void;
-  /** Set on a lead row this client has no thread for, so it still folds its members. */
   readonly toggle?: SidebarMissionToggle | undefined;
-  /** Under the thread's own row: only the waiting state and its action. */
   readonly stateOnly?: boolean;
-  /** Inside the thread's own row, as its last line. */
   readonly inRow?: boolean;
   readonly onContextMenu?: (event: ReactMouseEvent) => void;
-  /** A lead row whose lead is gone offers a new one under it. */
   readonly missingLead?: MissingLead;
 }) {
   const gt = useGT();
-  // A refused add never joined, so its row is only the refusal: no title, nothing to open.
   const dismisses = props.member.state === "add-refused";
   const thread = useQuietThreadShell(dismisses ? null : props.member.ref);
   const project = useProject(
@@ -460,16 +435,12 @@ function MemberRow(props: {
       (props.member.role === "lead"
         ? props.missionName
         : gt("Thread on {machine}", { machine: props.machineLabel })));
-  // A mission's lead row names no project: a mission can span several.
   const where =
     project === null || props.toggle !== undefined
       ? props.machineLabel
       : `${props.machineLabel} · ${project.title}`;
   const active = props.member.state === "active";
-  // Its machine has not answered, and may never: the lead can stop waiting without asking it.
   const forgets = props.member.state === "add-pending" || props.member.state === "release-pending";
-  // A refused release leaves the thread in the mission. Dismiss puts the refusal away; Retry
-  // sends the release again, as the user.
   const releaseRefused = props.member.state === "release-refused";
   const command = {
     environmentId: props.host,
@@ -540,7 +511,6 @@ function MemberRow(props: {
         </MemberRowAction>
       </span>
     ) : null;
-  // The last line of the thread's own row, styled as its other lines.
   if (props.inRow === true) {
     return (
       <div className="group/mission-row mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
@@ -620,7 +590,6 @@ function MemberRowAction(props: {
             aria-label={props.label}
             disabled={props.disabled}
             onClick={(event) => {
-              // Inside a thread's row, the row would open the thread as well.
               event.stopPropagation();
               props.onClick();
             }}
@@ -634,12 +603,10 @@ function MemberRowAction(props: {
   );
 }
 
-/** A Mission whose lead is gone takes a new lead: a draft sent on its machine, or a thread there. */
 function useMissingLead(props: {
   readonly host: EnvironmentId;
   readonly missionId: string;
   readonly missionName: string;
-  /** The missing lead, which is the only one a new lead may replace. */
   readonly expectedLead: ThreadId;
   readonly hosts: ReadonlyArray<MissionHost>;
 }) {
@@ -690,7 +657,6 @@ type MissingLead = ReturnType<typeof useMissingLead>;
 
 function MissingLeadActions(props: { readonly actions: MissingLead }) {
   return (
-    // Lined up with the title, past the chevron.
     <div className="flex gap-3 ps-7.5 pb-1 text-2xs">
       <InlineButton onClick={props.actions.newLead}>
         <T>New lead</T>
@@ -702,10 +668,6 @@ function MissingLeadActions(props: { readonly actions: MissingLead }) {
   );
 }
 
-/**
- * A Mission's own row while this client has no thread row for its lead: loading, archived or
- * deleted. It takes T3's menu with the Mission's group, as a lead's thread row does.
- */
 function MissionLeadRow(
   props: Omit<ComponentProps<typeof MemberRow>, "onContextMenu" | "missingLead"> & {
     readonly mission: Mission;
@@ -721,8 +683,6 @@ function MissionLeadRow(
     expectedLead: props.member.ref.threadId,
     hosts,
   });
-  // No thread row stands in for the lead, whether it is still loading or gone, so either way
-  // the Mission can take a new one from here. Only a gone lead also shows the actions inline.
   const deleted = props.member.state === "deleted" && missingLead.allowed;
   const onContextMenu = async (event: ReactMouseEvent) => {
     event.preventDefault();
@@ -744,10 +704,8 @@ function MissionLeadRow(
   );
 }
 
-/** How long a thread the lists left out may take to read in before it counts as not loaded. */
 const LOAD_WAIT_MS = 10_000;
 
-/** A thread's shell, read in through its family when the lists left it out. */
 async function loadThreadShell(ref: ScopedThreadRef): Promise<EnvironmentThreadShell | null> {
   const known = readThreadShell(ref);
   if (known !== null) return known;
@@ -765,7 +723,6 @@ async function loadThreadShell(ref: ScopedThreadRef): Promise<EnvironmentThreadS
   }
 }
 
-/** How many threads "Choose a thread…" offers, most recently written first. */
 const LEAD_CHOICES = 20;
 
 export function SidebarMissions(props: {
@@ -774,11 +731,9 @@ export function SidebarMissions(props: {
   readonly renderThreadRow: (
     thread: EnvironmentThreadShell,
     toggle?: SidebarMissionToggle,
-    /** The waiting state of a member's add or release, inside its row or under it. */
     footer?: (inRow: boolean) => ReactNode,
   ) => ReactNode;
   readonly onOpenThread: (ref: ScopedThreadRef) => void;
-  /** Where a drag over the sidebar would drop, while one is under way. */
   readonly dropTarget?: MissionDrop | null;
 }) {
   const gt = useGT();
@@ -853,12 +808,10 @@ export function SidebarMissions(props: {
             ? props.dropTarget
             : null;
         return (
-          // The area a dragged thread drops on to join this mission.
           <li key={mission.key} className="list-none" data-mission-drop={mission.key}>
             <ul
               className={cn(
                 "flex flex-col gap-px rounded-md",
-                // The composer's own highlight for a valid drop.
                 drop !== null && "bg-accent/45 ring-1 ring-inset ring-primary/70",
               )}
             >
@@ -895,11 +848,6 @@ export function SidebarMissions(props: {
 
 const scopedKey = (ref: ScopedThreadRef) => `${ref.environmentId}:${ref.threadId}`;
 
-/**
- * The shell stream leaves older settled threads out, a mission's lead among them. Each lead the
- * sidebar has no thread for is read in with its family, so its own row heads its mission, and is
- * kept while the mission is listed, so the row it brings in does not release it.
- */
 export function useMissionLeadShells(
   leads: ReadonlyArray<SidebarMissionEntry<EnvironmentThreadShell>>,
 ) {
@@ -937,7 +885,6 @@ export function useMissionLeadShells(
   );
 }
 
-// Keyed by a JSON array of scoped lead keys.
 const settledLeadReadsAtom = Atom.family((keys: string) =>
   Atom.make(
     (get): ReadonlySet<string> =>
@@ -954,10 +901,6 @@ const settledLeadReadsAtom = Atom.family((keys: string) =>
   ),
 );
 
-/**
- * The listed leads the shell left out whose family read has answered. That read brings every
- * thread it can, so a lead still missing after it is gone from the lists, as an archived one is.
- */
 export function useUnavailableMissionLeads(
   hosts: ReadonlyArray<MissionHost>,
   threads: ReadonlyArray<EnvironmentThreadShell>,
@@ -976,10 +919,6 @@ export function useUnavailableMissionLeads(
   return useAtomValue(settledLeadReadsAtom(JSON.stringify(missing)));
 }
 
-/**
- * Drops of the sidebar's thread drag on Missions. Over a Mission, the dragged threads join it;
- * a member dragged onto the thread list leaves its own. Each claims the pointer from sorting.
- */
 export function useMissionDrop(missions: ReadonlyArray<SidebarMission<EnvironmentThreadShell>>) {
   const resolve = useMessages();
   const registry = useContext(RegistryContext);
@@ -987,22 +926,17 @@ export function useMissionDrop(missions: ReadonlyArray<SidebarMission<Environmen
   const machineLabel = useMachineLabel(hosts);
   const menu = useMissionMenu();
   const [target, setTarget] = useState<MissionDrop | null>(null);
-  // Where the dragged member was when its drag began, read on the drag's first move.
   const source = useRef<{
     readonly dragged: string;
     readonly from: { readonly host: EnvironmentId; readonly missionId: string } | null;
   } | null>(null);
   type At = {
     readonly point: { readonly x: number; readonly y: number };
-    /** The thread list the drag runs in. */
     readonly list: HTMLElement | null;
     readonly dragged: string | null;
-    /** The dragged threads: the selection, when the drag started on a selected row. */
     readonly refs: ReadonlyArray<ScopedThreadRef>;
-    /** Those the lists hold. */
     readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   };
-  // Selected threads the lists left out, as older settled pages not read yet, are read in first.
   const add = async (id: MissionMenuId, refs: ReadonlyArray<ScopedThreadRef>) => {
     const read = await Promise.all(
       refs.map(async (ref) => [ref, await loadThreadShell(ref)] as const),
@@ -1024,18 +958,14 @@ export function useMissionDrop(missions: ReadonlyArray<SidebarMission<Environmen
         point.x >= box.left && point.x <= box.right && point.y >= box.top && point.y <= box.bottom
       );
     };
-    // Only what shows counts: the list scrolls behind the sidebar's header and footer.
     const viewport = list.closest<HTMLElement>("[data-slot=scroll-area-viewport]");
     if (viewport !== null && !contains(viewport)) return null;
     const mission = [...list.querySelectorAll<HTMLElement>("[data-mission-drop]")].find(contains);
-    // A dragged member shows the release zone. It, the Threads heading and the rows under them
-    // release one; blank space does not.
     const zone = list.querySelector<HTMLElement>('[data-mission-release="zone"]');
     const below = zone?.getBoundingClientRect().top ?? Infinity;
     const releases =
       zone !== null &&
       ([...list.querySelectorAll<HTMLElement>("[data-mission-release]")].some(contains) ||
-        // Only a thread's own row: not a folder, a shelf header, "Show more" or a draft.
         [...list.querySelectorAll<HTMLElement>("[data-thread-item]")].some(
           (row) => row.getBoundingClientRect().top >= below && contains(row),
         ));
@@ -1101,7 +1031,6 @@ export function useMissionDrop(missions: ReadonlyArray<SidebarMission<Environmen
       source.current = null;
       show(null);
     }),
-    /** Members a drag can take out by a route this client may change, even from a read-only row. */
     leavable: new Set(
       missions.flatMap((mission) =>
         mission.members.flatMap(({ member }) =>

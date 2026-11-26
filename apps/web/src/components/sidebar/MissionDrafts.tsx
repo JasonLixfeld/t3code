@@ -18,7 +18,6 @@ import {
 } from "./missionDraftStore";
 import { reportFailure, reportLeadOutcome, useMissionHosts } from "./MissionsSection";
 
-/** The composer's line for a draft that starts, leads or joins a Mission, with a way to undo it. */
 export function useMissionDraftBanner(
   draftId: DraftId | null,
 ): ReadonlyArray<ComposerBannerStackItem> {
@@ -59,7 +58,6 @@ function MissionDraftWatch(props: { readonly draftId: DraftId; readonly draft: M
   const createMission = useAtomCommand(serverEnvironment.createMission, "mission create");
   const setLead = useAtomCommand(serverEnvironment.setMissionLead, "mission set lead");
   const addMember = useAtomCommand(serverEnvironment.addMissionMember, "mission add member");
-  // A Mission's lead needs a message, so this waits for the first one to land.
   const sent = shell !== null && threadHasMessages(shell);
   const retry = () => setMissionDraftStep(draftId, "waiting");
   const start = useStableCallback(async () => {
@@ -76,7 +74,6 @@ function MissionDraftWatch(props: { readonly draftId: DraftId; readonly draft: M
         }),
         retry,
       );
-      // A lead that changed first leaves this thread plain, with its message.
       if (outcome === "failed") setMissionDraftStep(draftId, "failed");
       else clearMissionDraft(draftId);
       return;
@@ -97,12 +94,10 @@ function MissionDraftWatch(props: { readonly draftId: DraftId; readonly draft: M
               input: { missionId: draft.missionId, leadThreadId: draft.thread.threadId },
             }),
           ];
-    // The draft keeps its Mission until the server has it.
     if (result._tag === "Success") return clearMissionDraft(draftId);
     setMissionDraftStep(draftId, "failed");
     reportFailure(title, result, retry);
   });
-  // A Mission to join that its machine no longer lists holds the join until another pick.
   const hosts = useMissionHosts();
   const gone =
     draft.intent.kind === "member" &&
@@ -121,7 +116,6 @@ function MissionDraftWatch(props: { readonly draftId: DraftId; readonly draft: M
   return null;
 }
 
-/** Mounted once: acts on each marked draft when it is sent. */
 export function MissionDraftCoordinator() {
   const drafts = useMissionDrafts((state) => state.drafts);
   return [...drafts].map(([draftId, draft]) => (

@@ -385,7 +385,6 @@ interface SidebarThreadPartitionInput {
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   /** Tasks linked environments run for a listed thread; they show under it. */
   readonly delegatedUnderParent: ReadonlySet<string>;
-  /** Threads a Mission lists; they show there only. */
   readonly missionThreadKeys: ReadonlySet<string>;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly connectedEnvironmentIds: readonly EnvironmentId[];
@@ -489,7 +488,6 @@ function useSidebarThreads(input: {
   const missionExpandedById = useUiStateStore((store) => store.missionExpandedById);
   const threadsOf = (entries: ReadonlyArray<{ readonly thread: EnvironmentThreadShell | null }>) =>
     entries.flatMap((entry) => (entry.thread === null ? [] : [entry.thread]));
-  // A lead the project scope hides still heads its mission, but takes no jump slot or search hit.
   const missionLeads = threadsOf(missions.map((mission) => mission.lead));
   const missionThreads = missions.flatMap((mission) =>
     threadsOf([
@@ -551,8 +549,6 @@ function useSidebarThreads(input: {
 
   const { pinnedThreads, activeThreads, workingThreads, snoozedThreads, settledThreads } =
     partition;
-  // A mission row keeps its own state, so a snoozed one can be woken and a settled one un-settled.
-  // Every mission thread, folded ones too: search lists them, and their menus read this.
   const missionSectionByKey = new Map(
     missions
       .flatMap((mission) => threadsOf([mission.lead, ...mission.members]))
@@ -643,7 +639,6 @@ function useSidebarThreads(input: {
   ] as const) {
     for (const thread of list) sectionByThreadKey.set(threadShellKey(thread), section);
   }
-  // A sweep applies only to rows in its origin's state, mission rows included.
   for (const [key, section] of missionSectionByKey) sectionByThreadKey.set(key, section);
   return {
     ...partition,
@@ -692,7 +687,6 @@ function useSidebarThreads(input: {
       ),
     ),
     missionSectionByKey,
-    // Mission rows stay in their mission; moving on and the menu still treat them by their state.
     settledThreadKeys: new Set([
       ...settledThreads.map(threadShellKey),
       ...missionKeysIn("settled"),
@@ -1487,7 +1481,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
   });
   useMissionLeadShells(missionLeadEntries);
-  // A drag drops threads into a mission, or takes a member out of one, before sorting sees it.
   const missionDrop = useMissionDrop(missions);
   const missionDraggableKeys = missionDragKeys(missions);
   const [missionEdgeScroll] = useState(() => createMissionEdgeScroll(SIDEBAR_AUTO_SCROLL));
@@ -1582,7 +1575,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // Search hides them, so they drop out while it is open.
   const listedDraftIds = isSearchingThreads ? EMPTY_DRAFT_IDS : draftIds;
   const draftIdByRowKey = new Map<string, DraftId>(listedDraftIds.map((id) => [`draft:${id}`, id]));
-  // Missions sit above the drafts.
   const orderedRowKeys = [
     ...orderedThreadKeys.slice(0, missionRowCount),
     ...draftIdByRowKey.keys(),
@@ -1928,7 +1920,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     list: threadListRef.current,
     dragged: contextDragKeyRef.current,
     refs: contextDragThreads(),
-    // From the stream, so selected threads on a folded shelf go too.
     threads: contextDragThreads().flatMap((ref) => {
       const thread = readThreadShell(ref);
       return thread === null ? [] : [thread];
@@ -1944,8 +1935,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const scroll = dragScrollRef.current;
     if (scroll && scroll.viewport.scrollTop !== scroll.top) scroll.viewport.scrollTop = scroll.top;
   };
-  // A Mission drag scrolls the list at its edges: a member toward the release zone, a thread over
-  // a Mission, or a thread toward Missions scrolled out of view above. Other drags keep dnd-kit's.
   const scrollMissionEdge = (point: { x: number; y: number }, claimed: boolean) => {
     const list = threadListRef.current;
     const viewport = list?.closest<HTMLElement>("[data-slot=scroll-area-viewport]") ?? null;
@@ -1971,7 +1960,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const moveThreadContextDrag = (point: { x: number; y: number }) => {
     const claimed = missionDrop.move(missionDragAt(point));
     if (scrollMissionEdge(point, claimed) || claimed) {
-      // A drag from the composer onto a Mission leaves the composer's drop behind.
       endThreadContextDrag();
       return true;
     }
@@ -2207,7 +2195,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       !sidebarListItems.some(
         (item) => item.kind === "thread" && item.key === dragState.activeKey,
       ) &&
-      // A mission member is not in the sortable list, and drags out of its mission.
       !missionDraggableKeys.has(dragState.activeKey)
     ) {
       cancelThreadDrag();
@@ -2621,7 +2608,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           clicked.value,
           selectedThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
         );
-        // Refused threads stay selected, so the user can see them and try again.
         removeFromSelection(landed.map(scopedThreadKey));
         return;
       }
@@ -3815,7 +3801,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           />
                         );
                       };
-                      // A Mission member drags only out of its Mission, so no section boundary shows.
                       const memberDrag =
                         dragState !== null && missionDraggableKeys.has(dragState.activeKey);
                       const from =
@@ -3828,7 +3813,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           renderThreadRow={(thread, toggle, footer) => {
                             const section =
                               missionSectionByKey.get(threadShellKey(thread)) ?? "active";
-                            // Only a card has room for a last line; a one-line row gets it below.
                             const inCard = section === "active";
                             return (
                               <>
@@ -3846,7 +3830,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           onOpenThread={navigateToThread}
                           dropTarget={missionDrop.target}
                         />,
-                        // A member drags out of its Mission only onto this zone, below them all.
                         memberDrag ? (
                           <SidebarReleaseZone
                             key="mission-release"

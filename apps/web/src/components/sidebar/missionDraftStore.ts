@@ -6,22 +6,11 @@ import { type MissionDraftIntent, newMissionId } from "./missions.logic";
 
 export interface MissionDraft {
   readonly intent: MissionDraftIntent;
-  /** The thread the draft becomes when it is sent, on the machine the draft is pinned to. */
   readonly thread: ScopedThreadRef;
-  /** Every try uses this id, so a try whose answer was lost is not doubled. */
   readonly missionId: string;
-  /**
-   * `waiting` until the first message lands, which starts the one automatic try. After a
-   * failure only the user's "Try again" sets it back to `waiting`. `held`: the Mission it joins
-   * is gone from its machine's list, so nothing is sent until the user picks again.
-   */
   readonly step: "waiting" | "trying" | "failed" | "held";
 }
 
-/**
- * Drafts that start or lead a Mission once sent. Nothing is made before the first send, so an
- * abandoned draft leaves nothing behind. Kept for this session only.
- */
 export const useMissionDrafts = create<{ readonly drafts: ReadonlyMap<DraftId, MissionDraft> }>(
   () => ({ drafts: new Map() }),
 );
@@ -42,7 +31,6 @@ export function missionDraftOf(draftId: DraftId | null): MissionDraft | undefine
   return draftId === null ? undefined : useMissionDrafts.getState().drafts.get(draftId);
 }
 
-/** The machine a Mission draft is pinned to: it starts its Mission there, or leads one there. */
 function useMissionDraftMachine(draftId: DraftId | null): EnvironmentId | null {
   return useMissionDrafts((state) =>
     draftId === null ? null : (state.drafts.get(draftId)?.thread.environmentId ?? null),
@@ -64,7 +52,6 @@ export function setMissionDraftStep(draftId: DraftId, step: MissionDraft["step"]
   });
 }
 
-/** The Mission follows the user to the draft and machine a project pick makes. */
 export function moveMissionDraft(from: DraftId, to: DraftId, thread: ScopedThreadRef) {
   update((drafts) => {
     const draft = drafts.get(from);

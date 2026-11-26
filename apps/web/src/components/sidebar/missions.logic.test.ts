@@ -47,7 +47,6 @@ const hosts: ReadonlyArray<MissionHost> = [
 const label = (environmentId: EnvironmentId) =>
   environmentId === DESK ? "Desk" : String(environmentId);
 const allowed = () => true;
-/** A thread with messages, as every thread that may lead a mission has. */
 const thread = (environmentId: EnvironmentId, id?: string) => ({
   environmentId,
   ...(id === undefined ? {} : { id: ThreadId.make(id) }),
@@ -78,7 +77,6 @@ describe("buildMissionMenuItems", () => {
       disabled: true,
       detail: "No link from Desk",
     });
-    // A session that may not read access is told no links, so the host decides on the add.
     const unlisted: ReadonlyArray<MissionHost> = hosts.map((host) => ({
       ...host,
       snapshot: { ...host.snapshot, links: [], linksHidden: true },
@@ -90,7 +88,6 @@ describe("buildMissionMenuItems", () => {
         )!.children![0],
       ).toMatchObject({ disabled: false, detail: "Desk" });
     }
-    // The claim its own machine holds decides, not a tag the thread carries.
     const held = buildMissionMenuItems([thread(DESK, "held")], hosts, label, allowed);
     expect(held.map((item) => [item.id, item.disabled, item.detail])).toEqual([
       ["mission-start", true, "In a mission"],
@@ -151,7 +148,6 @@ describe("buildMissionMenuItems", () => {
         },
       },
     ];
-    // A lead gets only its mission's group: it cannot start, join or leave a mission.
     const group = (members: ReadonlyArray<MissionMember>) =>
       buildMissionMenuItems([thread(DESK, "lead")], led(members), label, allowed).map((item) => [
         item.id,
@@ -174,7 +170,6 @@ describe("buildMissionMenuItems", () => {
       true,
       "Has threads",
     ]);
-    // Without the right to add, there is no new thread to add either.
     const barred = buildMissionMenuItems([thread(DESK, "lead")], led([]), label, () => false);
     for (const prefix of ["mission-new-thread:", "mission-prompt:"]) {
       expect(barred.find((item) => item.id.startsWith(prefix))).toMatchObject({
@@ -183,7 +178,6 @@ describe("buildMissionMenuItems", () => {
       });
     }
     expect(parseMissionTarget("mission-prompt:env-desk:0123456789ab")?.action).toBe("prompt");
-    // A refused add never joined, so the mission can still go.
     expect(group([member("add-refused")]).at(-1)![1]).toBe(false);
     expect(parseMissionTarget("mission-delete:env-desk:0123456789ab")).toEqual({
       action: "delete",
@@ -317,7 +311,6 @@ describe("buildMissionMenuItems", () => {
         },
       },
     ];
-    // A stale row under this mission, while the thread's machine now holds it in another.
     const row = { host: DESK, mission: { missionId: mission.missionId } };
     const meant = mission.missionId;
     expect(missionLeaveId(ios, row, movedOn, allowed, meant)).toBe(
@@ -326,7 +319,6 @@ describe("buildMissionMenuItems", () => {
     expect(
       missionLeaveId(ios, row, movedOn, (environmentId) => environmentId === LAPTOP, meant),
     ).toBeNull();
-    // A thread no mission lists names none, so it leaves the one its machine holds it in.
     expect(missionLeaveId(ios, undefined, movedOn, allowed, undefined)).toBe(
       "mission-leave:env-laptop:ffffffffffff",
     );
@@ -457,7 +449,6 @@ describe("groupSidebarMissions", () => {
     expect(missions[0]!.key).toBe("env-desk:0123456789ab");
     expect(missions[0]!.lead.thread?.id).toBe("lead");
     expect(entryOf("done")).toBeUndefined();
-    // A thread this client cannot see keeps the mission's own row.
     expect(entryOf("remote")?.thread).toBeNull();
   });
 
@@ -489,15 +480,12 @@ describe("groupSidebarMissions", () => {
       member("docs", "active"),
     ]);
     const shells = [...threads, shell("other-lead"), shell("third-lead")];
-    // `joining` waits to be added to the first and is claimed by the second; two current
-    // claims on `docs` leave it with the first.
     const result = groupSidebarMissions(hostOf(ship, stale, later), shells, null);
     expect(rowsOf(result)).toEqual([
       ["env-desk:0123456789ab", true, ["docs", "leaving", "refused", "remote"]],
       ["env-desk:aaaaaaaaaaaa", true, ["joining"]],
       ["env-desk:bbbbbbbbbbbb", true, []],
     ]);
-    // A current claim wins over a release that still waits, whichever is listed first.
     const twice = groupSidebarMissions(hostOf(stale, later), shells, null);
     expect(rowsOf(twice).map((row) => row[2])).toEqual([["joining"], ["docs"]]);
   });
@@ -507,7 +495,6 @@ describe("groupSidebarMissions", () => {
     const withApi = mission("0123456789ab", [...ship.members, member("api-docs", "active")]);
     const result = groupSidebarMissions(hostOf(withApi), scoped, new Set(["env-desk:api"]));
     expect(rowsOf(result)).toEqual([["env-desk:0123456789ab", false, ["api-docs"]]]);
-    // Every mission thread still stays out of the other lists.
     expect(result.threadKeys.has("env-desk:docs")).toBe(true);
     expect(groupSidebarMissions(hostOf(ship), threads, new Set(["env-desk:api"])).missions).toEqual(
       [],
@@ -520,7 +507,6 @@ describe("groupSidebarMissions", () => {
     const loading = groupSidebarMissions(hostOf(waiting), threads, scope);
     expect(rowsOf(loading)).toEqual([["env-desk:cccccccccccc", false, []]]);
     expect(loading.leads.map((lead) => lead.member.ref.threadId)).toEqual(["old-lead"]);
-    // Once it arrives, its project decides.
     const arrived = [...threads, shell("old-lead", { settled: true })];
     expect(rowsOf(groupSidebarMissions(hostOf(waiting), arrived, scope))).toEqual([
       ["env-desk:cccccccccccc", true, []],

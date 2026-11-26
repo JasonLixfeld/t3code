@@ -112,22 +112,17 @@ const archived: Mission = {
   createdAt: "2026-11-23T00:00:00.000Z",
   members: [{ ref: ref(LOCAL, "old-lead"), role: "lead", state: "active" }],
 };
-/** A test may list one more mission, for itself only. */
 const listedMissions: Array<Mission> = [ship, gone, archived];
-/** The claims this machine holds, which a test may add to for itself. */
 const listedClaims: Array<MissionHost["snapshot"]["claims"][number]> = [];
 const hosts: Array<MissionHost> = [
   { environmentId: LOCAL, snapshot: { missions: listedMissions, links: [], claims: listedClaims } },
 ];
-/** The prompts each mission keeps, read only by the prompt editor. */
 const savedPrompts = new Map<string, string>();
-/** The sidebar's mission lists, told when a test changes what the machines list mid-test. */
 const hostChanges = new Set<() => void>();
 const publishHosts = () =>
   act(() => {
     for (const update of hostChanges) update();
   });
-/** Machines whose missions this client may not change, which a test may add to for itself. */
 const readOnly = new Set<EnvironmentId>();
 const permissions = new Map<string, ReturnType<typeof Atom.make<boolean>>>();
 const mayChange = (environmentId: EnvironmentId) => {
@@ -136,7 +131,6 @@ const mayChange = (environmentId: EnvironmentId) => {
   permissions.set(key, atom);
   return atom;
 };
-/** The mission commands the sidebar sends, by the label it sends them under. */
 const commands = vi.hoisted(() => new Map<string, ReturnType<typeof vi.fn>>());
 const commandFor = (label: string) => {
   const existing = commands.get(label);
@@ -186,7 +180,6 @@ vi.mock(import("../../state/server"), async (original) => {
     ),
     serverEnvironment: {
       ...actual.serverEnvironment,
-      // Each sidebar read sees the hosts as they are, and a test's live update reaches it.
       missionsLiveAcross: (environmentIdsKey: string) =>
         Atom.make((get) => {
           const asked = new Set(JSON.parse(environmentIdsKey) as ReadonlyArray<string>);
@@ -198,7 +191,6 @@ vi.mock(import("../../state/server"), async (original) => {
         }),
       missionPrompt: ({ input }: { input: { missionId: string } }) =>
         Atom.make(AsyncResult.success({ prompt: savedPrompts.get(input.missionId) ?? "" })),
-      // This client may change the missions every machine keeps, unless a test says otherwise.
       addMissionMember: Object.assign(actual.serverEnvironment.addMissionMember, {
         permissionAtom: (environmentId: EnvironmentId) => mayChange(environmentId),
       }),
@@ -222,13 +214,9 @@ async function renderSidebar(
     leadSettled?: boolean;
     docsSnoozed?: boolean;
     scope?: Project;
-    /** Threads the stream brings in later, by `arrive`. */
     later?: ReadonlyArray<ReturnType<typeof shell>>;
-    /** More threads, listed from the start. */
     extra?: ReadonlyArray<ReturnType<typeof shell>>;
-    /** Threads left out of the stream, by id. */
     without?: ReadonlyArray<string>;
-    /** Whether the machine says it keeps Missions. */
     keepsMissions?: boolean;
   } = {},
 ) {
@@ -311,7 +299,6 @@ const rowOf = (root: Element, title: string) =>
   [...root.querySelectorAll<HTMLElement>("[data-sidebar-row]")].find((row) =>
     row.textContent?.includes(title),
   )!;
-/** The thread jump each listed title shows while Ctrl is held, or null. */
 const jumpsOf = (root: Element, titles: ReadonlyArray<string>) =>
   titles.map((title) => {
     const row =
@@ -327,10 +314,8 @@ describe("missions in the sidebar", () => {
     await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
     const members = screen.container.querySelector("[data-testid=sidebar-mission-members]")!;
     expect(members.textContent).toContain("Update the release notes");
-    // A pending add this client has the thread for: its own row, with the pending state under it.
     expect(members.textContent).toContain("Write the migration guide");
     expect(screen.getByText("Add pending (machine offline)").elements()).toHaveLength(2);
-    // The settled member is back on the Settled shelf, and no thread shows twice.
     expect(members.textContent).not.toContain("Fix the changelog");
     for (const title of [
       "Plan the v2 release",
@@ -392,7 +377,6 @@ describe("missions in the sidebar", () => {
     await expect
       .element(screen.getByText("Leave refused: The laptop refused it."))
       .toBeInTheDocument();
-    // Still a member: its thread shows under the mission, with the refusal under its row.
     const members = screen.container.querySelector("[data-testid=sidebar-mission-members]")!;
     expect(members.textContent).toContain("Unrelated bug");
     const command = {
@@ -426,7 +410,6 @@ describe("missions in the sidebar", () => {
     onTestFinished(() => {
       useComposerDraftStore.setState(previous, true);
     });
-    // Drafts other test files saved in this origin's storage would take numbers too.
     useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
     const initial = useComposerDraftStore.getState();
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
@@ -470,7 +453,6 @@ describe("missions in the sidebar", () => {
     expect(members.textContent).toContain("Document the API");
     expect(members.textContent).not.toContain("Update the release notes");
     expect(screen.getByText("Lead deleted").elements()).toHaveLength(0);
-    // Its lead is still on its way, so only its project can rule it out.
     expect(screen.getByText("Archive the old site").elements()).toHaveLength(1);
     await userEvent.keyboard("{Control>}");
     await expect.element(screen.getByText("Ctrl+1")).toBeVisible();
@@ -526,7 +508,6 @@ describe("missions in the sidebar", () => {
     expect(
       screen.getByRole("button", { name: "Collapse mission Archive the old site, 0 threads" }),
     ).toBeInTheDocument();
-    // A member's row still names its project.
     expect(
       screen.container.querySelector('[data-sidebar-row="local:docs"]')!.getAttribute("aria-label"),
     ).toBe("Update the release notes, web");
@@ -567,7 +548,6 @@ describe("missions in the sidebar", () => {
   });
 
   it("stops waiting for a lead its family read did not bring, as for an archived lead", async () => {
-    // A lead no other test reads, so no earlier read of it is still held.
     listedMissions.push({
       missionId: "dddddddddddd",
       name: "Retired work",
@@ -593,7 +573,6 @@ describe("missions in the sidebar", () => {
     const collapse = screen.container.querySelector<HTMLElement>(
       '[aria-label^="Collapse mission"]',
     )!;
-    // A real click: an earlier sweep's click guard on the document would swallow a bare one.
     await userEvent.click(collapse);
     expect(screen.container.querySelector("[data-testid=sidebar-mission-members]")).toBeNull();
     await userEvent.fill(screen.getByLabelText("Search threads"), "release notes");
@@ -628,7 +607,6 @@ describe("missions in the sidebar", () => {
     );
   });
 
-  /** Right-clicks Update the release notes, a member of the v2 mission, and picks `pick`. */
   const memberMenu = async (pick: string | null, confirmed = true) => {
     const show = vi.fn().mockResolvedValue(pick);
     const confirm = vi.fn().mockResolvedValue(confirmed);
@@ -656,7 +634,6 @@ describe("missions in the sidebar", () => {
   };
 
   it("leaves from a row's menu only the mission the row is under, not another claim", async () => {
-    // Listed under the v2 mission, while this machine reports the thread in another one.
     claimDocs("ffffffffffff");
     const { ids } = await memberMenu(null);
     expect(ids).toContain("mission-release:local:0123456789ab");
@@ -697,7 +674,6 @@ describe("missions in the sidebar", () => {
         (item) => item.label,
       );
     };
-    // The live lead's thread menu keeps its own items, then the mission's group.
     const lead = await menuOf(rowOf(screen.container, "Plan the v2 release"), null);
     expect(lead).toContain("Pin thread");
     const group = lead.indexOf("Mission");
@@ -707,15 +683,12 @@ describe("missions in the sidebar", () => {
       "Edit mission prompt…",
       "Delete mission",
     ]);
-    // A lead cannot start, join or leave a mission, so those are not offered.
     for (const absent of ["Start mission from this thread", "Add to mission", "Leave mission"]) {
       expect(lead).not.toContain(absent);
     }
-    // A member keeps them.
     const member = await menuOf(rowOf(screen.container, "Update the release notes"), null);
     expect(member).toEqual(expect.arrayContaining(["Leave mission", "Add to mission"]));
     expect(member).not.toContain("New thread in this mission");
-    // A deleted lead's row also takes a new lead.
     const gone = screen.getByText("Lead deleted").element().closest("li")!;
     expect(await menuOf(gone, "mission-new-thread:local:ba9876543210")).toEqual([
       "Mission",
@@ -731,7 +704,6 @@ describe("missions in the sidebar", () => {
         mission: { kind: "member", host: LOCAL, missionId: "ba9876543210", name: "Old work" },
       }),
     );
-    // A lead not read in yet, as an archived one, still gets the menu, a new lead, and delete.
     const loading = screen.getByText("Archive the old site").element().closest("li")!;
     expect(await menuOf(loading, "mission-delete:local:cccccccccccc")).toEqual([
       "Mission",
@@ -779,18 +751,13 @@ describe("missions in the sidebar", () => {
     expect(lead.textContent).not.toMatch(/web|WB/);
     const chevron = lead.querySelector<HTMLElement>('[aria-label^="Collapse mission"]')!;
     expect(chevron.parentElement!.textContent).toContain("Plan the v2 release");
-    // The row's title is the lead's title alone, with no word put before it.
     expect(chevron.nextElementSibling!.textContent).toBe("Plan the v2 release");
-    // With no status, machine or provider to show, the row is that one line.
     expect(chevron.parentElement!.nextElementSibling).toBeNull();
-    // Members keep their own project.
     const members = screen.container.querySelector("[data-testid=sidebar-mission-members]")!;
-    // A pending add is the last line of its own member's row.
     expect(rowOf(members, "Write the migration guide").textContent).toContain(
       "Add pending (machine offline)",
     );
     expect(rowOf(members, "Update the release notes").textContent).toContain("web");
-    // The fallback leads have the same shape: chevron and title, no project.
     for (const title of ["Lead deleted", "Archive the old site"]) {
       const line = screen.getByText(title, { exact: true }).element().closest("li")!;
       expect(line.querySelector('[aria-label^="Collapse mission"]')).not.toBeNull();
@@ -856,7 +823,6 @@ describe("missions in the sidebar", () => {
   });
 });
 
-/** Rows drag only on a connected machine this client may operate, as missions may change there. */
 function allowDrag(): Disposable {
   vi.mocked(useConnectedEnvironmentIds).mockReturnValue([LOCAL]);
   vi.mocked(useEnvironmentScope).mockImplementation(
@@ -870,8 +836,6 @@ function allowDrag(): Disposable {
   };
 }
 
-/** A pointer drag from one element to another, as the sidebar's drag sees it. */
-/** An element, a point, or one the drag itself shows, found when the pointer gets there. */
 type DragTarget =
   | HTMLElement
   | { readonly clientX: number; readonly clientY: number }
@@ -901,7 +865,6 @@ async function dragBetween(from: HTMLElement, to: DragTarget) {
   await act(() => pointer("pointermove", document, { ...start, clientY: start.clientY + 12 }));
   await act(() => pointer("pointermove", document, { ...start, clientY: start.clientY + 16 }));
   await act(() => pointer("pointermove", document, center(to)));
-  // The pointer is let go where it last moved to.
   let at = to;
   return {
     moveTo: (next: DragTarget) => {
@@ -910,7 +873,6 @@ async function dragBetween(from: HTMLElement, to: DragTarget) {
     },
     release: async () => {
       await act(() => pointer("pointerup", document, { ...center(at), buttons: 0 }));
-      // A drag leaves a guard for its click; the next press clears it.
       await act(() => pointer("pointerdown", document.body, { clientX: 0, clientY: 0 }));
       await act(() => pointer("pointerup", document.body, { clientX: 0, clientY: 0, buttons: 0 }));
     },
@@ -1028,7 +990,6 @@ describe("dragging threads into and out of missions", () => {
     using _drag = allowDrag();
     await using screen = await renderSidebar();
     await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
-    // The sidebar sits beside the composer.
     screen.container.style.width = "200px";
     const composer = document.createElement("div");
     composer.setAttribute("data-thread-context-drop", "true");
@@ -1056,7 +1017,6 @@ describe("dragging threads into and out of missions", () => {
     await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
     const toasts = vi.spyOn(toastManager, "add");
     onTestFinished(() => toasts.mockRestore());
-    // The family read answers after the drop; only then is the thread there.
     const older = shell("older", "Old settled bug", { settled: true });
     let answered = false;
     const listedShell = vi.mocked(readThreadShell).getMockImplementation()!;
@@ -1095,7 +1055,6 @@ describe("dragging threads into and out of missions", () => {
     await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
     const toasts = vi.spyOn(toastManager, "add");
     onTestFinished(() => toasts.mockRestore());
-    // An older settled page holds "older"; "lost" cannot be read at all.
     const older = shell("older", "Old settled bug", { settled: true });
     const readIn = new Set<string>();
     const listedShell = vi.mocked(readThreadShell).getMockImplementation()!;
@@ -1154,10 +1113,6 @@ describe("dragging threads into and out of missions", () => {
     });
   });
 
-  /**
-   * A thread here joined a mission the laptop leads, and this machine holds its claim. "plain" is
-   * Unrelated bug's row; "unread" has no thread loaded, so its member row shows instead.
-   */
   const leadOnLaptop = (
     state: MissionMember["state"],
     writable: ReadonlyArray<EnvironmentId>,
@@ -1275,7 +1230,6 @@ describe("dragging threads into and out of missions", () => {
       rowOf(screen.container, "Unrelated bug"),
       releaseZone(screen.container),
     );
-    // Mid-drag, the laptop lists it no more and a mission this machine leads holds it instead.
     const laptop = hosts[1]!;
     hosts[1] = {
       ...laptop,
@@ -1387,7 +1341,6 @@ describe("dragging threads into and out of missions", () => {
     const headingRow = [...screen.container.querySelectorAll<HTMLElement>("h2")]
       .find((h2) => h2.textContent?.includes("Threads"))!
       .closest("li")!;
-    // Room the stylesheet would leave: a gap under the heading, and space under the last row.
     headingRow.style.marginBottom = "24px";
     const list = headingRow.parentElement!;
     list.style.paddingBottom = "120px";
@@ -1408,7 +1361,6 @@ describe("dragging threads into and out of missions", () => {
 
   it("releases nothing on a project folder or on Show more", async () => {
     using _drag = allowDrag();
-    // Enough settled threads, with the shelf open, for a Show more under them.
     localStorage.setItem("t3code:sidebar:settled-expanded", "true");
     onTestFinished(() => localStorage.removeItem("t3code:sidebar:settled-expanded"));
     const settled = Array.from({ length: 30 }, (_, index) =>
@@ -1423,12 +1375,10 @@ describe("dragging threads into and out of missions", () => {
       expect(target()).not.toBeNull();
       const drag = await dragBetween(rowOf(screen.container, "Update the release notes"), target);
       await drag.release();
-      // Each render starts its commands over, so each is checked here.
       expect(commandFor("mission release member")).not.toHaveBeenCalled();
     }
   });
 
-  /** A 200px viewport over the list, as a short window has. */
   const shortViewport = (root: Element) => {
     const viewport = root.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]")!;
     Object.assign(viewport.style, { height: "200px", overflow: "auto" });
@@ -1486,8 +1436,6 @@ describe("dragging threads into and out of missions", () => {
     using _drag = allowDrag();
     await using screen = await renderSidebar();
     await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
-    // A short viewport scrolled down: the first mission runs up behind the header, and the
-    // release zone sits below the footer.
     const viewport = screen.container.querySelector<HTMLElement>(
       "[data-slot=scroll-area-viewport]",
     )!;

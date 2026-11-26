@@ -17,7 +17,6 @@ export function createMissionEdgeScroll(options: AutoScrollOptions) {
     at: number;
   } | null = null;
   let frame: number | null = null;
-  /** -1 to 1: how deep into the top or bottom edge zone, or past it, the pointer is. */
   const depth = (viewport: HTMLElement, y: number) => {
     const box = viewport.getBoundingClientRect();
     const zone = box.height * threshold;
@@ -43,9 +42,7 @@ export function createMissionEdgeScroll(options: AutoScrollOptions) {
     held = null;
   };
   return {
-    /** Whether the pointer is in an edge zone, and which: -1 the top, 1 the bottom, 0 neither. */
     edge: (viewport: HTMLElement, y: number) => Math.sign(depth(viewport, y)),
-    /** Scrolls while the pointer rests in the edge zone, calling `onScroll` after each step. */
     hold: (viewport: HTMLElement, y: number, onScroll: () => void) => {
       held = { viewport, y, onScroll, at: held?.at ?? performance.now() };
       frame ??= requestAnimationFrame(step);

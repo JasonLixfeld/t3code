@@ -14,7 +14,6 @@ import { msg } from "gt-react";
 import { m, type MessageResolver } from "../../i18n/messages";
 import type { SidebarThreadSummary } from "../../types";
 
-/** The Missions one machine keeps: those whose lead thread is on it. */
 export interface MissionHost {
   readonly environmentId: EnvironmentId;
   readonly snapshot: MissionsSnapshot;
@@ -23,7 +22,6 @@ export interface MissionHost {
 export interface MissionCandidate {
   readonly environmentId: EnvironmentId;
   readonly id?: ThreadId;
-  /** Only a thread with messages may start a Mission. */
   readonly latestUserMessageAt: string | null;
   readonly visibleItemCount: number;
 }
@@ -39,7 +37,6 @@ export type MissionMenuId =
   | `mission-new-thread:${string}`
   | `mission-delete:${string}`
   | `mission-prompt:${string}`
-  /** The heading of a Mission row's own group. */
   | "mission-group"
   | "mission-new-lead"
   | "mission-choose-lead";
@@ -53,7 +50,6 @@ const NEW_THREAD_PREFIX = "mission-new-thread:";
 const DELETE_PREFIX = "mission-delete:";
 const PROMPT_PREFIX = "mission-prompt:";
 
-/** What a thread does with Missions itself; a lead's Mission group belongs to the Mission's row. */
 export const isThreadMissionAction = (id: MissionMenuId) =>
   id === "mission-start" ||
   id === "mission-add" ||
@@ -68,7 +64,6 @@ const TARGET_ACTIONS = {
   [PROMPT_PREFIX]: "prompt",
 } as const;
 
-/** Mission ids are hex, so the last colon separates them from the host's environment id. */
 export function parseMissionTarget(id: MissionMenuId): {
   readonly action: (typeof TARGET_ACTIONS)[keyof typeof TARGET_ACTIONS];
   readonly environmentId: EnvironmentId;
@@ -89,10 +84,6 @@ export function parseMissionTarget(id: MissionMenuId): {
 
 type MissionBlock = "in-mission" | "no-link" | "fenced" | "not-allowed";
 
-/**
- * The claim this thread's own machine holds for it, when one Mission or another holds it there.
- * The claim decides, never the thread's tags: a tag can lag behind its claim.
- */
 export const claimHere = (thread: MissionThread, hosts: ReadonlyArray<MissionHost>) =>
   hosts
     .find((host) => host.environmentId === thread.environmentId)
@@ -105,10 +96,6 @@ export function missionLeaveId(
     | undefined,
   hosts: ReadonlyArray<MissionHost>,
   canChangeOn: (environmentId: EnvironmentId) => boolean,
-  /**
-   * The Mission the row or gesture is under. Only a thread no Mission lists names none, and then
-   * it leaves whichever one its machine holds it in.
-   */
   meant: string | undefined,
 ): MissionMenuId | null {
   const claim = claimHere(thread, hosts);
@@ -124,19 +111,12 @@ export function missionLeaveId(
     : null;
 }
 
-/**
- * Why a thread cannot join a Mission kept on `host`. A thread on another machine needs the host's
- * link to that machine to have full access, because a weaker link may change only threads it started.
- */
 function missionBlock(
   thread: MissionCandidate,
   host: MissionHost,
   hosts: ReadonlyArray<MissionHost>,
 ): MissionBlock | null {
-  // A member may be empty: one a lead starts with no prompt joins as it is. Only a lead needs
-  // messages, since T3 deletes a draft chat that never got one.
   if (claimHere(thread, hosts) !== undefined) return "in-mission";
-  // A session that may not read access is not told the links, so the host decides on the add.
   if (thread.environmentId === host.environmentId || host.snapshot.linksHidden === true)
     return null;
   const link = host.snapshot.links.find((entry) => entry.environmentId === thread.environmentId);
@@ -144,7 +124,6 @@ function missionBlock(
   return link.fullAccess ? null : "fenced";
 }
 
-/** Short, because a menu entry's detail never shrinks and would crowd out its label. */
 function blockLabel(block: MissionBlock, hostLabel: string, resolve: MessageResolver) {
   switch (block) {
     case "in-mission":
@@ -158,22 +137,16 @@ function blockLabel(block: MissionBlock, hostLabel: string, resolve: MessageReso
   }
 }
 
-/**
- * The "Mission" group of a Mission's own row: a new thread to join it, its lead's prompt, and
- * deleting it once it has no members. A Mission whose lead is gone also takes a new lead here.
- */
 export function missionRowItems(
   input: {
     readonly host: EnvironmentId;
     readonly mission: Mission;
-    /** The lead is gone and this client may give the Mission a new one. */
     readonly leadGone: boolean;
     readonly canChange: boolean;
   },
   resolve: MessageResolver = m,
 ): ReadonlyArray<ContextMenuItem<MissionMenuId>> {
   const target = `${input.host}:${input.mission.missionId}`;
-  // A refused add never joined, so it holds nothing back.
   const members = input.mission.members.filter(
     (member) => member.role === "member" && member.state !== "add-refused",
   );
@@ -183,7 +156,6 @@ export function missionRowItems(
       id: `${NEW_THREAD_PREFIX}${target}`,
       label: resolve(msg("New thread in this mission")),
       icon: "message-square-plus",
-      // Its first send adds it, so it needs the right an add needs.
       disabled: !input.canChange,
       ...(input.canChange ? {} : { detail: blockLabel("not-allowed", "", resolve) }),
     },
@@ -215,15 +187,10 @@ export function missionRowItems(
   ];
 }
 
-/**
- * "Start mission from this thread" and "Leave mission" for one thread, and "Add to mission" for
- * one or more. A Mission's lead also gets its Mission's own group.
- */
 export function buildMissionMenuItems(
   threads: ReadonlyArray<MissionCandidate>,
   hosts: ReadonlyArray<MissionHost>,
   machineLabel: (environmentId: EnvironmentId) => string,
-  /** Whether this client may change the Missions a machine keeps; one source for every path. */
   canChangeOn: (environmentId: EnvironmentId) => boolean,
   resolve: MessageResolver = m,
 ): ReadonlyArray<ContextMenuItem<MissionMenuId>> {
@@ -236,7 +203,6 @@ export function buildMissionMenuItems(
     single === undefined
       ? undefined
       : hosts.find((host) => host.environmentId === single.environmentId);
-  // The Mission whose lead may release this thread: the one the sidebar lists it under.
   const holding =
     single?.id === undefined
       ? undefined
@@ -245,7 +211,6 @@ export function buildMissionMenuItems(
     holding !== undefined && holding.member.role === "member" && isJoined(holding.member)
       ? holding
       : undefined;
-  // A lead cannot start, join or leave a Mission, so it gets only its Mission's own group.
   if (holding !== undefined && holding.member.role === "lead") {
     return missionRowItems(
       {
@@ -322,14 +287,11 @@ export function buildMissionMenuItems(
   ];
 }
 
-/** How a batch of adds went: each thread is tried, whatever happened to the ones before it. */
 interface MissionAddOutcome<T> {
   readonly added: ReadonlyArray<T>;
-  /** Why each refused thread was refused. */
   readonly refused: ReadonlyArray<string>;
 }
 
-/** Tries `add` for every thread in turn. `add` answers why it refused, or null when it added. */
 export async function addEachToMission<T>(
   threads: ReadonlyArray<T>,
   add: (thread: T) => Promise<string | null>,
@@ -344,7 +306,6 @@ export async function addEachToMission<T>(
   return { added, refused };
 }
 
-/** One line for the whole batch, or null when nothing was refused. */
 export function missionAddSummary(
   outcome: MissionAddOutcome<unknown>,
   resolve: MessageResolver = m,
@@ -359,19 +320,16 @@ export function missionAddSummary(
   );
 }
 
-/** A row in a Mission: drawn as its thread's own row when this client has the thread. */
 export interface SidebarMissionEntry<T> {
   readonly member: MissionMember;
   readonly thread: T | null;
 }
 
 export interface SidebarMission<T> {
-  /** The lead's machine and the Mission id, as its collapse state is kept. */
   readonly key: string;
   readonly host: EnvironmentId;
   readonly mission: Mission;
   readonly lead: SidebarMissionEntry<T>;
-  /** False when a project scope hides the lead: it still heads its Mission, but only that. */
   readonly leadInScope: boolean;
   readonly members: ReadonlyArray<SidebarMissionEntry<T>>;
 }
@@ -381,12 +339,10 @@ type ListedThread = Pick<
   "environmentId" | "id" | "projectId" | "settledOverride" | "archivedAt"
 >;
 
-/** How surely a Mission holds a thread. A current claim wins over a last-known or pending one. */
 const HOLD: Record<MissionMember["state"], number> = {
   active: 2,
   offline: 1,
   "release-pending": 1,
-  // The release was refused, so the thread is still held.
   "release-refused": 2,
   "add-pending": 0,
   "add-refused": -1,
@@ -396,7 +352,6 @@ const HOLD: Record<MissionMember["state"], number> = {
 const isJoined = (member: MissionMember) =>
   member.state === "active" || member.state === "offline" || member.state === "release-refused";
 
-/** Where each thread shows: the Mission it leads, else the one that holds it surest, else the first. */
 function missionHolders(hosts: ReadonlyArray<MissionHost>) {
   const holders = new Map<
     string,
@@ -423,21 +378,14 @@ function missionHolders(hosts: ReadonlyArray<MissionHost>) {
   return holders;
 }
 
-/**
- * The Missions the sidebar lists, and `threadKeys`, the threads they show; other lists leave those
- * out. A thread shows in one Mission: the one it leads, else the surest hold, else the first.
- * A settled or archived member goes back to the other lists unless its add or release waits.
- */
 export function groupSidebarMissions<T extends ListedThread>(
   hosts: ReadonlyArray<MissionHost>,
   threads: readonly T[],
   scopedProjectKeys: ReadonlySet<string> | null,
-  /** Leads whose thread was read for and not found, such as an archived one. */
   unavailableLeads: ReadonlySet<string> = new Set(),
 ): {
   readonly missions: ReadonlyArray<SidebarMission<T>>;
   readonly threadKeys: ReadonlySet<string>;
-  /** Every listed Mission's lead, whatever the scope. */
   readonly leads: ReadonlyArray<SidebarMissionEntry<T>>;
 } {
   const keyOf = (thread: T) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
@@ -458,7 +406,6 @@ export function groupSidebarMissions<T extends ListedThread>(
   const missions = listed.flatMap(({ key, host, mission }): Array<SidebarMission<T>> => {
     const entries = mission.members.flatMap((listed): Array<SidebarMissionEntry<T>> => {
       const threadKey = scopedThreadKey(listed.ref);
-      // Shown as a deleted lead is: it heads its mission, and nothing waits for it.
       const member: MissionMember =
         listed.role === "lead" &&
         listed.state === "active" &&
@@ -488,7 +435,6 @@ export function groupSidebarMissions<T extends ListedThread>(
         ? members
         : members.filter((entry) => entry.thread !== null && inScope(entry.thread));
     const leadInScope = lead.thread === null ? scopedProjectKeys === null : inScope(lead.thread);
-    // A lead the shell left out is still on its way, and only its project can decide the scope.
     const leadLoading = lead.thread === null && lead.member.state === "active";
     if (!leadInScope && !leadLoading && shownMembers.length === 0) return [];
     return [{ key, host, mission, lead, leadInScope, members: shownMembers }];
@@ -496,7 +442,6 @@ export function groupSidebarMissions<T extends ListedThread>(
   return { missions, threadKeys, leads };
 }
 
-/** What a draft does on its first send: start a Mission it leads, or lead one whose lead is gone. */
 export const newMissionId = () => SecureRandom.uuidV4Unsafe().replaceAll("-", "").slice(0, 12);
 
 export type MissionDraftIntent =
@@ -506,21 +451,15 @@ export type MissionDraftIntent =
       readonly host: EnvironmentId;
       readonly missionId: string;
       readonly name: string;
-      /** The missing lead the user saw. Only that one is replaced. */
       readonly expectedLead: ThreadId;
     }
   | {
-      /** Joins as a member, through the usual add and its rules across machines. */
       readonly kind: "member";
       readonly host: EnvironmentId;
       readonly missionId: string;
       readonly name: string;
     };
 
-/**
- * Where a draft can do what it is for: a new lead only on its Mission's machine, a member also on
- * machines that machine links to with full access. A new Mission can start anywhere.
- */
 export function missionDraftMachines(
   intent: MissionDraftIntent,
   hosts: ReadonlyArray<MissionHost>,
@@ -536,7 +475,6 @@ export function missionDraftMachines(
   return new Set([intent.host, ...links]);
 }
 
-/** Where "No project" opens for a draft kept to these machines: the usual home if allowed. */
 export function missionScratchHome(
   machines: ReadonlySet<EnvironmentId> | null,
   usual: EnvironmentId | null,
@@ -546,7 +484,6 @@ export function missionScratchHome(
   return [...machines].find((environmentId) => scratchRootFor(environmentId) !== null) ?? null;
 }
 
-/** The members a drag can take out of their Mission: joined ones the sidebar shows. */
 export function missionDragKeys(missions: ReadonlyArray<SidebarMission<unknown>>) {
   return new Set(
     missions.flatMap((mission) =>
@@ -557,28 +494,22 @@ export function missionDragKeys(missions: ReadonlyArray<SidebarMission<unknown>>
   );
 }
 
-/** What a sidebar drag does where it is: add threads to a Mission, or take a member out of one. */
 export interface MissionDrop {
   readonly kind: "add" | "release";
-  /** The Mission's key, as the sidebar lists it. */
   readonly mission: string;
   readonly host: EnvironmentId;
   readonly missionId: string;
-  /** Why it does not drop, or null. */
   readonly refusal: string | null;
 }
 
 export function resolveMissionDrop(input: {
-  /** The thread the drag started on. A selection drags all of `threads`. */
   readonly dragged: string;
   readonly threads: ReadonlyArray<MissionCandidate>;
-  /** A listed Mission's key, or `list` for the threads in no Mission. */
   readonly over: string | null;
   readonly missions: ReadonlyArray<SidebarMission<unknown>>;
   readonly hosts: ReadonlyArray<MissionHost>;
   readonly machineLabel: (environmentId: EnvironmentId) => string;
   readonly canChangeOn: (environmentId: EnvironmentId) => boolean;
-  /** The Mission the dragged member was in when the drag began, if it was in one. */
   readonly source?: { readonly host: EnvironmentId; readonly missionId: string } | null;
   readonly resolve?: MessageResolver;
 }): MissionDrop | null {
@@ -592,7 +523,6 @@ export function resolveMissionDrop(input: {
   if (input.over === "list") {
     const ref = from?.members.find((entry) => scopedThreadKey(entry.member.ref) === input.dragged)
       ?.member.ref;
-    // Its row moved to another Mission during the drag, so it leaves neither.
     const moved =
       input.source != null &&
       from !== undefined &&
@@ -636,10 +566,6 @@ export function resolveMissionDrop(input: {
   };
 }
 
-/**
- * Threads that can take over a Mission whose lead is gone: on its machine, with messages, and
- * in no other Mission. Its own members can. Most recently written first.
- */
 export function missionLeadCandidates<
   T extends MissionCandidate & Pick<SidebarThreadSummary, "archivedAt" | "title">,
 >(

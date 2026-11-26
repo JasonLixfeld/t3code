@@ -49,10 +49,8 @@ function Banner(props: { readonly draftId: DraftId }) {
   ));
 }
 
-/** The draft's thread as the stream shows it: not there, there but empty, or sent. */
 async function renderDraft(draftId: DraftId, extra?: ReactNode) {
   commands.clear();
-  // The stream's shells are live, as the real hook's are.
   let shell: ReturnType<typeof makeThreadFixture> | null = null;
   const listeners = new Set<() => void>();
   vi.mocked(useThreadShell).mockImplementation(() =>
@@ -73,7 +71,6 @@ async function renderDraft(draftId: DraftId, extra?: ReactNode) {
   );
   const screen = await render(ui());
   return Object.assign(screen, {
-    /** The app remounts the watcher, as a route change can. */
     remount: async () => {
       await screen.rerender(<Banner draftId={draftId} />);
       await screen.rerender(ui());
@@ -206,7 +203,6 @@ it("keeps the mission until the server has it, and only the user's retry tries a
   await screen.stream("sent");
   await vi.waitFor(() => expect(toasts).toHaveBeenCalledOnce());
   expect(screen.container.textContent).toContain("Sending starts a new mission");
-  // A remount keeps the failure and sends nothing by itself.
   await screen.remount();
   await screen.stream("sent");
   expect(create).toHaveBeenCalledTimes(1);
@@ -301,7 +297,6 @@ it("holds a member's join while its mission's machine no longer lists the missio
   await screen.stream("sent");
   await vi.waitFor(() => expect(missionDraftOf(draftId)?.step).toBe("held"));
   expect(commandFor("mission add member")).not.toHaveBeenCalled();
-  // The notice no longer says the thread is added.
   await expect
     .element(screen.getByText("This thread will not join a mission unless you pick one."))
     .toBeInTheDocument();
@@ -321,7 +316,6 @@ it("offers no Mission choice on a machine where this client cannot start or join
   onTestFinished(() => vi.mocked(useMissionStartMachines).mockRestore());
   await using screen = await renderDraft(draftId, <MissionWord draftId={draftId} />);
   expect(screen.getByRole("button", { name: "Add to a mission" }).elements()).toHaveLength(0);
-  // A draft already marked keeps its choice in view, so it can still go as a plain thread.
   await act(() => markMissionDraft(draftId, { intent: { kind: "new" }, thread }));
   await expect.element(screen.getByRole("button", { name: "New mission" })).toBeInTheDocument();
 });

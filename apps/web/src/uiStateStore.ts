@@ -34,7 +34,6 @@ export interface PersistedUiState {
 
 export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
-  /** Keyed by the lead's machine and the Mission id. A Mission missing here is expanded. */
   missionExpandedById: Record<string, boolean>;
   projectOrder: string[];
   sidebarProjectScopeKeys: string[];
@@ -325,7 +324,6 @@ export function setProjectExpanded(
 export function setMissionExpanded(state: UiState, missionKey: string, expanded: boolean): UiState {
   if ((state.missionExpandedById[missionKey] ?? true) === expanded) return state;
   const { [missionKey]: _previous, ...rest } = state.missionExpandedById;
-  // Expanded is the default, so only collapsed Missions are kept.
   return { ...state, missionExpandedById: expanded ? rest : { ...rest, [missionKey]: false } };
 }
 

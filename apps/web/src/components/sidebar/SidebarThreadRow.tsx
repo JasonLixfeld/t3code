@@ -512,7 +512,6 @@ export function SortableThreadRow(
     sortableId: string;
     sortableDisabled: boolean;
     contextDrag: boolean;
-    /** A Mission member this client can take out by its lead's machine, so it drags anyway. */
     missionLeavable?: boolean;
   },
 ) {
@@ -603,7 +602,6 @@ function TopStatusIcon(props: { icon: keyof typeof TOP_STATUS_ICONS; className: 
   return <Icon aria-hidden className={cn("shrink-0", props.className)} />;
 }
 
-/** A Mission's lead row folds its members away under it. */
 export type SidebarMissionToggle = {
   expanded: boolean;
   memberCount: number;
@@ -613,7 +611,6 @@ export type SidebarMissionToggle = {
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   missionToggle?: SidebarMissionToggle | undefined;
-  /** A last line inside the card, such as a mission member's pending add or release. */
   footer?: ReactNode;
   // "folder" is a one-line row inside a boring sidebar project folder;
   // "folder-multiline" adds the card's environment and PR line under it.
@@ -1109,7 +1106,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const accessibility = resolveSidebarRowAccessibility({
     title: thread.title,
     statusLabel: pendingSync ? gt("Pending") : (topStatus?.label ?? null),
-    // A mission can span projects, so its lead's row names none.
     projectDisplayName: props.missionToggle ? null : props.projectDisplayName,
     isActive: props.isActive,
   });
@@ -1589,12 +1585,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     );
   }
 
-  // Only an empty line would remain, so a mission's lead row is then one line.
   const hasMissionMeta =
     Boolean(topStatus) ||
     metaLine !== null ||
     props.providerEntryByInstanceId.has(resolveThreadProviderStack(thread).at(-1)!);
-  // A mission's lead row shows its status on the line under its title, where the project was.
   const statusLabel = pendingSync ? (
     <PendingSyncLabel />
   ) : topStatus ? (
@@ -1691,7 +1685,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
               {missionChevron}
-              {/* A mission can span projects, so its lead's row names none. */}
               {missionToggle || !props.project ? null : (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               )}
@@ -1802,7 +1795,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </div>
             {missionToggle ? (
               !hasMissionMeta ? null : (
-                // Lined up with the title, past the chevron.
                 <div className="mt-1 flex min-w-0 items-center gap-1.5 ps-5.5 text-secondary-label text-xs">
                   {statusLabel}
                   {metaLine === null ? (

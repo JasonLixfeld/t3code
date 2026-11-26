@@ -49,7 +49,6 @@ const DROP_ZONE_CLASS =
   "flex h-9 items-center justify-center rounded-md border border-dashed border-sidebar-foreground/25 text-xs text-sidebar-foreground/80";
 const DROP_ZONE_TARGET_CLASS = "border-primary/40 bg-primary/5 text-primary";
 
-/** Where a Mission member is let go of its Mission, drawn as a shelf's drop zone is. */
 export function SidebarReleaseZone(props: { label: string; isDropTarget: boolean }) {
   return (
     <li className="mx-0.5 list-none py-1">
@@ -165,12 +164,7 @@ export function SidebarSectionHeader(props: {
   );
 }
 
-/** A heading that does not fold, drawn as the shelf headers are. */
-export function SidebarHeading(props: {
-  children: ReactNode;
-  /** A Mission member dropped on it leaves its Mission, as on the release zone. */
-  releasesMembers?: boolean;
-}) {
+export function SidebarHeading(props: { children: ReactNode; releasesMembers?: boolean }) {
   return (
     <li
       className="mx-0.5 flex list-none items-center"

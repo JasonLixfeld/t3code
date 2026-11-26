@@ -220,7 +220,6 @@ export function buildSidebarProjectSnapshots(
 export function buildSidebarProjectPickerEntries(input: {
   groups: ReadonlyArray<SidebarProjectSnapshot>;
   preferredProjectRef: ScopedProjectRef | null;
-  /** Offers only copies on these machines, when set. */
   environmentIds?: ReadonlySet<EnvironmentId> | null;
 }) {
   const preferredProjectRef = input.preferredProjectRef;
