@@ -57,6 +57,8 @@ export function eventCanEndBackgroundWork(event: OrchestrationV2DomainEvent): bo
   switch (event.type) {
     case "provider-session.detached":
     case "run.background-work-cancelled":
+    case "thread.pull-request-synced":
+    case "thread.pull-request-link-updated":
       return true;
     case "subagent.updated":
       return !isOrchestrationV2WorkActive(event.payload.status);

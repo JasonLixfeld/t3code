@@ -438,6 +438,34 @@ it.effect(
   },
 );
 
+it.effect("a member held by its pull request watch is told once the watch stops holding", () => {
+  const world = makeWorld();
+  const watch = { taskId: "pull-request-watch:github.com/acme/app#42", kind: "monitor" };
+  return withWakes(
+    world,
+    Effect.gen(function* () {
+      world.set(first, { pendingBackgroundTasks: [{ ...watch, awaited: true }] });
+      yield* world.run(first, "f1", "completed");
+      yield* world.run(second, "s1", "failed");
+      assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
+      yield* world.leadRead;
+      yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+      world.set(first, { pendingBackgroundTasks: [watch] });
+      yield* world.event(first, "thread.pull-request-synced", {});
+      assert.equal(
+        yield* nextText(world),
+        told(["member 1 on this machine finished its turn and is idle."]),
+      );
+      yield* world.leadRead;
+      yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+      yield* world.event(first, "thread.pull-request-link-updated", {});
+      yield* world.run(second, "s2", "failed");
+      assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
+      assert.equal(world.sent.length, 3);
+    }),
+  );
+});
+
 it.effect("a member held by its own work when the server stops is told once the work ends", () => {
   const world = makeWorld();
   return withWakes(
