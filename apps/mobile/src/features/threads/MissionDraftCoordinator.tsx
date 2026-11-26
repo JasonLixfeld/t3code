@@ -1,6 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
+import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { claimHere } from "@t3tools/client-runtime/missions";
 import { type ScopedThreadRef, threadHasMessages } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 import { useGT } from "gt-react-native";
 import { useEffect, useEffectEvent } from "react";
 
@@ -13,8 +15,20 @@ import {
 } from "../../state/mission-drafts";
 import { useMissionHosts } from "../../state/missions";
 import { serverEnvironment } from "../../state/server";
+import { environmentShell } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { reportLeadOutcome, reportMissionFailure } from "./useMissionActions";
+
+// The shell lists a thread deleted on any device until its next full snapshot.
+const threadRemovedAtom = Atom.family((key: string) =>
+  Atom.make((get) => {
+    const ref = parseScopedThreadKey(key);
+    return (
+      ref !== null &&
+      get(environmentShell.stateValueAtom(ref.environmentId)).removedAt.has(ref.threadId)
+    );
+  }).pipe(Atom.withLabel(`mobile-mission-draft-thread-removed:${key}`)),
+);
 
 function MissionDraftWatch(props: {
   readonly draft: MissionDraft;
@@ -27,9 +41,11 @@ function MissionDraftWatch(props: {
   const createMission = useAtomCommand(serverEnvironment.createMission, "mission create");
   const setLead = useAtomCommand(serverEnvironment.setMissionLead, "mission set lead");
   const addMember = useAtomCommand(serverEnvironment.addMissionMember, "mission add member");
+  const removed = useAtomValue(threadRemovedAtom(scopedThreadKey(thread)));
   const sent = shell !== null && threadHasMessages(shell);
   const { intent } = draft;
   const done =
+    removed ||
     shell?.archivedAt != null ||
     claimHere({ environmentId: thread.environmentId, id: thread.threadId }, hosts) !== undefined ||
     (intent.kind !== "new" &&

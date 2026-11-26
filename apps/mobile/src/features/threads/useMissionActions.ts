@@ -30,7 +30,7 @@ import { m } from "../../i18n/messages";
 import { newMissionId, uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useProjects, useServerConfigs } from "../../state/entities";
-import { markMissionDraft, missionDraftOf } from "../../state/mission-drafts";
+import { clearMissionDraft, markMissionDraft, missionDraftOf } from "../../state/mission-drafts";
 import { useMissionHosts, useMissionStartMachines, useMissionsLiveKey } from "../../state/missions";
 import { canStartMission } from "../../state/missions.logic";
 import { serverEnvironment } from "../../state/server";
@@ -401,6 +401,7 @@ export function useMissionActions() {
             }),
           ),
         );
+        for (const added of outcome.added) clearMissionDraft(added);
         const summary = missionAddSummary(outcome, resolve);
         if (summary !== null) Dialog.alert(summary);
         return;

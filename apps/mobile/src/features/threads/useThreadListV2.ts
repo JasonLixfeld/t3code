@@ -4,6 +4,7 @@ import { useMemo, useSyncExternalStore } from "react";
 
 import { keepMarked } from "../../i18n/messages";
 import { scopedProjectKey } from "../../lib/scopedEntities";
+import { useMissionLeadShells } from "../../state/mission-leads";
 import { useMissionHosts, useMissionPreferences } from "../../state/missions";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -71,6 +72,7 @@ export function useThreadListV2(input: {
 }) {
   const { threads, workingShelfEnabled } = input;
   const missionHosts = useMissionHosts();
+  const unavailableMissionLeads = useMissionLeadShells(missionHosts, threads);
   const { headerVisible: missionsHeaderVisible, threadsHeaderVisible } = useMissionPreferences();
   const collapsedMissions = useMemo(
     () => new Set(input.collapsedMissions ?? []),
@@ -162,6 +164,7 @@ export function useThreadListV2(input: {
         settledShelfExpanded: input.settledShelfExpanded,
         selectedThreadKey: input.selectedThreadKey,
         missionHosts,
+        unavailableMissionLeads,
         collapsedMissions,
         isListedSettled: isListed,
         unloadedSettledCount: unloadedCount(
@@ -196,6 +199,7 @@ export function useThreadListV2(input: {
       input.settledShelfExpanded,
       input.selectedThreadKey,
       missionHosts,
+      unavailableMissionLeads,
       collapsedMissions,
       isListed,
       unloadedCount,

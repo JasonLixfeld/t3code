@@ -20,6 +20,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { connectedEnvironmentIdsAtom } from "../../state/presentation";
 import { readEnvironmentScope, readEnvironmentScopeDenied } from "../../state/session";
+import { clearMissionDraft } from "../../state/mission-drafts";
 import { clearComposerDraft } from "../../state/use-composer-drafts";
 import {
   environmentThreadShells,
@@ -206,6 +207,7 @@ function useThreadActionExecutor(
       onSucceeded?.(result.value);
       if (action === "archive" || action === "delete") {
         for (const kind of ["settle", "snooze", "pin"]) ThreadUndo.invalidate(kind, key);
+        clearMissionDraft({ environmentId: thread.environmentId, threadId: thread.id });
       }
       if (action === "archive" || action === "unarchive" || action === "delete") {
         refreshArchivedThreadsForEnvironment(thread.environmentId);
