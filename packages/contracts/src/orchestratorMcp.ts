@@ -285,12 +285,17 @@ export const OrchestratorMcpCreateThreadRequest = Schema.Struct({
 });
 export type OrchestratorMcpCreateThreadRequest = typeof OrchestratorMcpCreateThreadRequest.Type;
 
+export const OrchestratorMcpMissionOptOut = Schema.Literal("none").annotate({
+  description: "Skip mission join.",
+});
+
 export const OrchestratorMcpCreateThreadsInput = Schema.Struct({
   threads: Schema.Array(OrchestratorMcpCreateThreadRequest).check(
     Schema.isMinLength(1),
     Schema.isMaxLength(20),
   ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  mission: Schema.optional(OrchestratorMcpMissionOptOut),
 });
 export type OrchestratorMcpCreateThreadsInput = typeof OrchestratorMcpCreateThreadsInput.Type;
 
@@ -312,7 +317,7 @@ export const OrchestratorMcpCreatedThread = Schema.Struct({
   creationSource: OrchestrationV2CreationSource,
   providerInstanceId: ProviderInstanceId,
   model: Schema.String,
-  /** Set when a mission's lead created it. */
+  /** The outcome of joining the caller's mission, if any. */
   mission: Schema.optional(MissionJoinOutcome),
 });
 export type OrchestratorMcpCreatedThread = typeof OrchestratorMcpCreatedThread.Type;

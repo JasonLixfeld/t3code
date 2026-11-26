@@ -3,12 +3,14 @@ import {
   type MissionJoinOutcome,
   OrchestratorMcpFailure,
   type ScopedThreadRef,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { linkOwner, MissionClaims } from "../../../missions/MissionClaims.ts";
 import * as Missions from "../../../missions/Missions.ts";
+import type { MissionRecord } from "../../../missions/MissionStore.ts";
 import {
   cutToBytes,
   GET_THE_BRIEF,
@@ -54,16 +56,17 @@ const byRepository = (rows: ReadonlyArray<RosterMember>) => {
   return [...groups].map(([repository, members]) => ({ repository, members }));
 };
 
-export const joinCallersMission = Effect.fn("MissionHandlers.joinCallersMission")(function* (
+const joinMission = Effect.fn("MissionHandlers.joinMission")(function* (
   missions: Option.Option<MissionsService>,
   member: ScopedThreadRef,
+  find: (missions: MissionsService, caller: ThreadId) => Effect.Effect<MissionRecord | undefined>,
 ) {
   const scope = yield* McpInvocationContext.McpInvocationContext;
   if (Option.isNone(missions) || scope.thread === undefined) return undefined;
-  const mission = yield* missions.value.ledBy(scope.thread.threadId);
+  const mission = yield* find(missions.value, scope.thread.threadId);
   if (mission === undefined) return undefined;
   return yield* missions.value
-    .joinStarted({ missionId: mission.missionId, member }, scope.thread.threadId)
+    .joinStarted({ missionId: mission.missionId, member }, mission.leadThreadId)
     .pipe(
       Effect.map((state): MissionJoinOutcome | undefined =>
         state === undefined ? undefined : { state },
@@ -74,6 +77,20 @@ export const joinCallersMission = Effect.fn("MissionHandlers.joinCallersMission"
       }),
     );
 });
+
+export const joinIfCallerLeads = (
+  missions: Option.Option<MissionsService>,
+  member: ScopedThreadRef,
+) => joinMission(missions, member, (service, caller) => service.ledBy(caller));
+
+export const joinLaunchersMission = (
+  missions: Option.Option<MissionsService>,
+  member: ScopedThreadRef,
+  startedApart: boolean,
+) =>
+  joinMission(missions, member, (service, caller) =>
+    startedApart ? service.ledBy(caller) : service.locallyLedMissionOf(caller),
+  );
 
 export const layer = McpToolAccess.toLayer(
   MissionToolkit,

@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as Missions from "../../../missions/Missions.ts";
-import { joinCallersMission } from "../mission/handlers.ts";
+import { joinLaunchersMission } from "../mission/handlers.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
@@ -247,13 +247,14 @@ export const layer = McpToolAccess.toLayer(
   OrchestratorToolkit,
   Effect.map(Effect.serviceOption(Missions.Missions), (missions) => ({
     ...handlers,
-    create_threads: McpToolAccess.followedBy(handlers.create_threads, (_input, result) =>
+    create_threads: McpToolAccess.followedBy(handlers.create_threads, (input, result) =>
       Effect.gen(function* () {
+        if (input.mission === "none") return result;
         const { environmentId } = yield* McpInvocationContext.McpInvocationContext;
         return {
           threads: yield* Effect.forEach(result.threads, (thread) =>
             Effect.map(
-              joinCallersMission(missions, { environmentId, threadId: thread.threadId }),
+              joinLaunchersMission(missions, { environmentId, threadId: thread.threadId }, false),
               (mission) => (mission === undefined ? thread : { ...thread, mission }),
             ),
           ),

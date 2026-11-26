@@ -364,6 +364,31 @@ it.effect("keeps the expiry the peer answers with, so a used link outlives its f
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("sends a peer a launch without the mission choice only this machine reads", () =>
+  Effect.gen(function* () {
+    const sent: Array<{ readonly method?: string; readonly params?: unknown }> = [];
+    const http = HttpClient.make((request) =>
+      Effect.sync(() => {
+        if (request.body._tag === "Uint8Array") {
+          sent.push(JSON.parse(new TextDecoder().decode(request.body.body)));
+        }
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(probeResult, { headers: { "mcp-session-id": "session" } }),
+        );
+      }),
+    );
+    const client = yield* clientThrough(http);
+    for (const tool of ["t3_thread_launch", "probe"]) {
+      yield* client.call({ ...probeCall, tool, arguments: { title: "Fix", mission: "none" } });
+    }
+    expect(sent.filter((body) => body.method === "tools/call").map((body) => body.params)).toEqual([
+      { name: "t3_thread_launch", arguments: { title: "Fix" } },
+      { name: "probe", arguments: { title: "Fix", mission: "none" } },
+    ]);
+  }),
+);
+
 it.effect("renews a missing peer session once and reuses its replacement", () =>
   Effect.gen(function* () {
     const sessionHeaders: Array<string | undefined> = [];

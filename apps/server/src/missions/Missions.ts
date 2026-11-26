@@ -121,6 +121,7 @@ export class Missions extends Context.Service<
     ) => Effect.Effect<void, MissionError>;
     readonly ledBy: (threadId: ThreadId) => Effect.Effect<MissionRecord | undefined>;
     readonly startAsLead: (lead: ThreadId) => Effect.Effect<Mission, MissionError>;
+    readonly locallyLedMissionOf: (threadId: ThreadId) => Effect.Effect<MissionRecord | undefined>;
     readonly heardInWait: (
       lead: ThreadId,
       member: ScopedThreadRef,
@@ -1247,6 +1248,16 @@ const make = Effect.gen(function* () {
       missions.find((mission) => mission.leadThreadId === threadId),
     );
 
+  const locallyLedMissionOf = Effect.fn("Missions.locallyLedMissionOf")(function* (
+    threadId: ThreadId,
+  ) {
+    const led = yield* ledBy(threadId);
+    if (led !== undefined) return led;
+    const claim = (yield* store.claimsOf(here)).find((held) => held.threadId === threadId);
+    if (claim === undefined) return undefined;
+    return (yield* store.missions).find((mission) => mission.missionId === claim.missionId);
+  });
+
   const machineLabels = Effect.map(
     missionLinks,
     (named) => new Map(named.map((link) => [link.environmentId, link.label])),
@@ -1528,6 +1539,7 @@ const make = Effect.gen(function* () {
     joinedWithPriorWork: Stream.fromPubSub(joined),
     ledBy,
     startAsLead,
+    locallyLedMissionOf,
     heardInWait,
     roster,
     memberStatuses,

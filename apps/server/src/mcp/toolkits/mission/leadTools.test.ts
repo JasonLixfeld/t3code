@@ -83,6 +83,8 @@ const threadScope = (threadId: string) =>
   }) satisfies McpInvocationContext.McpInvocationScope;
 const lead = threadScope("lead");
 const notLead = threadScope("member");
+const inMission = threadScope("in-mission");
+const stamped = threadScope("stamped");
 
 const row = (index: number, status: RosterMember["status"]): RosterMember => ({
   ref: { environmentId: LAPTOP, threadId: ThreadId.make(`t${index}`) },
@@ -144,6 +146,18 @@ const makeMissions = () => {
       Effect.succeed(
         threadId === lead.thread.threadId
           ? { missionId: MISSION, name: "Ship", leadThreadId: threadId, createdAt: "", prompt: "" }
+          : undefined,
+      ),
+    locallyLedMissionOf: (threadId) =>
+      Effect.succeed(
+        [lead, inMission, stamped].some((scope) => scope.thread.threadId === threadId)
+          ? {
+              missionId: MISSION,
+              name: "Ship",
+              leadThreadId: lead.thread.threadId,
+              createdAt: "",
+              prompt: "",
+            }
           : undefined,
       ),
     memberStatuses: () => Effect.succeed([]),
@@ -403,51 +417,195 @@ it.effect(
     }),
 );
 
+// What each launched thread saved, kept from its first launch as a replay keeps it.
+const launchedOrigins = new Map<string, object>();
+
+const callLaunch = (
+  missions: ReturnType<typeof makeMissions>,
+  scope: McpInvocationContext.McpInvocationScope,
+  input: Record<string, unknown>,
+  forwarded: Array<object> = [],
+) =>
+  Effect.gen(function* () {
+    const dependencies = Layer.mergeAll(
+      missions.layer,
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: (threadId) =>
+          Effect.succeed({
+            ...liveThreadShell(threadId),
+            ...(threadId === stamped.thread.threadId
+              ? { linkOrigin: { sessionId: "desk", label: "Desk", access: "full-access" as const } }
+              : {}),
+          }),
+      }),
+      Layer.succeed(McpInvocationContext.McpInvocationContext, scope),
+      Layer.mock(PeerForwarding.PeerForwarding)({
+        call: (_scope, _tool, _target, params) =>
+          Effect.sync(() => {
+            forwarded.push(params as object);
+            return {
+              threadId: ThreadId.make(`launched-${(params as { title: string }).title}`),
+              projectId: (params as { projectId?: string }).projectId ?? "project-there",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5.4",
+              },
+              runId: null,
+              status: null,
+            } as never;
+          }),
+      }),
+      Layer.mock(Project.ProjectService)({
+        getById: (id) => Effect.succeedSome({ id, workspaceRoot: process.cwd() } as never),
+      }),
+      Layer.mock(ThreadLaunch.ThreadLaunchService)({
+        launch: (launch) =>
+          Effect.sync(() => {
+            // As thread.create, which keeps these only alongside linkOrigin.
+            if (!launchedOrigins.has(launch.threadId!) && launch.linkOrigin !== undefined) {
+              const { delegatedFrom, workflowRun } = launch;
+              launchedOrigins.set(launch.threadId!, { delegatedFrom, workflowRun });
+            }
+            return {
+              threadId: launch.threadId,
+              projection: {
+                thread: {
+                  id: launch.threadId,
+                  projectId: launch.projectId,
+                  title: launch.title,
+                  modelSelection: launch.modelSelection,
+                  ...launchedOrigins.get(launch.threadId!),
+                },
+                runs: [],
+              },
+              resumed: false,
+            } as never;
+          }),
+      }),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "" }),
+      Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      Layer.mock(DocumentText.DocumentText)({}),
+      ServerSettings.layerTest(),
+      ServerConfig.layerTest(process.cwd(), { prefix: "t3-mission-launch-" }),
+    ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const results = yield* toolkit
+      .handle("t3_thread_launch", input as never)
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    return results.at(-1)?.result as {
+      readonly threadId?: ThreadId;
+      readonly projectId?: string;
+      readonly mission?: unknown;
+    };
+  });
+
+it.effect(
+  "a member's and a lead's new threads join the mission in the caller's project; mission none and an outsider join none",
+  () =>
+    Effect.gen(function* () {
+      const missions = makeMissions();
+      const optedOut = yield* callLaunch(missions, inMission, { title: "Apart", mission: "none" });
+      assert.isString(optedOut.threadId);
+      assert.notProperty(optedOut, "mission");
+      const forwarded: Array<object> = [];
+      const away = {
+        environmentId: LAPTOP,
+        projectId: "project:there",
+        title: "Away",
+        mission: "none",
+      };
+      const awayLaunch = yield* callLaunch(missions, inMission, away, forwarded);
+      assert.isString(awayLaunch.threadId);
+      assert.equal(awayLaunch.projectId, "project:there");
+      assert.notProperty(awayLaunch, "mission");
+      assert.deepEqual(forwarded, [away]);
+      const origins = {
+        delegatedFrom: { environmentId: LAPTOP, threadId: "parent", title: "Parent" },
+        workflowRun: { environmentId: LAPTOP, runId: "run-1", workflow: "ship", step: "build" },
+      };
+      for (const [field, origin] of Object.entries(origins)) {
+        const fromLink = yield* callLaunch(missions, stamped, { title: field, [field]: origin });
+        assert.isString(fromLink.threadId);
+        assert.notProperty(fromLink, "mission");
+      }
+      const first = { title: "Again", clientRequestId: "again", ...origins };
+      const replay = { title: "Again", clientRequestId: "again" };
+      const launchedAgain = yield* callLaunch(missions, stamped, first);
+      const replayed = yield* callLaunch(missions, stamped, replay);
+      assert.equal(replayed.threadId, launchedAgain.threadId);
+      assert.notProperty(replayed, "mission");
+      const remote = yield* callLaunch(missions, inMission, {
+        environmentId: LAPTOP,
+        title: "Far",
+      });
+      assert.isString(remote.threadId);
+      assert.notProperty(remote, "mission");
+      const apart = (yield* callOrchestratorTool(missions, lead, "create_threads", {
+        threads: [{ title: "Two" }],
+        mission: "none",
+      })) as {
+        readonly threads: ReadonlyArray<{ readonly threadId: string; readonly mission?: unknown }>;
+      };
+      assert.isString(apart.threads[0]?.threadId);
+      for (const thread of apart.threads) assert.notProperty(thread, "mission");
+      assert.notProperty(yield* callLaunch(missions, notLead, { title: "Other" }), "mission");
+      assert.deepEqual(missions.calls, []);
+
+      const byMember = yield* callLaunch(missions, inMission, { title: "Fix" });
+      assert.deepEqual(byMember.mission, { state: "joined" });
+      assert.equal(byMember.projectId, "project:mcp-test");
+      const named = yield* callLaunch(missions, inMission, {
+        title: "Named",
+        projectId: "project:other",
+      });
+      assert.equal(named.projectId, "project:other");
+      assert.deepEqual(named.mission, { state: "joined" });
+      const stampedPlain = yield* callLaunch(missions, stamped, { title: "Plain" });
+      assert.deepEqual(stampedPlain.mission, { state: "joined" });
+      const discarded = yield* callLaunch(missions, inMission, {
+        title: "Discarded",
+        delegatedFrom: origins.delegatedFrom,
+      });
+      assert.deepEqual(discarded.mission, { state: "joined" });
+      const created = (yield* callOrchestratorTool(missions, inMission, "create_threads", {
+        threads: [{ title: "One" }],
+      })) as { readonly threads: ReadonlyArray<{ readonly mission?: unknown }> };
+      assert.deepEqual(created.threads[0]?.mission, { state: "joined" });
+      const byLead = yield* callLaunch(missions, lead, { title: "Review" });
+      assert.deepEqual(byLead.mission, { state: "joined" });
+      const leadsDelegated = yield* callLaunch(missions, lead, {
+        title: "Delegated",
+        delegatedFrom: origins.delegatedFrom,
+      });
+      assert.deepEqual(leadsDelegated.mission, { state: "joined" });
+      assert.deepEqual(
+        missions.calls.map((call) => [call.missionId, call.member.threadId, call.asLead]),
+        [
+          byMember.threadId,
+          named.threadId,
+          stampedPlain.threadId,
+          discarded.threadId,
+          "new-1",
+          "taken",
+          byLead.threadId,
+          leadsDelegated.threadId,
+        ].map((threadId) => [MISSION, threadId, lead.thread.threadId]),
+      );
+    }),
+);
+
 it.effect(
   "a thread a lead launches on a linked machine joins over that link, or says why not",
   () =>
     Effect.gen(function* () {
       const missions = makeMissions();
       const launch = (environmentId: EnvironmentId) =>
-        Effect.gen(function* () {
-          const dependencies = Layer.mergeAll(
-            missions.layer,
-            liveThreadsLayer,
-            Layer.succeed(McpInvocationContext.McpInvocationContext, lead),
-            Layer.mock(PeerForwarding.PeerForwarding)({
-              call: (_scope, _tool, _target, params) =>
-                Effect.succeed({
-                  threadId: ThreadId.make(`launched-${(params as { title: string }).title}`),
-                  projectId: "project-there",
-                  modelSelection: {
-                    instanceId: ProviderInstanceId.make("codex"),
-                    model: "gpt-5.4",
-                  },
-                  runId: null,
-                  status: null,
-                } as never),
-            }),
-            Layer.mock(Project.ProjectService)({}),
-            Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
-            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "" }),
-            Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-            Layer.mock(ProviderRegistry.ProviderRegistry)({}),
-            Layer.mock(DocumentText.DocumentText)({}),
-            ServerSettings.layerTest(),
-            ServerConfig.layerTest(process.cwd(), { prefix: "t3-mission-launch-" }),
-          ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
-          const toolkit = yield* ProjectToolkit.pipe(
-            Effect.provide(
-              McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
-                Layer.provide(dependencies),
-              ),
-            ),
-          );
-          const results = yield* toolkit
-            .handle("t3_thread_launch", { environmentId, title: environmentId } as never)
-            .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
-          return results.at(-1)?.result as { readonly mission?: unknown };
-        });
+        callLaunch(missions, lead, { environmentId, title: environmentId });
       assert.deepEqual((yield* launch(LAPTOP)).mission, { state: "pending" });
       assert.notProperty(yield* launch(LAPTOP), "mission");
       assert.deepEqual((yield* launch(FENCED)).mission, {
@@ -507,6 +665,7 @@ it.effect(
         "mission",
       );
       assert.notProperty(yield* transfer(notLead, { action: "fork" }), "mission");
+      assert.notProperty(yield* transfer(inMission, { action: "fork" }), "mission");
       assert.lengthOf(missions.calls, 1);
     }),
 );

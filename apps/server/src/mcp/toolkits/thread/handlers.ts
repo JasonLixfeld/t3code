@@ -26,7 +26,7 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import * as Missions from "../../../missions/Missions.ts";
-import { joinCallersMission } from "../mission/handlers.ts";
+import { joinIfCallerLeads } from "../mission/handlers.ts";
 import { ThreadToolkit } from "./tools.ts";
 
 function queueEntry(
@@ -456,7 +456,7 @@ export const layer = McpToolAccess.toLayer(
         Effect.gen(function* () {
           if (input.action !== "fork" || !("targetThreadId" in result)) return result;
           const scope = yield* McpInvocationContext.McpInvocationContext;
-          const mission = yield* joinCallersMission(missions, {
+          const mission = yield* joinIfCallerLeads(missions, {
             environmentId: environmentId ?? scope.environmentId,
             threadId: result.targetThreadId,
           });

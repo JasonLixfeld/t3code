@@ -14,6 +14,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -239,6 +240,11 @@ const make = Effect.gen(function* () {
                 .join("/"),
             };
       const sessionKey = `${input.environmentId} ${resolved.url}`;
+      // Only the sender's launch hook reads `mission`, and an older peer refuses an unknown argument.
+      const toolArguments =
+        input.tool === "t3_thread_launch"
+          ? Struct.omit(input.arguments, ["mission"])
+          : input.arguments;
       const callOnce = (sessionId: string) =>
         post(
           resolved.url,
@@ -247,7 +253,7 @@ const make = Effect.gen(function* () {
             jsonrpc: "2.0",
             id: 1,
             method: "tools/call",
-            params: { name: input.tool, arguments: input.arguments },
+            params: { name: input.tool, arguments: toolArguments },
           },
           {
             ...limitHeader,

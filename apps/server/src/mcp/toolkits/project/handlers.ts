@@ -17,6 +17,7 @@ import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type { Tool } from "effect/ai";
 import * as Missions from "../../../missions/Missions.ts";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
 import { outputRequestProblem } from "../../../orchestration-v2/runOutput.ts";
@@ -44,7 +45,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
-import { joinCallersMission } from "../mission/handlers.ts";
+import { joinIfCallerLeads, joinLaunchersMission } from "../mission/handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
 
 const isAboveCeilingError = Schema.is(OrchestratorRuntimeModeAboveCeilingError);
@@ -219,9 +220,9 @@ const withSavedProjectSettingsAfterCreate = withSavedProjectSettings.pipe(
   Effect.orElseSucceed(() => (project: ProjectRecord) => project),
 );
 
-const handlers = {
-  t3_thread_launch: McpToolAccess.startsThreads(
-    (input) => input,
+const launchThread = (missions: Option.Option<Missions.Missions["Service"]>) =>
+  McpToolAccess.startsThreads(
+    (input: Tool.Parameters<typeof ProjectToolkit.tools.t3_thread_launch>) => input,
     (input, { runtimeMode, interactionMode, linkOrigin }) =>
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
@@ -514,7 +515,7 @@ const handlers = {
         );
         const thread = result.projection.thread;
         const run = result.projection.runs.find((run) => run.userMessageId === messageId);
-        return {
+        const started = {
           threadId: thread.id,
           link: McpInvocationContext.threadLinkFor(scope, thread.id, thread.title),
           projectId: thread.projectId,
@@ -522,10 +523,19 @@ const handlers = {
           runId: run?.id ?? null,
           status: run?.status ?? null,
         };
+        if (input.mission === "none") return started;
+        const mission = yield* joinLaunchersMission(
+          missions,
+          { environmentId: scope.environmentId, threadId: thread.id },
+          thread.delegatedFrom != null || thread.workflowRun != null,
+        );
+        return mission === undefined ? started : { ...started, mission };
       }),
     // The launched thread carries the caller's link, if it has one.
     "stamped",
-  ),
+  );
+
+const handlers = {
   t3_project_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const projects = yield* access;
@@ -649,23 +659,21 @@ const handlers = {
     // An existing destination is never adopted.
     { linkedCallers: "allowed" },
   ),
-} satisfies McpToolAccess.Handlers<typeof ProjectToolkit.tools>;
+} satisfies Omit<McpToolAccess.Handlers<typeof ProjectToolkit.tools>, "t3_thread_launch">;
 
 export const layer = McpToolAccess.toLayer(
   ProjectToolkit,
   Effect.map(Effect.serviceOption(Missions.Missions), (missions) => ({
     ...handlers,
     t3_thread_launch: McpToolAccess.followedBy(
-      handlers.t3_thread_launch,
-      (_input, launched, environmentId) =>
-        Effect.gen(function* () {
-          const scope = yield* McpInvocationContext.McpInvocationContext;
-          const mission = yield* joinCallersMission(missions, {
-            environmentId: environmentId ?? scope.environmentId,
-            threadId: launched.threadId,
-          });
-          return mission === undefined ? launched : { ...launched, mission };
-        }),
+      launchThread(missions),
+      (input, launched, environmentId) =>
+        environmentId === undefined || input.mission === "none"
+          ? Effect.succeed(launched)
+          : Effect.map(
+              joinIfCallerLeads(missions, { environmentId, threadId: launched.threadId }),
+              (mission) => (mission === undefined ? launched : { ...launched, mission }),
+            ),
     ),
   })),
 );
