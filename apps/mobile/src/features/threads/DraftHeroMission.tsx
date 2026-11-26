@@ -15,6 +15,7 @@ import {
 } from "../../state/missions";
 import {
   type DraftHeroToken,
+  chosenDraftMissionOption,
   type DraftMissionChoice,
   draftMissionChoice,
 } from "./draftMission.logic";
@@ -36,8 +37,8 @@ export function useDraftMission(input: {
     resolve,
   );
   const choose = (id: string) => {
-    const option = choice?.options.find((candidate) => candidate.id === id);
-    if (option === undefined || option.disabled || option.id === choice?.selected) return;
+    const option = chosenDraftMissionOption(choice, id);
+    if (option === undefined) return;
     const target = { requestId: input.requestId };
     if (option.intent === null) clearMissionDraft(target);
     else markMissionDraft(target, option.intent, newMissionId);
@@ -68,9 +69,7 @@ export function DraftMissionMenu(props: {
       actions={props.choice.options.map((option) => ({
         id: option.id,
         title: option.label,
-        ...(option.id === props.choice.selected && !props.choice.fixed
-          ? { state: "on" as const }
-          : {}),
+        ...(option.id === props.choice.selected ? { state: "on" as const } : {}),
         ...(option.disabled ? { attributes: { disabled: true } } : {}),
       }))}
       onPressAction={({ nativeEvent }) => props.onChoose(nativeEvent.event)}

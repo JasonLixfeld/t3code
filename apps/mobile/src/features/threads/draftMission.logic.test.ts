@@ -3,7 +3,12 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { m } from "../../i18n/messages";
-import { draftHeroTokens, draftMissionChoice } from "./draftMission.logic";
+import { clearMissionDraft, markMissionDraft, missionDraftOf } from "../../state/mission-drafts";
+import {
+  chosenDraftMissionOption,
+  draftHeroTokens,
+  draftMissionChoice,
+} from "./draftMission.logic";
 
 const DESK = EnvironmentId.make("env-desk");
 const LAPTOP = EnvironmentId.make("env-laptop");
@@ -98,6 +103,33 @@ describe("draftMissionChoice", () => {
       { id: "none", label: "Send as a plain thread", disabled: false, intent: null },
     ]);
     expect(choice({ kind: "new" })).toMatchObject({ word: "a new mission", label: "New mission" });
+  });
+
+  it("clears a new mission or lead mark when the draft is sent as a plain thread", () => {
+    const intents = [
+      { kind: "new" as const },
+      {
+        kind: "lead" as const,
+        host: DESK,
+        missionId: "m1",
+        name: "Ship v2",
+        expectedLead: ThreadId.make("gone"),
+      },
+    ];
+    for (const intent of intents) {
+      const target = { requestId: `request-${intent.kind}` };
+      markMissionDraft(target, intent, () => "m-new");
+      const option = chosenDraftMissionOption(choice(missionDraftOf(target)?.intent), "none");
+      expect(option).toMatchObject({ label: "Send as a plain thread", intent: null });
+      if (option?.intent === null) clearMissionDraft(target);
+      expect(missionDraftOf(target)).toBeUndefined();
+    }
+  });
+
+  it("ignores the option a member draft already has", () => {
+    const joined = choice({ kind: "member", host: DESK, missionId: "m1", name: "Ship v2" });
+    expect(chosenDraftMissionOption(joined, "env-desk:m1")).toBeUndefined();
+    expect(chosenDraftMissionOption(joined, "none")).toMatchObject({ intent: null });
   });
 
   it("hides the choice when Missions are off, or the machine may not start one and none is marked", () => {

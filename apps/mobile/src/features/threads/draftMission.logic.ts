@@ -22,8 +22,7 @@ export interface DraftMissionChoice {
   readonly kind: DraftMissionKind;
   readonly word: string;
   readonly label: string;
-  readonly selected: string;
-  /** A lead or a new mission cannot join another, so its only choice is to drop the mark. */
+  readonly selected: string | null;
   readonly fixed: boolean;
   readonly options: ReadonlyArray<DraftMissionOption>;
 }
@@ -53,7 +52,7 @@ export function draftMissionChoice(
         intent.kind === "new"
           ? resolve(msg("New mission"))
           : resolve(msg("New lead for {mission}", { mission: intent.name })),
-      selected: NO_MISSION,
+      selected: null,
       fixed: true,
       options: [
         {
@@ -111,6 +110,16 @@ export function draftMissionChoice(
     fixed: false,
     options,
   };
+}
+
+export function chosenDraftMissionOption(
+  choice: DraftMissionChoice | null,
+  id: string,
+): DraftMissionOption | undefined {
+  const option = choice?.options.find((candidate) => candidate.id === id);
+  return option === undefined || option.disabled || option.id === choice?.selected
+    ? undefined
+    : option;
 }
 
 type DraftHeroWord =
