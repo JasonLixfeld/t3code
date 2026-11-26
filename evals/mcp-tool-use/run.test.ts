@@ -5502,7 +5502,18 @@ it("mission lead cases fail a lead that speaks, asks half a question or reports 
   );
 
   assert.isFalse(
+    passes("mission-question-stands-alone", {
+      text: `${preface} Per device lets attackers switch devices, and per account can lock a user out. I recommend per account. Did you sign in on that device?`,
+    }),
+  );
+
+  assert.isFalse(
     passes("mission-pull-request-merged-speaks", { text: "PR #41 is not merged yet." }),
+  );
+  assert.isFalse(
+    passes("mission-pull-request-merged-speaks", {
+      text: "PR #41 will be merged after CI passes.",
+    }),
   );
   assert.isFalse(
     passes("mission-pull-request-merged-speaks", {
