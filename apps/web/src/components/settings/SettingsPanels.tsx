@@ -494,9 +494,14 @@ export function useSettingsRestore(onRestored?: () => void) {
   } = useTheme();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const canWriteSettings = useScopedSettingsWriteAllowed();
+  const canOperate = useScopedSettingsWriteAllowed(AuthOrchestrationOperateScope);
+  const missionPromptMixed = useScopedSettingsMixed(["missionDefaultPrompt"]);
   const resetsMissionPrompt =
-    useScopedSettingsWriteAllowed(AuthOrchestrationOperateScope) &&
-    settings.missionDefaultPrompt !== DEFAULT_UNIFIED_SETTINGS.missionDefaultPrompt;
+    canWriteSettings &&
+    canOperate &&
+    (missionPromptMixed ||
+      settings.missionDefaultPrompt !== DEFAULT_UNIFIED_SETTINGS.missionDefaultPrompt);
 
   const isTextGenerationModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
