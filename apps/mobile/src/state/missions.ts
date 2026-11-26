@@ -6,8 +6,8 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { useServerConfigs } from "./entities";
 import { useMissionDraft } from "./mission-drafts";
 import {
+  missionAdvertisers,
   missionDraftProjectMachines,
-  missionsAdvertised,
   resolveMissionPreferences,
 } from "./missions.logic";
 import { mobilePreferencesAtom } from "./preferences";
@@ -22,8 +22,8 @@ export function useMissionPreferences() {
 
 export function useMissionsLiveKey(): string {
   const { enabled } = useMissionPreferences();
-  const connected = useAtomValue(connectedEnvironmentIdsAtom);
   const configs = useServerConfigs();
+  const connected = missionAdvertisers(useAtomValue(connectedEnvironmentIdsAtom), configs);
   const readable = useEnvironmentsWithScope(
     connected.map((environmentId) => ({ environmentId })),
     AuthOrchestrationReadScope,
@@ -41,7 +41,9 @@ export function useMissionHosts(): ReadonlyArray<MissionHost> {
 }
 
 export function useMissionsAdvertised(): boolean {
-  return missionsAdvertised(useAtomValue(connectedEnvironmentIdsAtom), useServerConfigs());
+  return (
+    missionAdvertisers(useAtomValue(connectedEnvironmentIdsAtom), useServerConfigs()).length > 0
+  );
 }
 
 const missionCreatePermissionsAtom = Atom.family((key: string) =>

@@ -18,11 +18,11 @@ export function resolveMissionPreferences(preferences: Preferences | null) {
   };
 }
 
-export const missionsAdvertised = (
+export const missionAdvertisers = (
   connected: ReadonlyArray<EnvironmentId>,
   configs: ReadonlyMap<EnvironmentId, Pick<ServerConfig, "environment">>,
 ) =>
-  connected.some(
+  connected.filter(
     (environmentId) => configs.get(environmentId)?.environment.capabilities.missions === true,
   );
 

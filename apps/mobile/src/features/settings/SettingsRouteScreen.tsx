@@ -32,6 +32,7 @@ import type { SettingsPageTarget } from "./components/settings-page-targets";
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { filterSettingsSections } from "./settings-search";
+import { useMissionsAdvertised } from "../../state/missions";
 import { usePaneRole } from "../../components/ui/Pane";
 import { useGT, useMessages } from "gt-react-native";
 
@@ -179,6 +180,7 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
   const query = workspace?.state.tabs.settings.query ?? "";
   const overflowRows = useOverflowRows();
   const indexSections = useSettingsIndexSections();
+  const missionsAdvertised = useMissionsAdvertised();
   const sections = filterSettingsSections(
     [
       { rows: overflowRows },
@@ -186,6 +188,7 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
       ...indexSections,
     ],
     query,
+    missionsAdvertised,
     m,
   );
 

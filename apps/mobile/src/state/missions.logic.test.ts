@@ -1,12 +1,12 @@
 import { EnvironmentId, type ExecutionEnvironmentCapabilities } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { MissionHost } from "@t3tools/client-runtime/missions";
+import { type MissionHost, missionsLiveKey } from "@t3tools/client-runtime/missions";
 
 import {
   canStartMission,
+  missionAdvertisers,
   missionDraftProjectMachines,
-  missionsAdvertised,
   resolveMissionPreferences,
 } from "./missions.logic";
 
@@ -22,15 +22,22 @@ const configs = (
     ]),
   );
 
-describe("missionsAdvertised", () => {
-  it("offers Missions only when a connected server says it serves them", () => {
+describe("missionAdvertisers", () => {
+  it("keeps only connected servers that say they serve Missions, so an older fork server's are hidden", () => {
     const listed = configs([
       [DESK, { missions: true }],
       [LAPTOP, {}],
     ]);
-    expect(missionsAdvertised([DESK, LAPTOP], listed)).toBe(true);
-    expect(missionsAdvertised([LAPTOP], listed)).toBe(false);
-    expect(missionsAdvertised([], listed)).toBe(false);
+    expect(missionAdvertisers([DESK, LAPTOP], listed)).toEqual([DESK]);
+    expect(missionAdvertisers([LAPTOP], listed)).toEqual([]);
+    expect(
+      missionsLiveKey({
+        enabled: true,
+        connected: missionAdvertisers([DESK, LAPTOP], listed),
+        readable: new Set([DESK, LAPTOP]),
+        descriptorOf: () => ({ capabilities: { repositoryIdentity: true, missions: true } }),
+      }),
+    ).toBe(JSON.stringify([[DESK, true]]));
   });
 });
 

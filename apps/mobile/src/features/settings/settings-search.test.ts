@@ -29,7 +29,7 @@ const SECTIONS = [
 ];
 
 function visible(query: string) {
-  return filterSettingsSections(SECTIONS, query).map((section) => [
+  return filterSettingsSections(SECTIONS, query, false).map((section) => [
     section.title ?? null,
     section.rows.map((row) => row.label),
   ]);
@@ -65,6 +65,15 @@ describe("filterSettingsSections", () => {
   });
 
   it("drops sections that start empty", () => {
-    expect(filterSettingsSections([{ rows: [] }, ...SECTIONS], "").length).toBe(SECTIONS.length);
+    expect(filterSettingsSections([{ rows: [] }, ...SECTIONS], "", false).length).toBe(
+      SECTIONS.length,
+    );
+  });
+
+  it("finds the Missions settings by name only while a server advertises Missions", () => {
+    const general = [{ rows: [{ id: "SettingsOrganization", label: "General" }] }];
+    expect(filterSettingsSections(general, "mission prompt", true)).toEqual(general);
+    expect(filterSettingsSections(general, "mission prompt", false)).toEqual([]);
+    expect(filterSettingsSections(general, "missions", false)).toEqual([]);
   });
 });

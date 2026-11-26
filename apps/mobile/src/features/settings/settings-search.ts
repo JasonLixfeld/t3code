@@ -96,10 +96,6 @@ const SETTINGS_SEARCH_TERMS = {
     msg("organization", { $context: "settings search keyword" }),
     msg("sidebar", { $context: "settings search keyword" }),
     msg("working section", { $context: "settings search keyword" }),
-    msg("missions", { $context: "settings search keyword" }),
-    msg("missions heading", { $context: "settings search keyword" }),
-    msg("mission prompt", { $context: "settings search keyword" }),
-    msg("threads heading", { $context: "settings search keyword" }),
     msg("new threads", { $context: "settings search keyword" }),
     msg("last project", { $context: "settings search keyword" }),
   ],
@@ -185,6 +181,17 @@ const SETTINGS_SEARCH_TERMS = {
 const termsById: ReadonlyMap<string, readonly string[]> = new Map(
   Object.entries(SETTINGS_SEARCH_TERMS),
 );
+const MISSION_SEARCH_TERMS = {
+  SettingsOrganization: [
+    msg("missions", { $context: "settings search keyword" }),
+    msg("missions heading", { $context: "settings search keyword" }),
+    msg("mission prompt", { $context: "settings search keyword" }),
+    msg("threads heading", { $context: "settings search keyword" }),
+  ],
+} satisfies Partial<Record<SettingsPageTarget, readonly string[]>>;
+const missionTermsById: ReadonlyMap<string, readonly string[]> = new Map(
+  Object.entries(MISSION_SEARCH_TERMS),
+);
 
 export interface SettingsSearchRow {
   readonly id: string;
@@ -203,7 +210,12 @@ export interface SettingsSearchSection<Row extends SettingsSearchRow> {
 export function filterSettingsSections<
   Row extends SettingsSearchRow,
   Section extends SettingsSearchSection<Row>,
->(sections: readonly Section[], query: string, resolve: MessageResolver = m): Section[] {
+>(
+  sections: readonly Section[],
+  query: string,
+  missionsAdvertised: boolean,
+  resolve: MessageResolver = m,
+): Section[] {
   const normalizedQuery = foldSearchQuery(query);
   const rows = sections.flatMap((section) =>
     section.rows.map((row) => ({ row, section: section.title })),
@@ -217,6 +229,9 @@ export function filterSettingsSections<
               row.label,
               ...(section ? [section] : []),
               ...(termsById.get(row.id) ?? []).map((term) => resolve(term)),
+              ...(missionsAdvertised ? (missionTermsById.get(row.id) ?? []) : []).map((term) =>
+                resolve(term),
+              ),
             ],
             options,
           ),
