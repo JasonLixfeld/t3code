@@ -306,6 +306,8 @@ const make = Effect.gen(function* () {
       }
       const text = body.result.content.map((part) => part.text ?? "").join("");
       if (body.result.isError === true) {
+        // Effect MCP sends an internal tool failure as bare text, so only a structured refusal
+        // counts as an answer.
         const refused = decodeFailure(text);
         return Result.fail(
           refused._tag === "Some"

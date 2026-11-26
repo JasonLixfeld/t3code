@@ -1029,8 +1029,8 @@ const make = Effect.gen(function* () {
         return next;
       });
     yield* setSending(true);
-    // Finish a waiting release before taking this add's Mission lock. No code holds two Mission
-    // locks, so crossed adds cannot deadlock.
+    // Try a waiting release first, under its own Mission's lock, so this add never holds two
+    // Mission locks and crossed adds cannot deadlock.
     const releaseWaiting = Effect.gen(function* () {
       let answered = true;
       for (const release of yield* store.pendingReleases) {
@@ -1322,6 +1322,7 @@ const make = Effect.gen(function* () {
             ? "this machine"
             : (labels.get(ref.environmentId) ?? ref.environmentId),
         project: named ? (detail?.project ?? "") : "",
+        // Older member peers send claims without `detail`, so an answered peer can read as offline.
         status: state === "offline" || detail === undefined ? "offline" : detail.status,
         title: named ? (detail?.title ?? "") : "",
         ...(named && workspace !== undefined ? { workspace } : {}),

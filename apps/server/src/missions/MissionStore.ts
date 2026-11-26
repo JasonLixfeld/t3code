@@ -358,7 +358,7 @@ const heldElsewhere = (held: ClaimRow) =>
 
 const now = Effect.map(DateTime.now, DateTime.formatIso);
 
-/** Claim methods run only under MissionClaims' per-thread lock. */
+/** Claim writes run only under MissionClaims' per-thread lock. */
 export class MissionStore extends Context.Service<
   MissionStore,
   {

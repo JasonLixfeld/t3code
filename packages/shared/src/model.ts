@@ -587,7 +587,7 @@ export function applyClaudePromptEffortPrefix(
   if (!trimmed) {
     return trimmed;
   }
-  // Prefixing slash commands prevents Claude invocation.
+  // Claude runs a slash command only at the start of the prompt, so nothing is prepended to one.
   if (effort !== "ultrathink" || isClaudeSlashCommand(trimmed)) {
     return trimmed;
   }
