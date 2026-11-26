@@ -118,7 +118,6 @@ const hosts: Array<MissionHost> = [
   { environmentId: LOCAL, snapshot: { missions: listedMissions, links: [], claims: listedClaims } },
 ];
 const savedPrompts = new Map<string, string>();
-/** Each machine the sidebar asked for its missions, and whether it asked without prompts. */
 const subscribed: Array<ReadonlyArray<[string, boolean]>> = [];
 const hostChanges = new Set<() => void>();
 const publishHosts = () =>
