@@ -417,7 +417,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     (isDeferred(name) || active.includes("mcp__t3-code__" + name));
   let catalog: ReadonlyArray<McpTool> = [];
   // Pi normalizes \`t3-code\` to \`t3_code\` in MCP names. Keep the old public names for saved
-  // loadouts, and make the native aliases model-only.
+  // loadouts. The native aliases are model-only because Pi leaves those out of codemode.
   const prefixes = supportsExposure ? ["mcp__t3-code__", ALIAS_PREFIX] : ["mcp__t3-code__"];
   // Pi does not reserve T3's prefixes, so the bridge changes only names it registered itself.
   const owned = new Set<string>();
@@ -537,6 +537,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       ...before.filter((name) => !owned.has(name) || bridgeTools.has(name)),
       ...pi.getActiveTools().filter((name) => bridgeTools.has(name) && !previous.has(name) && !before.includes(name)),
     ]);
+    // Another extension may turn off \`tool_search\` while the catalog request is pending, so
+    // do not turn it back on.
     reconcileDiscovery(ctx, false);
   };
 
