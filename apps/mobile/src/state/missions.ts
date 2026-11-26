@@ -4,7 +4,12 @@ import { AuthOrchestrationReadScope, type EnvironmentId } from "@t3tools/contrac
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { useServerConfigs } from "./entities";
-import { missionsAdvertised, resolveMissionPreferences } from "./missions.logic";
+import { useMissionDraft } from "./mission-drafts";
+import {
+  missionDraftProjectMachines,
+  missionsAdvertised,
+  resolveMissionPreferences,
+} from "./missions.logic";
 import { mobilePreferencesAtom } from "./preferences";
 import { connectedEnvironmentIdsAtom } from "./presentation";
 import { serverEnvironment } from "./server";
@@ -64,4 +69,15 @@ export function useMissionStartMachines(
   return new Set(
     hosts.flatMap((host, index) => (permissions[index] === true ? [host.environmentId] : [])),
   );
+}
+
+/** The machines a draft route's projects may come from while its mission mark lasts. */
+export function useMissionDraftMachines(
+  requestId: string | null,
+): ReadonlySet<EnvironmentId> | null {
+  const { enabled } = useMissionPreferences();
+  const hosts = useMissionHosts();
+  const startMachines = useMissionStartMachines(hosts);
+  const intent = useMissionDraft(requestId, null)?.intent;
+  return enabled ? missionDraftProjectMachines(intent, hosts, startMachines) : null;
 }

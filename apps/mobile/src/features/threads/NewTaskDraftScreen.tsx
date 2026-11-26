@@ -180,6 +180,8 @@ export function NewTaskDraftScreen(props: {
   const goBack = useWorkspaceBackNavigation();
   const currentRoute = useRoute();
   const flowKey = newTaskFlowKey(currentRoute);
+  // A draft opened without a request still keeps its mission mark for as long as its route lives.
+  const missionRequestId = props.requestId ?? currentRoute.key;
   const { getShare, isLoading: isIncomingShareInboxLoading } = useIncomingShare();
   const { projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
   // selectedProject falls back to the environment's first project; remember only a chosen one.
@@ -430,6 +432,7 @@ export function NewTaskDraftScreen(props: {
         StackActions.replace("NewTaskProject", {
           incomingShareId: props.incomingShareId,
           draftId: pickerDraftId,
+          requestId: missionRequestId,
         }),
       );
     });
@@ -437,6 +440,7 @@ export function NewTaskDraftScreen(props: {
   }, [
     isProjectPickerReturnActive,
     isReturningToProjectPicker,
+    missionRequestId,
     navigation,
     pickerDraftId,
     props.incomingShareId,
@@ -534,10 +538,11 @@ export function NewTaskDraftScreen(props: {
       return;
     }
     initialPickerRef.current = "open";
-    navigation.dispatch(CommonActions.navigate("NewTaskProject"));
+    navigation.dispatch(CommonActions.navigate("NewTaskProject", { requestId: missionRequestId }));
   }, [
     goBack,
     isFocused,
+    missionRequestId,
     projectScopes,
     projects,
     flow.draftKey,
@@ -726,7 +731,7 @@ export function NewTaskDraftScreen(props: {
       );
       return null;
     }
-    adoptMissionDraft(props.requestId, {
+    adoptMissionDraft(missionRequestId, {
       environmentId: message.environmentId,
       threadId: message.threadId,
     });
@@ -772,7 +777,10 @@ export function NewTaskDraftScreen(props: {
     }
     promptInputRef.current?.blur();
     void KeyboardController.dismiss({ animated: true });
-    navigation.navigate("NewTaskProject", { incomingShareId: props.incomingShareId });
+    navigation.navigate("NewTaskProject", {
+      incomingShareId: props.incomingShareId,
+      requestId: missionRequestId,
+    });
   };
   const openContextPicker = (
     routeName: "NewTaskBranch" | "NewTaskEnvironment" | "NewTaskRepositories",

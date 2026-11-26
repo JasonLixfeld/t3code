@@ -41,10 +41,12 @@ import { useWorkspaceState } from "../../state/workspace";
 
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { useNewTaskFlow } from "./new-task-flow-provider";
+import { useMissionDraftMachines } from "../../state/missions";
 import {
   filterProjectScopes,
   getProjectScopeSelectionTarget,
-  resolveNewTaskScratchOption,
+  projectScopesOnMachines,
+  resolveMissionScratchOption,
 } from "./new-task-project-selection";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 
@@ -52,6 +54,8 @@ type NewTaskRouteParams = {
   readonly incomingShareId?: string | string[];
   /** An existing draft whose project is gone; the chosen project takes it over. */
   readonly draftId?: string | string[];
+  /** The draft route's request, whose mission mark limits the machines. */
+  readonly requestId?: string;
   readonly prompt?: string | string[];
   readonly repo?: string | string[];
   readonly pr?: string | string[];
@@ -203,7 +207,12 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const screenTitle = incomingShare ? gt("Start a task") : gt("Choose project");
   const projectEmptyState = deriveProjectEmptyState(catalogState, m);
   const serverConfigs = useServerConfigs();
-  const listScopes = pickableProjectGroups(projectScopes).filter(
+  const requestId = route.params?.requestId;
+  const missionMachines = useMissionDraftMachines(requestId ?? null);
+  const listScopes = projectScopesOnMachines(
+    pickableProjectGroups(projectScopes),
+    missionMachines,
+  ).filter(
     (scope) =>
       !scope.projects.every((project) =>
         isScratchProject(project, serverConfigs.get(project.environmentId)?.scratchWorkspaceRoot),
@@ -229,10 +238,11 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   });
   const scratchOption =
     reservedDestinationProject === null
-      ? resolveNewTaskScratchOption({
+      ? resolveMissionScratchOption({
           environments: connectedEnvironments,
           serverConfigs,
           selectedEnvironmentId,
+          machines: missionMachines,
         })
       : null;
   const canStartScratch = scratchOption?.ready === true;
@@ -297,6 +307,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
           projectId: String(project.id),
           draftId,
           incomingShareId: incomingShare?.id,
+          ...(requestId === undefined ? {} : { requestId }),
         },
       },
     });

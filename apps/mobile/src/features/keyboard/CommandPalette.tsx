@@ -63,7 +63,12 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadSearchMatchExcerpt } from "../threads/thread-search-match";
 import { missionPaletteRows } from "../threads/missionMenus";
-import { useMissionActions, useMissionMenuContext } from "../threads/useMissionActions";
+import {
+  startNewMission,
+  useCanStartMission,
+  useMissionActions,
+  useMissionMenuContext,
+} from "../threads/useMissionActions";
 import { pickTriageEnvironment } from "../triage/triageTarget";
 import { useStartTriage } from "../triage/useStartTriage";
 import { useNewTaskFlow } from "../threads/new-task-flow-provider";
@@ -296,6 +301,7 @@ export function CommandPalette(props: {
   const canShareWithGuest = useCanShareWithGuest(activeThreadRef?.environmentId ?? null);
   const missionMenu = useMissionMenuContext(threads);
   const runMissionAction = useMissionActions();
+  const canStartMission = useCanStartMission();
   const contentMatchByKey = new Map(
     search.matches
       .filter((match) => match.source === "user" || match.source === "assistant")
@@ -360,6 +366,15 @@ export function CommandPalette(props: {
         run: () => openSettings(navigation, "SettingsArchive"),
       },
     ];
+    if (canStartMission) {
+      actions.splice(1, 0, {
+        key: "newMission",
+        kind: "action",
+        title: gt("New mission..."),
+        searchTerms: ["new mission", "mission", "lead", "orchestrate"],
+        run: () => startNewMission(selectDetail),
+      });
+    }
     if (canTriage) {
       const triageEnvironmentLabel = savedConnectionsById[triageEnvironmentId]?.environmentLabel;
       actions.push({
@@ -516,6 +531,7 @@ export function CommandPalette(props: {
     environments.length,
     canTriage,
     canShareWithGuest,
+    canStartMission,
     missionMenu,
     navigation,
     projects,

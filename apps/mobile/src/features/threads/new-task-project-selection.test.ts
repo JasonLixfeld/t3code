@@ -8,8 +8,10 @@ import {
   isSameRepository,
   newTaskDestination,
   newTaskFilteredProject,
+  projectScopesOnMachines,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
+  resolveMissionScratchOption,
   resolveNewTaskScratchOption,
 } from "./new-task-project-selection";
 
@@ -467,5 +469,52 @@ describe("resolveNewTaskScratchOption", () => {
         selectedEnvironmentId: environmentId,
       }),
     ).toEqual({ environmentId, ready: true });
+  });
+});
+
+describe("a mission draft's machines", () => {
+  const desk = EnvironmentId.make("desk");
+  const laptop = EnvironmentId.make("laptop");
+
+  it("lists only each project's copies on the mission's machines", () => {
+    const onDesk = makeProject("desk-copy", "desk");
+    const onLaptop = makeProject("laptop-copy", "laptop");
+    const scopes = [
+      makeScope([onDesk, onLaptop]),
+      makeScope([makeProject("laptop-only", "laptop")]),
+    ];
+    expect(projectScopesOnMachines(scopes, null)).toBe(scopes);
+    expect(projectScopesOnMachines(scopes, new Set([laptop]))).toEqual([
+      {
+        ...scopes[0],
+        representative: onLaptop,
+        projects: [onLaptop],
+        projectRefs: [{ environmentId: laptop, projectId: onLaptop.id }],
+      },
+      scopes[1],
+    ]);
+  });
+
+  it("keeps the usual No project home on a mission machine, else moves it to one that has a root", () => {
+    const input = {
+      environments: [
+        { environmentId: desk, connectionState: "connected" as const },
+        { environmentId: laptop, connectionState: "connecting" as const },
+      ],
+      serverConfigs: new Map([
+        [desk, { scratchWorkspaceRoot: "/desk-scratch" }],
+        [laptop, { scratchWorkspaceRoot: "/laptop-scratch" }],
+      ]),
+      selectedEnvironmentId: desk,
+    };
+    expect(resolveMissionScratchOption({ ...input, machines: null })).toEqual({
+      environmentId: desk,
+      ready: true,
+    });
+    expect(resolveMissionScratchOption({ ...input, machines: new Set([laptop]) })).toEqual({
+      environmentId: laptop,
+      ready: false,
+    });
+    expect(resolveMissionScratchOption({ ...input, machines: new Set() })).toBeNull();
   });
 });

@@ -1,4 +1,5 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { missionScratchHome } from "@t3tools/client-runtime/missions";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
 import {
   isPickableProjectMember,
@@ -103,6 +104,50 @@ export function resolveNewTaskScratchOption(input: {
     candidates.find((candidate) => candidate.environmentId === input.selectedEnvironmentId) ??
     candidates[0];
   return environment ? { environmentId: environment.environmentId, ready: ready.length > 0 } : null;
+}
+
+/** Each scope's copies on the machines a mission draft allows; null allows every machine. */
+export function projectScopesOnMachines(
+  scopes: ReadonlyArray<HomeProjectScope>,
+  machines: ReadonlySet<EnvironmentId> | null,
+): ReadonlyArray<HomeProjectScope> {
+  if (machines === null) return scopes;
+  return scopes.flatMap((scope) => {
+    const projects = scope.projects.filter((project) => machines.has(project.environmentId));
+    const [first] = projects;
+    if (first === undefined) return [];
+    return [
+      {
+        ...scope,
+        projects,
+        projectRefs: scope.projectRefs.filter((ref) => machines.has(ref.environmentId)),
+        representative: projects.includes(scope.representative) ? scope.representative : first,
+      },
+    ];
+  });
+}
+
+/** The "No project" home: the usual one, or one on the machines a mission draft allows. */
+export function resolveMissionScratchOption(
+  input: Parameters<typeof resolveNewTaskScratchOption>[0] & {
+    readonly machines: ReadonlySet<EnvironmentId> | null;
+  },
+) {
+  const usual = resolveNewTaskScratchOption(input);
+  if (input.machines === null) return usual;
+  const home = missionScratchHome(
+    input.machines,
+    usual?.environmentId ?? null,
+    (environmentId) => input.serverConfigs.get(environmentId)?.scratchWorkspaceRoot ?? null,
+  );
+  const environment = input.environments.find((candidate) => candidate.environmentId === home);
+  if (home === null || environment === undefined) return null;
+  return {
+    environmentId: home,
+    ready:
+      availableScratchWorkspaceRoot(environment.connectionState, input.serverConfigs.get(home)) !==
+      null,
+  };
 }
 
 export function resolveEnvironmentProjectMatch(

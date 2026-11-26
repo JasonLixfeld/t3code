@@ -6,3 +6,6 @@ export const randomHex = (byteLength: number): string =>
   Array.from(Crypto.getRandomBytes(byteLength), (byte) => byte.toString(16).padStart(2, "0")).join(
     "",
   );
+
+// The shared `newMissionId` reads `globalThis.crypto`, which Hermes does not have.
+export const newMissionId = () => randomHex(6);

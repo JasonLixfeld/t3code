@@ -6,7 +6,6 @@ import {
   missionAddSummary,
   missionLeaveId,
   type MissionMenuId,
-  newMissionId,
   parseMissionTarget,
 } from "@t3tools/client-runtime/missions";
 import {
@@ -27,10 +26,12 @@ import { useMemo } from "react";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { m } from "../../i18n/messages";
-import { uuidv4 } from "../../lib/uuid";
+import { newMissionId, uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { useProjects, useServerConfigs } from "../../state/entities";
 import { markMissionDraft, missionDraftOf } from "../../state/mission-drafts";
-import { useMissionHosts, useMissionsLiveKey } from "../../state/missions";
+import { useMissionHosts, useMissionStartMachines, useMissionsLiveKey } from "../../state/missions";
+import { canStartMission } from "../../state/missions.logic";
 import { serverEnvironment } from "../../state/server";
 import { environmentThreadShells } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -152,6 +153,24 @@ export function useMissionListMenus(
   }, [items, ctx]);
 }
 
+/** Whether "New mission…" has somewhere to start: the web's command palette rule. */
+export function useCanStartMission(): boolean {
+  const startMachines = useMissionStartMachines(useMissionHosts());
+  const configs = useServerConfigs();
+  return canStartMission(
+    startMachines,
+    useProjects(),
+    (environmentId) => configs.get(environmentId)?.scratchWorkspaceRoot ?? null,
+  );
+}
+
+/** Opens a draft without a project; its first send starts a new mission that it leads. */
+export function startNewMission(selectDetail: ReturnType<typeof useSelectWorkspaceDetail>) {
+  const requestId = uuidv4();
+  markMissionDraft({ requestId }, { kind: "new" }, newMissionId);
+  selectDetail({ name: "Thread", params: { draft: { requestId } } });
+}
+
 export interface MissionActionTarget {
   readonly thread: ScopedThreadRef;
   readonly place: ThreadListV2MissionPlace | null;
@@ -196,7 +215,7 @@ export function useMissionActions() {
       return;
     }
     const requestId = uuidv4();
-    markMissionDraft({ requestId }, intent);
+    markMissionDraft({ requestId }, intent, newMissionId);
     selectDetail({
       name: "Thread",
       params: {
@@ -248,7 +267,9 @@ export function useMissionActions() {
     if (id === "mission-start") {
       const shell = shellOf(thread);
       if (missionDraftOf(thread) !== undefined || (shell !== null && !threadHasMessages(shell))) {
-        if (missionDraftOf(thread) === undefined) markMissionDraft(thread, { kind: "new" });
+        if (missionDraftOf(thread) === undefined) {
+          markMissionDraft(thread, { kind: "new" }, newMissionId);
+        }
         selectDetail({
           name: "Thread",
           params: {

@@ -1,5 +1,6 @@
+import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { type MissionDraftIntent, newMissionId } from "@t3tools/client-runtime/missions";
+import type { MissionDraftIntent } from "@t3tools/client-runtime/missions";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
@@ -13,12 +14,17 @@ export interface MissionDraft {
   readonly step: "waiting" | "trying" | "failed";
 }
 
+/** A draft route's request, before its first send, or the thread it became. */
+export type MissionDraftTarget = ScopedThreadRef | { readonly requestId: string };
+
 export const missionDraftsAtom = Atom.make<ReadonlyMap<string, MissionDraft>>(new Map()).pipe(
   Atom.keepAlive,
   Atom.withLabel("mobile-mission-drafts"),
 );
 
 const requestKey = (requestId: string) => `request:${requestId}`;
+const keyOf = (target: MissionDraftTarget) =>
+  "requestId" in target ? requestKey(target.requestId) : scopedThreadKey(target);
 
 function update(change: (drafts: Map<string, MissionDraft>) => void) {
   const next = new Map(appAtomRegistry.get(missionDraftsAtom));
@@ -26,20 +32,18 @@ function update(change: (drafts: Map<string, MissionDraft>) => void) {
   appAtomRegistry.set(missionDraftsAtom, next);
 }
 
+/** `newMissionId` comes from the caller, so this store stays out of expo-crypto's import graph. */
 export function markMissionDraft(
-  target: ScopedThreadRef | { readonly requestId: string },
+  target: MissionDraftTarget,
   intent: MissionDraftIntent,
+  newMissionId: () => string,
 ) {
   const missionId = intent.kind === "new" ? newMissionId() : intent.missionId;
-  const [key, thread] =
-    "requestId" in target
-      ? [requestKey(target.requestId), null]
-      : [scopedThreadKey(target), target];
-  update((drafts) => drafts.set(key, { intent, missionId, thread, step: "waiting" }));
+  const thread = "requestId" in target ? null : target;
+  update((drafts) => drafts.set(keyOf(target), { intent, missionId, thread, step: "waiting" }));
 }
 
-export function adoptMissionDraft(requestId: string | undefined, thread: ScopedThreadRef) {
-  if (requestId === undefined) return;
+export function adoptMissionDraft(requestId: string, thread: ScopedThreadRef) {
   update((drafts) => {
     const draft = drafts.get(requestKey(requestId));
     if (draft === undefined) return;
@@ -48,8 +52,20 @@ export function adoptMissionDraft(requestId: string | undefined, thread: ScopedT
   });
 }
 
-export const missionDraftOf = (thread: ScopedThreadRef) =>
-  appAtomRegistry.get(missionDraftsAtom).get(scopedThreadKey(thread));
+export const missionDraftOf = (target: MissionDraftTarget) =>
+  appAtomRegistry.get(missionDraftsAtom).get(keyOf(target));
+
+/** The mark of a draft route: under its request before the first send, its thread after. */
+export function useMissionDraft(
+  requestId: string | null,
+  thread: ScopedThreadRef | null,
+): MissionDraft | undefined {
+  const drafts = useAtomValue(missionDraftsAtom);
+  return (
+    (requestId === null ? undefined : drafts.get(requestKey(requestId))) ??
+    (thread === null ? undefined : drafts.get(scopedThreadKey(thread)))
+  );
+}
 
 export function setMissionDraftStep(thread: ScopedThreadRef, step: MissionDraft["step"]) {
   update((drafts) => {
@@ -58,6 +74,6 @@ export function setMissionDraftStep(thread: ScopedThreadRef, step: MissionDraft[
   });
 }
 
-export function clearMissionDraft(thread: ScopedThreadRef) {
-  update((drafts) => drafts.delete(scopedThreadKey(thread)));
+export function clearMissionDraft(target: MissionDraftTarget) {
+  update((drafts) => drafts.delete(keyOf(target)));
 }
