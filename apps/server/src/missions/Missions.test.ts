@@ -36,6 +36,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -155,6 +156,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
   const activity = new Map<string, Record<string, unknown>>();
   const dispatched: Array<string> = [];
   const workspaces = new Map<string, MemberWorkspace | "pending">();
+  const forgotten: Array<ThreadId> = [];
   const workspacesLayer = Layer.mock(MemberWorkspaces)({
     cached: (shell) =>
       Effect.sync(
@@ -162,7 +164,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
           (shell.worktreePath === null ? undefined : workspaces.get(shell.worktreePath)) ??
           "pending",
       ),
-    forget: () => Effect.void,
+    forget: (threadId) => Effect.sync(() => void forgotten.push(threadId)),
   });
   const settings = { missionDefaultPrompt: "" };
   const laptop = {
@@ -421,12 +423,23 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     >,
     beforeShellRead: (_threadId: ThreadId): Effect.Effect<void> => Effect.void,
     beforeThreadLock: (_threadId: ThreadId): Effect.Effect<void> => Effect.void,
+    unreadableLineage: new Set<string>(),
+    /** A deleted thread keeps its row, so its lineage reads even without a shell. */
+    lineageOf: (environmentId: EnvironmentId, threadId: ThreadId) => {
+      const key = keyOf(ref(environmentId, threadId));
+      const lineage = activity.get(key)?.lineage;
+      if (lineage !== undefined) return lineage;
+      return tags.has(key)
+        ? { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId }
+        : null;
+    },
     beforeMissionsRead: Effect.void as Effect.Effect<void>,
     beforeReleasesRead: Effect.void as Effect.Effect<void>,
     lineageReads: 0,
     numberings: 0,
     dispatched,
     workspaces,
+    forgotten,
     workspacesLayer,
     beforeLeadWrite: Effect.void as Effect.Effect<void>,
     afterSettle: Effect.void as Effect.Effect<void>,
@@ -557,6 +570,17 @@ const withMissions = <A, E>(
         Layer.provide(
           Layer.mergeAll(
             world.threadsOn(environmentId),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              findThread: (threadId) =>
+                world.unreadableLineage.has(threadId)
+                  ? Effect.fail(
+                      new ProjectionStore.ProjectionStoreReadError({ threadId, cause: "" }),
+                    )
+                  : Effect.sync(() => {
+                      const lineage = world.lineageOf(environmentId, threadId);
+                      return lineage === null ? null : ({ id: threadId, lineage } as never);
+                    }),
+            }),
             NodeCrypto.layer,
             world.workspacesLayer,
             Layer.mock(Project.ProjectService)({
@@ -992,7 +1016,16 @@ it.effect("each settled or archived member here is marked settled, and none else
       world.archive(otherMember);
       settle(world, laptopMember);
       world.archive(lead);
-      assert.deepEqual(settledOf(yield* listed), ["env-here/local", "env-here/other"]);
+      const snapshot = yield* listed;
+      assert.deepEqual(settledOf(snapshot), ["env-here/local", "env-here/other"]);
+      assert.deepEqual(
+        snapshot.claims.map((claim) => [claim.threadId, claim.settled]),
+        [
+          [lead.threadId, undefined],
+          [localMember.threadId, true],
+          [otherMember.threadId, true],
+        ],
+      );
 
       world.shell(localMember, { settledOverride: null });
       yield* followMemberThreads(
@@ -1000,6 +1033,53 @@ it.effect("each settled or archived member here is marked settled, and none else
         HERE,
       );
       yield* until((snapshot) => settledOf(snapshot)?.join() === "env-here/other");
+    }),
+  );
+});
+
+it.effect("each change that can settle or wake a member thread here refreshes the list", () => {
+  const world = makeWorld([lead, localMember, otherMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const store = yield* MissionStore.MissionStore;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: localMember });
+      const changes = yield* PubSub.subscribe(store.changes);
+      const refreshes = (type: string, threadId: ThreadId) =>
+        PubSub.takeUpTo(changes, 100).pipe(
+          Effect.andThen(followMemberThreads(Stream.make({ type, threadId }), HERE)),
+          Effect.andThen(PubSub.takeUpTo(changes, 100)),
+          Effect.map((taken) => taken.length > 0),
+        );
+      for (const type of [
+        "thread.settled",
+        "thread.unsettled",
+        "thread.pinned",
+        "thread.guest-share-updated",
+        "thread.archived",
+        "thread.unarchived",
+      ]) {
+        assert.isTrue(yield* refreshes(type, localMember.threadId), type);
+      }
+      assert.isFalse(yield* refreshes("thread.visited", localMember.threadId));
+      assert.isFalse(yield* refreshes("thread.settled", otherMember.threadId));
+    }),
+  );
+});
+
+it.effect("a member whose thread here reads as deleted leaves the list", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: localMember });
+      world.shell(localMember, { deletedAt: "2026-01-03T00:00:00.000Z" });
+      const view = yield* missions.setLead({ missionId, lead, expectedLead: lead.threadId });
+      assert.deepEqual(membersOf(view), [["env-here/lead", "active"]]);
     }),
   );
 });
@@ -1119,33 +1199,73 @@ it.effect(
   },
 );
 
-it.effect("ending a mission locks parents before their side chats and subagents", () => {
+const childOf = (thread: ScopedThreadRef, relationship: "fork" | "side chat" | "subagent") => ({
+  parentThreadId: thread.threadId,
+  relationshipToParent: relationship === "subagent" ? "subagent" : "fork",
+  rootThreadId: thread.threadId,
+  ...(relationship === "side chat" ? { sideChat: true } : {}),
+});
+
+it.effect("ending a mission locks each thread after every thread up its lineage", () => {
   const parent = ref(HERE, "b-parent");
   const sideChat = ref(HERE, "a-side");
   const subagent = ref(HERE, "a-sub");
-  const world = makeWorld([lead, parent, sideChat, subagent]);
-  const childOf = (thread: ScopedThreadRef, isSideChat: boolean) => ({
-    parentThreadId: thread.threadId,
-    relationshipToParent: isSideChat ? null : "subagent",
-    rootThreadId: thread.threadId,
-    ...(isSideChat ? { sideChat: true } : {}),
-  });
+  const fork = ref(HERE, "a-fork");
+  const gone = ref(HERE, "gone");
+  const grandchild = ref(HERE, "a-grandchild");
+  const members = [parent, sideChat, subagent, fork, grandchild];
+  const world = makeWorld([lead, ...members, gone]);
   return withMissions(
     world,
     Effect.gen(function* () {
       const missions = yield* Missions.Missions;
       const { missionId } = yield* createOne;
-      for (const member of [parent, sideChat, subagent]) {
+      for (const member of members) {
         yield* missions.addMember({ missionId, member });
         settle(world, member);
       }
-      world.shell(sideChat, { lineage: childOf(parent, true) });
-      world.shell(subagent, { lineage: childOf(lead, false) });
+      world.shell(sideChat, { lineage: childOf(parent, "side chat") });
+      world.shell(subagent, { lineage: childOf(lead, "subagent") });
+      world.shell(fork, { lineage: childOf(parent, "fork") });
+      world.shell(gone, { lineage: childOf(lead, "subagent") });
+      world.shell(grandchild, { lineage: childOf(gone, "subagent") });
+      world.remove(gone);
       const locked: Array<string> = [];
       world.beforeThreadLock = (threadId) => Effect.sync(() => locked.push(threadId));
       yield* missions.deleteMission({ missionId });
-      assert.deepEqual(locked, ["b-parent", "lead", "a-side", "a-sub"]);
+      assert.deepEqual(locked, ["b-parent", "lead", "a-fork", "a-side", "a-sub", "a-grandchild"]);
       assert.deepEqual((yield* listed).missions, []);
+    }),
+  );
+});
+
+it.effect("a lineage it cannot read or that loops keeps its mission from ending", () => {
+  const [a, b] = [ref(HERE, "a"), ref(HERE, "b")];
+  const world = makeWorld([lead, a, b]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      for (const member of [a, b]) {
+        yield* missions.addMember({ missionId, member });
+        settle(world, member);
+      }
+      world.shell(a, { lineage: childOf(b, "fork") });
+      world.shell(b, { lineage: childOf(a, "fork") });
+      const refusal = yield* deleteRefusal(missionId);
+      assert.include(refusal, "could not be read in a safe order");
+      world.shell(b, { lineage: childOf(lead, "fork") });
+      world.unreadableLineage.add(b.threadId);
+      assert.equal(yield* deleteRefusal(missionId), refusal);
+      assert.deepEqual(
+        (yield* listed).claims.map((claim) => claim.threadId),
+        [lead.threadId, a.threadId, b.threadId],
+      );
+      assert.deepEqual(world.forgotten, []);
+      world.unreadableLineage.clear();
+      yield* missions.deleteMission({ missionId });
+      assert.deepEqual(world.forgotten.toSorted(), [a.threadId, b.threadId]);
     }),
   );
 });

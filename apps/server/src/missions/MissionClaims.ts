@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { DispatchModeLimit } from "../orchestration-v2/DispatchModeLimit.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as Project from "../project/ProjectService.ts";
@@ -127,8 +128,13 @@ export class MissionClaims extends Context.Service<
 
 const fail = (message: string) => Effect.fail(new MissionError({ message }));
 
-// The orchestrator locks a parent before its side chats and subagents, and side chats in id
-// order. Locking shallower threads first, each depth in id order, never crosses it.
+const LINEAGE_HOPS = 64;
+const LINEAGE_UNREAD =
+  "The threads of this mission could not be read in a safe order, so it was not ended. Try again.";
+
+// The orchestrator locks a thread's lineage parent (fork source, side chat parent or subagent
+// parent) before the thread, and side chats in id order. Locking threads with fewer lineage
+// hops first, each depth in id order, never crosses it.
 const withEachLock = <A, E, R>(
   lock: KeyedLock.KeyedLock<ThreadId>,
   threads: ReadonlyArray<{ readonly threadId: ThreadId; readonly depth: number }>,
@@ -141,6 +147,7 @@ const withEachLock = <A, E, R>(
 const make = Effect.gen(function* () {
   const store = yield* MissionStore.MissionStore;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const random = yield* SecureRandom.SecureRandom;
   const workspaces = yield* MemberWorkspaces;
   const locks = yield* KeyedLock.make<ThreadId>();
@@ -254,21 +261,22 @@ const make = Effect.gen(function* () {
     return yield* locks.withLock(first!, locks.withLock(second!, swap));
   });
 
+  // Lineage never changes, and a deleted thread keeps its row, so a parent deleted meanwhile still
+  // counts. An order this cannot read refuses the end rather than risk a deadlock.
   const lockDepth = Effect.fn("MissionClaims.lockDepth")(function* (threadId: ThreadId) {
-    const seen = new Set<ThreadId>();
-    let shell = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
-    while (
-      shell !== null &&
-      (shell.lineage.sideChat === true || shell.lineage.relationshipToParent === "subagent") &&
-      shell.lineage.parentThreadId !== null &&
-      !seen.has(shell.lineage.parentThreadId)
-    ) {
-      seen.add(shell.lineage.parentThreadId);
-      shell = yield* threads
-        .getThreadShell(shell.lineage.parentThreadId)
-        .pipe(Effect.orElseSucceed(() => null));
+    const unread = new MissionError({ message: LINEAGE_UNREAD });
+    const parentOf = (id: ThreadId) =>
+      projections.findThread(id).pipe(
+        Effect.map((thread) => thread?.lineage.parentThreadId ?? null),
+        Effect.mapError(() => unread),
+      );
+    const seen = new Set<ThreadId>([threadId]);
+    for (let parent = yield* parentOf(threadId); parent !== null;) {
+      if (seen.has(parent) || seen.size > LINEAGE_HOPS) return yield* unread;
+      seen.add(parent);
+      parent = yield* parentOf(parent);
     }
-    return seen.size;
+    return seen.size - 1;
   });
 
   const deleteMission = Effect.fn("MissionClaims.deleteMission")(function* (input: {

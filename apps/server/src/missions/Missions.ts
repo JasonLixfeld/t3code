@@ -325,19 +325,21 @@ const make = Effect.gen(function* () {
     }
   });
 
+  const readShell = (threadId: ThreadId) =>
+    threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => undefined));
+
   const missionView = Effect.fn("Missions.view")(function* (
     mission: MissionRecord,
     held: ReadonlyMap<EnvironmentId, Machine>,
     waiting: Waiting,
+    shellOf: typeof readShell = readShell,
   ) {
     const lead = { environmentId: here, threadId: mission.leadThreadId };
-    const leadDeleted = yield* threads.getThreadShell(mission.leadThreadId).pipe(
-      Effect.map(
-        (shell) =>
-          shell === null || shell.deletedAt !== null || (shell.archivedAt ?? null) !== null,
-      ),
-      Effect.orElseSucceed(() => false),
-    );
+    const leadShell = yield* shellOf(mission.leadThreadId);
+    const leadDeleted =
+      leadShell === null ||
+      (leadShell !== undefined &&
+        (leadShell.deletedAt !== null || (leadShell.archivedAt ?? null) !== null));
     const members = new Map<string, MissionMember>([
       [memberKey(lead), { ref: lead, role: "lead", state: leadDeleted ? "deleted" : "active" }],
     ]);
@@ -350,12 +352,7 @@ const make = Effect.gen(function* () {
     for (const [environmentId, machine] of held) {
       for (const claim of machine.claims) {
         if (claim.missionId !== mission.missionId || claim.role === "lead") continue;
-        const shell =
-          environmentId === here
-            ? yield* threads
-                .getThreadShell(claim.threadId)
-                .pipe(Effect.orElseSucceed(() => undefined))
-            : undefined;
+        const shell = environmentId === here ? yield* shellOf(claim.threadId) : undefined;
         if (shell === null || (shell !== undefined && shell.deletedAt !== null)) continue;
         const ref = { environmentId, threadId: claim.threadId };
         const sameClaim = (release: PendingRelease) =>
@@ -409,8 +406,13 @@ const make = Effect.gen(function* () {
   const snapshot = Effect.gen(function* () {
     const held = yield* machines;
     const owed = yield* shown;
+    const read = new Map<ThreadId, Effect.Success<ReturnType<typeof readShell>>>();
+    const shellOf = (threadId: ThreadId) =>
+      read.has(threadId)
+        ? Effect.succeed(read.get(threadId))
+        : Effect.tap(readShell(threadId), (shell) => Effect.sync(() => read.set(threadId, shell)));
     const views = yield* Effect.forEach(yield* store.missions, (mission) =>
-      missionView(mission, held, owed),
+      missionView(mission, held, owed, shellOf),
     );
     for (const view of views) {
       yield* store.numbersOf(
@@ -422,11 +424,16 @@ const make = Effect.gen(function* () {
     return {
       missions: views,
       links: yield* missionLinks,
-      claims: (yield* store.allClaims).map(({ threadId, missionId, name }) => ({
-        threadId,
-        missionId,
-        name,
-      })),
+      claims: yield* Effect.forEach(yield* store.allClaims, ({ threadId, missionId, name, role }) =>
+        Effect.map(role === "member" ? shellOf(threadId) : Effect.undefined, (shell) => ({
+          threadId,
+          missionId,
+          name,
+          ...(shell != null && shell.deletedAt === null && isSettledMissionMember(shell)
+            ? { settled: true as const }
+            : {}),
+        })),
+      ),
     } satisfies MissionsSnapshot;
   });
 

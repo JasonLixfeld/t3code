@@ -529,3 +529,34 @@ it.effect("deleting a mission removes the updates its lead heard another way", (
     }),
   ),
 );
+
+it.effect("ends a mission only with each member claim checked and no release waiting", () =>
+  withDatabase((filename) =>
+    usingStore(filename, (store) =>
+      Effect.gen(function* () {
+        const end = (checkedLocalMembers: ReadonlyArray<ThreadId>) =>
+          store.deleteMission({ missionId: "m1", lead, machines: [], checkedLocalMembers });
+        const refusal = (checkedLocalMembers: ReadonlyArray<ThreadId>) =>
+          end(checkedLocalMembers).pipe(
+            Effect.flip,
+            Effect.map((error) => error.message),
+          );
+        yield* store.createMission(claimFor(lead, "m1", "g1"));
+        yield* store.join(claimFor(member, "m1", "g2"));
+        assert.equal(yield* refusal([]), MissionStore.MISSION_NOT_ENDED);
+        const waiting = {
+          environmentId: EnvironmentId.make("env-laptop"),
+          threadId: ThreadId.make("laptop-thread"),
+          generation: "g3",
+          missionId: "m1",
+        };
+        yield* store.addPendingRelease(waiting);
+        assert.equal(yield* refusal([member]), MissionStore.MISSION_NOT_ENDED);
+        yield* store.refusePendingRelease(waiting, "That machine refused.");
+        yield* end([member]);
+        assert.deepEqual(yield* store.allClaims, []);
+        assert.deepEqual(yield* store.pendingReleases, []);
+      }),
+    ),
+  ),
+);
