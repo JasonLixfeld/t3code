@@ -296,14 +296,16 @@ export function useMissionMenu() {
       }
       if (target.action === "delete" && mission !== undefined) {
         const confirmed = await readLocalApi()?.dialogs.confirm(
-          gt('Delete the mission "{mission}"? Its lead stays as a thread of its own.', {
-            mission: mission.name,
-          }),
-          { variant: "destructive" },
+          gt(
+            'End the mission "{mission}"? Its lead and its threads stay as threads of their own.',
+            {
+              mission: mission.name,
+            },
+          ),
         );
         if (confirmed !== true) return [];
         reportFailure(
-          gt("Could not delete the mission"),
+          gt("Could not end the mission"),
           await deleteMission({
             environmentId: target.environmentId,
             input: { missionId: target.missionId },

@@ -881,7 +881,7 @@ describe("CommandPalette mission thread actions", () => {
     openCommandPalette();
     await expect.element(page.getByRole("option", { name: "Copy", exact: true })).toBeVisible();
     const shown = document.body.textContent ?? "";
-    for (const command of ["Delete mission", "New thread in this mission", "Edit mission prompt"]) {
+    for (const command of ["End mission", "New thread in this mission", "Edit mission prompt"]) {
       expect(shown).not.toContain(command);
     }
     expect(page.getByText("Mission", { exact: true }).elements()).toHaveLength(0);

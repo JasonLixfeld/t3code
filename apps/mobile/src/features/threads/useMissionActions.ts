@@ -369,17 +369,17 @@ export function useMissionActions(openPrompt?: OpenMissionPrompt) {
         if (
           mission === undefined ||
           !(await confirmed({
-            title: gt('Delete the mission "{mission}"? Its lead stays as a thread of its own.', {
-              mission: mission.name,
-            }),
-            confirmText: gt("Delete mission"),
-            destructive: true,
+            title: gt(
+              'End the mission "{mission}"? Its lead and its threads stay as threads of their own.',
+              { mission: mission.name },
+            ),
+            confirmText: gt("End mission"),
           }))
         ) {
           return;
         }
         reportMissionFailure(
-          gt("Could not delete the mission"),
+          gt("Could not end the mission"),
           await deleteMission({
             environmentId: target.environmentId,
             input: { missionId: target.missionId },
