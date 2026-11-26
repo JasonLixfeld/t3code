@@ -19,6 +19,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import type * as Fiber from "effect/Fiber";
 import * as Clock from "effect/Clock";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -147,13 +148,14 @@ export class Missions extends Context.Service<
     readonly ledBy: (threadId: ThreadId) => Effect.Effect<MissionRecord | undefined>;
     /**
      * A lead's t3_thread_wait returned a member's run as completed, so the wake for that run would
-     * tell it again. Drops that update unless a wake already took it.
+     * tell it again. Marks it heard in the background, without the wait taking the lock. The fiber
+     * is for tests to join.
      */
     readonly heardInWait: (
       lead: ThreadId,
       member: ScopedThreadRef,
       runId: string,
-    ) => Effect.Effect<void>;
+    ) => Effect.Effect<Fiber.Fiber<void>>;
     /**
      * The Mission's members, without the lead, as this machine last knew them. Asks no other
      * machine: those on other machines are as the last sweep heard them.
@@ -1577,7 +1579,7 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const heardInWait = Effect.fn("Missions.heardInWait")(function* (
+  const markHeard = Effect.fn("Missions.heardInWait")(function* (
     lead: ThreadId,
     member: ScopedThreadRef,
     runId: string,
@@ -1586,7 +1588,7 @@ const make = Effect.gen(function* () {
     if (mission === undefined) return;
     yield* withLead(mission.missionId, (now) =>
       now.leadThreadId === lead
-        ? store.dropMissionUpdate({
+        ? store.markMissionUpdateHeard({
             missionId: now.missionId,
             ...member,
             source: `run:${runId}`,
@@ -1595,6 +1597,13 @@ const make = Effect.gen(function* () {
         : Effect.void,
     );
   });
+  const heardInWait = (lead: ThreadId, member: ScopedThreadRef, runId: string) =>
+    markHeard(lead, member, runId).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("A mission wake the lead's wait answered was kept", cause),
+      ),
+      Effect.forkIn(background),
+    );
 
   const joinStarted = Effect.fn("Missions.joinStarted")(function* (
     input: { readonly missionId: string; readonly member: ScopedThreadRef },

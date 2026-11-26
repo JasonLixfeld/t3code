@@ -895,7 +895,7 @@ const joinedWithPriorWork = (
     yield* Queue.offer(world.live("joined"), MISSION);
   });
 const GET_THE_BRIEF =
-  'Get its brief before giving it new work: queue a message asking for it with t3_thread_send (mode "queue", outputSchema a JSON Schema whose required "brief" property is a string with maxLength 4000), then call t3_thread_wait with the runId it returned and untilOutput: true. If the send is refused or the member is settled, read it with t3_thread_read (limit: 2, runLimit: 1, maxCharsPerItem: 4000) instead.';
+  'Get its brief before giving it new work: queue a message asking for it with t3_thread_send (mode "queue", outputSchema a JSON Schema object with additionalProperties false whose required "brief" property is a string with maxLength 4000), then call t3_thread_wait with the runId it returned and untilOutput: true. If the send is refused or the member is settled, read it with t3_thread_read (limit: 2, runLimit: 1, maxCharsPerItem: 4000) instead.';
 const joinedText = (line: string) =>
   [
     `Mission update: ${line}`,

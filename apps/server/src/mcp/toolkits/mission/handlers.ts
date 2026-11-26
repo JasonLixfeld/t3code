@@ -227,10 +227,10 @@ export const layer = McpToolAccess.toLayer(
           let end = Math.min(last, cursor + 1);
           if (end > cursor && jsonBytes(page(end)) > ROSTER_MAX_BYTES) {
             const alone = listed[cursor]!;
-            rows = listed.with(cursor, {
-              ...alone,
-              workspace: typeof alone.workspace === "object" ? "tooLarge" : alone.workspace,
-            });
+            rows = listed.with(cursor, { ...alone, title: "", project: "", machine: "" });
+            const tooLarge =
+              typeof alone.workspace === "object" && jsonBytes(page(end)) > ROSTER_MAX_BYTES;
+            rows = listed.with(cursor, tooLarge ? { ...alone, workspace: "tooLarge" } : alone);
             for (const field of ["title", "project", "machine"] as const) {
               let over = jsonBytes(page(end)) - ROSTER_MAX_BYTES;
               while (over > 0 && rows[cursor]![field] !== "") {

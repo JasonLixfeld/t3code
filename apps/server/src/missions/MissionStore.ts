@@ -528,8 +528,11 @@ export class MissionStore extends Context.Service<
     }) => Effect.Effect<void, MissionError>;
     /** Each untold update once: one already recorded from the same source is not added again. */
     readonly addMissionUpdate: (update: MissionUpdate) => Effect.Effect<void>;
-    /** Drops one update not told yet. One a wake already took stays with that wake. */
-    readonly dropMissionUpdate: (update: MissionUpdate) => Effect.Effect<void>;
+    /**
+     * Marks an update the lead heard another way: one not told yet, or one recorded later, is
+     * never told. One a wake already took stays with that wake.
+     */
+    readonly markMissionUpdateHeard: (update: MissionUpdate) => Effect.Effect<void>;
     /** The Missions with updates not told yet. */
     readonly missionsWithUpdates: Effect.Effect<ReadonlyArray<string>>;
     /**
@@ -1235,6 +1238,8 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /** The delivery mark of an update the lead heard by other means, which no wake takes. */
+  const HEARD = "heard";
   const updateRows = (missionId: string) =>
     sql<{
       readonly mission_id: string;
@@ -1248,7 +1253,8 @@ const make = Effect.gen(function* () {
     }>`
       SELECT mission_id, environment_id, thread_id, source, event, delivery_key, delivery_lead,
         attempt
-      FROM mission_updates WHERE mission_id = ${missionId} ORDER BY rowid
+      FROM mission_updates WHERE mission_id = ${missionId} AND delivery_key IS NOT ${HEARD}
+      ORDER BY rowid
     `;
   const toUpdate = (row: {
     readonly mission_id: string;
@@ -1271,16 +1277,17 @@ const make = Effect.gen(function* () {
         ${update.event})
     `.pipe(Effect.asVoid, Effect.orDie);
 
-  const dropMissionUpdate = (update: MissionUpdate) =>
+  const markMissionUpdateHeard = (update: MissionUpdate) =>
     sql`
-      DELETE FROM mission_updates
-      WHERE mission_id = ${update.missionId} AND environment_id = ${update.environmentId}
-        AND thread_id = ${update.threadId} AND source = ${update.source}
-        AND event = ${update.event} AND delivery_key IS NULL
+      INSERT INTO mission_updates (mission_id, environment_id, thread_id, source, event, delivery_key)
+      VALUES (${update.missionId}, ${update.environmentId}, ${update.threadId}, ${update.source},
+        ${update.event}, ${HEARD})
+      ON CONFLICT (mission_id, environment_id, thread_id, source) DO UPDATE SET delivery_key = ${HEARD}
+      WHERE delivery_key IS NULL AND event = excluded.event
     `.pipe(Effect.asVoid, Effect.orDie);
 
   const missionsWithUpdates = sql<{ readonly mission_id: string }>`
-    SELECT DISTINCT mission_id FROM mission_updates
+    SELECT DISTINCT mission_id FROM mission_updates WHERE delivery_key IS NOT ${HEARD}
   `.pipe(
     Effect.map((rows) => rows.map((row) => row.mission_id)),
     Effect.orDie,
@@ -1308,7 +1315,7 @@ const make = Effect.gen(function* () {
           if (updates.length > 0) {
             yield* sql`
               UPDATE mission_updates SET delivery_key = ${key}, delivery_lead = ${lead}
-              WHERE mission_id = ${missionId}
+              WHERE mission_id = ${missionId} AND delivery_key IS NOT ${HEARD}
             `;
           }
           return { key, updates: updates.map(({ attempt: _attempt, ...update }) => update) };
@@ -1478,7 +1485,7 @@ const make = Effect.gen(function* () {
   return MissionStore.of({
     setPrompt,
     addMissionUpdate,
-    dropMissionUpdate,
+    markMissionUpdateHeard,
     missionsWithUpdates,
     takeMissionUpdates,
     clearMissionUpdates,

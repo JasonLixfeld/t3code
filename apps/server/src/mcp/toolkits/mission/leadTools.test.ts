@@ -133,7 +133,9 @@ const makeMissions = () => {
     heardInWait: (lead, member, runId) =>
       runId === "broken"
         ? Effect.die("The mission store is unreadable.")
-        : Effect.sync(() => void heard.push([lead, member, runId])),
+        : Effect.sync(() => void heard.push([lead, member, runId])).pipe(
+            Effect.andThen(Effect.forkChild(Effect.void)),
+          ),
     joinStarted: (input, asLead) =>
       Effect.suspend(() => {
         const key = `${input.member.environmentId}/${input.member.threadId}`;
@@ -262,7 +264,7 @@ it.effect("add and release act on the caller's own mission, by the UI's rules", 
     assert.deepEqual((yield* add({ threadId: "here-thread" })).structured, { state: "joined" });
     assert.deepEqual((yield* add({ threadId: "worked" })).structured, {
       state: "joined",
-      next: 'This thread has prior work. Get its brief before giving it new work: queue a message asking for it with t3_thread_send (mode "queue", outputSchema a JSON Schema whose required "brief" property is a string with maxLength 4000), then call t3_thread_wait with the runId it returned and untilOutput: true. If the send is refused or the member is settled, read it with t3_thread_read (limit: 2, runLimit: 1, maxCharsPerItem: 4000) instead.',
+      next: 'This thread has prior work. Get its brief before giving it new work: queue a message asking for it with t3_thread_send (mode "queue", outputSchema a JSON Schema object with additionalProperties false whose required "brief" property is a string with maxLength 4000), then call t3_thread_wait with the runId it returned and untilOutput: true. If the send is refused or the member is settled, read it with t3_thread_read (limit: 2, runLimit: 1, maxCharsPerItem: 4000) instead.',
     });
     assert.deepEqual((yield* add({ threadId: "t1", environmentId: LAPTOP })).structured, {
       state: "pending",
@@ -537,7 +539,7 @@ it.effect("a thread offered the lead tools that no longer leads is refused, not 
 );
 
 it.effect(
-  "a wait that returns a run completed with its output tells Missions what it saw, here or on a linked machine",
+  "a wait for a run's output that returns it completed tells Missions what it saw, here or on a linked machine",
   () =>
     Effect.gen(function* () {
       const missions = makeMissions();
@@ -553,12 +555,13 @@ it.effect(
         scope: McpInvocationContext.McpInvocationScope,
         waited: object,
         environmentId?: EnvironmentId,
+        asked: object = { untilOutput: true, runId: "run-1" },
       ) =>
         callOrchestratorTool(
           missions,
           scope,
           "t3_thread_wait",
-          { threadId: member, ...(environmentId === undefined ? {} : { environmentId }) },
+          { threadId: member, ...asked, ...(environmentId === undefined ? {} : { environmentId }) },
           { ...answer, ...waited },
         );
       assert.deepEqual(yield* wait(lead, {}), answer);
@@ -568,6 +571,8 @@ it.effect(
       yield* wait(lead, { status: "failed" });
       yield* wait(lead, { runId: null });
       yield* wait(lead, { output: undefined });
+      yield* wait(lead, {}, undefined, { runId: "run-1" });
+      yield* wait(lead, {}, undefined, { untilOutput: true });
       // A wake it cannot drop stays, and the lead still gets its answer.
       assert.deepEqual(yield* wait(lead, { runId: "broken" }), { ...answer, runId: "broken" });
       assert.deepEqual(missions.heard, [
@@ -578,12 +583,23 @@ it.effect(
     }),
 );
 
-it.effect("a roster member with a huge project or machine label is cut to fit 30,000 bytes", () =>
+it.effect("long roster labels are cut to fit 30,000 bytes, and a small workspace stays", () =>
   Effect.gen(function* () {
     const rows = [
       { ...row(0, "idle"), project: "p".repeat(40_000) },
       { ...row(1, "idle"), machine: "m".repeat(40_000) },
       row(2, "idle"),
+      {
+        ...row(3, "idle"),
+        title: "t".repeat(40_000),
+        workspace: {
+          kind: "project" as const,
+          repositories: [],
+          truncated: false,
+          otherPullRequests: [],
+          stale: false,
+        },
+      },
     ];
     const missions = {
       ...makeMissions(),
@@ -609,18 +625,25 @@ it.effect("a roster member with a huge project or machine label is cut to fit 30
       const page = structured as {
         readonly members: ReadonlyArray<{
           readonly threadRef: ScopedThreadRef;
+          readonly title: string;
           readonly project: string;
           readonly machine: string;
+          readonly workspace: unknown;
         }>;
         readonly nextCursor: number | null;
       };
       for (const member of page.members) {
         seen.push(
-          `${member.threadRef.threadId} ${member.project.length < 40_000} ${member.machine.length < 40_000}`,
+          `${member.threadRef.threadId} ${member.title.length < 40_000} ${member.project.length < 40_000} ${member.machine.length < 40_000} ${typeof member.workspace}`,
         );
       }
       cursor = page.nextCursor;
     }
-    assert.deepEqual(seen, ["t0 true true", "t1 true true", "t2 true true"]);
+    assert.deepEqual(seen, [
+      "t0 true true true string",
+      "t1 true true true string",
+      "t2 true true true string",
+      "t3 true true true object",
+    ]);
   }),
 );

@@ -266,6 +266,8 @@ export const layer = McpToolAccess.toLayer(
         if (
           Option.isSome(missions) &&
           scope.thread !== undefined &&
+          input.untilOutput === true &&
+          input.runId !== undefined &&
           !result.timedOut &&
           result.runId !== null &&
           result.status === "completed" &&
