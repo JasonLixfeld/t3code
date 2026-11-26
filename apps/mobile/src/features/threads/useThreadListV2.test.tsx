@@ -17,6 +17,10 @@ vi.mock("../../state/threads", () => ({
   threadFamilies: { mountRows: () => () => {} },
 }));
 vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: undefined }));
+vi.mock("../../state/shell", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { liveShellEnvironmentIdsAtom: Atom.make(new Set<string>()) };
+});
 vi.mock("../../state/missions", () => {
   const noHosts: ReadonlyArray<never> = [];
   return {

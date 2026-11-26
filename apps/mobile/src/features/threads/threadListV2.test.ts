@@ -1037,6 +1037,61 @@ describe("buildThreadListV2ListItems", () => {
     expect(shown(laptop)).toEqual([["lead"]]);
   });
 
+  it("shows a member the list leaves out from the mission's shells, and hides settled ones", () => {
+    const laptop = EnvironmentId.make("environment-laptop");
+    const member = (threadId: string, on = environmentId, settled = false) => ({
+      ref: { environmentId: on, threadId: ThreadId.make(threadId) },
+      role: "member" as const,
+      state: "active" as const,
+      ...(settled ? { settled: true as const } : {}),
+    });
+    const hosts: ReadonlyArray<MissionHost> = [
+      {
+        environmentId,
+        snapshot: {
+          links: [],
+          claims: [],
+          missions: [
+            {
+              missionId: "m1",
+              name: "Ship v2",
+              createdAt: NOW,
+              members: [
+                { ...member("lead"), role: "lead" },
+                member("delegated", laptop),
+                member("archived", environmentId, true),
+                member("trimmed", environmentId, true),
+              ],
+            },
+          ],
+        },
+      },
+    ];
+    const delegated = makeThread({
+      environmentId: laptop,
+      id: ThreadId.make("delegated"),
+      title: "Delegated task",
+      delegatedFrom: { environmentId, threadId: ThreadId.make("lead") } as never,
+    });
+    const archived = makeThread({
+      id: ThreadId.make("archived"),
+      title: "archived",
+      archivedAt: NOW,
+    });
+    const members = buildThreadListV2Items({
+      threads: [makeThread({ id: ThreadId.make("lead"), title: "lead" })],
+      missionThreads: [delegated, archived],
+      liveEnvironmentIds: new Set([environmentId, laptop]),
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      missionHosts: hosts,
+    }).missions[0]!.members;
+    expect(
+      members.map((entry) => [entry.place.member.ref.threadId, entry.item?.thread.title]),
+    ).toEqual([["delegated", "Delegated task"]]);
+  });
+
   it("places queued tasks above active rows and a collapsed snoozed shelf", () => {
     const snoozedLayout = buildThreadListV2Items({
       threads: [

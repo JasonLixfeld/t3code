@@ -1,12 +1,14 @@
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useMemo, useSyncExternalStore } from "react";
 
 import { keepMarked } from "../../i18n/messages";
 import { scopedProjectKey } from "../../lib/scopedEntities";
-import { useMissionLeadShells } from "../../state/mission-leads";
+import { useMissionLeadShells, useMissionThreadShells } from "../../state/mission-leads";
 import { useMissionHosts, useMissionPreferences } from "../../state/missions";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
+import { liveShellEnvironmentIdsAtom } from "../../state/shell";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   buildThreadListV2Items,
@@ -73,6 +75,8 @@ export function useThreadListV2(input: {
   const { threads, workingShelfEnabled } = input;
   const missionHosts = useMissionHosts();
   const settledMissingMissionLeadKeys = useMissionLeadShells(missionHosts, threads);
+  const missionThreads = useMissionThreadShells(missionHosts);
+  const liveEnvironmentIds = useAtomValue(liveShellEnvironmentIdsAtom);
   const { headerVisible: missionsHeaderVisible, threadsHeaderVisible } = useMissionPreferences();
   const collapsedMissions = useMemo(
     () => new Set(input.collapsedMissions ?? []),
@@ -164,6 +168,8 @@ export function useThreadListV2(input: {
         settledShelfExpanded: input.settledShelfExpanded,
         selectedThreadKey: input.selectedThreadKey,
         missionHosts,
+        missionThreads,
+        liveEnvironmentIds,
         settledMissingMissionLeadKeys,
         collapsedMissions,
         isListedSettled: isListed,
@@ -199,6 +205,8 @@ export function useThreadListV2(input: {
       input.settledShelfExpanded,
       input.selectedThreadKey,
       missionHosts,
+      missionThreads,
+      liveEnvironmentIds,
       settledMissingMissionLeadKeys,
       collapsedMissions,
       isListed,

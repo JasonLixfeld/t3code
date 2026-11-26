@@ -5,6 +5,7 @@ import {
   type Mission,
   type MissionMember,
   type MissionsSnapshot,
+  isSettledMissionMember,
   type ThreadId,
   threadHasMessages,
 } from "@t3tools/contracts";
@@ -174,9 +175,18 @@ export function missionRowItems(
   resolve: MFunctionType = mFallback,
 ): ReadonlyArray<ContextMenuItem<MissionMenuId>> {
   const target = `${input.host}:${input.mission.missionId}`;
-  const members = input.mission.members.filter(
-    (member) => member.role === "member" && member.state !== "add-refused",
+  // As the server ends a Mission: only once each member left is settled on the Mission's machine.
+  const holding = input.mission.members.filter(
+    (member) =>
+      member.role === "member" &&
+      member.state !== "add-refused" &&
+      !(
+        member.state === "active" &&
+        member.settled === true &&
+        member.ref.environmentId === input.host
+      ),
   );
+  const holdingHere = holding.some((member) => member.ref.environmentId === input.host);
   return [
     { id: "mission-group", label: resolve(msg("Mission")), header: true, separatorBefore: true },
     {
@@ -201,12 +211,15 @@ export function missionRowItems(
       : []),
     {
       id: `${DELETE_PREFIX}${target}`,
-      label: resolve(msg("Delete mission")),
-      icon: "trash",
-      destructive: true,
-      disabled: members.length > 0 || !input.canChange,
-      ...(members.length > 0
-        ? { detail: resolve(msg("Has threads")) }
+      label: resolve(msg("End mission")),
+      icon: "check",
+      disabled: holding.length > 0 || !input.canChange,
+      ...(holding.length > 0
+        ? {
+            detail: holdingHere
+              ? resolve(msg("Has active threads"))
+              : resolve(msg("Has threads on another machine")),
+          }
         : input.canChange
           ? {}
           : { detail: blockLabel("not-allowed", "", resolve) }),
@@ -429,11 +442,27 @@ function missionIndex(hosts: ReadonlyArray<MissionHost>) {
   return index;
 }
 
+/**
+ * A list trims older settled threads, so a member the Mission's machine marks settled may have
+ * no shell. Its row waits for its environment to finish syncing before it hides.
+ */
+const isSettledMember = (
+  member: MissionMember,
+  thread: Pick<ListedThread, "settledOverride" | "archivedAt"> | null,
+  syncedEnvironments: ReadonlySet<EnvironmentId>,
+) =>
+  thread === null
+    ? member.state === "active" &&
+      member.settled === true &&
+      syncedEnvironments.has(member.ref.environmentId)
+    : isJoined(member) && isSettledMissionMember(thread);
+
 export function groupSidebarMissions<T extends ListedThread>(
   hosts: ReadonlyArray<MissionHost>,
   threads: readonly T[],
   scopedProjectKeys: ReadonlySet<string> | null,
   unavailableLeads: ReadonlySet<string> = new Set(),
+  syncedEnvironments: ReadonlySet<EnvironmentId> = new Set(),
 ): {
   readonly missions: ReadonlyArray<SidebarMission<T>>;
   readonly threadKeys: ReadonlySet<string>;
@@ -467,12 +496,7 @@ export function groupSidebarMissions<T extends ListedThread>(
       const claimed = member.state !== "deleted" && member.state !== "add-refused";
       if (claimed && holders.get(threadKey)?.key !== key) return [];
       const thread = claimed ? (threadByKey.get(threadKey) ?? null) : null;
-      if (
-        member.role === "member" &&
-        isJoined(member) &&
-        thread !== null &&
-        (thread.settledOverride === "settled" || thread.archivedAt !== null)
-      ) {
+      if (member.role === "member" && isSettledMember(member, thread, syncedEnvironments)) {
         return [];
       }
       if (thread !== null) threadKeys.add(threadKey);

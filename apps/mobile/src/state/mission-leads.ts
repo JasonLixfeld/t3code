@@ -5,13 +5,14 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import type { MissionHost } from "@t3tools/client-runtime/missions";
+import { arrayElementsEqual, threadKey } from "@t3tools/client-runtime/state/entities";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useState } from "react";
 
 import { appAtomRegistry } from "./atom-registry";
-import { environmentThreadShells, threadFamilies } from "./threads";
+import { environmentThreadShells, steadyThreadShells, threadFamilies } from "./threads";
 
 const activeLeadKeys = (hosts: ReadonlyArray<MissionHost>) =>
   hosts.flatMap((host) =>
@@ -69,4 +70,37 @@ export function useMissionLeadShells(
     };
   }, [wantedKey]);
   return useAtomValue(settledMissingLeadsAtom(JSON.stringify(missing)));
+}
+
+/**
+ * Each Mission thread's shell, as the web sidebar reads them. The thread list leaves out an
+ * archived thread and a task delegated from its lead's machine, which left a blank member row.
+ */
+const missionThreadShellsAtom = Atom.family((keys: string) => {
+  let previous: ReadonlyArray<EnvironmentThreadShell> = [];
+  return Atom.make((get) => {
+    const wanted = JSON.parse(keys) as ReadonlyArray<string>;
+    if (wanted.length === 0) return previous;
+    const hidden = get(steadyThreadShells.hiddenThreadKeysAtom);
+    const next = wanted.flatMap((key) => {
+      const ref = parseScopedThreadKey(key);
+      if (ref === null || hidden.has(threadKey(ref))) return [];
+      const shell = get(steadyThreadShells.quietThreadShellAtom(ref));
+      return shell === null ? [] : [shell];
+    });
+    if (arrayElementsEqual(previous, next)) return previous;
+    previous = next;
+    return next;
+  }).pipe(Atom.withLabel(`mobile-mission-thread-shells:${keys}`));
+});
+
+export function useMissionThreadShells(
+  hosts: ReadonlyArray<MissionHost>,
+): ReadonlyArray<EnvironmentThreadShell> {
+  const keys = hosts.flatMap((host) =>
+    host.snapshot.missions.flatMap((mission) =>
+      mission.members.map((member) => scopedThreadKey(member.ref)),
+    ),
+  );
+  return useAtomValue(missionThreadShellsAtom(JSON.stringify(keys)));
 }

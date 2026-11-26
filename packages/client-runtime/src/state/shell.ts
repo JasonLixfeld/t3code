@@ -805,6 +805,28 @@ function mapsEqual<K, V>(left: ReadonlyMap<K, V>, right: ReadonlyMap<K, V>): boo
   return true;
 }
 
+/** Environments whose threads reflect the server now, not a cache or a resync in flight. */
+export function createLiveShellEnvironmentIdsAtom(input: {
+  readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
+  readonly statusAtom: (environmentId: EnvironmentId) => Atom.Atom<EnvironmentShellStatus>;
+}) {
+  let previous: ReadonlySet<EnvironmentId> = new Set();
+  return Atom.make((get): ReadonlySet<EnvironmentId> => {
+    const next = new Set<EnvironmentId>();
+    for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
+      if (get(input.statusAtom(environmentId)) === "live") next.add(environmentId);
+    }
+    if (
+      next.size === previous.size &&
+      [...next].every((environmentId) => previous.has(environmentId))
+    ) {
+      return previous;
+    }
+    previous = next;
+    return next;
+  }).pipe(Atom.withLabel("live-shell-environment-ids"));
+}
+
 export function createEnvironmentShellSummaryAtom(input: {
   readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
   readonly shellStateValueAtom: (environmentId: EnvironmentId) => Atom.Atom<EnvironmentShellState>;
