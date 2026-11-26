@@ -129,12 +129,7 @@ const makeMissions = () => {
       );
     });
   const layer = Layer.mock(Missions.Missions)({
-    heardInWait: (lead, member, runId) =>
-      runId === "broken"
-        ? Effect.die("The mission store is unreadable.")
-        : Effect.sync(() => void heard.push([lead, member, runId])).pipe(
-            Effect.andThen(Effect.forkChild(Effect.void)),
-          ),
+    heardInWait: (lead, member, runId) => Effect.sync(() => void heard.push([lead, member, runId])),
     joinStarted: (input, asLead) =>
       Effect.suspend(() => {
         const key = `${input.member.environmentId}/${input.member.threadId}`;
@@ -726,7 +721,6 @@ it.effect(
       yield* wait(lead, { output: undefined });
       yield* wait(lead, {}, undefined, { runId: "run-1" });
       yield* wait(lead, {}, undefined, { untilOutput: true });
-      assert.deepEqual(yield* wait(lead, { runId: "broken" }), { ...answer, runId: "broken" });
       assert.deepEqual(missions.heard, [
         [lead.thread.threadId, { environmentId: HERE, threadId: member }, "run-1"],
         [lead.thread.threadId, { environmentId: LAPTOP, threadId: member }, "run-1"],

@@ -274,17 +274,11 @@ export const layer = McpToolAccess.toLayer(
           result.status === "completed" &&
           result.output !== undefined
         ) {
-          yield* missions.value
-            .heardInWait(
-              scope.thread.threadId,
-              { environmentId: there ?? scope.environmentId, threadId: input.threadId },
-              result.runId,
-            )
-            .pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("A mission wake the lead's wait answered was kept", cause),
-              ),
-            );
+          yield* missions.value.heardInWait(
+            scope.thread.threadId,
+            { environmentId: there ?? scope.environmentId, threadId: input.threadId },
+            result.runId,
+          );
         }
         return result;
       }),

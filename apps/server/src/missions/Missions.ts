@@ -23,7 +23,6 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import type * as Fiber from "effect/Fiber";
 import * as Clock from "effect/Clock";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -127,7 +126,7 @@ export class Missions extends Context.Service<
       lead: ThreadId,
       member: ScopedThreadRef,
       runId: string,
-    ) => Effect.Effect<Fiber.Fiber<void>>;
+    ) => Effect.Effect<void>;
     readonly roster: (
       missionId: string,
     ) => Effect.Effect<ReadonlyArray<RosterMember>, MissionError>;
@@ -1480,6 +1479,7 @@ const make = Effect.gen(function* () {
         Effect.logWarning("A mission wake the lead's wait answered was kept", cause),
       ),
       Effect.forkIn(background),
+      Effect.asVoid,
     );
 
   const joinStarted = Effect.fn("Missions.joinStarted")(function* (
