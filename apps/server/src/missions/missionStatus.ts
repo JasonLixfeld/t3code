@@ -125,11 +125,9 @@ interface Mark {
   readonly run?: { readonly id: string; readonly status: string } | undefined;
   readonly held?: boolean | undefined;
   readonly requests?: ReadonlyArray<string> | undefined;
-  /** A completed run that work held, so the lead has not heard of it yet. */
-  readonly carried?: string | undefined;
+  readonly unreportedCompletionRunId?: string | undefined;
 }
 
-// Older peers send no `held`; their status said "working" while work held a finished turn.
 const isHeld = (seen: Partial<Pick<Mark, "status" | "held">>) =>
   seen.held ?? seen.status === "working";
 
@@ -143,7 +141,7 @@ const markFields = (detail: MemberDetail): Mark => ({
 export const markOf = (detail: MemberDetail): string => JSON.stringify(markFields(detail));
 
 export const wasCompletionHeld = (mark: string) =>
-  (JSON.parse(mark) as Partial<Mark>).carried !== undefined;
+  (JSON.parse(mark) as Partial<Mark>).unreportedCompletionRunId !== undefined;
 
 /** Older peers send status without run or request IDs. Compare their statuses instead. */
 export const memberUpdates = (
@@ -164,26 +162,33 @@ export const memberUpdates = (
   const updates: Array<SourcedUpdate> = [];
   const told = (id: string, event: "completed" | "failed") =>
     updates.push({ source: `run:${id}`, event });
-  let carried = mark.carried;
+  let unreportedCompletionRunId = mark.unreportedCompletionRunId;
   const run = detail.run;
   const fresh = run !== undefined && (mark.run?.id !== run.id || mark.run.status !== run.status);
   if (run?.status === "failed") {
     if (fresh) told(run.id, "failed");
-    carried = undefined;
+    unreportedCompletionRunId = undefined;
   } else if (run?.status === "completed" && isHeld(detail)) {
-    carried = run.id;
+    unreportedCompletionRunId = run.id;
   } else if (run?.status === "completed") {
-    if (fresh || carried === run.id) told(run.id, "completed");
-    carried = undefined;
-  } else if (carried !== undefined && !isHeld(detail) && !WORKING.has(run?.status ?? "")) {
-    told(carried, "completed");
-    carried = undefined;
+    if (fresh || unreportedCompletionRunId === run.id) told(run.id, "completed");
+    unreportedCompletionRunId = undefined;
+  } else if (
+    unreportedCompletionRunId !== undefined &&
+    !isHeld(detail) &&
+    !WORKING.has(run?.status ?? "")
+  ) {
+    told(unreportedCompletionRunId, "completed");
+    unreportedCompletionRunId = undefined;
   }
   for (const request of detail.requests ?? []) {
     if (mark.requests?.includes(request.id) === true) continue;
     updates.push({ source: `request:${request.id}`, event: eventForRequest(request.kind) });
   }
-  return { updates, mark: JSON.stringify({ ...markFields(detail), carried } satisfies Mark) };
+  return {
+    updates,
+    mark: JSON.stringify({ ...markFields(detail), unreportedCompletionRunId } satisfies Mark),
+  };
 };
 
 export const shellDetail = (
