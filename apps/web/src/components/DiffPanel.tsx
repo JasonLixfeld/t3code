@@ -816,7 +816,7 @@ export default function DiffPanel({
   const onPanelAction = useEffectEvent((action: PreviewAction) => {
     if (action === "find") diffFind.find.open();
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the panel find command, which fires while focus is anywhere in the right panel
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for the window's panel find event while the diff is visible
   useEffect(() => {
     if (!visible) return;
     return subscribePreviewAction(onPanelAction);

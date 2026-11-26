@@ -17,7 +17,6 @@ export interface DiffFind {
   readonly state: DiffFindState | null;
   readonly open: () => void;
   readonly close: () => void;
-  /** Sets the diff find's query from another input and keeps focus there. */
   readonly search: (query: string, input: HTMLInputElement | null) => void;
   readonly selectMatch: (index: number) => void;
   readonly navigate: (direction: "next" | "previous") => void;
@@ -28,7 +27,6 @@ export function isFindShortcut(event: KeyboardEvent<HTMLElement>) {
   return isModPressed && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f";
 }
 
-/** Drives the diff CodeView's own find panel, so other views share its query and matches. */
 type FindableCodeView = Pick<
   CodeViewHandle<unknown, undefined>,
   "openSearch" | "closeSearch" | "isSearchOpen" | "navigateSearch" | "getItem"
@@ -62,7 +60,6 @@ export function useDiffFind() {
       };
     }
     const files = groupedRef.current.files;
-    // Pierre reports the state again whenever its options change, which every render does.
     setState((previous) =>
       previous?.query === next.text &&
       previous.matchCount === next.matchCount &&

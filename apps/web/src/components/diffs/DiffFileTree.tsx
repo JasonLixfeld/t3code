@@ -44,7 +44,6 @@ interface DiffFileTreeProps {
   readonly headerAccessory?: ReactNode;
   readonly footer?: ReactNode;
   readonly className?: string;
-  /** Offers a Contents search that shares this diff find's query and matches. */
   readonly find?: DiffFind;
 }
 
