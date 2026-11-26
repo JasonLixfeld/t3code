@@ -69,11 +69,10 @@ describe("missionMenuActions", () => {
     { id: "mission-new-thread:x", label: "New thread", icon: "message-square-plus" },
     {
       id: "mission-delete:x",
-      label: "Delete mission",
-      icon: "trash",
-      destructive: true,
+      label: "End mission",
+      icon: "check",
       disabled: true,
-      detail: "Has threads",
+      detail: "Has active threads",
     },
     {
       id: "mission-add",
@@ -88,10 +87,10 @@ describe("missionMenuActions", () => {
     const newThread = { id: "mission-new-thread:x", title: "New thread", image: "plus.bubble" };
     const remove = {
       id: "mission-delete:x",
-      title: "Delete mission",
-      subtitle: "Has threads",
-      image: "trash",
-      attributes: { disabled: true, destructive: true },
+      title: "End mission",
+      subtitle: "Has active threads",
+      image: "checkmark",
+      attributes: { disabled: true },
     };
     const add = {
       id: "mission-add",

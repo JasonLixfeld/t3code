@@ -704,7 +704,7 @@ describe("missions in the sidebar", () => {
       "Mission",
       "New thread in this mission",
       "Edit mission prompt…",
-      "Delete mission",
+      "End mission",
     ]);
     for (const absent of ["Start mission from this thread", "Add to mission", "Leave mission"]) {
       expect(lead).not.toContain(absent);
@@ -719,7 +719,7 @@ describe("missions in the sidebar", () => {
       "Edit mission prompt…",
       "New lead",
       "Choose a thread…",
-      "Delete mission",
+      "End mission",
     ]);
     await vi.waitFor(() =>
       expect(openCommandPalette).toHaveBeenCalledWith({
@@ -734,7 +734,7 @@ describe("missions in the sidebar", () => {
       "Edit mission prompt…",
       "New lead",
       "Choose a thread…",
-      "Delete mission",
+      "End mission",
     ]);
     await vi.waitFor(() =>
       expect(commandFor("mission delete")).toHaveBeenCalledExactlyOnceWith({

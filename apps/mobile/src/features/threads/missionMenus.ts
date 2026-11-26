@@ -19,7 +19,7 @@ import type { ThreadListV2MissionPlace } from "./threadListV2";
 const SYMBOL_BY_ICON: Readonly<Record<string, string>> = {
   "message-square-plus": "plus.bubble",
   pencil: "pencil",
-  trash: "trash",
+  check: "checkmark",
   "folder-tree": "flowchart",
   "folder-minus": "folder.badge.minus",
   "folder-plus": "folder.badge.plus",
