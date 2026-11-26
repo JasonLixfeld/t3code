@@ -71,6 +71,9 @@ const makeWorld = () => {
     ]),
   );
   const session: Session = {};
+  const leadWait: {
+    current?: { threadId: ThreadId; runId: string; status: "running" | "completed" } | undefined;
+  } = {};
   const live = <K extends keyof Session>(key: K): NonNullable<Session[K]> => {
     const value = session[key];
     if (value === undefined) throw new Error(`No wakes session has set ${key}.`);
@@ -94,6 +97,7 @@ const makeWorld = () => {
   };
   const world = {
     session,
+    leadWait,
     live,
     /** Members here that joined while no server ran, with no mark yet. */
     joinedUnseen: [] as Array<ThreadId>,
@@ -221,6 +225,29 @@ const makeWorld = () => {
     ),
     layer: Layer.mergeAll(
       Layer.mock(ThreadManagement.ThreadManagementService)({
+        // The lead's running run, and the t3_thread_wait it is in, if a test sets one.
+        getThreadRecords: (id) =>
+          Effect.sync(
+            () =>
+              (id !== lead || leadWait.current === undefined
+                ? { runs: [], turnItems: [] }
+                : {
+                    runs: [{ id: "lead-run", status: "running" }],
+                    turnItems: [
+                      {
+                        type: "dynamic_tool",
+                        runId: "lead-run",
+                        status: leadWait.current.status,
+                        toolName: "mcp__t3-code__t3_thread_wait",
+                        input: {
+                          threadId: leadWait.current.threadId,
+                          runId: leadWait.current.runId,
+                          untilOutput: true,
+                        },
+                      },
+                    ],
+                  }) as never,
+          ),
         getThreadShell: (id) =>
           Effect.gen(function* () {
             if (id !== lead && id !== second) return (shells.get(id) ?? null) as never;
@@ -1055,3 +1082,29 @@ it.effect(
     );
   },
 );
+
+it.effect("a member's run the lead still waits on in t3_thread_wait wakes no one", () => {
+  const world = makeWorld();
+  return withWakes(
+    world,
+    Effect.gen(function* () {
+      world.leadWait.current = { threadId: first, runId: "brief", status: "running" };
+      yield* world.run(first, "brief", "completed");
+      // A run it does not wait on, and the same run once its wait ended, still wake it.
+      yield* world.run(second, "s1", "completed");
+      assert.equal(
+        yield* nextText(world),
+        told(["member 2 on this machine finished its turn and is idle."]),
+      );
+      yield* world.leadRead;
+      world.leadWait.current = { threadId: first, runId: "after", status: "completed" };
+      yield* world.run(first, "after", "completed");
+      yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+      assert.equal(
+        yield* nextText(world),
+        told(["member 1 on this machine finished its turn and is idle."]),
+      );
+      assert.equal(world.sent.length, 2);
+    }),
+  );
+});

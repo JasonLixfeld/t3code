@@ -10,10 +10,12 @@ import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Predicate from "effect/Predicate";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -98,6 +100,7 @@ export const layer = Layer.effectDiscard(
       missionId: string,
       ref: ScopedThreadRef,
       updates: ReadonlyArray<SourcedUpdate>,
+      wake = true,
     ) {
       const toldKey = (source: string) =>
         `${ref.environmentId}\u0000${ref.threadId}\u0000${source}`;
@@ -105,9 +108,9 @@ export const layer = Layer.effectDiscard(
       for (const update of fresh) {
         told.add(toldKey(update.source));
         if (told.size > TOLD_KEPT) told.delete(told.values().next().value!);
-        yield* store.addMissionUpdate({ missionId, ...ref, ...update });
+        if (wake) yield* store.addMissionUpdate({ missionId, ...ref, ...update });
       }
-      if (fresh.length > 0) yield* Queue.offer(due, missionId);
+      if (wake && fresh.length > 0) yield* Queue.offer(due, missionId);
     });
 
     /** Compared with what the member last showed, kept on disk, so a restart misses nothing. */
@@ -172,7 +175,45 @@ export const layer = Layer.effectDiscard(
       // A lead whose run ended may now hear what waited for it.
       if (claim.role === "lead") return yield* Queue.offer(due, claim.missionId);
       if (update === undefined) return;
-      yield* record(claim.missionId, { environmentId: here, threadId: event.threadId }, [update]);
+      const ref = { environmentId: here, threadId: event.threadId };
+      // The lead hears this run end from the t3_thread_wait it is still in: no turn for it.
+      if (
+        event.type === "run.updated" &&
+        (yield* leadAwaits(claim.missionId, ref, event.payload.id))
+      ) {
+        return yield* record(claim.missionId, ref, [update], false);
+      }
+      yield* record(claim.missionId, ref, [update]);
+    });
+
+    const leadAwaits = Effect.fn("MissionWakes.leadAwaits")(function* (
+      missionId: string,
+      ref: ScopedThreadRef,
+      runId: string,
+    ) {
+      const mission = (yield* store.missions).find((known) => known.missionId === missionId);
+      if (mission === undefined) return false;
+      const lead = mission.leadThreadId;
+      return yield* Effect.gen(function* () {
+        const { runs } = yield* threads.getThreadRecords(lead, ["runs"], {
+          runStatuses: ["running"],
+        });
+        const running = runs.filter((run) => run.status === "running").map((run) => run.id);
+        if (running.length === 0) return false;
+        const { turnItems } = yield* threads.getThreadRecords(lead, ["turnItems"], {
+          turnItemRunIds: running,
+        });
+        return turnItems.some(
+          (item) =>
+            item.type === "dynamic_tool" &&
+            (item.status === "running" || item.status === "waiting") &&
+            resolveT3McpToolId(item.toolName) === "t3_thread_wait" &&
+            Predicate.isObject(item.input) &&
+            Reflect.get(item.input, "threadId") === ref.threadId &&
+            Reflect.get(item.input, "runId") === runId &&
+            (Reflect.get(item.input, "environmentId") ?? here) === ref.environmentId,
+        );
+      }).pipe(Effect.orElseSucceed(() => false));
     });
 
     /**
