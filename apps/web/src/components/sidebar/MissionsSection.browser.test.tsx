@@ -307,6 +307,7 @@ describe("missions in the sidebar", () => {
     expect(screen.getByText("Lead deleted").elements()).toHaveLength(1);
     expect(screen.getByRole("heading", { name: "Missions" }).elements()).toHaveLength(1);
     expect(screen.getByRole("heading", { name: "Threads" }).elements()).toHaveLength(1);
+    expect(screen.container.querySelector('[aria-label="New mission"]')).toBeNull();
     expect(screen.getByRole("button", { name: "Forget" }).elements()).toHaveLength(2);
   });
 
@@ -737,6 +738,14 @@ describe("missions in the sidebar", () => {
     });
     await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
     expect(screen.getByRole("heading").elements()).toHaveLength(0);
+  });
+
+  it("keeps the Threads heading and offers no New mission button when the Missions heading is off", async () => {
+    await using screen = await renderSidebar({ sidebarMissionsHeaderVisible: false });
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Missions" }).elements()).toHaveLength(0);
+    expect(screen.getByRole("heading", { name: "Threads" }).elements()).toHaveLength(1);
+    expect(screen.container.querySelector('[aria-label="New mission"]')).toBeNull();
   });
 });
 

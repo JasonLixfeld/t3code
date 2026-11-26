@@ -390,6 +390,34 @@ describe("CommandPalette open intents", () => {
     await expect.element(page.getByRole("option", { name: /No project/ })).not.toBeInTheDocument();
   });
 
+  it.each([
+    ["offers New mission... with No project", EnvironmentId.make("local")],
+    ["offers no New mission... with no home for No project", null],
+  ] as const)("with no projects, the palette %s", async (_, home) => {
+    setup();
+    vi.mocked(useScratchProject).mockReturnValue({
+      scratchEnvironmentId: () => home,
+      scratchWorkspaceRootFor: () => (home === null ? null : "/scratch"),
+      startScratchThread: vi.fn(),
+      openScratchProject: vi.fn(),
+    } as never);
+    onTestFinished(() => vi.mocked(useScratchProject).mockRestore());
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+
+    openCommandPalette({});
+    await expect
+      .element(page.getByPlaceholder("Search commands, projects, and threads..."))
+      .toHaveFocus();
+    const newMission = page.getByRole("option", { name: /^New mission\.\.\./ });
+    if (home === null) {
+      await expect.element(newMission).not.toBeInTheDocument();
+      return;
+    }
+    await newMission.click();
+    await expect.element(page.getByText("New mission", { exact: true })).toBeVisible();
+    await expect.element(page.getByRole("option", { name: /No project/ })).toBeVisible();
+  });
+
   it("marks the draft a mission's project pick makes, offering only the lead's machine", async () => {
     const local = makeProject("web");
     const remote = { ...makeProject("api"), environmentId: EnvironmentId.make("remote") };

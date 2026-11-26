@@ -1440,18 +1440,19 @@ function OpenCommandPaletteDialog(props: {
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: NEW_THREAD_IN_GROUP, label: gt("Projects"), items: projectThreadItems }],
     });
-    if (missionsEnabled) {
-      actionItems.push({
-        kind: "action",
-        value: "action:new-mission",
-        searchTerms: ["new mission", "mission", "lead", "orchestrate"],
-        title: gt("New mission..."),
-        icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
-        keepOpen: true,
-        run: async () =>
-          dispatchCommandPalette({ _tag: "OpenNewThreadIn", mission: { kind: "new" } }),
-      });
-    }
+  }
+
+  if (missionsEnabled && (projects.length > 0 || scratchTargetEnvironmentId !== null)) {
+    actionItems.push({
+      kind: "action",
+      value: "action:new-mission",
+      searchTerms: ["new mission", "mission", "lead", "orchestrate"],
+      title: gt("New mission..."),
+      icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
+      keepOpen: true,
+      run: async () =>
+        dispatchCommandPalette({ _tag: "OpenNewThreadIn", mission: { kind: "new" } }),
+    });
   }
 
   if (scratchTargetEnvironmentId !== null) {

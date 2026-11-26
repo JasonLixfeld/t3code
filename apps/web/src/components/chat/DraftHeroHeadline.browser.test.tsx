@@ -375,7 +375,7 @@ it("a new thread's Mission choice marks its draft to join that mission, or none"
   await page.getByRole("menuitemradio", { name: "None" }).click();
   expect(missionDraftOf(draftId)).toBeUndefined();
 
-  // A new mission it leads fixes the choice, as + New mission does.
+  // A new mission it leads fixes the choice.
   await userEvent.click(trigger);
   await page.getByRole("menuitemradio", { name: "New mission (this thread leads)" }).click();
   expect(missionDraftOf(draftId)).toMatchObject({
