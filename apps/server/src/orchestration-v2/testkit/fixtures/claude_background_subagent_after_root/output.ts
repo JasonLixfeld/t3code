@@ -66,13 +66,6 @@ export function assertClaudeBackgroundSubagentAfterRootOutput(
     (message) => message.id === projection.runs[1]?.userMessageId,
   );
   assert.equal(wakeMessage?.text, "SUB_FINAL_REPORT");
-  assert.isFalse(
-    result.domainEvents.some(
-      (event) =>
-        event.type === "provider-thread.updated" &&
-        (event.payload.pendingBackgroundTasks?.length ?? 0) > 0,
-    ),
-  );
   if (subagent?.childThreadId == null) {
     throw new Error("The background subagent is missing its child thread.");
   }
@@ -103,6 +96,40 @@ export function assertClaudeBackgroundSubagentAfterRootOutput(
       event.payload.status === "starting",
   );
   assert.isAtLeast(continuationStartIndex, 0);
+  // The finished subagent's owed wake holds the root's run until its continuation has taken it.
+  const rosters = result.domainEvents.flatMap((event, index) =>
+    event.type === "provider-thread.updated"
+      ? [{ index, tasks: event.payload.pendingBackgroundTasks ?? [] }]
+      : [],
+  );
+  const owed = rosters.filter((roster) => roster.tasks.length > 0);
+  assert.isNotEmpty(owed);
+  for (const roster of owed) {
+    assert.deepEqual(
+      roster.tasks.map((task) => [task.kind, task.taskId]),
+      [["background_task", subagent.nativeTaskRef?.nativeId]],
+    );
+  }
+  const subagentEndIndex = result.domainEvents.findIndex(
+    (event) =>
+      event.type === "subagent.updated" &&
+      event.payload.id === subagent.id &&
+      event.payload.status === "completed",
+  );
+  assert.isBelow(owed[0]!.index, subagentEndIndex);
+  const cleared = rosters.find(
+    (roster) => roster.index > owed[0]!.index && roster.tasks.length === 0,
+  );
+  assert.isDefined(cleared);
+  assert.isAbove(cleared!.index, continuationStartIndex);
+  const continuationEndIndex = result.domainEvents.findIndex(
+    (event) =>
+      event.type === "run.updated" &&
+      event.payload.id === projection.runs[1]?.id &&
+      event.payload.status === "completed",
+  );
+  assert.isBelow(cleared!.index, continuationEndIndex);
+  assert.isFalse(owed.some((roster) => roster.index > cleared!.index));
   const assertStoredWhileIdle = (
     label: string,
     matches: (event: OrchestrationV2DomainEvent) => boolean,
