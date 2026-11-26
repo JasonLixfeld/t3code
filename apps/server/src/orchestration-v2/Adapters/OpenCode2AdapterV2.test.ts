@@ -5929,7 +5929,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ...quickTurn,
           ...mcpConnected,
           ...quickTurn,
-          // An OpenCode reload rebuilds its Locations without runtime-added MCP servers.
           ...mcpListed(),
           ...mcpAdded,
           ...mcpConnected,

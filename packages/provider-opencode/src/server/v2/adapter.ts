@@ -4448,7 +4448,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         Effect.map(({ data }) => data.find((server) => server.name === mcp.name)?.status),
       );
 
-    // A reload or idle eviction of OpenCode's Location drops runtime MCP servers without telling T3.
+    // OpenCode stores runtime MCP registrations per Location, so reload and idle eviction can leave T3's cache stale.
     const ensureMcp = Effect.fnUntraced(function* (
       state: ThreadState,
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
