@@ -103,9 +103,7 @@ export const layer = Layer.effectDiscard(
       if (fresh.length > 0) yield* Queue.offer(due, missionId);
     });
 
-    // The startup look, the event fiber and settle rechecks run apart; one at a time keeps a
-    // stale read of a member from overwriting a newer mark.
-    const observing = yield* Semaphore.make(1);
+    const memberObservationLock = yield* Semaphore.make(1);
     const observe = Effect.fn("MissionWakes.observe")(
       function* (
         missionId: string,
@@ -120,7 +118,7 @@ export const layer = Layer.effectDiscard(
         yield* record(missionId, ref, updates);
         yield* store.setMemberMark(ref, mark);
       },
-      (effect) => observing.withPermits(1)(effect),
+      (effect) => memberObservationLock.withPermits(1)(effect),
     );
 
     const localDetail = (threadId: ThreadId) =>
@@ -136,10 +134,8 @@ export const layer = Layer.effectDiscard(
         "{}",
       );
 
-    // A finished subagent's continuation run is dispatched on another fiber after the subagent
-    // ends, so an idle-looking member is looked at again once that run has had time to start.
     const settling = new Set<string>();
-    const recheckWhenSettled = (missionId: string, ref: ScopedThreadRef) => {
+    const recheckAfterContinuationGracePeriod = (missionId: string, ref: ScopedThreadRef) => {
       const key = numberKey(ref);
       if (settling.has(key)) return Effect.void;
       settling.add(key);
@@ -204,7 +200,7 @@ export const layer = Layer.effectDiscard(
       const mark = yield* store.memberMark(ref);
       if (mark === undefined || !wasCompletionHeld(mark)) return;
       if (run) return yield* observeRunWithoutRequests(claim.missionId, ref);
-      yield* recheckWhenSettled(claim.missionId, ref);
+      yield* recheckAfterContinuationGracePeriod(claim.missionId, ref);
     });
 
     const dropUpdates = (missionId: string, lead: ThreadId): Effect.Effect<void> =>
