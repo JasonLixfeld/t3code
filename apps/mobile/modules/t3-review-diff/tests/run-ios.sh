@@ -59,6 +59,7 @@ Path(sys.argv[2]).write_text(source + "\n" + stubs + "\n"
                             + (module / "tests/ios/anchor.swift").read_text() + "\n"
                             + (module / "tests/ios/row-decode.swift").read_text() + "\n"
                             + (module / "tests/ios/token-decode.swift").read_text() + "\n"
+                            + (module / "tests/ios/search.swift").read_text() + "\n"
                             + (module / "tests/ios/geometry.swift").read_text())
 PYTHON
 "$compiler" -O -target "$(uname -m)-apple-ios16.1-macabi" -sdk "$sdk" \

@@ -21,7 +21,7 @@ for fixture in fixtures {
     previousHeight = height
     let fullRange = NSRange(location: 0, length: text.utf16.count)
     let attributed = NSAttributedString(string: text, attributes: [.foregroundColor: UIColor.black])
-    layout.decorate(text: attributed, highlights: [], color: .clear, version: 0)
+    layout.decorate(text: attributed, highlights: [], version: 0)
     let format = UIGraphicsImageRendererFormat()
     format.scale = 1
     format.opaque = false
@@ -39,7 +39,7 @@ for fixture in fixtures {
         check(bytes[y * bitmap.bytesPerRow + x * 4 + 3] == 0, "Ink outside viewport: \(fixture) x=\(x) y=\(y) bpp=\(bitmap.bitsPerPixel) alpha=\(bitmap.alphaInfo.rawValue)")
       }
     }
-    layout.decorate(text: attributed, highlights: [fullRange], color: .green, version: 1)
+    layout.decorate(text: attributed, highlights: [ReviewDiffCodeHighlight(range: fullRange, color: .green)], version: 1)
     check(layout.firstLineHeight + layout.extraHeight == height)
     cases += 1
   }
@@ -50,7 +50,7 @@ for text in ["\t\t\"extends\": \"@riptech/tsconfig/tsconfig.test.json\",", "æ¼¢å
   )
   check(layout.usesNativeLayout && layout.extraHeight == 0, "Unwrapped text must stay on one line: \(text)")
   check(layout.usedWidth > CGFloat(text.utf16.count - 1) * characterWidth, "Tabs must widen the row: \(text)")
-  layout.decorate(text: NSAttributedString(string: text, attributes: [.foregroundColor: UIColor.black]), highlights: [], color: .clear, version: 0)
+  layout.decorate(text: NSAttributedString(string: text, attributes: [.foregroundColor: UIColor.black]), highlights: [], version: 0)
   let format = UIGraphicsImageRendererFormat()
   format.scale = 1
   format.opaque = false

@@ -23,6 +23,12 @@ struct ReviewDiffCodeNote {
   let background: UIColor
 }
 
+/** A background behind code, such as a word diff or a search match. Later ones paint over earlier. */
+struct ReviewDiffCodeHighlight {
+  let range: NSRange
+  let color: UIColor
+}
+
 final class ReviewDiffCodeLayout: NSObject {
   static let unboundedWidth = CGFloat.greatestFiniteMagnitude
 
@@ -94,8 +100,7 @@ final class ReviewDiffCodeLayout: NSObject {
   // A cut line's note is not code, so it takes the warning colors over any token color.
   func decorate(
     text: NSAttributedString,
-    highlights: [NSRange],
-    color: UIColor,
+    highlights: [ReviewDiffCodeHighlight],
     note: ReviewDiffCodeNote? = nil,
     version: Int
   ) {
@@ -113,10 +118,10 @@ final class ReviewDiffCodeLayout: NSObject {
         storage.addAttribute(.foregroundColor, value: value, range: intersection)
       }
     }
-    for range in highlights {
-      let intersection = NSIntersectionRange(range, fullRange)
+    for highlight in highlights {
+      let intersection = NSIntersectionRange(highlight.range, fullRange)
       if intersection.length > 0 {
-        storage.addAttribute(.backgroundColor, value: color, range: intersection)
+        storage.addAttribute(.backgroundColor, value: highlight.color, range: intersection)
       }
     }
     if let note {
@@ -128,6 +133,14 @@ final class ReviewDiffCodeLayout: NSObject {
     }
     storage.endEditing()
     layout.decorationVersion = version
+  }
+
+  /// Where `range` is drawn, relative to the origin passed to `draw`.
+  func rect(for range: NSRange) -> CGRect? {
+    guard usesNativeLayout else { return nil }
+    let layout = nativeLayout()
+    let glyphs = layout.manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+    return layout.manager.boundingRect(forGlyphRange: glyphs, in: layout.container)
   }
 
   func draw(at origin: CGPoint, clip: CGRect) {
