@@ -243,6 +243,20 @@ it("a member whose turn ended while its own work runs is told once that work end
   ]);
 });
 
+it("a held run first seen is owed once, and a run already told is not owed again", () => {
+  const heldRun = { run: { id: "run-7", status: "completed" }, held: true };
+  const firstSeen = memberUpdates(undefined, detail({ status: "working", ...heldRun }), 0);
+  assert.deepEqual(firstSeen.updates, []);
+  assert.deepEqual(updatesOf(firstSeen.mark, detail({ run: heldRun.run, held: false }), 0), [
+    { source: "run:run-7", event: "completed" },
+  ]);
+
+  const told = memberUpdates(markOf(detail({})), detail({ held: false }), 0);
+  const heldAgain = memberUpdates(told.mark, detail({ status: "working", held: true }), 0);
+  assert.deepEqual(heldAgain.updates, []);
+  assert.deepEqual(updatesOf(heldAgain.mark, detail({ held: false }), 0), []);
+});
+
 it("only a move into a state that needs the lead, or a finished turn, is an update", () => {
   assert.equal(updateFor(undefined, "awaiting-input"), undefined);
   assert.equal(updateFor("idle", "working"), undefined);
