@@ -706,6 +706,46 @@ it.effect("a plan ready while a pull request watch holds wakes the lead for the 
   );
 });
 
+it.effect(
+  "a release event that arrives while the startup look records a hold is not missed",
+  () => {
+    const world = makeWorld();
+    const reading = Deferred.makeUnsafe<void>();
+    const release = Deferred.makeUnsafe<void>();
+    world.joinedUnseen.push(third);
+    world.set(third, {
+      id: third,
+      deletedAt: null,
+      status: "completed",
+      latestRunId: "t1",
+      pendingRuntimeRequest: null,
+      hasActionableProposedPlan: false,
+      pendingBackgroundTasks: [subagent],
+    });
+    world.hooks.afterMemberRead = (id) =>
+      id !== third
+        ? Effect.void
+        : Effect.gen(function* () {
+            world.hooks.afterMemberRead = () => Effect.void;
+            yield* Deferred.succeed(reading, undefined);
+            yield* Deferred.await(release);
+          });
+    return withWakes(
+      world,
+      Effect.gen(function* () {
+        yield* Deferred.await(reading);
+        world.set(third, { pendingBackgroundTasks: [] });
+        yield* world.event(third, "subagent.updated", { status: "completed" });
+        yield* Deferred.succeed(release, undefined);
+        assert.equal(
+          yield* nextText(world),
+          told(["member 4 on this machine finished its turn and is idle."]),
+        );
+      }),
+    );
+  },
+);
+
 it.effect("a member held by its pull request watch is told once it is settled or archived", () => {
   const world = makeWorld();
   const watching = (id: ThreadId) => ({
