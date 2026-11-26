@@ -135,7 +135,7 @@ describe("buildMissionMenuItems", () => {
     });
   });
 
-  it("gives a mission's lead the mission's own group, deletable only with no members", () => {
+  it("gives a mission's lead the mission's own group, ended once each member is settled", () => {
     const led = (members: ReadonlyArray<MissionMember>): ReadonlyArray<MissionHost> => [
       {
         environmentId: DESK,
@@ -175,11 +175,36 @@ describe("buildMissionMenuItems", () => {
       role: "member",
       state,
     });
-    expect(group([member("add-pending")]).at(-1)).toEqual([
-      "mission-delete:env-desk:0123456789ab",
-      true,
-      "Has threads",
+    const here = (threadId: string, extra: Partial<MissionMember> = {}): MissionMember => ({
+      ref: { environmentId: DESK, threadId: ThreadId.make(threadId) },
+      role: "member",
+      state: "active",
+      ...extra,
+    });
+    const end = (members: ReadonlyArray<MissionMember>) => group(members).at(-1)!.slice(1);
+    expect(end([here("a", { settled: true }), here("b", { settled: true })])).toEqual([
+      false,
+      undefined,
     ]);
+    expect(end([here("a", { settled: true }), here("b")])).toEqual([true, "Has active threads"]);
+    expect(end([here("a", { settled: true, state: "release-pending" })])).toEqual([
+      true,
+      "Has active threads",
+    ]);
+    expect(end([here("a", { settled: true }), { ...member("active"), settled: true }])).toEqual([
+      true,
+      "Has threads on another machine",
+    ]);
+    expect(end([member("add-pending")])).toEqual([true, "Has threads on another machine"]);
+    expect(end([member("release-pending")])).toEqual([true, "Has threads on another machine"]);
+    const item = buildMissionMenuItems(
+      [thread(DESK, "lead")],
+      led([here("a", { settled: true })]),
+      label,
+      allowed,
+    ).at(-1);
+    expect(item).toMatchObject({ label: "End mission", icon: "check" });
+    expect(item?.destructive).toBeUndefined();
     const barred = buildMissionMenuItems([thread(DESK, "lead")], led([]), label, () => false);
     for (const prefix of ["mission-new-thread:", "mission-prompt:"]) {
       expect(barred.find((item) => item.id.startsWith(prefix))).toMatchObject({
@@ -536,6 +561,37 @@ describe("groupSidebarMissions", () => {
     expect(
       groupSidebarMissions(hostOf(waiting), arrived, new Set(["env-desk:api"])).missions,
     ).toEqual([]);
+  });
+
+  it("hides a settled member the list trimmed, once its machine is done syncing", () => {
+    const settled = (
+      threadId: string,
+      state: MissionMember["state"] = "active",
+      role: MissionMember["role"] = "member",
+    ): MissionMember => ({ ...member(threadId, state, role), settled: true });
+    const trimmed = mission("dddddddddddd", [
+      settled("lead", "active", "lead"),
+      settled("trimmed"),
+      member("loading", "active"),
+      settled("leaving", "release-pending"),
+      settled("joining", "add-pending"),
+      settled("refused", "add-refused"),
+      settled("stuck", "release-refused"),
+      { ...member("away", "offline", "member", laptop), settled: true },
+    ]);
+    const shown = (synced: ReadonlySet<EnvironmentId>) =>
+      rowsOf(groupSidebarMissions(hostOf(trimmed), [], null, new Set(), synced))[0]![2];
+    const kept = ["loading", "leaving", "joining", "refused", "stuck", "away"];
+    expect(shown(new Set([environmentId, laptop]))).toEqual(kept);
+    expect(shown(new Set())).toEqual(["trimmed", ...kept]);
+    const result = groupSidebarMissions(
+      hostOf(trimmed),
+      [],
+      null,
+      new Set(),
+      new Set([environmentId]),
+    );
+    expect(result.missions[0]!.lead).toMatchObject({ member: { role: "lead" }, thread: null });
   });
 
   it("leaves every thread to the other lists when no mission is listed", () => {

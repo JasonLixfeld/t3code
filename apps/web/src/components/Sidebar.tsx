@@ -157,6 +157,7 @@ import {
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom } from "../state/server";
+import { liveShellEnvironmentIdsAtom } from "../state/shell";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
@@ -480,11 +481,18 @@ function useSidebarThreads(input: {
     folderGroups,
     keepEmptyFolders: keepEmpty,
   } = input;
+  const liveEnvironmentIds = useAtomValue(liveShellEnvironmentIdsAtom);
   const {
     missions,
     threadKeys: missionThreadKeys,
     leads: missionLeadEntries,
-  } = groupSidebarMissions(missionHosts, threads, scopedProjectKeys, unavailableMissionLeads);
+  } = groupSidebarMissions(
+    missionHosts,
+    threads,
+    scopedProjectKeys,
+    unavailableMissionLeads,
+    liveEnvironmentIds,
+  );
   const missionExpandedById = useUiStateStore((store) => store.missionExpandedById);
   const threadsOf = (entries: ReadonlyArray<{ readonly thread: EnvironmentThreadShell | null }>) =>
     entries.flatMap((entry) => (entry.thread === null ? [] : [entry.thread]));

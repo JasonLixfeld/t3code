@@ -3,6 +3,7 @@ import {
   createEnvironmentShellAtoms,
   createEnvironmentShellSummaryAtom,
   createEnvironmentSnapshotAtom,
+  createLiveShellEnvironmentIdsAtom,
   EMPTY_SHELL_STATE,
   type EnvironmentShellState,
 } from "@t3tools/client-runtime/state/shell";
@@ -19,6 +20,10 @@ export const environmentSnapshotAtom = createEnvironmentSnapshotAtom(environment
 export const environmentShellSummaryAtom = createEnvironmentShellSummaryAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   shellStateValueAtom: environmentShell.stateValueAtom,
+});
+export const liveShellEnvironmentIdsAtom = createLiveShellEnvironmentIdsAtom({
+  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  statusAtom: environmentShell.statusAtom,
 });
 
 const EMPTY_ENVIRONMENT_SHELL_STATE_ATOM = Atom.make<EnvironmentShellState>(EMPTY_SHELL_STATE);
