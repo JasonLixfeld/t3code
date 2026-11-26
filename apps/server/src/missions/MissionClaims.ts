@@ -318,7 +318,10 @@ const make = Effect.gen(function* () {
           );
           if (tried.held) break;
           const freed = yield* Effect.raceFirst(
-            threadCommands.withLock(tried.busy, Effect.succeed(true)),
+            threadCommands.withLock(
+              tried.busy,
+              Effect.map(Clock.currentTimeMillis, (now) => now < deadline),
+            ),
             Effect.as(untilDeadline, false),
           );
           if (!freed) return yield* fail(END_BUSY);

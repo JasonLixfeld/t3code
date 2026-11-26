@@ -1374,6 +1374,55 @@ it.effect("ending a mission refuses once its threads stay busy past the wait", (
   );
 });
 
+it.effect("a thread that frees only after the wait ran out still refuses the end", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: localMember });
+      settle(world, localMember);
+      // Its timer never fires, so only the freed lock can answer the wait.
+      let now = 0;
+      const nanos = () => BigInt(now) * 1_000_000n;
+      const stopped: Clock.Clock = {
+        currentTimeMillisUnsafe: () => now,
+        currentTimeMillis: Effect.sync(() => now),
+        currentTimeNanosUnsafe: nanos,
+        currentTimeNanos: Effect.sync(nanos),
+        monotonicTimeNanosUnsafe: nanos,
+        monotonicTimeNanos: Effect.sync(nanos),
+        sleep: () => Effect.never,
+      };
+      const holding = yield* Deferred.make<void>();
+      const free = yield* Deferred.make<void>();
+      const holder = yield* Effect.forkChild(
+        threadCommands.withLock(
+          localMember.threadId,
+          Deferred.succeed(holding, undefined).pipe(Effect.andThen(Deferred.await(free))),
+        ),
+      );
+      yield* Deferred.await(holding);
+      const waits = yield* Deferred.make<void>();
+      world.beforeThreadLock = (threadId) =>
+        threadId === localMember.threadId ? Deferred.succeed(waits, undefined) : Effect.void;
+      const ending = yield* Effect.forkChild(
+        missions
+          .deleteMission({ missionId })
+          .pipe(Effect.provideService(Clock.Clock, stopped), Effect.flip),
+      );
+      yield* Deferred.await(waits);
+      now = Duration.toMillis(MissionClaims.END_WAIT) + 1;
+      yield* Deferred.succeed(free, undefined);
+      yield* Fiber.join(holder);
+      assert.include((yield* Fiber.join(ending)).message, "stayed busy");
+      assert.equal((yield* listed).missions.length, 1);
+    }),
+  );
+});
+
 it.effect(
   "a failed settlement read leaves every mission's flags out, without reading again",
   () => {
