@@ -2117,7 +2117,7 @@ const userVoice = (option: unknown) =>
     : option;
 
 /** The text of question-tool calls: AskUserQuestion and both Codex request_user_input shapes. */
-export const askToolTexts = (run: SecretRun) =>
+const askToolTexts = (run: SecretRun) =>
   run.calls
     .filter((call) => ASK_TOOLS.has(call.tool))
     .flatMap((call) => {
