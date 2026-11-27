@@ -40,7 +40,7 @@ it("resets a mission prompt another selected environment set, only with both sco
     [true, true],
     [true, false],
     [false, true],
-  ]) {
+  ] as const) {
     state.writes = writes;
     state.operates = operates;
     state.update.mockClear();
