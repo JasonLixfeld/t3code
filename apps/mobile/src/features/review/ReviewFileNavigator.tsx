@@ -2,7 +2,17 @@ import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { splitSearchText } from "@t3tools/shared/paletteSearch";
 import { LegendList } from "@legendapp/list/react-native";
 import { useGT } from "gt-react-native";
-import { type Ref, use, useImperativeHandle, useRef, useState } from "react";
+import {
+  type Ref,
+  memo,
+  use,
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { type TextInputInstance, View } from "react-native";
 
 import { AppBar } from "../../components/ui/AppBar";
@@ -43,6 +53,7 @@ export interface ReviewFileNavigatorFind {
   readonly partial: boolean;
   readonly onChangeQuery: (query: string) => void;
   readonly onSelectMatch: (match: ReviewFindMatch) => void;
+  readonly onContentsSearchOpenChange: (open: boolean) => void;
 }
 
 type SearchMode = "name" | "contents";
@@ -87,7 +98,7 @@ const ReviewFileNavigatorRow = function ReviewFileNavigatorRow(props: {
   );
 };
 
-function ReviewFindFileResult(props: {
+const ReviewFindFileResult = memo(function ReviewFindFileResult(props: {
   readonly file: ReviewFindFile;
   readonly path: string;
   readonly activeIndex: number | null;
@@ -151,7 +162,7 @@ function ReviewFindFileResult(props: {
       ) : null}
     </View>
   );
-}
+});
 
 interface ReviewFileNavigatorProps {
   readonly files: ReadonlyArray<ReviewNavigatorFile>;
@@ -209,10 +220,25 @@ export function ReviewFileNavigator({
     setFileSelection({ sectionId, fileId });
     afterSheetCloses(() => onSelectFile(fileId));
   };
-  const handleSelectMatch = (index: number) => {
-    const match = find.result.matches[index];
-    if (match) afterSheetCloses(() => find.onSelectMatch(match));
-  };
+  const { result: findResult, onSelectMatch } = find;
+  const handleSelectMatch = useCallback(
+    (index: number) => {
+      const match = findResult.matchAt(index);
+      if (!match) return;
+      if (closeInspectorSheet) closeInspectorSheet(() => onSelectMatch(match));
+      else onSelectMatch(match);
+    },
+    [closeInspectorSheet, findResult, onSelectMatch],
+  );
+  const reportContentsSearchOpen = useEffectEvent((open: boolean) =>
+    find.onContentsSearchOpenChange(open),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- find scans the diff only while a search shows its results, and this inspector can unmount in Contents
+  useEffect(() => {
+    if (mode !== "contents") return;
+    reportContentsSearchOpen(true);
+    return () => reportContentsSearchOpen(false);
+  }, [mode]);
   const handleChangeMode = (next: SearchMode) => {
     if (next === mode) return;
     if (next === "contents") {
@@ -319,7 +345,13 @@ export function ReviewFileNavigator({
               <ReviewFindFileResult
                 file={item}
                 path={pathById.get(item.fileId) ?? item.fileId}
-                activeIndex={find.activeIndex}
+                activeIndex={
+                  find.activeIndex !== null &&
+                  find.activeIndex >= item.firstMatchIndex &&
+                  find.activeIndex < item.firstMatchIndex + item.matchCount
+                    ? find.activeIndex
+                    : null
+                }
                 onSelectMatch={handleSelectMatch}
               />
             )}

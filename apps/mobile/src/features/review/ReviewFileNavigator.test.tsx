@@ -37,10 +37,12 @@ vi.mock("../../components/ui/SheetPane", () => ({
 vi.mock("../../components/ui/ScreenContent", () => ({
   ScreenContent: ({ children }: { children: ReactNode }) => children,
 }));
+const paneListItemRenders = vi.hoisted(() => ({ count: 0 }));
 vi.mock("../../components/ui/PaneListItem", () => ({
-  PaneListItem: (props: { children: ReactNode; onPress: () => void }) => (
-    <button onClick={props.onPress}>{props.children}</button>
-  ),
+  PaneListItem: (props: { children: ReactNode; onPress: () => void }) => {
+    paneListItemRenders.count += 1;
+    return <button onClick={props.onPress}>{props.children}</button>;
+  },
 }));
 vi.mock("../../components/ui/SearchField", () => ({
   SearchField: (props: { value: string; onChangeText: (value: string) => void }) => (
@@ -100,15 +102,23 @@ function setup(closeSheet: ((then?: () => void) => void) | null = null) {
   const container = document.body.appendChild(document.createElement("div"));
   let root = createRoot(container);
   let findQuery = "";
+  let activeIndex: number | null = null;
+  const results = new Map<string, ReturnType<typeof findInReviewRows>>();
+  const resultFor = (query: string) => {
+    if (!results.has(query)) results.set(query, findInReviewRows(rows, query));
+    return results.get(query)!;
+  };
   const onSelectMatch = vi.fn();
+  const onContentsSearchOpenChange = vi.fn();
   const tree = () => {
     const find: ReviewFileNavigatorFind = {
       query: findQuery,
-      result: findInReviewRows(rows, findQuery),
-      activeIndex: null,
+      result: resultFor(findQuery),
+      activeIndex,
       partial: false,
       onChangeQuery,
       onSelectMatch,
+      onContentsSearchOpenChange,
     };
     return (
       <InspectorSheetContext value={closeSheet}>
@@ -120,8 +130,9 @@ function setup(closeSheet: ((then?: () => void) => void) | null = null) {
     findQuery = query;
     root.render(tree());
   });
-  const render = (query: string) => {
+  const render = (query: string, active: number | null = null) => {
     findQuery = query;
+    activeIndex = active;
     act(() => root.render(tree()));
   };
   const reopen = () => {
@@ -223,6 +234,17 @@ it("keeps an active find query when Contents opens with an empty Name field", ()
   expect(screen.container.querySelector("input")!.value).toBe("app");
 });
 
+it("re-renders only the Contents group that holds the active match when stepping", () => {
+  using screen = setup();
+  screen.render("app", 0);
+  screen.chooseMode("Contents");
+
+  paneListItemRenders.count = 0;
+  screen.render("app", 1);
+
+  expect(paneListItemRenders.count).toBe(2);
+});
+
 it("closes the inspector sheet before jumping to a chosen match", () => {
   let afterClose: (() => void) | undefined;
   using screen = setup((then) => {
@@ -236,5 +258,5 @@ it("closes the inspector sheet before jumping to a chosen match", () => {
 
   expect(screen.onSelectMatch).not.toHaveBeenCalled();
   act(() => afterClose?.());
-  expect(screen.onSelectMatch).toHaveBeenCalledWith(findInReviewRows(rows, "app").matches[2]);
+  expect(screen.onSelectMatch).toHaveBeenCalledWith(findInReviewRows(rows, "app").matchAt(2));
 });

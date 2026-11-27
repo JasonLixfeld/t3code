@@ -33,16 +33,33 @@ function setup() {
   };
 }
 
-it("autofocuses the find field only when it is opened from the header", () => {
+it("asks to focus the find field on every header press, and never from Contents typing", () => {
   using screen = setup();
 
   screen.run((find) => find.changeQuery("app"));
   expect(screen.find().open).toBe(true);
-  expect(screen.find().autoFocus).toBe(false);
+  expect(screen.find().focusRequestId).toBe(0);
+
+  screen.run((find) => find.openFromHeader());
+  const first = screen.find().focusRequestId;
+  screen.run((find) => find.openFromHeader());
+  expect(screen.find().focusRequestId).toBeGreaterThan(first);
 
   screen.run((find) => find.close());
-  screen.run((find) => find.openFromHeader());
-  expect(screen.find().autoFocus).toBe(true);
+  screen.run((find) => find.changeQuery("apple"));
+  expect(screen.find().focusRequestId).toBe(0);
+});
+
+it("searches only while Find or the Contents search is open", () => {
+  using screen = setup();
+  screen.run((find) => find.changeQuery("app"));
+  expect(screen.find().result.matchCount).toBe(2);
+
+  screen.run((find) => find.close());
+  expect(screen.find().result.matchCount).toBe(0);
+
+  screen.run((find) => find.setContentsSearchOpen(true));
+  expect(screen.find().result.matchCount).toBe(2);
 });
 
 it("steps through matches with wrap-around and reveals each one", () => {
@@ -59,7 +76,7 @@ it("steps through matches with wrap-around and reveals each one", () => {
 it("reveals the exact match chosen under an older query", () => {
   using screen = setup();
   screen.run((find) => find.changeQuery("app"));
-  const chosen = screen.find().result.matches[1]!;
+  const chosen = screen.find().result.matchAt(1)!;
 
   screen.run((find) => find.changeQuery("appl"));
   screen.run((find) => find.selectMatch(chosen));

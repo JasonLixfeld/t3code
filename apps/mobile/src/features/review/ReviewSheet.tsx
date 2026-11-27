@@ -480,6 +480,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
         partial: findPartial,
         onChangeQuery: find.changeQuery,
         onSelectMatch: find.selectMatch,
+        onContentsSearchOpenChange: find.setContentsSearchOpen,
       }}
     />
   );
@@ -674,7 +675,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     query={find.query}
                     result={find.result}
                     activeIndex={find.activeIndex}
-                    autoFocus={find.autoFocus}
+                    focusRequestId={find.focusRequestId}
                     resultIsStale={find.resultIsStale}
                     partial={findPartial}
                     onChangeQuery={find.changeQuery}

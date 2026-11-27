@@ -34,39 +34,108 @@ export interface ReviewFindFile {
   readonly previewLines: ReadonlyArray<ReviewFindLine>;
 }
 
-export interface ReviewFindResult {
-  readonly matches: ReadonlyArray<ReviewFindMatch>;
+/** Occurrences sit in parallel typed arrays, so a dense search keeps exact counts cheaply. */
+export class ReviewFindResult {
+  readonly matchCount: number;
   readonly files: ReadonlyArray<ReviewFindFile>;
+  private readonly rowIds: ReadonlyArray<string>;
+  private readonly rowFileIds: ReadonlyArray<string>;
+  private readonly rowFirstMatch: ReadonlyArray<number>;
+  private readonly rowById: ReadonlyMap<string, number>;
+  private readonly matchRows: Int32Array;
+  private readonly matchStarts: Int32Array;
+  private readonly matchEnds: Int32Array;
+
+  constructor(input: {
+    readonly matchCount: number;
+    readonly files: ReadonlyArray<ReviewFindFile>;
+    readonly rowIds: ReadonlyArray<string>;
+    readonly rowFileIds: ReadonlyArray<string>;
+    readonly rowFirstMatch: ReadonlyArray<number>;
+    readonly matchRows: Int32Array;
+    readonly matchStarts: Int32Array;
+    readonly matchEnds: Int32Array;
+  }) {
+    this.matchCount = input.matchCount;
+    this.files = input.files;
+    this.rowIds = input.rowIds;
+    this.rowFileIds = input.rowFileIds;
+    this.rowFirstMatch = input.rowFirstMatch;
+    this.rowById = new Map(input.rowIds.map((rowId, index) => [rowId, index]));
+    this.matchRows = input.matchRows;
+    this.matchStarts = input.matchStarts;
+    this.matchEnds = input.matchEnds;
+  }
+
+  matchAt(index: number): ReviewFindMatch | undefined {
+    if (index < 0 || index >= this.matchCount) return undefined;
+    const row = this.matchRows[index]!;
+    return {
+      rowId: this.rowIds[row]!,
+      fileId: this.rowFileIds[row]!,
+      start: this.matchStarts[index]!,
+      end: this.matchEnds[index]!,
+    };
+  }
+
+  indexOf(rowId: string, start: number): number {
+    const row = this.rowById.get(rowId);
+    if (row === undefined) return -1;
+    let low = this.rowFirstMatch[row]!;
+    let high = (this.rowFirstMatch[row + 1] ?? this.matchCount) - 1;
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      const middleStart = this.matchStarts[middle]!;
+      if (middleStart === start) return middle;
+      if (middleStart < start) low = middle + 1;
+      else high = middle - 1;
+    }
+    return -1;
+  }
 }
 
-export const EMPTY_REVIEW_FIND_RESULT: ReviewFindResult = {
-  matches: [],
+export const EMPTY_REVIEW_FIND_RESULT = new ReviewFindResult({
+  matchCount: 0,
   files: [],
-};
+  rowIds: [],
+  rowFileIds: [],
+  rowFirstMatch: [],
+  matchRows: new Int32Array(0),
+  matchStarts: new Int32Array(0),
+  matchEnds: new Int32Array(0),
+});
 
 // Match the default case folding in @pierre/diffs, which omits the `u` flag.
 function literalCaseInsensitivePattern(query: string): RegExp {
   return new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
 }
 
+function isLowSurrogate(code: string, index: number): boolean {
+  const unit = code.charCodeAt(index);
+  return unit >= 0xdc00 && unit <= 0xdfff;
+}
+
 function presentLine(
   row: NativeReviewDiffRow,
   code: string,
-  matches: ReadonlyArray<ReviewFindMatch>,
+  starts: ReadonlyArray<number>,
+  ends: ReadonlyArray<number>,
   firstMatchIndex: number,
 ): ReviewFindLine {
-  const first = matches[0]!;
+  const firstStart = starts[0]!;
   const indent = code.length - code.trimStart().length;
-  const start = Math.min(first.start, Math.max(indent, first.start - LEADING_CONTEXT));
-  const end = Math.min(code.length, start + SNIPPET_LENGTH);
+  let start = Math.min(firstStart, Math.max(indent, firstStart - LEADING_CONTEXT));
+  if (start > 0 && isLowSurrogate(code, start)) start -= 1;
+  let end = Math.min(code.length, start + SNIPPET_LENGTH);
+  if (end < code.length && isLowSurrogate(code, end)) end += 1;
   const prefix = start > indent ? "…" : "";
   const suffix = end < code.length ? "…" : "";
   const ranges: SearchRange[] = [];
-  for (const match of matches) {
-    if (ranges.length === HIGHLIGHTS_PER_LINE || match.start >= end) break;
+  for (let index = 0; index < starts.length; index++) {
+    if (ranges.length === HIGHLIGHTS_PER_LINE || starts[index]! >= end) break;
     ranges.push({
-      start: match.start - start + prefix.length,
-      end: Math.min(match.end, end) - start + prefix.length,
+      start: starts[index]! - start + prefix.length,
+      end: Math.min(ends[index]!, end) - start + prefix.length,
     });
   }
   const change = row.change ?? "context";
@@ -80,8 +149,15 @@ function presentLine(
     text: prefix + code.slice(start, end) + suffix,
     ranges,
     firstMatchIndex,
-    matchCount: matches.length,
+    matchCount: starts.length,
   };
+}
+
+function grow(array: Int32Array, size: number): Int32Array {
+  if (size <= array.length) return array;
+  const next = new Int32Array(Math.max(size, array.length * 2));
+  next.set(array);
+  return next;
 }
 
 export function findInReviewRows(
@@ -90,7 +166,13 @@ export function findInReviewRows(
 ): ReviewFindResult {
   if (query.length === 0) return EMPTY_REVIEW_FIND_RESULT;
   const pattern = literalCaseInsensitivePattern(query);
-  const matches: ReviewFindMatch[] = [];
+  let matchCount = 0;
+  let matchRows: Int32Array = new Int32Array(64);
+  let matchStarts: Int32Array = new Int32Array(64);
+  let matchEnds: Int32Array = new Int32Array(64);
+  const rowIds: string[] = [];
+  const rowFileIds: string[] = [];
+  const rowFirstMatch: number[] = [];
   const files: Array<{
     fileId: string;
     matchCount: number;
@@ -102,46 +184,59 @@ export function findInReviewRows(
   for (const row of rows) {
     if (row.kind !== "line" || !row.content) continue;
     const code = row.noteStart === undefined ? row.content : row.content.slice(0, row.noteStart);
-    const rowStart = matches.length;
+    const starts: number[] = [];
+    const ends: number[] = [];
     for (const found of code.matchAll(pattern)) {
-      const start = found.index;
-      matches.push({
-        rowId: row.id,
-        fileId: row.fileId ?? "",
-        start,
-        end: start + found[0].length,
-      });
+      starts.push(found.index);
+      ends.push(found.index + found[0].length);
     }
-    if (matches.length > rowStart) {
-      const fileId = row.fileId ?? "";
-      let file = files.at(-1);
-      if (file?.fileId !== fileId) {
-        file = { fileId, matchCount: 0, firstMatchIndex: rowStart, lineCount: 0, previewLines: [] };
-        files.push(file);
-      }
-      file.matchCount += matches.length - rowStart;
-      file.lineCount += 1;
-      if (
-        file.previewLines.length < REVIEW_FIND_LINES_PER_FILE &&
-        shownLines < REVIEW_FIND_MAX_LINES
-      ) {
-        file.previewLines.push(presentLine(row, code, matches.slice(rowStart), rowStart));
-        shownLines += 1;
-      }
+    if (starts.length === 0) continue;
+    const rowStart = matchCount;
+    const rowIndex = rowIds.length;
+    const fileId = row.fileId ?? "";
+    rowIds.push(row.id);
+    rowFileIds.push(fileId);
+    rowFirstMatch.push(rowStart);
+    matchCount += starts.length;
+    matchRows = grow(matchRows, matchCount);
+    matchStarts = grow(matchStarts, matchCount);
+    matchEnds = grow(matchEnds, matchCount);
+    matchRows.fill(rowIndex, rowStart, matchCount);
+    matchStarts.set(starts, rowStart);
+    matchEnds.set(ends, rowStart);
+    let file = files.at(-1);
+    if (file?.fileId !== fileId) {
+      file = { fileId, matchCount: 0, firstMatchIndex: rowStart, lineCount: 0, previewLines: [] };
+      files.push(file);
+    }
+    file.matchCount += starts.length;
+    file.lineCount += 1;
+    if (
+      file.previewLines.length < REVIEW_FIND_LINES_PER_FILE &&
+      shownLines < REVIEW_FIND_MAX_LINES
+    ) {
+      file.previewLines.push(presentLine(row, code, starts, ends, rowStart));
+      shownLines += 1;
     }
   }
-  return { matches, files };
+  return new ReviewFindResult({
+    matchCount,
+    files,
+    rowIds,
+    rowFileIds,
+    rowFirstMatch,
+    matchRows,
+    matchStarts,
+    matchEnds,
+  });
 }
 
 export function resolveReviewFindActiveIndex(
-  matches: ReadonlyArray<ReviewFindMatch>,
+  result: ReviewFindResult,
   active: { readonly rowId: string; readonly start: number } | null,
 ): number | null {
-  if (matches.length === 0) return null;
-  const index = active
-    ? matches.findIndex((match) => match.rowId === active.rowId && match.start === active.start)
-    : -1;
-  return Math.max(0, index);
+  if (result.matchCount === 0) return null;
+  return Math.max(0, active ? result.indexOf(active.rowId, active.start) : -1);
 }
 
 export function stepReviewFindIndex(index: number, direction: 1 | -1, count: number): number {
@@ -149,20 +244,22 @@ export function stepReviewFindIndex(index: number, direction: 1 | -1, count: num
 }
 
 export function reviewFindHighlightsJson(
-  matches: ReadonlyArray<ReviewFindMatch>,
+  result: ReviewFindResult,
   activeIndex: number | null,
 ): string {
-  const active = activeIndex === null ? undefined : matches[activeIndex];
+  const active = activeIndex === null ? undefined : result.matchAt(activeIndex);
   if (activeIndex === null || active === undefined) return "";
   const first = Math.max(
     0,
     Math.min(
       activeIndex - REVIEW_FIND_HIGHLIGHT_LIMIT / 2,
-      matches.length - REVIEW_FIND_HIGHLIGHT_LIMIT,
+      result.matchCount - REVIEW_FIND_HIGHLIGHT_LIMIT,
     ),
   );
+  const last = Math.min(result.matchCount, first + REVIEW_FIND_HIGHLIGHT_LIMIT);
   const ranges = new Map<string, Array<[number, number]>>();
-  for (const match of matches.slice(first, first + REVIEW_FIND_HIGHLIGHT_LIMIT)) {
+  for (let index = first; index < last; index++) {
+    const match = result.matchAt(index)!;
     const rowRanges = ranges.get(match.rowId);
     if (rowRanges) rowRanges.push([match.start, match.end]);
     else ranges.set(match.rowId, [[match.start, match.end]]);
