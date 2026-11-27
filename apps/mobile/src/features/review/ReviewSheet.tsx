@@ -61,7 +61,12 @@ import { resolveReviewAvailability } from "./reviewAvailability";
 import { useHardwareBack } from "../../lib/backHandler";
 import { ReviewFindBar } from "./ReviewFindBar";
 import { ReviewFileNavigator, type ReviewFileNavigatorHandle } from "./ReviewFileNavigator";
-import { findInReviewRows, reviewFindHighlightsJson } from "./reviewFind";
+import {
+  findInReviewRows,
+  resolveReviewFindActiveIndex,
+  reviewFindHighlightsJson,
+  stepReviewFindIndex,
+} from "./reviewFind";
 import { buildReviewSectionMenu } from "./review-section-menu";
 import { reportShowcaseSceneRendered } from "../showcase/showcaseRenderSignal";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
@@ -469,15 +474,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     [nativeReviewDiffData.rows, findQuery],
   );
   const findMatches = findResult.matches;
-  const findActiveIndex =
-    findMatches.length === 0
-      ? null
-      : Math.max(
-          0,
-          findMatches.findIndex(
-            (match) => match.rowId === find.active?.rowId && match.start === find.active.start,
-          ),
-        );
+  const findActiveIndex = resolveReviewFindActiveIndex(findMatches, find.active);
   const activeMatch = findActiveIndex === null ? undefined : findMatches[findActiveIndex];
   const searchHighlightsJson = useMemo(
     () => (find.open ? reviewFindHighlightsJson(findMatches, findActiveIndex) : ""),
@@ -497,7 +494,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     setFind((current) => ({ open: true, query, active: null, revision: current.revision + 1 }));
   const stepFind = (direction: 1 | -1) => {
     if (findActiveIndex === null) return;
-    selectFindMatch((findActiveIndex + direction + findMatches.length) % findMatches.length);
+    selectFindMatch(stepReviewFindIndex(findActiveIndex, direction, findMatches.length));
   };
   const closeFind = () => setFind((current) => ({ ...current, open: false }));
   useHardwareBack(find.open, () => {
