@@ -25,6 +25,7 @@ import { SheetPane } from "../../components/ui/SheetPane";
 import { useBarOverlap } from "../../components/ui/useBarInset";
 import { cn } from "../../lib/cn";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { useWorkspacePaneState } from "../layout/AdaptiveWorkspaceLayout";
 import { InspectorSheetContext } from "../layout/workspace-inspector-sheet";
 import { ReviewFindPartialHint } from "./ReviewFindBar";
 import type {
@@ -233,12 +234,15 @@ export function ReviewFileNavigator({
   const reportContentsSearchOpen = useEffectEvent((open: boolean) =>
     find.onContentsSearchOpenChange(open),
   );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- find scans the diff only while a search shows its results, and this inspector can unmount in Contents
+  const { panes } = useWorkspacePaneState();
+  const contentsSearchShown =
+    mode === "contents" && (closeInspectorSheet !== null || panes.auxiliaryPaneVisible);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- find scans the diff only while a search shows its results, and this inspector can hide or unmount in Contents
   useEffect(() => {
-    if (mode !== "contents") return;
+    if (!contentsSearchShown) return;
     reportContentsSearchOpen(true);
     return () => reportContentsSearchOpen(false);
-  }, [mode]);
+  }, [contentsSearchShown]);
   const handleChangeMode = (next: SearchMode) => {
     if (next === mode) return;
     if (next === "contents") {

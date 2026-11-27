@@ -64,6 +64,8 @@ vi.mock("../../components/ui/SegmentedControl", () => ({
   ),
 }));
 vi.mock("./ReviewFindBar", () => ({ ReviewFindPartialHint: () => null }));
+const panes = vi.hoisted(() => ({ auxiliaryPaneVisible: true }));
+vi.mock("../layout/AdaptiveWorkspaceLayout", () => ({ useWorkspacePaneState: () => ({ panes }) }));
 vi.mock("../layout/workspace-inspector-sheet", async () => {
   const { createContext } = await import("react");
   return { InspectorSheetContext: createContext<((then?: () => void) => void) | null>(null) };
@@ -161,6 +163,7 @@ function setup(closeSheet: ((then?: () => void) => void) | null = null) {
     buttons,
     onSelectMatch,
     onChangeQuery,
+    onContentsSearchOpenChange,
     [Symbol.dispose]() {
       act(() => root.unmount());
       container.remove();
@@ -243,6 +246,26 @@ it("re-renders only the Contents group that holds the active match when stepping
   screen.render("app", 1);
 
   expect(paneListItemRenders.count).toBe(2);
+});
+
+it("reports Contents open only while the inspector column shows it", () => {
+  panes.auxiliaryPaneVisible = false;
+  try {
+    using screen = setup();
+    screen.render("app");
+    screen.chooseMode("Contents");
+    expect(screen.onContentsSearchOpenChange).not.toHaveBeenCalledWith(true);
+
+    panes.auxiliaryPaneVisible = true;
+    screen.render("app");
+    expect(screen.onContentsSearchOpenChange).toHaveBeenLastCalledWith(true);
+
+    panes.auxiliaryPaneVisible = false;
+    screen.render("app");
+    expect(screen.onContentsSearchOpenChange).toHaveBeenLastCalledWith(false);
+  } finally {
+    panes.auxiliaryPaneVisible = true;
+  }
 });
 
 it("closes the inspector sheet before jumping to a chosen match", () => {
