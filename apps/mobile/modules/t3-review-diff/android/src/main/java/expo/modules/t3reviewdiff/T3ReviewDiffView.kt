@@ -46,7 +46,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   private var pendingMatch: SearchMatch? = null
   private var searchHighlights = SearchHighlights()
   private var pendingMatchAnimated = false
-  private var programmaticScrollActive = false
+  private var deferVisibleFileEventUntilScrollEnds = false
   private var firstVisibleIndex = 0
   private var lastVisibleFileId: String? = null
   private var tokensResetKey = ""
@@ -92,8 +92,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
         ),
       )
       firstVisibleIndex = first
-      // An animated jump reports only where it lands, so it does not load every file it passes.
-      if (!programmaticScrollActive) emitVisibleFile(first)
+      if (!deferVisibleFileEventUntilScrollEnds) emitVisibleFile(first)
     }
 
     addView(
@@ -321,7 +320,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     when (event.actionMasked) {
       MotionEvent.ACTION_DOWN -> {
         pendingMatch = null
-        programmaticScrollActive = false
+        deferVisibleFileEventUntilScrollEnds = false
         verticalScroller.forceFinished(true)
         horizontalScroller.forceFinished(true)
         dragAxis = null
@@ -440,8 +439,8 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     if (verticalScroller.computeScrollOffset()) {
       canvasView.setVerticalOffset(verticalScroller.currY)
       animating = true
-    } else if (programmaticScrollActive) {
-      programmaticScrollActive = false
+    } else if (deferVisibleFileEventUntilScrollEnds) {
+      deferVisibleFileEventUntilScrollEnds = false
       emitVisibleFile(firstVisibleIndex)
     }
     if (horizontalScroller.computeScrollOffset()) {
@@ -538,7 +537,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
 
   private fun scrollToY(y: Int, animated: Boolean) {
     val target = y.coerceIn(0, canvasView.maxVerticalOffset())
-    programmaticScrollActive = animated
+    deferVisibleFileEventUntilScrollEnds = animated
     if (animated) {
       verticalScroller.startScroll(
         0,
