@@ -705,8 +705,9 @@ it("retains each thread's diff selection when returning from another thread or S
   });
 });
 
-it("refuses to send a mission draft that left its mission's machine", async () => {
-  using _environment = installFakeEnvironment([], { acceptCommands: true });
+it("refuses to send a mission draft that left its mission's machine, and shows an empty server thread's mark until it is sent plain", async () => {
+  const thread = threadWithHistory("empty-mission-lead", 0);
+  using _environment = installFakeEnvironment([thread], { acceptCommands: true });
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
@@ -721,10 +722,15 @@ it("refuses to send a mission draft that left its mission's machine", async () =
     thread: { environmentId: EnvironmentId.make("mission-machine"), threadId },
   });
   using _mark = { [Symbol.dispose]: () => clearMissionDraft(draftId) };
+  const threadRef = scopeThreadRef(ENVIRONMENT_ID, thread.id);
+  const markId = serverThreadMissionDraftId(threadRef);
+  markMissionDraft(markId, { intent: { kind: "new" }, thread: threadRef });
+  using _threadMark = { [Symbol.dispose]: () => clearMissionDraft(markId) };
   using launch = holdRpc(ORCHESTRATION_V2_WS_METHODS.launchThread, Effect.interrupt);
   const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
     router: false,
   });
   const editor = page.getByTestId("composer-editor");
@@ -736,34 +742,12 @@ it("refuses to send a mission draft that left its mission's machine", async () =
   await expect.element(page.getByText("This draft left its mission's machine")).toBeVisible();
   expect(launch.calls).toHaveLength(0);
   expect(dispatchedCommands()).toHaveLength(0);
-});
 
-it("shows an empty server thread's mission mark in its composer, and sends it plain on undo", async () => {
-  const thread = threadWithHistory("empty-mission-lead", 0);
-  using _environment = installFakeEnvironment([thread]);
-  __setClientSettingsForTests({
-    ...DEFAULT_CLIENT_SETTINGS,
-    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
-  });
-  const threadRef = scopeThreadRef(ENVIRONMENT_ID, thread.id);
-  const markId = serverThreadMissionDraftId(threadRef);
-  markMissionDraft(markId, { intent: { kind: "new" }, thread: threadRef });
-  using _mark = { [Symbol.dispose]: () => clearMissionDraft(markId) };
-  const router = getRouter(
-    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
-  );
-  await router.load();
-  await using _app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
-    router: false,
-  });
-  await expect
-    .element(page.getByText("Sending starts a new mission led by this thread"))
-    .toBeVisible();
+  await act(() => router.navigate({ to: `/${ENVIRONMENT_ID}/${thread.id}` }));
+  const notice = page.getByText("Sending starts a new mission led by this thread");
+  await expect.element(notice).toBeVisible();
   await userEvent.click(page.getByRole("button", { name: "Send as a plain thread" }));
-  await expect
-    .element(page.getByText("Sending starts a new mission led by this thread"))
-    .not.toBeInTheDocument();
+  await expect.element(notice).not.toBeInTheDocument();
   expect(missionDraftOf(markId)).toBeUndefined();
 });
 

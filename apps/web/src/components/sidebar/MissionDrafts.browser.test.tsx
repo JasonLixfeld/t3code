@@ -96,20 +96,30 @@ async function renderDraft(draftId: DraftId, extra?: ReactNode) {
   });
 }
 
-it("starts a mission only once the draft's first message lands, led by that thread", async () => {
+it("starts a mission only once the draft's first message lands, led by the thread its Mission choice picked", async () => {
   const draftId = DraftId.make("mission-draft");
-  await using screen = await renderDraft(draftId);
-  await act(() => markMissionDraft(draftId, { intent: { kind: "new" }, thread }));
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(LOCAL, ProjectId.make("project")), draftId);
+  const threadId = useComposerDraftStore.getState().getDraftSession(draftId)!.threadId;
+  vi.mocked(useMissionStartMachines).mockReturnValue(new Set([LOCAL]));
+  onTestFinished(() => vi.mocked(useMissionStartMachines).mockRestore());
+  await using screen = await renderDraft(draftId, <MissionWord draftId={draftId} />);
+  await userEvent.click(page.getByRole("button", { name: "Add to a mission" }));
+  await page.getByRole("menuitemradio", { name: "New mission (this thread leads)" }).click();
   await expect
     .element(screen.getByText("Sending starts a new mission led by this thread"))
     .toBeInTheDocument();
+  vi.mocked(useMissionStartMachines).mockReturnValue(new Set());
+  await screen.remount();
+  await expect.element(screen.getByRole("button", { name: "New mission" })).toBeInTheDocument();
   await screen.stream("empty");
   expect(commandFor("mission create")).not.toHaveBeenCalled();
   await screen.stream("sent");
   await vi.waitFor(() =>
     expect(commandFor("mission create")).toHaveBeenCalledExactlyOnceWith({
       environmentId: LOCAL,
-      input: { missionId: expect.stringMatching(/^[0-9a-f]{12}$/), leadThreadId: thread.threadId },
+      input: { missionId: expect.stringMatching(/^[0-9a-f]{12}$/), leadThreadId: threadId },
     }),
   );
   await vi.waitFor(() =>
@@ -117,6 +127,8 @@ it("starts a mission only once the draft's first message lands, led by that thre
   );
   await screen.stream("sent");
   expect(commandFor("mission create")).toHaveBeenCalledTimes(1);
+  await expect.element(screen.getByRole("button", { name: "New mission" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Add to a mission" }).elements()).toHaveLength(0);
 });
 
 function StartFromMenu() {
@@ -128,7 +140,7 @@ function StartFromMenu() {
   );
 }
 
-it("starts one mission led by an empty server thread its menu marked, with the mark's id, once it first sends", async () => {
+it("starts one mission led by an empty server thread its menu marked, with the mark's id, once it first sends, and none once sent as a plain thread", async () => {
   const markId = serverThreadMissionDraftId(thread);
   onTestFinished(() => clearMissionDraft(markId));
   const read = (sent: boolean) =>
@@ -144,6 +156,9 @@ it("starts one mission led by an empty server thread its menu marked, with the m
   await screen.stream("empty");
   const start = screen.getByRole("button", { name: "Start mission from this thread" });
   await userEvent.click(start);
+  await userEvent.click(screen.getByRole("button", { name: "Send as a plain thread" }));
+  expect(missionDraftOf(markId)).toBeUndefined();
+  await userEvent.click(start);
   const mark = missionDraftOf(markId);
   expect(mark).toMatchObject({ intent: { kind: "new" }, thread, step: "waiting" });
   vi.mocked(readThreadShell).mockReturnValue(read(true));
@@ -158,35 +173,6 @@ it("starts one mission led by an empty server thread its menu marked, with the m
     }),
   );
   await vi.waitFor(() => expect(missionDraftOf(markId)).toBeUndefined());
-});
-
-it("starts a mission led by a draft once sent, when its Mission choice picked a new one", async () => {
-  const draftId = DraftId.make("mission-choice-draft");
-  useComposerDraftStore
-    .getState()
-    .setProjectDraftThreadId(scopeProjectRef(LOCAL, ProjectId.make("project")), draftId);
-  const threadId = useComposerDraftStore.getState().getDraftSession(draftId)!.threadId;
-  vi.mocked(useMissionStartMachines).mockReturnValue(new Set([LOCAL]));
-  onTestFinished(() => vi.mocked(useMissionStartMachines).mockRestore());
-  await using screen = await renderDraft(draftId, <MissionWord draftId={draftId} />);
-  await userEvent.click(page.getByRole("button", { name: "Add to a mission" }));
-  await page.getByRole("menuitemradio", { name: "New mission (this thread leads)" }).click();
-  await screen.stream("sent");
-  await vi.waitFor(() =>
-    expect(commandFor("mission create")).toHaveBeenCalledExactlyOnceWith({
-      environmentId: LOCAL,
-      input: { missionId: expect.stringMatching(/^[0-9a-f]{12}$/), leadThreadId: threadId },
-    }),
-  );
-});
-
-it("makes nothing for a draft that is abandoned or sent as a plain thread", async () => {
-  const draftId = DraftId.make("plain-draft");
-  await using screen = await renderDraft(draftId);
-  await act(() => markMissionDraft(draftId, { intent: { kind: "new" }, thread }));
-  await userEvent.click(screen.getByRole("button", { name: "Send as a plain thread" }));
-  await screen.stream("sent");
-  expect(commandFor("mission create")).not.toHaveBeenCalled();
 });
 
 it("makes a new-lead draft the mission's lead once it is sent", async () => {
@@ -263,24 +249,6 @@ it("keeps the mission until the server has it, and only the user's retry tries a
   );
 });
 
-it("leaves a new-lead draft plain when another window gave the mission a lead first", async () => {
-  const draftId = DraftId.make("beaten-draft");
-  await using screen = await renderDraft(draftId);
-  const toasts = watchToasts();
-  commandFor("mission set lead").mockResolvedValueOnce(beaten);
-  await act(() => markMissionDraft(draftId, { intent: leadIntent, thread }));
-  await screen.stream("sent");
-  await vi.waitFor(() =>
-    expect(toasts).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ title: "This mission already has a new lead" }),
-    ),
-  );
-  expect(retryOf(toasts.mock.calls[0]![0])).toBeUndefined();
-  await vi.waitFor(() => expect(screen.container.textContent).not.toContain("Sending makes"));
-  await screen.remount();
-  expect(commandFor("mission set lead")).toHaveBeenCalledTimes(1);
-});
-
 it("stops offering a retry once the lead changed while the first try failed", async () => {
   const draftId = DraftId.make("stale-retry-draft");
   await using screen = await renderDraft(draftId);
@@ -299,6 +267,8 @@ it("stops offering a retry once the lead changed while the first try failed", as
   expect(toasts.mock.calls[1]![0]).toMatchObject({ title: "This mission already has a new lead" });
   expect(retryOf(toasts.mock.calls[1]![0])).toBeUndefined();
   await vi.waitFor(() => expect(screen.container.textContent).not.toContain("Sending makes"));
+  await screen.remount();
+  expect(setLead).toHaveBeenCalledTimes(2);
 });
 
 it("joins a draft marked for a mission as a member once its first message lands", async () => {
@@ -347,21 +317,4 @@ it("holds a member's join while its mission's machine no longer lists the missio
     .element(screen.getByText("This thread will not join a mission unless you pick one."))
     .toBeInTheDocument();
   expect(screen.container.textContent).not.toContain("Sending adds");
-});
-
-it("offers no Mission choice on a machine where this client cannot start or join one", async () => {
-  const draftId = DraftId.make("unwritable-draft");
-  useComposerDraftStore
-    .getState()
-    .setProjectDraftThreadId(scopeProjectRef(LOCAL, ProjectId.make("project")), draftId);
-  vi.mocked(useMissionHosts).mockReturnValue([
-    { environmentId: LOCAL, snapshot: { missions: [], links: [], claims: [] } },
-  ]);
-  onTestFinished(() => vi.mocked(useMissionHosts).mockRestore());
-  vi.mocked(useMissionStartMachines).mockReturnValue(new Set());
-  onTestFinished(() => vi.mocked(useMissionStartMachines).mockRestore());
-  await using screen = await renderDraft(draftId, <MissionWord draftId={draftId} />);
-  expect(screen.getByRole("button", { name: "Add to a mission" }).elements()).toHaveLength(0);
-  await act(() => markMissionDraft(draftId, { intent: { kind: "new" }, thread }));
-  await expect.element(screen.getByRole("button", { name: "New mission" })).toBeInTheDocument();
 });
