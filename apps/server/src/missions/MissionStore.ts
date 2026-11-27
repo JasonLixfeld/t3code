@@ -209,6 +209,11 @@ export const MIGRATIONS = {
     `;
     yield* sql`ALTER TABLE member_numbers ADD COLUMN joined_generation TEXT`;
   }),
+  "9_LeadSince": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE missions ADD COLUMN lead_since TEXT NOT NULL DEFAULT ''`;
+    yield* sql`UPDATE missions SET lead_since = created_at`;
+  }),
 };
 const migrations = Migrator.fromRecord(MIGRATIONS);
 
@@ -377,6 +382,7 @@ export class MissionStore extends Context.Service<
       readonly machines: ReadonlyArray<EnvironmentId>;
       readonly owner: string;
       readonly checkedLocalMembers: ReadonlyArray<ThreadId>;
+      readonly leadSettledAt?: DateTime.Utc | undefined;
     }) => Effect.Effect<void, MissionError>;
     readonly join: (
       input: ClaimInput,
@@ -547,9 +553,9 @@ const make = Effect.gen(function* () {
   );
 
   const createMission = Effect.fn("MissionStore.createMission")(function* (lead: ClaimInput) {
-    const createdAt = yield* now;
     return yield* change(
       Effect.gen(function* () {
+        const createdAt = yield* now;
         const [deleted] = yield* sql`
           SELECT 1 FROM deleted_missions WHERE mission_id = ${lead.missionId}
         `;
@@ -566,8 +572,8 @@ const make = Effect.gen(function* () {
         const held = yield* claimRow(lead.threadId);
         if (held !== undefined) return heldElsewhere(held);
         yield* sql`
-          INSERT INTO missions (mission_id, name, lead_thread_id, created_at)
-          VALUES (${lead.missionId}, ${lead.name}, ${lead.threadId}, ${createdAt})
+          INSERT INTO missions (mission_id, name, lead_thread_id, created_at, lead_since)
+          VALUES (${lead.missionId}, ${lead.name}, ${lead.threadId}, ${createdAt}, ${createdAt})
         `;
         yield* sql`INSERT OR IGNORE INTO former_leads (thread_id) VALUES (${lead.threadId})`;
         yield* insertClaim(lead, "lead", createdAt);
@@ -588,16 +594,27 @@ const make = Effect.gen(function* () {
     readonly machines: ReadonlyArray<EnvironmentId>;
     readonly owner: string;
     readonly checkedLocalMembers: ReadonlyArray<ThreadId>;
+    readonly leadSettledAt?: DateTime.Utc | undefined;
   }) {
     const asked = DateTime.toEpochMillis(yield* DateTime.now);
     return yield* change(
       Effect.gen(function* () {
-        const [mission] = yield* sql<MissionRow>`
-          SELECT mission_id, name, lead_thread_id, created_at, prompt FROM missions
+        const [mission] = yield* sql<{
+          readonly lead_thread_id: string;
+          readonly lead_since: string;
+          readonly created_at: string;
+        }>`
+          SELECT lead_thread_id, lead_since, created_at FROM missions
           WHERE mission_id = ${input.missionId}
         `;
         if (mission === undefined) return refuse("That mission was not found.");
-        if (mission.lead_thread_id !== input.lead) {
+        const since = Date.parse(mission.lead_since);
+        const leadSince = Number.isNaN(since) ? Date.parse(mission.created_at) : since;
+        if (
+          mission.lead_thread_id !== input.lead ||
+          (input.leadSettledAt !== undefined &&
+            !(leadSince < DateTime.toEpochMillis(input.leadSettledAt)))
+        ) {
           return new MissionError({
             message: "This mission already has a new lead.",
             reason: "lead-changed",
@@ -692,7 +709,8 @@ const make = Effect.gen(function* () {
           yield* markUnsynced(previous);
         }
         yield* sql`
-          UPDATE missions SET lead_thread_id = ${lead.threadId}, name = ${lead.name}
+          UPDATE missions
+          SET lead_thread_id = ${lead.threadId}, name = ${lead.name}, lead_since = ${claimedAt}
           WHERE mission_id = ${lead.missionId}
         `;
         yield* sql`INSERT OR IGNORE INTO former_leads (thread_id) VALUES (${lead.threadId})`;
@@ -1142,8 +1160,9 @@ const make = Effect.gen(function* () {
   const addMissionUpdate = (update: MissionUpdate) =>
     sql`
       INSERT OR IGNORE INTO mission_updates (mission_id, environment_id, thread_id, source, event)
-      VALUES (${update.missionId}, ${update.environmentId}, ${update.threadId}, ${update.source},
-        ${update.event})
+      SELECT ${update.missionId}, ${update.environmentId}, ${update.threadId}, ${update.source},
+        ${update.event}
+      WHERE EXISTS (SELECT 1 FROM missions WHERE mission_id = ${update.missionId})
     `.pipe(Effect.asVoid, Effect.orDie);
 
   const markMissionUpdateHeard = (update: MissionUpdate) =>

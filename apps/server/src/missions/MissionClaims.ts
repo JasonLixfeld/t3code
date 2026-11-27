@@ -16,6 +16,7 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import type * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -94,6 +95,7 @@ export class MissionClaims extends Context.Service<
         readonly missionId: string;
         readonly lead: ThreadId;
         readonly machines: ReadonlyArray<EnvironmentId>;
+        readonly leadSettledAt?: DateTime.Utc | undefined;
       },
     ) => Effect.Effect<void, MissionError>;
     readonly join: <E = never>(
@@ -222,14 +224,19 @@ const make = Effect.gen(function* () {
       owner: string,
       input: { readonly missionId: string; readonly name: string; readonly leadThreadId: ThreadId },
     ) {
-      yield* requireThread(input.leadThreadId);
-      const mission = yield* store.createMission({
-        threadId: input.leadThreadId,
-        missionId: input.missionId,
-        name: input.name,
-        owner,
-        generation: yield* generation,
-      });
+      const mission = yield* threadCommands.withLock(
+        input.leadThreadId,
+        Effect.gen(function* () {
+          yield* requireThread(input.leadThreadId);
+          return yield* store.createMission({
+            threadId: input.leadThreadId,
+            missionId: input.missionId,
+            name: input.name,
+            owner,
+            generation: yield* generation,
+          });
+        }),
+      );
       yield* syncTags(input.leadThreadId);
       return mission;
     },
@@ -281,6 +288,7 @@ const make = Effect.gen(function* () {
       readonly missionId: string;
       readonly lead: ThreadId;
       readonly machines: ReadonlyArray<EnvironmentId>;
+      readonly leadSettledAt?: DateTime.Utc | undefined;
     },
   ) {
     const membersNow = Effect.map(store.claimsOf(owner), (held) =>
@@ -298,6 +306,12 @@ const make = Effect.gen(function* () {
         );
         const threadKeys = [input.lead, ...members];
         const recheckAndReleaseSettledMembers = Effect.gen(function* () {
+          if (
+            input.leadSettledAt !== undefined &&
+            (yield* readThread(input.lead))?.settledOverride !== "settled"
+          ) {
+            return yield* fail("The lead is no longer settled, so this mission was not ended.");
+          }
           for (const threadId of members) {
             const shell = yield* readThread(threadId);
             if (shell !== null && shell.deletedAt === null && !isSettledMissionMember(shell)) {

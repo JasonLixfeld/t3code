@@ -92,6 +92,10 @@ export class Missions extends Context.Service<
     readonly deleteMission: (input: {
       readonly missionId: string;
     }) => Effect.Effect<void, MissionError>;
+    readonly endIfLeadSettled: (
+      mission: Pick<MissionRecord, "missionId" | "leadThreadId">,
+      settledAt: DateTime.Utc,
+    ) => Effect.Effect<void>;
     readonly addMember: (
       input: {
         readonly missionId: string;
@@ -1025,10 +1029,10 @@ const make = Effect.gen(function* () {
     return yield* createLedBy(input, yield* leadTitle(input.leadThreadId));
   });
 
-  const deleteMission = Effect.fn("Missions.deleteMission")(function* (input: {
-    readonly missionId: string;
-  }) {
-    const mission = yield* missionNamed(input.missionId);
+  const endMission = Effect.fn("Missions.endMission")(function* (
+    missionId: string,
+    settledLead?: { readonly threadId: ThreadId; readonly at: DateTime.Utc },
+  ) {
     yield* letGoOfGoneMembers;
     // Every machine this one can add from is asked too: an older build kept no list of the
     // machines a Mission sent to, and an add forgotten there left nothing behind.
@@ -1036,13 +1040,31 @@ const make = Effect.gen(function* () {
       .filter((link) => link.fullAccess)
       .map((link) => link.environmentId);
     yield* missionLocks.withLock(
-      mission.missionId,
-      Effect.flatMap(missionNamed(mission.missionId), (current) =>
+      missionId,
+      Effect.flatMap(missionNamed(missionId), (current) =>
         claims.deleteMission(here, {
           missionId: current.missionId,
-          lead: current.leadThreadId,
+          lead: settledLead?.threadId ?? current.leadThreadId,
           machines,
+          leadSettledAt: settledLead?.at,
         }),
+      ),
+    );
+  });
+
+  const deleteMission = Effect.fn("Missions.deleteMission")(function* (input: {
+    readonly missionId: string;
+  }) {
+    yield* endMission((yield* missionNamed(input.missionId)).missionId);
+  });
+
+  const endIfLeadSettled = Effect.fn("Missions.endIfLeadSettled")(function* (
+    mission: Pick<MissionRecord, "missionId" | "leadThreadId">,
+    settledAt: DateTime.Utc,
+  ) {
+    yield* endMission(mission.missionId, { threadId: mission.leadThreadId, at: settledAt }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logDebug("A mission stayed open after its lead settled", cause),
       ),
     );
   });
@@ -1604,6 +1626,7 @@ const make = Effect.gen(function* () {
     create,
     setLead,
     deleteMission,
+    endIfLeadSettled,
     addMember,
     addAsLead,
     releaseMember,
