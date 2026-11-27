@@ -243,13 +243,21 @@ it.effect("a full-access link claims and tags a thread it did not start", () =>
   }),
 );
 
-it.effect("a mission id or name that a mission could not be started with is refused", () =>
+it.effect("a mission id, name or request a mission tool could not take is refused", () =>
   Effect.gen(function* () {
-    for (const broken of [{ missionId: "ship:it" }, { name: "two\nlines" }]) {
-      const refused = yield* callOnce(linkedClient("full-access"), {
-        ...joinShip,
-        ...broken,
-      }).pipe(Effect.flip);
+    for (const broken of [
+      { ...joinShip, missionId: "ship:it" },
+      { ...joinShip, name: "two\nlines" },
+      { kind: "rename", missionId: SHIP, name: "two\nlines" },
+      {
+        kind: "workspaces",
+        members: Array.from({ length: 9 }, (_, index) => ({
+          threadId: `thread:${index}`,
+          generation: "g",
+        })),
+      },
+    ]) {
+      const refused = yield* callOnce(linkedClient("full-access"), broken).pipe(Effect.flip);
       assert.include(refused.message, "Invalid parameters for tool 't3_mission_tag'");
     }
   }),
@@ -360,16 +368,6 @@ it.effect("a rename with no claim makes none, and one for another mission change
   }),
 );
 
-it.effect("a rename to a name a mission could not have is refused", () =>
-  Effect.gen(function* () {
-    const refused = yield* callOnce(linkedClient("full-access"), {
-      ...renameShip,
-      name: "two\nlines",
-    }).pipe(Effect.flip);
-    assert.include(refused.message, "Invalid parameters for tool 't3_mission_tag'");
-  }),
-);
-
 it.effect("a link lowered to auto cannot rename its claim on a full-access thread", () =>
   Effect.gen(function* () {
     const { tags, held } = yield* callOnce(linkedClient("auto"), renameShip, {
@@ -379,13 +377,6 @@ it.effect("a link lowered to auto cannot rename its claim on a full-access threa
     });
     assert.deepEqual(tags, [`mission:${SHIP}:Ship`]);
     assert.deepEqual(namesOf(held), [[SHIP, "member", "Ship"]]);
-  }),
-);
-
-it.effect("an agent on this machine is not offered the tool and cannot call it", () =>
-  Effect.gen(function* () {
-    const refused = yield* callOnce(agentHere, joinShip).pipe(Effect.flip);
-    assert.include(refused.message, "Tool 't3_mission_tag' not found");
   }),
 );
 
@@ -558,6 +549,11 @@ it.effect(
         const found = (searched.result?.structuredContent?.tools ?? []).map((tool) => tool.name);
         assert.includeMembers(found, LEAD_TOOLS);
         assert.notInclude(found, "t3_mission_tag");
+        const tagCall = yield* agent.rpc("tools/call", {
+          name: "t3_mission_tag",
+          arguments: joinShip,
+        });
+        assert.include(JSON.stringify(tagCall), "Tool 't3_mission_tag' not found");
 
         const lead = yield* (yield* session("leadToken")).listed;
         assert.includeMembers(lead, LEAD_TOOLS);
@@ -618,31 +614,36 @@ it.effect(
     }),
 );
 
-it.effect(
-  "a thread whose claim changes hands while the list reads it is listed with no detail",
-  () =>
-    Effect.gen(function* () {
-      const { answer } = yield* callOnce(
-        linkedClient("full-access"),
-        { kind: "list" },
-        {
-          before: joinedBy(LINK_OWNER),
-          duringFirstWorkspaceRead: (claims) =>
-            Effect.gen(function* () {
-              const [held] = yield* claims.list(LINK_OWNER);
-              yield* claims.release(LINK_OWNER, {
-                threadId: userThread,
-                missionId: SHIP,
-                generation: held!.generation,
-              });
-              yield* joinedBy("env-other-lead")(claims);
-            }),
-        },
-      );
-      const [listed] = decodeTagAnswer(JSON.parse(answer)).claims;
-      assert.equal(listed?.threadId, userThread);
-      assert.isUndefined(listed?.detail);
+it.effect.each([
+  { kind: "list", args: () => ({ kind: "list" }) },
+  {
+    kind: "workspaces",
+    args: (held: MissionClaim | "intent-spent" | undefined) => ({
+      kind: "workspaces",
+      members: [
+        { threadId: userThread, generation: typeof held === "object" ? held.generation : "" },
+      ],
     }),
+  },
+])("a $kind call for a claim that changes hands while it is read answers no detail", ({ args }) =>
+  Effect.gen(function* () {
+    const { answer } = yield* callOnce(linkedClient("full-access"), args, {
+      before: joinedBy(LINK_OWNER),
+      duringFirstWorkspaceRead: (claims) =>
+        Effect.gen(function* () {
+          const [held] = yield* claims.list(LINK_OWNER);
+          yield* claims.release(LINK_OWNER, {
+            threadId: userThread,
+            missionId: SHIP,
+            generation: held!.generation,
+          });
+          yield* joinedBy("env-other-lead")(claims);
+        }),
+    });
+    const [listed] = decodeTagAnswer(JSON.parse(answer)).claims;
+    assert.equal(listed?.threadId, userThread);
+    assert.isUndefined(listed?.detail);
+  }),
 );
 
 const largeWorkspace = {
@@ -721,50 +722,5 @@ it.effect("a workspaces call answers only the caller's own claims, under their g
       },
     );
     assert.equal(answer, '{"claims":[]}');
-  }),
-);
-
-it.effect(
-  "a workspaces call for a claim that changes hands while it is read answers no detail",
-  () =>
-    Effect.gen(function* () {
-      const { answer } = yield* callOnce(
-        linkedClient("full-access"),
-        (held) => ({
-          kind: "workspaces",
-          members: [
-            { threadId: userThread, generation: typeof held === "object" ? held.generation : "" },
-          ],
-        }),
-        {
-          before: joinedBy(LINK_OWNER),
-          duringFirstWorkspaceRead: (claims) =>
-            Effect.gen(function* () {
-              const [held] = yield* claims.list(LINK_OWNER);
-              yield* claims.release(LINK_OWNER, {
-                threadId: userThread,
-                missionId: SHIP,
-                generation: held!.generation,
-              });
-              yield* joinedBy("env-other-lead")(claims);
-            }),
-        },
-      );
-      const [listed] = decodeTagAnswer(JSON.parse(answer)).claims;
-      assert.equal(listed?.threadId, userThread);
-      assert.isUndefined(listed?.detail);
-    }),
-);
-
-it.effect("a workspaces call for more than eight members is refused", () =>
-  Effect.gen(function* () {
-    const refused = yield* callOnce(linkedClient("full-access"), {
-      kind: "workspaces",
-      members: Array.from({ length: 9 }, (_, index) => ({
-        threadId: `thread:${index}`,
-        generation: "g",
-      })),
-    }).pipe(Effect.flip);
-    assert.include(refused.message, "Invalid parameters for tool 't3_mission_tag'");
   }),
 );
