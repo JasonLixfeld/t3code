@@ -15,6 +15,7 @@ function DraftBlock(props: {
   routeDraftId?: string | null;
   terminalLabels?: ReadonlyMap<string, string>;
   projectDisplayNameByKey?: ReadonlyMap<string, string>;
+  environmentLabelById?: ReadonlyMap<EnvironmentId, string | null>;
 }) {
   const routeDraftId = props.routeDraftId ?? null;
   const terminalLabels = props.terminalLabels ?? NO_TERMINAL_LABELS;
@@ -27,6 +28,8 @@ function DraftBlock(props: {
       jumpLabelByDraftId={null}
       projectByKey={new Map()}
       projectDisplayNameByKey={props.projectDisplayNameByKey ?? new Map()}
+      environmentLabelById={props.environmentLabelById ?? new Map()}
+      environmentMachineById={new Map()}
       routeDraftId={routeDraftId}
       onNavigateToDraft={vi.fn()}
       onDraftContextMenu={vi.fn()}
@@ -102,7 +105,7 @@ it("keeps draft previews current through edits, promotion and removal", async ()
   await expect.element(row).not.toBeInTheDocument();
 });
 
-it("lays a draft out like a thread card: its preview first, its project below", async () => {
+it("lays a draft out like a thread card: its preview first, its project and machine below", async () => {
   const initial = useComposerDraftStore.getState();
   using _store = {
     [Symbol.dispose]: () => useComposerDraftStore.setState(initial, true),
@@ -121,16 +124,22 @@ it("lays a draft out like a thread card: its preview first, its project below", 
   initial.setPrompt(draftId, "Draft preview");
   await using screen = await render(
     <ul>
-      <DraftBlock projectDisplayNameByKey={new Map([[`${environmentId}:${projectId}`, "web"]])} />
+      <DraftBlock
+        projectDisplayNameByKey={new Map([[`${environmentId}:${projectId}`, "web"]])}
+        environmentLabelById={new Map([[environmentId, "Laptop"]])}
+      />
     </ul>,
   );
   await expect.element(screen.getByText("Draft preview")).toBeInTheDocument();
-  const titleLine = screen.getByText("Draft preview").element().parentElement!;
-  expect(titleLine.textContent).not.toContain("web");
+  const top = (text: string) => screen.getByText(text, { exact: true }).element();
+  const preview = top("Draft preview").getBoundingClientRect();
+  for (const below of ["web", "Laptop"]) {
+    expect(top(below).getBoundingClientRect().top).toBeGreaterThanOrEqual(preview.bottom);
+  }
   expect(
-    titleLine.nextElementSibling!.querySelector("[data-testid=sidebar-row-project]")!.textContent,
-  ).toBe("web");
-  expect(titleLine.parentElement!.getBoundingClientRect().height).toBe(54);
+    screen.getByTestId("sidebar-draft-row").element().firstElementChild!.getBoundingClientRect()
+      .height,
+  ).toBe(54);
 });
 
 it("lists empty drafts by terminal label while their terminal exists, active or not", async () => {

@@ -654,11 +654,13 @@ function CardMetaLine({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
+export type SidebarCardMachine = { readonly kind: EnvironmentMachineKind; readonly label: string };
+
 /** The project, then the machine when there is one; the project name truncates first. */
 function CardPlace(props: {
   readonly project: ProjectFaviconProject | null;
   readonly projectDisplayName: string | null;
-  readonly machine?: { readonly icon: ReactNode; readonly label: string } | null;
+  readonly machine?: SidebarCardMachine | null;
 }) {
   const hasProject = props.project !== null || props.projectDisplayName !== null;
   const machine = props.machine ?? null;
@@ -675,7 +677,11 @@ function CardPlace(props: {
       {hasProject && machine !== null ? <span aria-hidden>·</span> : null}
       {machine === null ? null : (
         <>
-          {machine.icon}
+          <EnvironmentMachineIcon
+            aria-hidden
+            kind={machine.kind}
+            className="size-3.5 shrink-0 text-icon-muted"
+          />
           <span className={cn("truncate", hasProject ? "max-w-1/2 shrink-0" : "min-w-0")}>
             {machine.label}
           </span>
@@ -1123,6 +1129,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   // Closing here, not just masking, keeps the menu from reopening when the button returns.
   if (snoozeMenuOpenRaw && !showSnoozeButton) setSnoozeMenuOpen(false);
   const snoozeMenuOpen = snoozeMenuOpenRaw && showSnoozeButton;
+  const hasRowControls = props.settlementSupported || showSnoozeButton || hasUnsentDraft;
   const jumpHintLabel = snoozeMenuOpen ? null : props.jumpLabel;
   const handlePrClick = (event: ReactMouseEvent<HTMLElement>, targetUrl?: string) => {
     const url = targetUrl ?? pr?.url ?? currentLinkedPr?.url;
@@ -1702,7 +1709,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           machine={
             props.environmentLabel === null
               ? null
-              : { icon: machineIcon, label: props.environmentLabel }
+              : { kind: props.environmentMachine, label: props.environmentLabel }
           }
         />
         {metaTrailing}
@@ -1822,7 +1829,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   className={cn(
                     isWokeStatus
                       ? "pointer-events-auto"
-                      : "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:right-0 group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-any-hover/sidebar-row:absolute group-any-hover/sidebar-row:right-0 group-any-hover/sidebar-row:opacity-0",
+                      : hasRowControls
+                        ? "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:right-0 group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-any-hover/sidebar-row:absolute group-any-hover/sidebar-row:right-0 group-any-hover/sidebar-row:opacity-0"
+                        : "pointer-events-none",
                     "flex items-center self-center justify-self-end tabular-nums text-secondary-label",
                     snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                   )}
@@ -1833,7 +1842,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     <RelativeTimeLabel timestamp={resolveThreadActivityTimestamp(thread)} />
                   )}
                 </span>
-                {props.settlementSupported || showSnoozeButton || hasUnsentDraft ? (
+                {hasRowControls ? (
                   <span
                     className={cn(
                       // Mouse clicks leave Settle focused; focus-within would pin controls over

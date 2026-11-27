@@ -563,23 +563,24 @@ describe("missions in the sidebar", () => {
     expect(groups.length).toBeGreaterThan(1);
     for (const [above, below] of groups.slice(1).map((group, index) => [groups[index]!, group])) {
       const space = below!.getBoundingClientRect().top - above!.getBoundingClientRect().bottom;
-      expect(space).toBeGreaterThanOrEqual(12);
+      expect(space).toBeCloseTo(12, 0);
     }
   });
 
-  it("puts each card's title on its first line, and its project on the line below", async () => {
+  it("keeps a lead's status on hover when its machine offers no row actions", async () => {
     await using screen = await renderSidebar();
-    await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
-    for (const title of ["Update the release notes", "Unrelated bug"]) {
-      const card = rowOf(screen.container, title);
-      const titleLine = screen.getByText(title, { exact: true }).element().parentElement!;
-      expect(card.contains(titleLine)).toBe(true);
-      expect(titleLine.querySelector("[data-testid=sidebar-row-project]")).toBeNull();
-      const project = titleLine.nextElementSibling!.querySelector(
-        "[data-testid=sidebar-row-project]",
-      );
-      expect(project?.textContent).toBeTruthy();
-    }
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    const status = (row: HTMLElement) =>
+      row.querySelector<HTMLElement>(".group\\/sidebar-status-slot > span")!;
+    const lead = () =>
+      screen.container.querySelector<HTMLElement>('[data-sidebar-row="local:lead"]')!;
+    await userEvent.hover(lead());
+    await vi.waitFor(() => expect(getComputedStyle(status(lead())).opacity).toBe("0"));
+    vi.mocked(useServerConfigs).mockReturnValue(new Map());
+    await screen.arrive();
+    await userEvent.hover(lead());
+    expect(lead().querySelector('[aria-label="Settle thread"]')).toBeNull();
+    expect(getComputedStyle(status(lead())).opacity).toBe("1");
   });
 
   it("sweeps Settle from the lead over its members in the same state only", async () => {
@@ -813,21 +814,22 @@ describe("missions in the sidebar", () => {
     await expect.element(prompt).not.toBeInTheDocument();
   });
 
-  it("heads a mission with the lead's title beside its chevron, and its project below", async () => {
+  it("heads a mission with the lead's title beside its chevron, and every card's project below its title", async () => {
     await using screen = await renderSidebar();
     await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
     const navigate = vi.spyOn(screen.router!, "navigate").mockResolvedValue(undefined);
     const lead = screen.container.querySelector<HTMLElement>('[data-sidebar-row="local:lead"]')!;
     const chevron = lead.querySelector<HTMLElement>('[aria-label^="Collapse mission"]')!;
-    const titleLine = chevron.parentElement!;
-    expect(titleLine.textContent).toContain("Plan the v2 release");
-    expect(titleLine.textContent).not.toMatch(/web|WB/);
     const icon = chevron.nextElementSibling!;
     expect(icon.getAttribute("data-testid")).toBe("mission-lead-icon");
     expect(icon.nextElementSibling!.textContent).toBe("Plan the v2 release");
-    expect(
-      titleLine.nextElementSibling!.querySelector("[data-testid=sidebar-row-project]")!.textContent,
-    ).toBe("web");
+    for (const title of ["Plan the v2 release", "Update the release notes", "Unrelated bug"]) {
+      const card = rowOf(screen.container, title);
+      const titleBox = screen.getByText(title, { exact: true }).element().getBoundingClientRect();
+      const project = card.querySelector("[data-testid=sidebar-row-project]")!;
+      expect(project.textContent).toBe("web");
+      expect(project.getBoundingClientRect().top).toBeGreaterThanOrEqual(titleBox.bottom);
+    }
     const members = screen.container.querySelector("[data-testid=sidebar-mission-members]")!;
     expect(rowOf(members, "Write the migration guide").textContent).toContain(
       "Add pending (machine offline)",

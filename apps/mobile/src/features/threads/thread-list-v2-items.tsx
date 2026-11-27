@@ -6,6 +6,8 @@ import {
   THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
   THREAD_LIST_V2_ROW_DIVIDERS,
   THREAD_LIST_V2_ROW_INSET,
+  THREAD_LIST_V2_ROW_OUTER_GAP,
+  THREAD_LIST_V2_ROW_OUTER_INSET,
   THREAD_LIST_V2_SIDEBAR_ROW_STYLE,
   selectedThreadRowColors,
   getThreadListV2NewBranchMenuTitle,
@@ -447,9 +449,12 @@ export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(pro
 const MISSION_MEMBER_INDENT = 16;
 const MISSION_GROUP_GAP = 12;
 
+// Replaces the card container's own top margin, and the card above adds its bottom margin.
+const MISSION_LEAD_SPACING = { marginTop: MISSION_GROUP_GAP - THREAD_LIST_V2_ROW_OUTER_GAP };
+
 // Undefined without a gap: a zero marginTop would override a row's own marginVertical.
 const missionLeadSpacing = (place: ThreadListV2MissionPlace | null) =>
-  place?.toggle && !place.toggle.firstMission ? { marginTop: MISSION_GROUP_GAP } : undefined;
+  place?.toggle && !place.toggle.firstMission ? MISSION_LEAD_SPACING : undefined;
 
 function MissionLeadIcon(props: { readonly height: number }) {
   return (
@@ -474,14 +479,51 @@ const missionRowInset = (pane: "screen" | "sidebar" | undefined) =>
     ? THREAD_LIST_V2_SIDEBAR_ROW_STYLE.paddingHorizontal
     : THREAD_LIST_V2_ROW_INSET;
 
-function MissionMemberRail(props: { readonly pane?: "screen" | "sidebar" | undefined }) {
+/**
+ * A loaded row draws the rail inside its card container. A placeholder row has no container,
+ * so it adds the container's outer inset to land on the same x.
+ */
+function MissionMemberRail(props: {
+  readonly pane?: "screen" | "sidebar" | undefined;
+  readonly outsideContainer?: boolean;
+}) {
   const sidebar = props.pane === "sidebar";
+  const left =
+    (props.outsideContainer ? THREAD_LIST_V2_ROW_OUTER_INSET : 0) +
+    missionRowInset(props.pane) +
+    MISSION_MEMBER_INDENT / 2;
   return (
     <View
       pointerEvents="none"
       className={cn("absolute inset-y-0", sidebar ? "bg-drawer-foreground/20" : "bg-foreground/20")}
-      style={{ left: missionRowInset(props.pane) + MISSION_MEMBER_INDENT / 2, width: 1.5 }}
+      style={{ left, width: 1.5 }}
     />
+  );
+}
+
+/** A card's second line opens with its project; capped at half the line so the rest still fits. */
+function ThreadListV2ProjectPrefix(props: {
+  readonly environmentId: EnvironmentId;
+  readonly project: EnvironmentProject;
+  readonly size: number;
+  readonly textClassName: string;
+  readonly separated: boolean;
+}) {
+  return (
+    <View className="shrink flex-row items-center gap-1" style={{ maxWidth: "50%" }}>
+      <ProjectFavicon
+        environmentId={props.environmentId}
+        faviconPath={props.project.faviconPath}
+        projectIcon={props.project.projectIcon}
+        size={props.size}
+        projectTitle={props.project.title}
+        workspaceRoot={props.project.workspaceRoot}
+      />
+      <Text className={cn("shrink text-xs", props.textClassName)} numberOfLines={1}>
+        {props.project.title}
+      </Text>
+      {props.separated ? <Text className={cn("text-xs", props.textClassName)}>·</Text> : null}
+    </View>
   );
 }
 
@@ -595,10 +637,15 @@ export const ThreadListV2MissionMemberRow = memo(function ThreadListV2MissionMem
       style={
         lead
           ? missionLeadSpacing(props.place)
-          : { paddingLeft: missionRowInset(props.pane) + MISSION_MEMBER_INDENT }
+          : {
+              paddingLeft:
+                THREAD_LIST_V2_ROW_OUTER_INSET +
+                missionRowInset(props.pane) +
+                MISSION_MEMBER_INDENT,
+            }
       }
     >
-      {lead ? null : <MissionMemberRail pane={props.pane} />}
+      {lead ? null : <MissionMemberRail pane={props.pane} outsideContainer />}
       <ThreadListV2MissionToggle
         place={props.place}
         title={title}
@@ -689,7 +736,6 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   const { width: windowWidth, fontScale } = useWindowDimensions();
   const titleTypography = useScaledTextRole("body");
   const metadataTypography = useScaledTextRole("label");
-  const projectIconSize = titleTypography.fontSize * 1.25 * fontScale;
   const machineIconSize = metadataTypography.fontSize * fontScale;
   // Android's nonlinear system text scaling can differ from the fontScale estimate.
   const [androidTitleLineHeight, setTitleLineHeight] = useState(
@@ -754,22 +800,9 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
     [onDeletePendingTask, pendingTask],
   );
 
-  const titleTextInset = props.project ? projectIconSize + 8 : 0;
   const rowContent = (
     <>
       <View className="flex-row items-start gap-2">
-        {props.project ? (
-          <View className="justify-center" style={{ height: titleLineHeight }}>
-            <ProjectFavicon
-              environmentId={pendingTask.environmentId}
-              faviconPath={props.project.faviconPath}
-              projectIcon={props.project.projectIcon}
-              size={projectIconSize}
-              projectTitle={props.project.title}
-              workspaceRoot={props.project.workspaceRoot}
-            />
-          </View>
-        ) : null}
         <Text
           className={cn(
             "flex-1 text-base font-t3-medium",
@@ -817,22 +850,21 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
           </View>
         ) : null}
       </View>
-      {!isDraft ? (
-        <View className="mt-1" style={{ paddingLeft: titleTextInset }}>
-          <Text
-            className={cn(
-              "text-xs",
-              selected
-                ? selectedThreadRowColors.foregroundClassName
-                : rowAppearance.tertiaryForegroundClassName,
-            )}
-          >
-            <T>Sends on reconnect</T>
-          </Text>
-        </View>
-      ) : null}
-      {branch || props.environmentLabel ? (
-        <View className="mt-1 flex-row items-center gap-1" style={{ paddingLeft: titleTextInset }}>
+      {props.project || branch || props.environmentLabel ? (
+        <View className="mt-1 flex-row items-center gap-1">
+          {props.project ? (
+            <ThreadListV2ProjectPrefix
+              environmentId={pendingTask.environmentId}
+              project={props.project}
+              size={machineIconSize + 2}
+              textClassName={
+                selected
+                  ? selectedThreadRowColors.mutedForegroundClassName
+                  : rowAppearance.tertiaryForegroundClassName
+              }
+              separated={Boolean(branch || props.environmentLabel)}
+            />
+          ) : null}
           {props.environmentLabel && props.environmentMachine ? (
             <EnvironmentMachineSymbol
               kind={props.environmentMachine}
@@ -844,41 +876,57 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
               }
             />
           ) : null}
+          {branch || props.environmentLabel ? (
+            <Text
+              className={cn(
+                "shrink text-xs text-foreground-muted",
+                selected
+                  ? selectedThreadRowColors.mutedForegroundClassName
+                  : rowAppearance.mutedForegroundClassName,
+              )}
+              numberOfLines={1}
+            >
+              {branch ? (
+                <Text
+                  className={cn(
+                    "text-xs",
+                    selected
+                      ? selectedThreadRowColors.mutedForegroundClassName
+                      : rowAppearance.mutedForegroundClassName,
+                  )}
+                  style={{ fontFamily: MONO_FONT }}
+                >
+                  {branch}
+                </Text>
+              ) : null}
+              {branch && props.environmentLabel ? "  ·  " : null}
+              {props.environmentLabel ? (
+                <Text
+                  className={cn(
+                    "text-xs",
+                    selected
+                      ? selectedThreadRowColors.mutedForegroundClassName
+                      : rowAppearance.tertiaryForegroundClassName,
+                  )}
+                >
+                  {props.environmentLabel}
+                </Text>
+              ) : null}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+      {!isDraft ? (
+        <View className="mt-1">
           <Text
             className={cn(
-              "shrink text-xs text-foreground-muted",
+              "text-xs",
               selected
-                ? selectedThreadRowColors.mutedForegroundClassName
-                : rowAppearance.mutedForegroundClassName,
+                ? selectedThreadRowColors.foregroundClassName
+                : rowAppearance.tertiaryForegroundClassName,
             )}
-            numberOfLines={1}
           >
-            {branch ? (
-              <Text
-                className={cn(
-                  "text-xs",
-                  selected
-                    ? selectedThreadRowColors.mutedForegroundClassName
-                    : rowAppearance.mutedForegroundClassName,
-                )}
-                style={{ fontFamily: MONO_FONT }}
-              >
-                {branch}
-              </Text>
-            ) : null}
-            {branch && props.environmentLabel ? "  ·  " : null}
-            {props.environmentLabel ? (
-              <Text
-                className={cn(
-                  "text-xs",
-                  selected
-                    ? selectedThreadRowColors.mutedForegroundClassName
-                    : rowAppearance.tertiaryForegroundClassName,
-                )}
-              >
-                {props.environmentLabel}
-              </Text>
-            ) : null}
+            <T>Sends on reconnect</T>
           </Text>
         </View>
       ) : null}
@@ -1621,7 +1669,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const titleTextInset = leadToggle ? projectIconSize + 8 : 0;
   const lastError =
     rawStatus === "failed" || rawStatus === "limited" ? thread.runtime?.lastError : undefined;
-  const hasMetaDetail = Boolean(lastError || missionState || props.environmentLabel);
   const metaTextClassName = selected
     ? selectedThreadRowColors.mutedForegroundClassName
     : rowAppearance.tertiaryForegroundClassName;
@@ -1754,33 +1801,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           )}
         </View>
       </View>
-      {props.searchMatch ? (
-        <View className="mt-1" style={{ paddingLeft: titleTextInset }}>
-          <ThreadSearchMatchExcerpt
-            sidebar={sidebarPane}
-            match={props.searchMatch}
-            query={props.searchQuery ?? ""}
-            selected={selected}
-          />
-        </View>
-      ) : null}
       <View className="mt-1 flex-row items-center gap-2" style={{ paddingLeft: titleTextInset }}>
         <View className="min-w-0 flex-1 flex-row items-center gap-1">
-          {props.project ? (
-            <View className="shrink flex-row items-center gap-1" style={{ maxWidth: "50%" }}>
-              <ProjectFavicon
-                environmentId={thread.environmentId}
-                faviconPath={props.project.faviconPath}
-                projectIcon={props.project.projectIcon}
-                size={machineIconSize + 2}
-                projectTitle={props.project.title}
-                workspaceRoot={props.project.workspaceRoot}
-              />
-              <Text className={cn("shrink text-xs", metaTextClassName)} numberOfLines={1}>
-                {props.project.title}
-              </Text>
-              {hasMetaDetail ? <Text className={cn("text-xs", metaTextClassName)}>·</Text> : null}
-            </View>
+          {/* Error and mission-state text take the whole line, as before the project moved here. */}
+          {props.project && !lastError && !missionState ? (
+            <ThreadListV2ProjectPrefix
+              environmentId={thread.environmentId}
+              project={props.project}
+              size={machineIconSize + 2}
+              textClassName={metaTextClassName}
+              separated={Boolean(props.environmentLabel)}
+            />
           ) : null}
           {lastError ? (
             <Text
@@ -1898,6 +1929,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           </View>
         ) : null}
       </View>
+      {props.searchMatch ? (
+        <View className="mt-1" style={{ paddingLeft: titleTextInset }}>
+          <ThreadSearchMatchExcerpt
+            sidebar={sidebarPane}
+            match={props.searchMatch}
+            query={props.searchQuery ?? ""}
+            selected={selected}
+          />
+        </View>
+      ) : null}
     </>
   );
 
@@ -2053,13 +2094,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     );
 
   const leadSpacing = missionLeadSpacing(mission);
-  if (!canSwipe)
-    return (
-      <View style={[rowAppearance.swipeContainerStyle, leadSpacing]}>{rowContent(() => {})}</View>
-    );
+  const baseContainerStyle = rowAppearance.swipeContainerStyle;
+  // The gap goes on the card container itself, so it replaces that container's top margin.
+  const containerStyle = leadSpacing ? [baseContainerStyle, leadSpacing] : baseContainerStyle;
+  if (!canSwipe) return <View style={containerStyle}>{rowContent(() => {})}</View>;
 
   return (
-    <View collapsable={false} style={leadSpacing}>
+    <View collapsable={false}>
       {customSnoozeOpen && (
         <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
       )}
@@ -2068,7 +2109,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         threadKey={`${thread.environmentId}:${thread.id}`}
         backgroundColor={rowAppearance.swipeBackgroundColor}
         compactActions={variant === "slim"}
-        containerStyle={rowAppearance.swipeContainerStyle}
+        containerStyle={containerStyle}
         enableTrackpadSwipe
         fullSwipeAction="primary"
         fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
