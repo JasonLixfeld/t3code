@@ -20,7 +20,7 @@ import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
-import { act, render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
@@ -1606,6 +1606,9 @@ describe("dragging threads into and out of missions", () => {
     using _drag = allowDrag();
     await using screen = await renderSidebar({ boringSidebarEnabled: true });
     await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    // Edge scrolling moves by the time between frames, so one late frame on a busy runner jumps
+    // the whole list. Fake timers move it only as far as each vi.waitFor check advances the clock.
+    using _timers = fakeTimers();
     const viewport = shortViewport(screen.container);
     const view = viewport.getBoundingClientRect();
     const drag = await dragBetween(rowOf(screen.container, "Update the release notes"), {
@@ -1632,8 +1635,10 @@ describe("dragging threads into and out of missions", () => {
 
   it("scrolls up to missions above the list while a thread is held at its top edge", async () => {
     using _drag = allowDrag();
-    await using screen = await renderSidebar();
+    // With no heading above it, the first mission comes to rest under the held pointer.
+    await using screen = await renderSidebar({ sidebarMissionsHeaderVisible: false });
     await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
+    using _timers = fakeTimers();
     const viewport = shortViewport(screen.container, "120px");
     const areas = [...screen.container.querySelectorAll<HTMLElement>("[data-mission-drop]")];
     viewport.scrollTop =
@@ -1644,7 +1649,7 @@ describe("dragging threads into and out of missions", () => {
       clientX: view.left + 40,
       clientY: view.top + 2,
     });
-    await vi.waitFor(() => expect(areas.map(hintIn)).toContain("Add to mission"));
+    await vi.waitFor(() => expect(hintIn(areas[0]!)).toBe("Add to mission"), { timeout: 10_000 });
     await drag.release();
     expect(commandFor("mission add member")).toHaveBeenCalledOnce();
   });
