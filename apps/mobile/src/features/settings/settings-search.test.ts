@@ -62,7 +62,7 @@ describe("filterSettingsSections", () => {
     { query: "usage", expected: [[null, ["Usage"]]] },
     { query: "zzzz", expected: [] },
     { query: "mission prompt", missions: true, expected: [[null, ["General"]]] },
-    { query: "missions", expected: [] },
+    { query: "mission prompt", missions: false, expected: [] },
   ])("$query", ({ query, missions, expected }) => {
     expect(visible(query, missions)).toEqual(expected);
   });

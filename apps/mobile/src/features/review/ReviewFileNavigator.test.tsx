@@ -104,7 +104,7 @@ const rows: NativeReviewDiffRow[] = [
 function setup(closeSheet: ((then?: () => void) => void) | null = null) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const container = document.body.appendChild(document.createElement("div"));
-  const root = createRoot(container);
+  let root = createRoot(container);
   let findQuery = "";
   let activeIndex: number | null = null;
   const results = new Map<string, ReturnType<typeof findInReviewRows>>();
@@ -139,6 +139,11 @@ function setup(closeSheet: ((then?: () => void) => void) | null = null) {
     activeIndex = active;
     act(() => root.render(tree()));
   };
+  const reopen = () => {
+    act(() => root.unmount());
+    root = createRoot(container);
+    act(() => root.render(tree()));
+  };
   const type = (value: string) => {
     const input = container.querySelector("input")!;
     act(() => {
@@ -154,6 +159,7 @@ function setup(closeSheet: ((then?: () => void) => void) | null = null) {
   return {
     container,
     render,
+    reopen,
     type,
     chooseMode,
     buttons,
@@ -187,8 +193,14 @@ it("switches modes like the web diff: Contents takes typed Name text, Name takes
   screen.chooseMode("Contents");
   expect(screen.onChangeQuery).not.toHaveBeenCalled();
   expect(input()).toBe("app");
-  screen.chooseMode("Name");
+  screen.reopen();
+  screen.chooseMode("Contents");
+  expect(screen.onChangeQuery).not.toHaveBeenCalled();
   expect(input()).toBe("app");
+  screen.type("twice");
+  expect(screen.onChangeQuery).toHaveBeenLastCalledWith("twice");
+  screen.chooseMode("Name");
+  expect(input()).toBe("twice");
 
   screen.type("SRC");
   screen.chooseMode("Contents");

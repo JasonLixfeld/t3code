@@ -34,35 +34,29 @@ class ReviewDiffSearchTest {
   @Test
   fun highlightsPaintTheActiveMatchApartWithoutNewGeometryAndClearOnEmpty() {
     withView { view, canvas, _ ->
-      val plain = draw(canvas)
       val offsets = field(canvas, "rowOffsets")
-      view.setSearchHighlightsJson(highlights(active = null))
+      for (scheme in listOf("light", "dark")) {
+        view.setAppearanceScheme(scheme)
+        view.setSearchHighlightsJson("")
+        val plain = draw(canvas)
+        view.setSearchHighlightsJson(highlights(active = null))
+        val ordinary = draw(canvas)
+        view.setSearchHighlightsJson(highlights(active = MATCH_ROW))
+        val active = draw(canvas)
+        assertTrue("$scheme paints a match", !ordinary.sameAs(plain))
+        assertTrue("$scheme paints the active match", !active.sameAs(plain))
+        assertTrue(
+          "$scheme paints the active match apart from an ordinary one",
+          !active.sameAs(ordinary),
+        )
+        view.setSearchHighlightsJson("")
+        assertTrue("$scheme clears highlights on an empty payload", draw(canvas).sameAs(plain))
+      }
       assertSame(
         "search highlights must not rebuild row geometry",
         offsets,
         field(canvas, "rowOffsets")
       )
-      val ordinary = draw(canvas)
-      assertTrue("a match is painted", !ordinary.sameAs(plain))
-
-      view.setSearchHighlightsJson(highlights(active = MATCH_ROW))
-      assertTrue(
-        "the active match paints apart from an ordinary one",
-        !draw(canvas).sameAs(ordinary),
-      )
-
-      view.setAppearanceScheme("dark")
-      view.setSearchHighlightsJson(highlights(active = null))
-      val darkOrdinary = draw(canvas)
-      view.setSearchHighlightsJson(highlights(active = MATCH_ROW))
-      assertTrue(
-        "dark paints the active match apart from an ordinary one",
-        !draw(canvas).sameAs(darkOrdinary),
-      )
-
-      view.setAppearanceScheme("light")
-      view.setSearchHighlightsJson("")
-      assertTrue("an empty payload clears highlights", draw(canvas).sameAs(plain))
     }
   }
 

@@ -926,7 +926,7 @@ describe("buildThreadListV2ListItems", () => {
               members: [
                 { ...member("lead"), role: "lead" },
                 member("member", "release-pending"),
-                member("delegated"),
+                member("delegated", "active", laptop),
                 member("trimmed"),
                 member("unloaded", "active", laptop),
               ],
@@ -961,7 +961,7 @@ describe("buildThreadListV2ListItems", () => {
         searchQuery: "",
         now: NOW,
         fallbackMissionThreadShells: [
-          makeThread({ id: ThreadId.make("delegated"), title: "delegated" }),
+          makeThread({ environmentId: laptop, id: ThreadId.make("delegated"), title: "delegated" }),
         ],
         liveShellEnvironmentIds: new Set([environmentId]),
         missionHosts: hosts,

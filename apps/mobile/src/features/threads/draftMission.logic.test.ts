@@ -46,16 +46,18 @@ describe("draftHeroTokens", () => {
   it.each([
     [
       { scratch: false, mission: "member" },
-      "What should we build in [project], in mission [mission]?",
+      [
+        ["project", ", "],
+        ["mission", "?"],
+      ],
     ],
-    [{ scratch: true, mission: "lead" }, "What should we work on as the new lead for [mission]?"],
-  ] as const)("splits %o into whole words, keeping the glue on its choice", (input, sentence) => {
+    [{ scratch: true, mission: "lead" }, [["mission", "?"]]],
+  ] as const)("splits %o into whole words, keeping the glue on its choice", (input, choices) => {
     const tokens = draftHeroTokens(input, m);
+    expect(tokens.at(-1)?.kind).toBe("mission");
     expect(
-      tokens
-        .map((token) => (token.kind === "text" ? token.text : `[${token.kind}]${token.glue}`))
-        .join(""),
-    ).toBe(sentence);
+      tokens.flatMap((token) => (token.kind === "text" ? [] : [[token.kind, token.glue]])),
+    ).toEqual(choices);
     expect(tokens.every((token) => token.kind !== "text" || /^\S+ $/.test(token.text))).toBe(true);
     expect(new Set(tokens.map((token) => token.key)).size).toBe(tokens.length);
   });

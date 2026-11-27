@@ -46,6 +46,14 @@ it("offers a dismiss except while trying, ignores a tap on a mark that has chang
     );
   render();
   expect(shown()?.onDismiss).toBeTypeOf("function");
+  act(() =>
+    markMissionDraft(
+      thread,
+      { kind: "member", host: thread.environmentId, missionId: "m0", name: "Docs" },
+      () => "m0",
+    ),
+  );
+  expect(shown()?.message).toContain("Docs");
 
   let attempt = 0;
   act(() => {

@@ -134,11 +134,12 @@ describe("mission menus", () => {
       missingMemberMenuItems(place(entry), ctx(allowed)).map((row) => row.id);
     expect(ids(lead)).toContain("mission-new-lead");
     expect(ids({ ...lead, state: "active" })).not.toContain("mission-new-lead");
-    expect(
-      missingMemberMenuItems(place(lead), ctx(false)).find(
+    const promptDisabled = (allowed: boolean) =>
+      missingMemberMenuItems(place(lead), ctx(allowed)).find(
         (row) => row.id === "mission-prompt:env-desk:m1",
-      )?.disabled,
-    ).toBe(true);
+      )?.disabled;
+    expect(promptDisabled(true)).toBe(false);
+    expect(promptDisabled(false)).toBe(true);
   });
 
   it("lists one palette row per mission the open thread can join", () => {
