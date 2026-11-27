@@ -15,6 +15,7 @@ private val REVIEW_DIFF_EVENTS = arrayOf(
 )
 
 class T3ReviewDiffModule : Module() {
+  @Suppress("LongMethod") // A flat list of the view's props and events.
   override fun definition() = ModuleDefinition {
     Name("T3ReviewDiffSurface")
 

@@ -44,6 +44,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   private var initialFileId: String? = null
   private var pendingScrollFileId: String? = null
   private var pendingMatch: SearchMatch? = null
+  private var searchHighlights = SearchHighlights()
   private var pendingMatchAnimated = false
   private var lastVisibleFileId: String? = null
   private var tokensResetKey = ""
@@ -142,8 +143,13 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   }
 
   fun setSearchHighlightsJson(value: String) {
-    val (ranges, active) = parseSearchHighlights(value)
-    canvasView.setSearchHighlights(ranges, active)
+    searchHighlights = parseSearchHighlights(value, searchHighlights.dark)
+    showSearchHighlights()
+  }
+
+  private fun showSearchHighlights() {
+    canvasView.drawing.search.highlights = searchHighlights
+    canvasView.invalidate()
   }
 
   /** Waits for the row to be decoded and its file open, since JS opens a fold just before this. */
@@ -176,7 +182,8 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   }
 
   fun setAppearanceScheme(value: String) {
-    canvasView.darkAppearance = value == "dark"
+    searchHighlights = searchHighlights.copy(dark = value == "dark")
+    showSearchHighlights()
     canvasView.theme = DiffTheme.fallback(value)
   }
 
@@ -595,48 +602,6 @@ internal data class DiffWordDiffRange(
   val end: Int
 )
 
-internal data class SearchMatch(
-  val rowId: String,
-  val start: Int,
-  val end: Int
-)
-
-// The web diff's find colors: a translucent orange match and its modified blue at 45%.
-internal fun searchMatchColor(dark: Boolean): Int =
-  if (dark) Color.argb(0x66, 0xff, 0x96, 0x32) else Color.argb(0x88, 0xff, 0x96, 0x32)
-
-internal fun activeSearchMatchColor(dark: Boolean): Int =
-  if (dark) Color.argb(115, 0x69, 0xb1, 0xff) else Color.argb(115, 0x00, 0x9f, 0xff)
-
-private fun parseSearchHighlights(
-  value: String
-): Pair<Map<String, List<DiffWordDiffRange>>, SearchMatch?> = try {
-  if (value.isEmpty()) {
-    emptyMap<String, List<DiffWordDiffRange>>() to null
-  } else {
-    val payload = JSONObject(value)
-    val rangesJson = payload.optJSONObject("ranges") ?: JSONObject()
-    val ranges = HashMap<String, List<DiffWordDiffRange>>()
-    for (rowId in rangesJson.keys()) {
-      val pairs = rangesJson.optJSONArray(rowId) ?: continue
-      ranges[rowId] = (0 until pairs.length()).mapNotNull { index ->
-        val pair = pairs.optJSONArray(index) ?: return@mapNotNull null
-        val start = pair.optInt(0, -1)
-        val end = pair.optInt(1, -1)
-        if (start >= 0 && end > start) DiffWordDiffRange(start, end) else null
-      }
-    }
-    val active = payload.optJSONObject("active")?.let {
-      val start = it.optInt("start", -1)
-      val end = it.optInt("end", -1)
-      if (start >= 0 && end > start) SearchMatch(it.optString("rowId"), start, end) else null
-    }
-    ranges to active
-  }
-} catch (_: Exception) {
-  emptyMap<String, List<DiffWordDiffRange>>() to null
-}
-
 internal data class DiffToken(
   val content: String,
   val color: Int?,
@@ -834,7 +799,7 @@ internal data class DiffStyle(
 
 private class DiffCanvasView(context: Context) : View(context) {
   private val density = resources.displayMetrics.density
-  private val drawing = ReviewDiffCanvasDrawing(context)
+  val drawing = ReviewDiffCanvasDrawing(context)
   private val backgroundPaint = drawing.backgroundPaint
   private val borderPaint = drawing.borderPaint
   private val textPaint = drawing.textPaint
@@ -926,44 +891,14 @@ private class DiffCanvasView(context: Context) : View(context) {
       field = value
       invalidate()
     }
-  var darkAppearance = false
-    set(value) {
-      field = value
-      invalidate()
-    }
-  private var searchRangesByRowId: Map<String, List<DiffWordDiffRange>> = emptyMap()
-  private var activeSearchMatch: SearchMatch? = null
-
-  /** Paint-only: row geometry does not depend on search highlights. */
-  fun setSearchHighlights(ranges: Map<String, List<DiffWordDiffRange>>, active: SearchMatch?) {
-    searchRangesByRowId = ranges
-    activeSearchMatch = active
-    invalidate()
-  }
 
   /**
    * Scrolls the match horizontally into view and returns its top and bottom in content
    * coordinates, or null while its row is not laid out, as when its file is folded.
    */
-  fun revealMatch(match: SearchMatch): Pair<Int, Int>? {
-    val index = rows.indexOfFirst { it.id == match.rowId }
-    if (index < 0 || width <= 0) return null
-    val row = rows[index]
-    val lines = codeWrap.lines(row)
-    val line = lines.lineForOffset(match.start)
-    val top = rowOffsets[index] + lines.lineTop(line)
-    val bottom = top + if (line == 0) lines.firstHeight(style.rowHeightPx.toInt()) else lines.height
-    if (!codeWrap.enabled) {
-      val left = drawing.codeOffsetX(row, lines, match.start, style).toInt()
-      val right = drawing.codeOffsetX(row, lines, match.end, style).toInt()
-      val visibleWidth =
-        width - (style.changeBarWidthPx + style.gutterWidthPx + style.codePaddingPx * 2f).toInt()
-      if (left < horizontalOffset || right > horizontalOffset + visibleWidth) {
-        setHorizontalOffset(left - visibleWidth / 3)
-      }
-    }
-    return top to bottom
-  }
+  fun revealMatch(match: SearchMatch) =
+    drawing.search.reveal(match, rows, rowOffsets, codeWrap, style, width, horizontalOffset)
+      ?.also { setHorizontalOffset(it.horizontalOffset) }
 
   var theme: DiffTheme = DiffTheme.fallback("light")
     set(value) {
@@ -1454,22 +1389,7 @@ private class DiffCanvasView(context: Context) : View(context) {
       val baseline = lines.baseline(top, firstLineBottom, textPaint)
       val tokens = tokensByRowId[row.id]
       drawing.drawWordDiffRanges(canvas, row, tokens, codeX, top, firstLineBottom, lines, style)
-      val active = activeSearchMatch?.takeIf { it.rowId == row.id }
-        ?.let { DiffWordDiffRange(it.start, it.end) }
-      // The current match replaces its match color, as on web, instead of stacking on it.
-      searchRangesByRowId[row.id]?.let { ranges ->
-        drawing.drawSearchRanges(
-          canvas, row, tokens, codeX, top, firstLineBottom, baseline, lines, style,
-          if (active == null) ranges else ranges.filter { it != active },
-          searchMatchColor(darkAppearance),
-        )
-      }
-      active?.let {
-        drawing.drawSearchRanges(
-          canvas, row, tokens, codeX, top, firstLineBottom, baseline, lines, style, listOf(it),
-          activeSearchMatchColor(darkAppearance),
-        )
-      }
+      drawing.search.draw(canvas, row, tokens, codeX, top, firstLineBottom, baseline, lines, style)
       drawing.drawCode(canvas, row, tokens, codeX, baseline, style, lines)
     }
 
