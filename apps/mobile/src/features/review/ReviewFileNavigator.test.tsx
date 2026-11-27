@@ -21,8 +21,11 @@ vi.mock("@legendapp/list/react-native", () => ({
   ),
 }));
 vi.mock("react-native", () => ({
-  View: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+  View: ({ children, style }: { children?: ReactNode; style?: { paddingTop?: number } }) => (
+    <div data-padding-top={style?.paddingTop}>{children}</div>
+  ),
 }));
+vi.mock("../../components/ui/useBarInset", () => ({ useBarOverlap: () => 44 }));
 vi.mock("../../native/NativeScrollViewMarker", () => ({ NativeScrollView: () => null }));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
@@ -141,6 +144,14 @@ function setup(closeSheet: ((then?: () => void) => void) | null = null) {
     },
   };
 }
+
+it("keeps the pinned search controls below the bar that floats over the inspector", () => {
+  using screen = setup();
+  screen.render("");
+
+  const controls = screen.container.querySelector("input")!.closest("[data-padding-top]");
+  expect(controls?.getAttribute("data-padding-top")).toBe("52");
+});
 
 it("filters files by path, including files whose rows have not loaded", () => {
   using screen = setup();
