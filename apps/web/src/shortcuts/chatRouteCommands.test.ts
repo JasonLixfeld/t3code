@@ -108,7 +108,10 @@ describe("preview commands", () => {
     expect(dispatch).toHaveBeenCalledWith(action);
   });
 
-  it("preview.find leaves the key to the tab bar when no browser surface has focus", () => {
+  it.each([
+    { where: "on a draft thread with no browser surface focused", draft: true, focused: false },
+    { where: "on a non-thread chat route", draft: false, focused: true },
+  ])("preview.find leaves the key unclaimed $where", ({ draft, focused }) => {
     const draftId = DraftId.make("draft-2");
     useComposerDraftStore
       .getState()
@@ -116,37 +119,20 @@ describe("preview commands", () => {
         { environmentId: EnvironmentId.make("local"), projectId: ProjectId.make("active") },
         draftId,
       );
-    using cleanup = new DisposableStack();
-    cleanup.defer(() => useComposerDraftStore.getState().clearDraftThread(draftId));
+    using stack = new DisposableStack();
+    stack.defer(() => useComposerDraftStore.getState().clearDraftThread(draftId));
     using _scope = vi.spyOn(session, "readEnvironmentScope").mockReturnValue(true);
-    using _browser = vi.spyOn(previewFocus, "isBrowserSurfaceFocused").mockReturnValue(false);
+    using _browser = vi.spyOn(previewFocus, "isBrowserSurfaceFocused").mockReturnValue(focused);
     using dispatch = vi.spyOn(previewActions, "dispatchPreviewAction").mockReturnValue(true);
     using register = vi.spyOn(dispatcher, "registerCommands").mockReturnValue(() => {});
-    const router = {
-      state: { matches: [{ routeId: "/_chat/draft/$draftId", params: { draftId } }] },
-    } as unknown as AnyRouter;
-    using stack = new DisposableStack();
+    const match = draft
+      ? { routeId: "/_chat/draft/$draftId", params: { draftId } }
+      : { routeId: "/_chat/pull-requests", params: {} };
+    const router = { state: { matches: [match] } } as unknown as AnyRouter;
     stack.defer(installChatRouteCommands(router));
     const event = { preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as KeyboardEvent;
 
     expect(register.mock.calls[0]![0]["preview.find"]!(event)).toBe(false);
-    expect(event.preventDefault).not.toHaveBeenCalled();
-    expect(dispatch).not.toHaveBeenCalled();
-  });
-
-  it("preview.find leaves the key unclaimed on non-thread chat routes", () => {
-    using dispatch = vi.spyOn(previewActions, "dispatchPreviewAction").mockReturnValue(true);
-    using register = vi.spyOn(dispatcher, "registerCommands").mockReturnValue(() => {});
-    const router = {
-      state: { matches: [{ routeId: "/_chat/pull-requests", params: {} }] },
-    } as unknown as AnyRouter;
-    using stack = new DisposableStack();
-    stack.defer(installChatRouteCommands(router));
-    const event = { preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as KeyboardEvent;
-
-    const result = register.mock.calls[0]![0]["preview.find"]!(event);
-
-    expect(result).toBe(false);
     expect(event.preventDefault).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalled();
   });
