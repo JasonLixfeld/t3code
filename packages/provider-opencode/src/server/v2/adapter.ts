@@ -3487,12 +3487,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const onSessionDeleted = Effect.fnUntraced(function* (sessionId: string) {
       busy.delete(sessionId);
       const deleted = threads.get(sessionId);
-      if (deleted?.subagent === undefined) return;
+      if (deleted === undefined) return;
       for (const session of sessionsOf(deleted)) {
         for (const call of Array.from(session.calls.values())) {
           yield* settleCall(call, "interrupted", DELETED_SUBAGENT);
         }
-        if (session.active !== undefined) yield* finishTurn(session, { status: "interrupted" });
+        // A deleted root's own turn ends with the interrupt OpenCode sends before deleting it.
+        if (session.subagent !== undefined && session.active !== undefined) {
+          yield* finishTurn(session, { status: "interrupted" });
+        }
         session.reports.clear();
         discardWakes(session, session.wakes.splice(0));
       }
@@ -3538,7 +3541,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         yield* syncRosterAncestors(shell.state);
         return;
       }
-      if (event.type === "session.deleted") return yield* onSessionDeleted(event.data.sessionID);
+      // A root's deletion drops its held wakes at once; anything else waits behind a held wake's events.
+      if (event.type === "session.deleted") {
+        const deleted = threads.get(event.data.sessionID);
+        if (deleted !== undefined && deleted.subagent === undefined) {
+          return yield* onSessionDeleted(event.data.sessionID);
+        }
+      }
       const sessionId = sessionOfEvent(event);
       const cleared = sessionId === undefined ? undefined : clearing.get(sessionId);
       if (cleared !== undefined) {
@@ -3583,6 +3592,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
         return;
       }
+      // An inbox item's delivery or cancel stays behind its enqueue while a wake still holds that.
+      if (event.type === "session.inbox.delivered" || event.type === "session.inbox.cancelled") {
+        const holding = threads
+          .get(event.data.sessionID)
+          ?.wakes.find((wake) =>
+            wake.events.some(
+              (buffered) =>
+                buffered.type === "session.inbox.enqueued" &&
+                buffered.data.inboxID === event.data.inboxID,
+            ),
+          );
+        if (holding !== undefined) return void holding.events.push(event);
+      }
       const holder = sessionId === undefined ? undefined : holderOf(sessionId);
       const held = holder?.wakes.at(-1);
       if (holder !== undefined && held !== undefined) {
@@ -3603,6 +3625,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       sessionId: string | undefined,
       held = false,
     ) {
+      if (event.type === "session.deleted") return yield* onSessionDeleted(event.data.sessionID);
       const ended =
         !held && (event.type === "unreadable.execution.ended" || executionEnd(event.type))
           ? threads.get(sessionId ?? "")

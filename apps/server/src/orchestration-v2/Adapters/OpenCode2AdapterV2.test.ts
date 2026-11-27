@@ -2147,18 +2147,103 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }),
   );
 
-  it.effect("settles an earlier child's report held by a wake that is given up", () =>
+  it.effect.each(["delivered", "cancelled"] as const)(
+    "settles an earlier child's report held by a wake that is given up, report %s",
+    (fate) =>
+      Effect.gen(function* () {
+        const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+        const settle = event(`session.inbox.${fate}`, {
+          sessionID: SESSION,
+          inboxID: "msg_report",
+        });
+        const { runtime, thread } = yield* resumed([
+          ...launchedAndRunning,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          childReport("msg_report", "CHILD_OK"),
+          // OpenCode cancels a report it never delivered only after its execution ends.
+          ...(fate === "delivered" ? [settle] : []),
+          event(`session.execution.${fate === "delivered" ? "succeeded" : "interrupted"}`, {
+            sessionID: SESSION,
+          }),
+          ...(fate === "cancelled" ? [settle] : []),
+          // Routed once the held execution ended, so its update proves the report was held.
+          event("session.model.selected", {
+            sessionID: SESSION,
+            model: { providerID: "opencode", id: "big-pickle", variant: "thinking" },
+          }),
+        ]).pipe(
+          Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+            offer: (request) => Effect.sync(() => void offers.push(request)),
+            take: Effect.never,
+          }),
+        );
+        const watch = yield* watchCalls(runtime, thread);
+        yield* runtime.startTurn(withLineage(thread));
+        yield* watch.until(() => offers.length === 1 && watch.state.variant === "thinking");
+        assert.equal(watch.calls.get("Sleep")?.status, "running");
+        yield* offers[0]!.clearIfCurrent!();
+        yield* watch.until(
+          () =>
+            watch.calls.get("Sleep")?.status === "completed" && watch.state.roster?.length === 0,
+        );
+        assert.deepEqual(watch.calls.get("Sleep"), { status: "completed", result: "CHILD_OK" });
+        assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+      }),
+  );
+
+  it.effect("clears the reports a deleted root still had queued", () =>
     Effect.gen(function* () {
-      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
       const { runtime, thread } = yield* resumed([
         ...launchedAndRunning,
         event("session.execution.succeeded", { sessionID: SESSION }),
-        event("session.execution.started", { sessionID: SESSION }),
         event("session.execution.succeeded", { sessionID: CHILD }),
         childReport("msg_report", "CHILD_OK"),
-        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report" }),
+        event("session.deleted", { sessionID: SESSION }, undefined, 2),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () => watch.calls.get("Sleep")?.status === "completed" && watch.state.roster?.length === 0,
+      );
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }),
+  );
+
+  it.effect("settles a subagent deleted before the held wake that launched it is taken", () =>
+    Effect.gen(function* () {
+      const LATE = "ses_late0000000000000000000000";
+      const late = { sessionID: SESSION, assistantMessageID: "msg_wake", id: "call-late" };
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
         event("session.execution.succeeded", { sessionID: SESSION }),
-        // Routed once the held execution ended, so its update proves the report was held.
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.tool.input.started", { ...late, name: "subagent" }),
+        event("session.tool.called", {
+          ...late,
+          name: "subagent",
+          input: { description: "Late", prompt: "sleep", background: true },
+          executed: false,
+        }),
+        event("session.created", { ...childCreated(LATE), title: "Late" }),
+        event("session.tool.progress", {
+          ...late,
+          metadata: { sessionID: LATE, status: "running" },
+        }),
+        event("session.tool.success", {
+          ...late,
+          content: [{ type: "text", text: "The subagent is working in the background." }],
+          metadata: { sessionID: LATE, status: "running", truncated: false },
+          executed: false,
+        }),
+        event("session.execution.started", { sessionID: LATE }),
+        event("session.execution.interrupted", { sessionID: LATE }),
+        event("session.deleted", { sessionID: LATE }, undefined, 2),
+        event("session.execution.succeeded", { sessionID: SESSION }),
         event("session.model.selected", {
           sessionID: SESSION,
           model: { providerID: "opencode", id: "big-pickle", variant: "thinking" },
@@ -2172,12 +2257,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const watch = yield* watchCalls(runtime, thread);
       yield* runtime.startTurn(withLineage(thread));
       yield* watch.until(() => offers.length === 1 && watch.state.variant === "thinking");
-      assert.equal(watch.calls.get("Sleep")?.status, "running");
-      yield* offers[0]!.clearIfCurrent!();
+      yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
       yield* watch.until(
-        () => watch.calls.get("Sleep")?.status === "completed" && watch.state.roster?.length === 0,
+        () => watch.calls.get("Late")?.status === "interrupted" && watch.state.roster?.length === 0,
       );
-      assert.deepEqual(watch.calls.get("Sleep"), { status: "completed", result: "CHILD_OK" });
       assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
     }),
   );
