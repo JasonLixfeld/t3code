@@ -341,7 +341,6 @@ it.each([
 
   const target = allowed ? scopeProjectRef(api.environmentId, api.id) : home;
   expect(useComposerDraftStore.getState().getDraftSession(draftId)).toMatchObject(target);
-  // The send check compares this mark with the draft's machine.
   expect(missionDraftOf(draftId)).toEqual({
     ...mark,
     thread: { environmentId: target.environmentId, threadId },

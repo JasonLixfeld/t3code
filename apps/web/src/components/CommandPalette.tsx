@@ -647,7 +647,6 @@ function OpenCommandPaletteDialog(props: {
   const readAddProjectDraftMachines = useStableCallback(() => addProjectDraftMachines);
   const moveDraftToAddedProject = async (project: EnvironmentProject): Promise<boolean> => {
     if (addProjectDraftId === null) return false;
-    // A mission draft moves only to a machine its mission allows, and its mark follows it.
     const machines = readAddProjectDraftMachines();
     if (machines !== null && !machines.has(project.environmentId)) return false;
     const mark = missionDraftOf(addProjectDraftId);
