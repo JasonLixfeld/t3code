@@ -423,6 +423,9 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     contentView.onToggleComment = { [weak self] commentId in
       self?.onToggleComment(["commentId": commentId])
     }
+    contentView.onUserTouch = { [weak self] in
+      self?.pendingMatch = nil
+    }
     contentView.onPressNotice = { [weak self] payload in
       self?.onPressNotice(payload)
     }
@@ -1401,6 +1404,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   var onToggleComment: ((String) -> Void)?
   var onPressNotice: (([String: Any]) -> Void)?
   var onDrawMetrics: (([String: Any]) -> Void)?
+  var onUserTouch: (() -> Void)?
 
   private var stickyWidth: CGFloat {
     style.changeBarWidth + style.gutterWidth
@@ -1824,9 +1828,15 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     false
   }
 
+  override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+    onUserTouch?()
+    super.touchesBegan(touches, with: event)
+  }
+
   @objc private func handleHorizontalPan(_ gesture: UIPanGestureRecognizer) {
     switch gesture.state {
     case .began:
+      onUserTouch?()
       stopHorizontalDeceleration()
       let panTarget = horizontalPanTarget(at: gesture.location(in: self))
       activePanFileId = panTarget?.fileId
