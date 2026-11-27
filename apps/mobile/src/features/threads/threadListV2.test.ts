@@ -1037,13 +1037,12 @@ describe("buildThreadListV2ListItems", () => {
     expect(shown(laptop)).toEqual([["lead"]]);
   });
 
-  it("shows a member the list leaves out from the mission's shells, and hides settled ones", () => {
+  it("shows a member the list leaves out from the mission's shells, and hides one with no thread", () => {
     const laptop = EnvironmentId.make("environment-laptop");
-    const member = (threadId: string, on = environmentId, settled = false) => ({
+    const member = (threadId: string, on = environmentId) => ({
       ref: { environmentId: on, threadId: ThreadId.make(threadId) },
       role: "member" as const,
       state: "active" as const,
-      ...(settled ? { settled: true as const } : {}),
     });
     const hosts: ReadonlyArray<MissionHost> = [
       {
@@ -1059,8 +1058,8 @@ describe("buildThreadListV2ListItems", () => {
               members: [
                 { ...member("lead"), role: "lead" },
                 member("delegated", laptop),
-                member("archived", environmentId, true),
-                member("trimmed", environmentId, true),
+                member("archived"),
+                member("trimmed"),
               ],
             },
           ],

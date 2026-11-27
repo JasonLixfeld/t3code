@@ -243,6 +243,7 @@ async function renderSidebar(
     extra?: ReadonlyArray<ReturnType<typeof shell>>;
     without?: ReadonlyArray<string>;
     keepsMissions?: boolean;
+    synced?: ReadonlyArray<EnvironmentId>;
   } = {},
 ) {
   const previousSettings = getClientSettings();
@@ -291,7 +292,7 @@ async function renderSidebar(
     ),
   );
   vi.mocked(useConnectedEnvironmentIds).mockReturnValue(CONNECTED);
-  vi.mocked(useLiveShellEnvironmentIds).mockReturnValue(new Set(CONNECTED));
+  vi.mocked(useLiveShellEnvironmentIds).mockReturnValue(new Set(options.synced ?? CONNECTED));
   vi.mocked(useEnvironmentsWithScope).mockImplementation(
     (environments) => new Set(environments.map(({ environmentId }) => environmentId)),
   );
@@ -1298,12 +1299,12 @@ describe("dragging threads into and out of missions", () => {
     ] as const;
 
   it.each(leaveRoutes("unread"))(
-    "leaves at once from the row's X when %s may be changed",
+    "leaves at once from the X of a row its machine is still syncing when %s may be changed",
     async (_, writable, label, command) => {
       leadOnLaptop("active", writable, "unread");
       const confirm = vi.fn().mockResolvedValue(true);
       vi.mocked(readLocalApi).mockReturnValue({ dialogs: { confirm } } as unknown as LocalApi);
-      await using screen = await renderSidebar();
+      await using screen = await renderSidebar({}, { synced: [LAPTOP] });
       await expect.element(screen.getByText("Laptop launch").first()).toBeInTheDocument();
       const x = screen.container.querySelector<HTMLElement>('button[aria-label="Leave mission"]')!;
       expect(x.hasAttribute("disabled")).toBe(label === null);
@@ -1316,6 +1317,14 @@ describe("dragging threads into and out of missions", () => {
       expect(confirm).not.toHaveBeenCalled();
     },
   );
+
+  it("shows no blank row for a member whose thread the list leaves out once its machine syncs", async () => {
+    leadOnLaptop("active", [LOCAL, LAPTOP], "unread");
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Laptop launch").first()).toBeInTheDocument();
+    expect(screen.container.textContent).not.toContain(`Thread on ${LOCAL}`);
+    expect(screen.container.querySelector('button[aria-label="Leave mission"]')).toBeNull();
+  });
 
   it.each(leaveRoutes("plain"))(
     "leaves at once by a drop on the zone when %s may be changed",

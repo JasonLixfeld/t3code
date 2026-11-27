@@ -61,7 +61,7 @@ const MissionClaimHere = Schema.Struct({
   threadId: ThreadId,
   missionId: Schema.String,
   name: Schema.String,
-  /** A member thread `isSettledMissionMember` holds for. Only lists read it, to hide its row. */
+  /** A member thread `isSettledMissionMember` holds for. Kept for older clients; current lists hide a missing member without it. */
   settled: Schema.optional(Schema.Literal(true)),
 });
 
