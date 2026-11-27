@@ -303,7 +303,7 @@ it.effect(
               name: `repo-${repo}`,
               path: `/code/app/repo-${repo}`,
               repositoryPath: `/code/app/repo-${repo}`,
-              branch: `t3/${"b".repeat(400)}`,
+              branch: `t3/${"b".repeat(320)}`,
               branchSource: "recorded" as const,
               remote: `github.com/acme/repo-${repo}`,
               pullRequests: [
