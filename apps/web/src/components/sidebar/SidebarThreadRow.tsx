@@ -69,6 +69,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type ComponentProps,
   type ReactNode,
 } from "react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
@@ -624,6 +625,73 @@ export function MissionLeadIcon() {
     />
   );
 }
+
+function CardBody({ className, ...props }: ComponentProps<"div">) {
+  return (
+    <div
+      className={cn(
+        "relative z-10 h-13.5 px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+function CardTitleLine({ className, ...props }: ComponentProps<"div">) {
+  return <div className={cn("flex h-5 min-w-0 items-center gap-1.5", className)} {...props} />;
+}
+
+function CardMetaLine({ className, ...props }: ComponentProps<"div">) {
+  return (
+    <div
+      className={cn(
+        "mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+/** The project, then the machine when there is one; the project name truncates first. */
+function CardPlace(props: {
+  readonly project: ProjectFaviconProject | null;
+  readonly projectDisplayName: string | null;
+  readonly machine?: { readonly icon: ReactNode; readonly label: string } | null;
+}) {
+  const hasProject = props.project !== null || props.projectDisplayName !== null;
+  const machine = props.machine ?? null;
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-1.5">
+      {props.project ? (
+        <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+      ) : null}
+      {props.projectDisplayName ? (
+        <span data-testid="sidebar-row-project" className="min-w-7 truncate">
+          {props.projectDisplayName}
+        </span>
+      ) : null}
+      {hasProject && machine !== null ? <span aria-hidden>·</span> : null}
+      {machine === null ? null : (
+        <>
+          {machine.icon}
+          <span className={cn("truncate", hasProject ? "max-w-1/2 shrink-0" : "min-w-0")}>
+            {machine.label}
+          </span>
+        </>
+      )}
+    </span>
+  );
+}
+
+/** The two-line sidebar card: title and status on top, project and machine below. */
+export const SidebarCard = {
+  Body: CardBody,
+  TitleLine: CardTitleLine,
+  MetaLine: CardMetaLine,
+  Place: CardPlace,
+};
 
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
@@ -1627,31 +1695,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const hasProject = props.project !== null || props.projectDisplayName !== null;
   const cardMetaLine =
     metaLineEmpty && !hasProject ? null : (
-      <div
-        className={cn(
-          "mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs",
-          missionToggle && "ps-5.5",
-        )}
-      >
-        <span className="flex min-w-0 flex-1 items-center gap-1.5">
-          {props.project ? (
-            <ProjectFavicon project={props.project} className="size-4 shrink-0" />
-          ) : null}
-          {props.projectDisplayName ? (
-            <span data-testid="sidebar-row-project" className="min-w-7 truncate">
-              {props.projectDisplayName}
-            </span>
-          ) : null}
-          {hasProject && props.environmentLabel !== null ? <span aria-hidden>·</span> : null}
-          {machineIcon}
-          {props.environmentLabel !== null ? (
-            <span className={cn("truncate", hasProject ? "max-w-1/2 shrink-0" : "min-w-0")}>
-              {props.environmentLabel}
-            </span>
-          ) : null}
-        </span>
+      <SidebarCard.MetaLine className={cn(missionToggle && "ps-5.5")}>
+        <SidebarCard.Place
+          project={props.project}
+          projectDisplayName={props.projectDisplayName}
+          machine={
+            props.environmentLabel === null
+              ? null
+              : { icon: machineIcon, label: props.environmentLabel }
+          }
+        />
         {metaTrailing}
-      </div>
+      </SidebarCard.MetaLine>
     );
   const statusLabel = pendingSync ? (
     <PendingSyncLabel />
@@ -1741,13 +1796,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           />
         }
       >
-        <div
-          className={cn(
-            "relative z-10 h-13.5 px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
-            (cardMetaLine === null || props.footer !== undefined) && "h-auto",
-          )}
+        <SidebarCard.Body
+          className={cn((cardMetaLine === null || props.footer !== undefined) && "h-auto")}
         >
-          <div className="flex h-5 min-w-0 items-center gap-1.5">
+          <SidebarCard.TitleLine>
             {draftIndicator}
             {missionChevron}
             {/* Left of the status slot, the pin would slide when hover swaps the
@@ -1846,7 +1898,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               </span>
             )}
             {props.sweepAction !== null ? dragDestination : null}
-          </div>
+          </SidebarCard.TitleLine>
           {cardMetaLine}
           {props.footer}
           {isRegeneratingTitle ? (
@@ -1854,7 +1906,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               <T>Regenerating title</T>
             </span>
           ) : null}
-        </div>
+        </SidebarCard.Body>
       </ThreadHoverCardTrigger>
     </li>
   );

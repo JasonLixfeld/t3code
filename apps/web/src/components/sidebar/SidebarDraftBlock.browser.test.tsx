@@ -3,6 +3,7 @@ import { EnvironmentId, MessageId, ProjectId, ThreadId } from "@t3tools/contract
 import { Profiler } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
+import "~/index.css";
 import { act, render } from "../../../test/render";
 import { formatAssistantCitationForComposer } from "../../composer-logic";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
@@ -13,6 +14,7 @@ const NO_TERMINAL_LABELS: ReadonlyMap<string, string> = new Map();
 function DraftBlock(props: {
   routeDraftId?: string | null;
   terminalLabels?: ReadonlyMap<string, string>;
+  projectDisplayNameByKey?: ReadonlyMap<string, string>;
 }) {
   const routeDraftId = props.routeDraftId ?? null;
   const terminalLabels = props.terminalLabels ?? NO_TERMINAL_LABELS;
@@ -24,7 +26,7 @@ function DraftBlock(props: {
       terminalLabels={terminalLabels}
       jumpLabelByDraftId={null}
       projectByKey={new Map()}
-      projectDisplayNameByKey={new Map()}
+      projectDisplayNameByKey={props.projectDisplayNameByKey ?? new Map()}
       routeDraftId={routeDraftId}
       onNavigateToDraft={vi.fn()}
       onDraftContextMenu={vi.fn()}
@@ -98,6 +100,37 @@ it("keeps draft previews current through edits, promotion and removal", async ()
   await expect.element(row).toHaveAccessibleName("Next draft preview, Unsent draft");
   await act(() => initial.clearDraftThread(nextDraftId));
   await expect.element(row).not.toBeInTheDocument();
+});
+
+it("lays a draft out like a thread card: its preview first, its project below", async () => {
+  const initial = useComposerDraftStore.getState();
+  using _store = {
+    [Symbol.dispose]: () => useComposerDraftStore.setState(initial, true),
+  };
+  useComposerDraftStore.setState({
+    draftsByThreadKey: {},
+    draftThreadsByThreadKey: {},
+    logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+  });
+  const environmentId = EnvironmentId.make("draft-layout-environment");
+  const projectId = ProjectId.make("draft-layout-project");
+  const draftId = DraftId.make("draft-layout");
+  initial.setProjectDraftThreadId(scopeProjectRef(environmentId, projectId), draftId, {
+    threadId: ThreadId.make("draft-layout-thread"),
+  });
+  initial.setPrompt(draftId, "Draft preview");
+  await using screen = await render(
+    <ul>
+      <DraftBlock projectDisplayNameByKey={new Map([[`${environmentId}:${projectId}`, "web"]])} />
+    </ul>,
+  );
+  await expect.element(screen.getByText("Draft preview")).toBeInTheDocument();
+  const titleLine = screen.getByText("Draft preview").element().parentElement!;
+  expect(titleLine.textContent).not.toContain("web");
+  expect(
+    titleLine.nextElementSibling!.querySelector("[data-testid=sidebar-row-project]")!.textContent,
+  ).toBe("web");
+  expect(titleLine.parentElement!.getBoundingClientRect().height).toBe(54);
 });
 
 it("lists empty drafts by terminal label while their terminal exists, active or not", async () => {
