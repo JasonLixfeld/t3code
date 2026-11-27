@@ -472,20 +472,21 @@ describe("CommandPalette open intents", () => {
     await expect.element(page.getByRole("option", { name: /No project/ })).toBeVisible();
   });
 
-  it("marks the draft a mission's project pick makes, offering a member no machine its mission links to without full access, and a lead only its machine", async () => {
+  it("marks the draft a mission's project pick makes, offering a member a machine its mission links to only with full access, and a lead only its machine", async () => {
     const local = makeProject("web");
     const remote = { ...makeProject("api"), environmentId: EnvironmentId.make("remote") };
     setup({ projects: [local, remote] });
-    vi.mocked(useMissionHosts).mockReturnValue([
+    const linked = (fullAccess: boolean) => [
       {
         environmentId: local.environmentId,
         snapshot: {
           missions: [],
           claims: [],
-          links: [{ environmentId: remote.environmentId, label: "Remote", fullAccess: false }],
+          links: [{ environmentId: remote.environmentId, label: "Remote", fullAccess }],
         },
       },
-    ]);
+    ];
+    vi.mocked(useMissionHosts).mockReturnValue(linked(false));
     onTestFinished(() => vi.mocked(useMissionHosts).mockRestore());
     const created = { draftId: DraftId.make("lead-draft"), threadId: ThreadId.make("lead-thread") };
     onTestFinished(() => clearMissionDraft(created.draftId));
@@ -499,17 +500,18 @@ describe("CommandPalette open intents", () => {
       expectedLead: ThreadId.make("deleted-lead"),
     } as const;
 
-    openCommandPalette({
-      open: "new-thread-in",
-      mission: {
-        kind: "member",
-        host: local.environmentId,
-        missionId: "0123456789ab",
-        name: "Ship v2",
-      },
-    });
+    const member = {
+      kind: "member",
+      host: local.environmentId,
+      missionId: "0123456789ab",
+      name: "Ship v2",
+    } as const;
+    openCommandPalette({ open: "new-thread-in", mission: member });
     await expect.element(page.getByRole("option", { name: /web/ })).toBeInTheDocument();
     await expect.element(page.getByRole("option", { name: /api/ })).not.toBeInTheDocument();
+    vi.mocked(useMissionHosts).mockReturnValue(linked(true));
+    openCommandPalette({ open: "new-thread-in", mission: member });
+    await expect.element(page.getByRole("option", { name: /api/ })).toBeInTheDocument();
     openCommandPalette({ open: "new-thread-in", mission: intent });
     await expect.element(page.getByRole("option", { name: /web/ })).toBeInTheDocument();
     await expect.element(page.getByRole("option", { name: /api/ })).not.toBeInTheDocument();
