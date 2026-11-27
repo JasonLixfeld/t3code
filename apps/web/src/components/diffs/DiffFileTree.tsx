@@ -246,7 +246,7 @@ export function DiffFileTree({
 
   return (
     <div
-      className={cn("flex min-h-0 flex-1 flex-col bg-background", className)}
+      className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-background", className)}
       // Capture: Pierre's tree handles Escape on a filtered row itself and stops it there.
       onKeyDownCapture={(event) => {
         if (event.key !== "Escape" || !searchOpen) return;
