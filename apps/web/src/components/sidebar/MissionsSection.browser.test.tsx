@@ -1532,10 +1532,8 @@ describe("dragging threads into and out of missions", () => {
     using _drag = allowDrag();
     await using screen = await renderSidebar();
     await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
-    const viewport = screen.container.querySelector<HTMLElement>(
-      "[data-slot=scroll-area-viewport]",
-    )!;
-    Object.assign(viewport.style, { height: "200px", overflow: "auto" });
+    using _timers = fakeTimers();
+    const viewport = shortViewport(screen.container);
     const shipTop = shipArea(screen.container).getBoundingClientRect().top;
     viewport.scrollTop = shipTop - viewport.getBoundingClientRect().top + 40;
     const view = viewport.getBoundingClientRect();
