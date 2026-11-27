@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.os.Looper
+import android.view.MotionEvent
 import android.view.View
 import expo.modules.kotlin.AppContext
 import java.time.Duration
@@ -135,6 +136,44 @@ class ReviewDiffSearchTest {
     }
   }
 
+  @Test
+  fun aTouchThatStopsAnAnimatedJumpReportsTheFileWhereItStopped() {
+    val files = (0 until 5).map { "f$it.ts" }
+    withView(files) { view, canvas, appContext ->
+      view.scrollToMatch("f4.ts:line:10", 0, 5, true)
+      repeat(4) {
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(16))
+        view.computeScroll()
+      }
+      appContext.events.clear()
+
+      val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 10f, 10f, 0)
+      view.onInterceptTouchEvent(down)
+      down.recycle()
+
+      val visibleFiles = appContext.events.filter { it.first == "onVisibleFileChange" }
+      val offset = canvas.javaClass.getDeclaredMethod("verticalOffset").invoke(canvas) as Int
+      assertTrue(
+        "the jump was stopped part of the way",
+        offset < rowTop(canvas, rowIndex("f4.ts:line:10", files))
+      )
+      assertEquals(1, visibleFiles.size)
+      assertTrue(visibleFiles.single().second["fileId"] != "f4.ts")
+    }
+  }
+
+  @Test
+  fun aContentResetEndsTheDeferredVisibleFileEvent() {
+    withView { view, _, _ ->
+      view.scrollToMatch(TARGET_ROW, 300, 306, true)
+      view.setContentResetKey("next-content")
+
+      val deferred = view.javaClass.getDeclaredField("deferVisibleFileEventUntilScrollEnds")
+        .apply { isAccessible = true }.getBoolean(view)
+      assertTrue("a reset must not keep hiding the next content's visible file", !deferred)
+    }
+  }
+
   private fun scroller(view: T3ReviewDiffView, name: String) =
     view.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(view)
       as android.widget.OverScroller
@@ -181,8 +220,8 @@ class ReviewDiffSearchTest {
     },
   ).toString()
 
-  private fun rowIndex(id: String): Int {
-    val rows = JSONArray(rows())
+  private fun rowIndex(id: String, files: List<String> = listOf("a.ts", "b.ts")): Int {
+    val rows = JSONArray(rows(files))
     return (0 until rows.length()).indexOfFirst { rows.getJSONObject(it).getString("id") == id }
   }
 
