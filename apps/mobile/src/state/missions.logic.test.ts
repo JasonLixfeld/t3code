@@ -100,32 +100,42 @@ describe("a new mission's machines", () => {
       canRun: () => input.allowed ?? true,
     }).kind;
 
-  it("starts a new mission on a machine that may start one, and a member on its host or a full-access link", () => {
-    expect(machines(undefined)).toBeNull();
+  it("keeps a marked draft to a start machine, or to a member's host and its full-access links", () => {
+    const allowed = (intent: Parameters<typeof machines>[0]) =>
+      [DESK, LAPTOP, PHONE].filter((id) => missionDraftAllows(machines(intent), id));
+    expect(allowed(undefined)).toEqual([DESK, LAPTOP, PHONE]);
     expect(machines({ kind: "new" })).toBe(startMachines);
-    expect(machines(member)).toEqual(new Set([DESK, LAPTOP]));
+    expect(allowed(member)).toEqual([DESK, LAPTOP]);
   });
 
-  it("sends as a plain thread only when the user turned Missions off, and keeps a member to its host when links are hidden", () => {
-    expect(send(PHONE, { intent: undefined, missionsOff: true })).toBe("plain");
-    expect(send(PHONE, { missionsOff: true })).toBe("turned-off");
-    expect(send(LAPTOP)).toBe("mission");
-    expect(send(PHONE)).toBe("machine-refused");
-
-    const hidden: ReadonlyArray<MissionHost> = hosts.map((host) => ({
-      ...host,
-      snapshot: { ...host.snapshot, links: [], linksHidden: true as const },
-    }));
-    expect(send(DESK, { hosts: hidden })).toBe("mission");
-    expect(send(LAPTOP, { hosts: hidden })).toBe("machine-refused");
-  });
-
-  it("refuses a send while the mission's machine is offline or loading, or the action is not allowed there", () => {
-    expect(send(DESK, { hosts: [] })).toBe("offline");
-    expect(send(DESK, { intent: { kind: "new" }, hosts: [] })).toBe("offline");
-    expect(send(DESK, { allowed: false })).toBe("not-allowed");
-    expect(send(DESK, { intent: lead, allowed: false })).toBe("not-allowed");
-    expect(send(DESK, { intent: lead })).toBe("mission");
+  const hidden: ReadonlyArray<MissionHost> = hosts.map((host) => ({
+    ...host,
+    snapshot: { ...host.snapshot, links: [], linksHidden: true as const },
+  }));
+  it.each([
+    [
+      "a plain draft while Missions are off",
+      PHONE,
+      { intent: undefined, missionsOff: true },
+      "plain",
+    ],
+    ["a marked draft while Missions are off", PHONE, { missionsOff: true }, "turned-off"],
+    ["a member on a full-access link", LAPTOP, {}, "mission"],
+    ["a member on a link without full access", PHONE, {}, "machine-refused"],
+    ["a member on its host while links are hidden", DESK, { hosts: hidden }, "mission"],
+    ["a member on a link while links are hidden", LAPTOP, { hosts: hidden }, "machine-refused"],
+    ["a member while its host is offline", DESK, { hosts: [] }, "offline"],
+    [
+      "a new mission while its machine is offline",
+      DESK,
+      { intent: { kind: "new" }, hosts: [] },
+      "offline",
+    ],
+    ["a member where adding is not allowed", DESK, { allowed: false }, "not-allowed"],
+    ["a lead where leading is not allowed", DESK, { intent: lead, allowed: false }, "not-allowed"],
+    ["a lead on its host", DESK, { intent: lead }, "mission"],
+  ] as const)("checks the send of %s", (_name, environmentId, input, expected) => {
+    expect(send(environmentId, input)).toBe(expected);
   });
 
   it("offers New mission only where a start machine has a project or a No project home", () => {
@@ -141,15 +151,5 @@ describe("a new mission's machines", () => {
       ),
     ).toBe(false);
     expect(canStartMission(new Set([DESK]), [], () => "/scratch")).toBe(true);
-  });
-});
-
-describe("missionDraftAllows", () => {
-  it("keeps a marked draft's environments and its send to the machines its mission allows", () => {
-    const environments = [DESK, LAPTOP];
-    const machines = new Set([DESK]);
-    expect(environments.filter((id) => missionDraftAllows(machines, id))).toEqual([DESK]);
-    expect(missionDraftAllows(machines, LAPTOP)).toBe(false);
-    expect(environments.filter((id) => missionDraftAllows(null, id))).toEqual(environments);
   });
 });

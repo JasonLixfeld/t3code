@@ -24,7 +24,7 @@ vi.mock("../../components/ui/SearchField", () => ({
 import { ReviewFindBar } from "./ReviewFindBar";
 import { useReviewFind } from "./useReviewFind";
 
-it("focuses the find field once per header press, and a remount does not replay it", () => {
+it("focuses the find field once per header press, and neither a remount nor reopening by typing replays it", () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const root = createRoot(document.createElement("div"));
   const latest: { current: ReturnType<typeof useReviewFind> | null } = { current: null };
@@ -59,6 +59,13 @@ it("focuses the find field once per header press, and a remount does not replay 
 
     render(false);
     render(true);
+    expect(focus).toHaveBeenCalledTimes(2);
+
+    render(false);
+    act(() => latest.current!.openFromHeader());
+    act(() => latest.current!.close());
+    render(true);
+    act(() => latest.current!.changeQuery("apple"));
     expect(focus).toHaveBeenCalledTimes(2);
   } finally {
     act(() => root.unmount());

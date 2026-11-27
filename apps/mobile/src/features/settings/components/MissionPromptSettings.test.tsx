@@ -130,54 +130,47 @@ describe("MissionPromptSettings", () => {
     );
   });
 
-  it("drops an edit when a server joins before it saves", () => {
-    mocks.targets = [target("desk", true)];
-    render();
-    mocks.input?.onChangeText("Check the tests.");
-    mocks.targets = [target("desk", true), target("laptop", true)];
-    render();
-    expect(mocks.input?.defaultValue).toBe("");
-    mocks.input?.onEndEditing();
-    act(() => root.unmount());
-    root = createRoot(document.createElement("div"));
-    expect(mocks.write).not.toHaveBeenCalled();
-  });
-
-  it("drops an edit for good once the servers change, even if they change back", () => {
-    mocks.targets = [target("desk", true)];
-    render();
-    mocks.input?.onChangeText("Check the tests.");
-    mocks.targets = [target("desk", true), target("laptop", true)];
-    render();
-    mocks.targets = [target("desk", true)];
-    render();
-    act(() => root.unmount());
-    root = createRoot(document.createElement("div"));
-    expect(mocks.write).not.toHaveBeenCalled();
-  });
-
-  it("drops an edit once the saved prompt changes, even if it changes back", () => {
-    mocks.targets = [target("desk", true, "A")];
-    render();
-    mocks.input?.onChangeText("Mine");
-    mocks.targets = [target("desk", true, "B")];
-    render();
-    mocks.targets = [target("desk", true, "A")];
-    render();
-    act(() => root.unmount());
-    root = createRoot(document.createElement("div"));
-    expect(mocks.write).not.toHaveBeenCalled();
-  });
-
-  it("saves nothing on leaving once the last server offering Missions is gone", () => {
-    mocks.targets = [target("desk", true)];
-    render();
-    mocks.input?.onChangeText("Mine");
-    mocks.advertised = [];
-    act(() => root.unmount());
-    root = createRoot(document.createElement("div"));
-    expect(mocks.write).not.toHaveBeenCalled();
-  });
+  it.each([
+    [
+      "a server joins before it ends editing",
+      [[target("desk", true)], [target("desk", true), target("laptop", true)]],
+      null,
+      true,
+    ],
+    [
+      "the servers change and change back",
+      [
+        [target("desk", true)],
+        [target("desk", true), target("laptop", true)],
+        [target("desk", true)],
+      ],
+      null,
+      false,
+    ],
+    [
+      "the saved prompt changes and changes back",
+      [[target("desk", true, "A")], [target("desk", true, "B")], [target("desk", true, "A")]],
+      null,
+      false,
+    ],
+    ["the last server offering Missions is gone", [[target("desk", true)]], [], false],
+  ] as const)(
+    "drops an edit for good once %s",
+    (_name, [first, ...later], advertised, endsEditing) => {
+      mocks.targets = first;
+      render();
+      mocks.input?.onChangeText("Mine");
+      for (const targets of later) {
+        mocks.targets = targets;
+        render();
+      }
+      mocks.advertised = advertised;
+      if (endsEditing) mocks.input?.onEndEditing();
+      act(() => root.unmount());
+      root = createRoot(document.createElement("div"));
+      expect(mocks.write).not.toHaveBeenCalled();
+    },
+  );
 
   it("is read-only without the right to operate, and hidden where no machine serves Missions", () => {
     mocks.targets = [target("desk", true, "Ship it.")];

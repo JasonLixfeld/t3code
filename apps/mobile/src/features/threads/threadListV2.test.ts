@@ -902,8 +902,13 @@ describe("buildThreadListV2ListItems", () => {
   });
 
   it("lists each mission above the other threads, its lead heading its members", () => {
-    const member = (threadId: string, state: "active" | "release-pending" = "active") => ({
-      ref: { environmentId, threadId: ThreadId.make(threadId) },
+    const laptop = EnvironmentId.make("environment-laptop");
+    const member = (
+      threadId: string,
+      state: "active" | "release-pending" = "active",
+      on = environmentId,
+    ) => ({
+      ref: { environmentId: on, threadId: ThreadId.make(threadId) },
       role: "member" as const,
       state,
     });
@@ -921,7 +926,9 @@ describe("buildThreadListV2ListItems", () => {
               members: [
                 { ...member("lead"), role: "lead" },
                 member("member", "release-pending"),
-                member("unloaded"),
+                member("delegated", "active", laptop),
+                member("trimmed"),
+                member("unloaded", "active", laptop),
               ],
             },
             {
@@ -953,6 +960,10 @@ describe("buildThreadListV2ListItems", () => {
         environmentId: null,
         searchQuery: "",
         now: NOW,
+        fallbackMissionThreadShells: [
+          makeThread({ environmentId: laptop, id: ThreadId.make("delegated"), title: "delegated" }),
+        ],
+        liveShellEnvironmentIds: new Set([environmentId]),
         missionHosts: hosts,
         collapsedMissions: new Set(collapsed),
       });
@@ -970,16 +981,17 @@ describe("buildThreadListV2ListItems", () => {
       "# missions",
       "lead (lead)",
       "member (member)",
+      "delegated (member)",
       "missing unloaded",
       "next (lead)",
       "# threads",
       "plain",
     ]);
     expect(expanded[1]).toMatchObject({
-      mission: { toggle: { expanded: true, memberCount: 2, firstMission: true } },
+      mission: { toggle: { expanded: true, memberCount: 3, firstMission: true } },
     });
     expect(expanded[2]).toMatchObject({ mission: { member: { state: "release-pending" } } });
-    expect(expanded[4]).toMatchObject({ mission: { toggle: { firstMission: false } } });
+    expect(expanded[5]).toMatchObject({ mission: { toggle: { firstMission: false } } });
     expect(names(list([`${environmentId}:m1`], false))).toEqual([
       "lead (lead)",
       "next (lead)",
@@ -1049,60 +1061,6 @@ describe("buildThreadListV2ListItems", () => {
 
     expect(shown(environmentId)).toEqual([["lead", "member"]]);
     expect(shown(laptop)).toEqual([["lead"]]);
-  });
-
-  it("shows a member the list leaves out from the mission's shells, and hides one with no thread", () => {
-    const laptop = EnvironmentId.make("environment-laptop");
-    const member = (threadId: string, on = environmentId) => ({
-      ref: { environmentId: on, threadId: ThreadId.make(threadId) },
-      role: "member" as const,
-      state: "active" as const,
-    });
-    const hosts: ReadonlyArray<MissionHost> = [
-      {
-        environmentId,
-        snapshot: {
-          links: [],
-          claims: [],
-          missions: [
-            {
-              missionId: "m1",
-              name: "Ship v2",
-              createdAt: NOW,
-              members: [
-                { ...member("lead"), role: "lead" },
-                member("delegated", laptop),
-                member("archived"),
-                member("trimmed"),
-              ],
-            },
-          ],
-        },
-      },
-    ];
-    const delegated = makeThread({
-      environmentId: laptop,
-      id: ThreadId.make("delegated"),
-      title: "Delegated task",
-      delegatedFrom: { environmentId, threadId: ThreadId.make("lead"), title: "lead" },
-    });
-    const archived = makeThread({
-      id: ThreadId.make("archived"),
-      title: "archived",
-      archivedAt: NOW,
-    });
-    const members = buildThreadListV2Items({
-      threads: [makeThread({ id: ThreadId.make("lead"), title: "lead" })],
-      fallbackMissionThreadShells: [delegated, archived],
-      liveShellEnvironmentIds: new Set([environmentId, laptop]),
-      environmentId: null,
-      searchQuery: "",
-      now: NOW,
-      missionHosts: hosts,
-    }).missions[0]!.members;
-    expect(
-      members.map((entry) => [entry.place.member.ref.threadId, entry.item?.thread.title]),
-    ).toEqual([["delegated", "Delegated task"]]);
   });
 
   it("places queued tasks above active rows and a collapsed snoozed shelf", () => {

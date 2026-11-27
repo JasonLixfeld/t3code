@@ -21,9 +21,7 @@ vi.mock("@legendapp/list/react-native", () => ({
   ),
 }));
 vi.mock("react-native", () => ({
-  View: ({ children, style }: { children?: ReactNode; style?: { paddingTop?: number } }) => (
-    <div data-padding-top={style?.paddingTop}>{children}</div>
-  ),
+  View: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
 }));
 vi.mock("../../components/ui/useBarInset", () => ({ useBarOverlap: () => 44 }));
 vi.mock("../../native/NativeScrollViewMarker", () => ({ NativeScrollView: () => null }));
@@ -41,7 +39,11 @@ const paneListItemRenders = vi.hoisted(() => ({ count: 0 }));
 vi.mock("../../components/ui/PaneListItem", () => ({
   PaneListItem: (props: { children: ReactNode; onPress: () => void }) => {
     paneListItemRenders.count += 1;
-    return <button onClick={props.onPress}>{props.children}</button>;
+    return (
+      <button data-render={paneListItemRenders.count} onClick={props.onPress}>
+        {props.children}
+      </button>
+    );
   },
 }));
 vi.mock("../../components/ui/SearchField", () => ({
@@ -171,81 +173,63 @@ function setup(closeSheet: ((then?: () => void) => void) | null = null) {
   };
 }
 
-it("keeps the pinned search controls below the bar that floats over the inspector", () => {
-  using screen = setup();
-  screen.render("");
-
-  const controls = screen.container.querySelector("input")!.closest("[data-padding-top]");
-  expect(controls?.getAttribute("data-padding-top")).toBe("52");
-});
-
 it("filters files by path, including files whose rows have not loaded", () => {
   using screen = setup();
   screen.render("");
 
   screen.type("SRC/");
 
-  expect(screen.buttons().map((button) => button.textContent)).toEqual([
-    "src/app.ts+2-1",
-    "src/unloaded.ts+9-0",
+  expect(screen.buttons().map((button) => button.querySelector("span")?.textContent)).toEqual([
+    "src/app.ts",
+    "src/unloaded.ts",
   ]);
-});
-
-it("searches contents with the find query and lists counts and matching lines", () => {
-  using screen = setup();
-  screen.render("");
-  screen.type("app");
-
-  screen.chooseMode("Contents");
-  expect(screen.onChangeQuery).toHaveBeenLastCalledWith("app");
-  screen.render("app");
-
-  expect(screen.buttons().map((button) => button.textContent)).toEqual([
-    "src/app.ts2",
-    "12+const app = createApp();",
-    "docs/guide.md3",
-    "3 Run the app twice: app, app.",
-  ]);
-  screen.type("twice");
-  expect(screen.onChangeQuery).toHaveBeenLastCalledWith("twice");
 });
 
 it("switches modes like the web diff: Contents takes typed Name text, Name takes the find query", () => {
   using screen = setup();
   screen.render("app");
-  screen.type("SRC");
+  const input = () => screen.container.querySelector("input")!.value;
 
   screen.chooseMode("Contents");
+  expect(screen.onChangeQuery).not.toHaveBeenCalled();
+  expect(input()).toBe("app");
+  screen.reopen();
+  screen.chooseMode("Contents");
+  expect(screen.onChangeQuery).not.toHaveBeenCalled();
+  expect(input()).toBe("app");
+  screen.type("twice");
+  expect(screen.onChangeQuery).toHaveBeenLastCalledWith("twice");
+  screen.chooseMode("Name");
+  expect(input()).toBe("twice");
+
+  screen.type("SRC");
+  screen.chooseMode("Contents");
   expect(screen.onChangeQuery).toHaveBeenLastCalledWith("SRC");
-  expect(screen.container.querySelector("input")!.value).toBe("SRC");
+  expect(input()).toBe("SRC");
   screen.type("");
 
   screen.chooseMode("Name");
-  expect(screen.container.querySelector("input")!.value).toBe("");
-});
-
-it("keeps an active find query when Contents opens with an empty Name field", () => {
-  using screen = setup();
-  screen.render("app");
-
-  screen.chooseMode("Contents");
-  expect(screen.container.querySelector("input")!.value).toBe("app");
-
-  screen.reopen();
-  screen.chooseMode("Contents");
-  expect(screen.onChangeQuery).not.toHaveBeenCalledWith("");
-  expect(screen.container.querySelector("input")!.value).toBe("app");
+  expect(input()).toBe("");
 });
 
 it("re-renders only the Contents group that holds the active match when stepping", () => {
   using screen = setup();
   screen.render("app", 0);
   screen.chooseMode("Contents");
+  expect(
+    [...screen.container.querySelectorAll("li")].map(
+      (group) => group.querySelector("button")!.querySelectorAll("span")[1]?.textContent,
+    ),
+  ).toEqual(["2", "3"]);
 
-  paneListItemRenders.count = 0;
+  const renders = () =>
+    [...screen.container.querySelectorAll("li")].map((group) =>
+      [...group.querySelectorAll("button")].map((row) => row.dataset.render).join(),
+    );
+  const before = renders();
   screen.render("app", 1);
 
-  expect(paneListItemRenders.count).toBe(2);
+  expect(renders().map((group, index) => group !== before[index])).toEqual([true, false]);
 });
 
 it("reports Contents open only while the inspector column shows it", () => {

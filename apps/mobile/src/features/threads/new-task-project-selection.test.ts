@@ -495,7 +495,7 @@ describe("a mission draft's machines", () => {
     ]);
   });
 
-  it("keeps the usual No project home on a mission machine, else moves it to one that has a root", () => {
+  it("moves the No project home to a mission machine, ready only once it connects, else has none", () => {
     const input = {
       environments: [
         { environmentId: desk, connectionState: "connected" as const },
@@ -507,10 +507,6 @@ describe("a mission draft's machines", () => {
       ]),
       selectedEnvironmentId: desk,
     };
-    expect(resolveMissionScratchOption({ ...input, machines: null })).toEqual({
-      environmentId: desk,
-      ready: true,
-    });
     expect(resolveMissionScratchOption({ ...input, machines: new Set([laptop]) })).toEqual({
       environmentId: laptop,
       ready: false,

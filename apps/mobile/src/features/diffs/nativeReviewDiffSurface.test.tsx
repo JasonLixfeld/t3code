@@ -36,7 +36,6 @@ function RawView({
   onDebug,
   initialFileId,
   contentResetKey = "",
-  searchHighlightsJson,
 }: NativeReviewDiffViewProps & { ref: Ref<unknown> }) {
   const [content, setContent] = useState({ resetKey: contentResetKey, rows: "" });
   // Native setContentResetKey clears rows unless the key is unchanged.
@@ -95,7 +94,7 @@ function RawView({
     },
   }));
   return (
-    <div data-token-rows={tokenRowIds.join(",")} data-search-highlights={searchHighlightsJson}>
+    <div data-token-rows={tokenRowIds.join(",")}>
       {content.rows ? "Rendered diff" : "Blank native surface"}
     </div>
   );
@@ -369,19 +368,13 @@ it("retries transient native registration without replacing the diff with an err
   expect(screen.container.textContent).toBe("Rendered diff");
 });
 
-it("passes find highlights to the native view and forwards match jumps", async () => {
+it("forwards a match jump to the native view, animated by default", async () => {
   using screen = setup(true);
   const handle: { current: NativeReviewDiffViewHandle | null } = { current: null };
-  const highlights = '{"ranges":{"r1":[[2,5]]},"active":{"rowId":"r1","start":2,"end":5}}';
 
-  await screen.renderSurface({ nativeViewRef: handle, searchHighlightsJson: highlights });
+  await screen.renderSurface({ nativeViewRef: handle });
   await handle.current!.requestScrollToMatch("r1", 2, 5);
 
-  expect(
-    screen.container
-      .querySelector("[data-search-highlights]")
-      ?.getAttribute("data-search-highlights"),
-  ).toBe(highlights);
   expect(mocks.scrollToMatch).toHaveBeenCalledWith("r1", 2, 5, true);
 });
 

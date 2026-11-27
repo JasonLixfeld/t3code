@@ -47,11 +47,15 @@ vi.mock("./useMissionActions", () => ({
   reportMissionFailure,
 }));
 
-it("keeps a waiting mark while its thread is not delivered, and clears it once the thread is removed", () => {
+it("keeps a waiting or failed mark while its thread is not delivered, and clears it once the thread is removed", () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   using _globals = { [Symbol.dispose]: () => vi.unstubAllGlobals() };
-  const thread = { environmentId: EnvironmentId.make("env-desk"), threadId: ThreadId.make("t1") };
+  const environmentId = EnvironmentId.make("env-desk");
+  const thread = { environmentId, threadId: ThreadId.make("t1") };
+  const failed = { environmentId, threadId: ThreadId.make("t2") };
   markMissionDraft(thread, { kind: "new" }, () => "m1");
+  markMissionDraft(failed, { kind: "new" }, () => "m2");
+  settleMissionDraftAttempt(failed, startMissionDraftAttempt(failed), "failed");
   const root = createRoot(document.createElement("div"));
   using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
 
@@ -63,46 +67,25 @@ it("keeps a waiting mark while its thread is not delivered, and clears it once t
     ),
   );
   expect(missionDraftOf(thread)?.step).toBe("waiting");
+  expect(missionDraftOf(failed)?.step).toBe("failed");
   expect(createMission).not.toHaveBeenCalled();
 
   act(() =>
     appAtomRegistry.set(
-      environmentShell.stateValueAtom(thread.environmentId) as unknown as Atom.Writable<{
+      environmentShell.stateValueAtom(environmentId) as unknown as Atom.Writable<{
         removedAt: ReadonlyMap<string, number>;
       }>,
-      { removedAt: new Map([[thread.threadId, 2]]) },
+      {
+        removedAt: new Map([
+          [thread.threadId, 2],
+          [failed.threadId, 3],
+        ]),
+      },
     ),
   );
   expect(missionDraftOf(thread)).toBeUndefined();
+  expect(missionDraftOf(failed)).toBeUndefined();
   expect(createMission).not.toHaveBeenCalled();
-});
-
-it("clears a failed mark once its thread is removed", () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  using _globals = { [Symbol.dispose]: () => vi.unstubAllGlobals() };
-  const thread = { environmentId: EnvironmentId.make("env-laptop"), threadId: ThreadId.make("t2") };
-  markMissionDraft(thread, { kind: "new" }, () => "m2");
-  settleMissionDraftAttempt(thread, startMissionDraftAttempt(thread), "failed");
-  const root = createRoot(document.createElement("div"));
-  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
-  act(() =>
-    root.render(
-      <RegistryContext.Provider value={appAtomRegistry}>
-        <MissionDraftCoordinator />
-      </RegistryContext.Provider>,
-    ),
-  );
-  expect(missionDraftOf(thread)?.step).toBe("failed");
-
-  act(() =>
-    appAtomRegistry.set(
-      environmentShell.stateValueAtom(thread.environmentId) as unknown as Atom.Writable<{
-        removedAt: ReadonlyMap<string, number>;
-      }>,
-      { removedAt: new Map([[thread.threadId, 3]]) },
-    ),
-  );
-  expect(missionDraftOf(thread)).toBeUndefined();
 });
 
 it("drops the late failure of an attempt whose mark was replaced, without an alert", async () => {

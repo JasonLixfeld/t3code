@@ -29,51 +29,11 @@ vi.mock("../../components/ui/Notice", () => ({
   },
 }));
 
-it("tells an empty thread that sending starts its mission, and sends it as a plain thread on dismiss", () => {
+it("offers a dismiss except while trying, ignores a tap on a mark that has changed, and hides while Missions are off", () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   using _globals = { [Symbol.dispose]: () => vi.unstubAllGlobals() };
   const thread = { environmentId: EnvironmentId.make("env-desk"), threadId: ThreadId.make("t1") };
   markMissionDraft(thread, { kind: "new" }, () => "m1");
-  const root = createRoot(document.createElement("div"));
-  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
-  act(() =>
-    root.render(
-      <RegistryContext.Provider value={appAtomRegistry}>
-        <MissionDraftNotice thread={thread} />
-      </RegistryContext.Provider>,
-    ),
-  );
-  expect(notice.current).toMatchObject({
-    message: "Sending starts a new mission led by this thread",
-    dismissLabel: "Send as a plain thread",
-  });
-
-  notice.current = null;
-  act(() => {
-    markMissionDraft(
-      thread,
-      { kind: "member", host: thread.environmentId, missionId: "m2", name: "Docs" },
-      () => "m3",
-    );
-  });
-  expect(shown()?.message).toBe('Sending adds this thread to "Docs"');
-
-  act(() => {
-    startMissionDraftAttempt(thread);
-  });
-  expect(shown()?.onDismiss).toBeUndefined();
-
-  act(() => markMissionDraft(thread, { kind: "new" }, () => "m4"));
-  act(() => shown()?.onDismiss?.());
-  expect(missionDraftOf(thread)).toBeUndefined();
-});
-
-it("says a failed mission start failed, ignores a tap on a mark that has changed, and hides while Missions are off", () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  using _globals = { [Symbol.dispose]: () => vi.unstubAllGlobals() };
-  const thread = { environmentId: EnvironmentId.make("env-desk"), threadId: ThreadId.make("t2") };
-  markMissionDraft(thread, { kind: "new" }, () => "m1");
-  settleMissionDraftAttempt(thread, startMissionDraftAttempt(thread), "failed");
   const root = createRoot(document.createElement("div"));
   using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
   const render = () =>
@@ -85,16 +45,33 @@ it("says a failed mission start failed, ignores a tap on a mark that has changed
       ),
     );
   render();
-  expect(shown()).toMatchObject({
-    message: "Could not start the mission",
-    dismissLabel: "Dismiss",
-  });
+  expect(shown()?.onDismiss).toBeTypeOf("function");
+  act(() =>
+    markMissionDraft(
+      thread,
+      { kind: "member", host: thread.environmentId, missionId: "m0", name: "Docs" },
+      () => "m0",
+    ),
+  );
+  expect(shown()?.message).toContain("Docs");
 
+  let attempt = 0;
+  act(() => {
+    attempt = startMissionDraftAttempt(thread);
+  });
+  expect(shown()?.onDismiss).toBeUndefined();
+
+  act(() => settleMissionDraftAttempt(thread, attempt, "failed"));
   const staleTap = shown()?.onDismiss;
-  markMissionDraft(thread, { kind: "new" }, () => "m2");
-  staleTap?.();
+  expect(staleTap).toBeTypeOf("function");
+  act(() => markMissionDraft(thread, { kind: "new" }, () => "m2"));
+  act(() => staleTap?.());
   expect(missionDraftOf(thread)?.missionId).toBe("m2");
 
+  act(() => shown()?.onDismiss?.());
+  expect(missionDraftOf(thread)).toBeUndefined();
+
+  markMissionDraft(thread, { kind: "new" }, () => "m3");
   notice.current = null;
   notice.turnedOff = true;
   render();

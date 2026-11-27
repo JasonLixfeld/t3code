@@ -13,12 +13,10 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { missingMemberMenuItems } from "../features/threads/missionMenus";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
 } from "../features/threads/threadListV2";
-import { m } from "../i18n/messages";
 import { makeRawThreadShell, makeThreadShellFixture } from "../test-fixtures";
 import { appAtomRegistry } from "./atom-registry";
 import { useMissionLeadShells } from "./mission-leads";
@@ -157,30 +155,19 @@ describe("useMissionLeadShells", () => {
       missionHosts: hosts,
       settledMissingMissionLeadKeys: missing,
     });
-    const recovery = buildThreadListV2ListItems({
+    const rows = buildThreadListV2ListItems({
       items: built.items,
       missions: built.missions,
       pendingTasks: [],
     }).flatMap((item) =>
       item.type === "v2-mission-member"
-        ? [
-            [
-              item.mission.member.ref.threadId,
-              missingMemberMenuItems(item.mission, {
-                hosts,
-                threads: [],
-                machineLabel: () => "Desk",
-                can: () => true,
-                resolve: m,
-              }).some((row) => row.id === "mission-new-lead"),
-            ],
-          ]
+        ? [[item.mission.member.ref.threadId, item.mission.member.state]]
         : [],
     );
-    expect(recovery).toEqual([
-      ["hidden", false],
-      ["family", false],
-      ["gone", true],
+    expect(rows).toEqual([
+      ["hidden", "active"],
+      ["family", "active"],
+      ["gone", "deleted"],
     ]);
   });
 });

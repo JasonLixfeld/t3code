@@ -74,13 +74,31 @@ describe("findInReviewRows", () => {
     expect(findInReviewRows(rows, "code").matchCount).toBe(1);
   });
 
-  it("reports UTF-16 offsets after astral characters and length-changing case folds", () => {
-    const rows = [line("a", 0, "😀 İx Name")];
-
-    const result = findInReviewRows(rows, "name");
-
-    expect(result.matchAt(0)).toMatchObject({ start: 6, end: 10 });
-    expect("😀 İx Name".slice(6, 10)).toBe("Name");
+  it.each([
+    [
+      "reports UTF-16 offsets after astral characters and length-changing case folds",
+      "😀 İx Name",
+      "name",
+      [[6, 10]],
+    ],
+    [
+      "folds case like the web diff, including final sigma",
+      "ΟΔΟΣ οδος",
+      "Σ",
+      [
+        [3, 4],
+        [8, 9],
+      ],
+    ],
+    ["matches regular expression characters literally", "axb a.b (a|b)", "a.b", [[4, 7]]],
+    ["matches a regular expression group literally", "axb a.b (a|b)", "(a|b)", [[8, 13]]],
+  ])("%s", (_name, content, query, expected) => {
+    expect(
+      allMatches(findInReviewRows([line("a", 0, content)], query)).map((match) => [
+        match.start,
+        match.end,
+      ]),
+    ).toEqual(expected);
   });
 
   it("caps preview lines per file but keeps exact counts", () => {
@@ -107,20 +125,7 @@ describe("findInReviewRows", () => {
     ]);
   });
 
-  it("folds case like the web diff, including final sigma", () => {
-    const rows = [line("a", 0, "ΟΔΟΣ οδος")];
-
-    expect(allMatches(findInReviewRows(rows, "Σ")).map((match) => match.start)).toEqual([3, 8]);
-  });
-
-  it("matches regular expression characters literally", () => {
-    const rows = [line("a", 0, "axb a.b (a|b)")];
-
-    expect(allMatches(findInReviewRows(rows, "a.b")).map((match) => match.start)).toEqual([4]);
-    expect(allMatches(findInReviewRows(rows, "(a|b)")).map((match) => match.start)).toEqual([8]);
-  });
-
-  it("never splits a surrogate pair at either edge of a clipped preview", () => {
+  it("trims a long line preview around its first match without splitting a surrogate pair", () => {
     const content = `${"b".repeat(50)}😀${"c".repeat(15)}needle${"d".repeat(176)}😀tail`;
 
     const [preview] = findInReviewRows([line("a", 0, content)], "needle").files[0]!.previewLines;
@@ -130,17 +135,6 @@ describe("findInReviewRows", () => {
     );
     expect(preview!.text.startsWith("…😀")).toBe(true);
     expect(preview!.text.endsWith("😀…")).toBe(true);
-    const range = preview!.ranges[0]!;
-    expect(preview!.text.slice(range.start, range.end)).toBe("needle");
-  });
-
-  it("trims a long line preview around its first match and shifts the highlight", () => {
-    const content = `${"a".repeat(100)}needle${"b".repeat(300)}`;
-
-    const [preview] = findInReviewRows([line("a", 0, content)], "needle").files[0]!.previewLines;
-
-    expect(preview!.text.startsWith("…")).toBe(true);
-    expect(preview!.text.endsWith("…")).toBe(true);
     const range = preview!.ranges[0]!;
     expect(preview!.text.slice(range.start, range.end)).toBe("needle");
   });
@@ -160,11 +154,6 @@ describe("reviewFindHighlightsJson", () => {
       },
       active: { rowId: "a:line:0", start: 3, end: 5 },
     });
-  });
-
-  it("clears highlights without an active match", () => {
-    const matches = findInReviewRows([line("a", 0, "ab")], "ab");
-
     expect(reviewFindHighlightsJson(matches, null)).toBe("");
   });
 
@@ -192,20 +181,14 @@ describe("find stepping", () => {
     expect(stepReviewFindIndex(0, 1, 1)).toBe(0);
   });
 
-  it("keeps the active match by identity when rows load before it", () => {
-    const before = findInReviewRows([line("b", 0, "hit hit")], "hit");
-    const after = findInReviewRows([line("a", 0, "    hit"), line("b", 0, "hit hit")], "hit");
+  it("keeps the active match by identity when rows load before it, even deep in a dense row", () => {
+    const before = findInReviewRows([line("b", 0, "x x")], "x");
+    const after = findInReviewRows([line("a", 0, "x".repeat(12_000)), line("b", 0, "x x")], "x");
     const active = { rowId: before.matchAt(1)!.rowId, start: before.matchAt(1)!.start };
 
     expect(resolveReviewFindActiveIndex(before, active)).toBe(1);
-    expect(resolveReviewFindActiveIndex(after, active)).toBe(2);
-  });
-
-  it("finds the active match deep in a dense row", () => {
-    const result = findInReviewRows([line("a", 0, "x".repeat(12_000)), line("b", 0, "x")], "x");
-
-    expect(resolveReviewFindActiveIndex(result, { rowId: "a:line:0", start: 9_000 })).toBe(9_000);
-    expect(resolveReviewFindActiveIndex(result, { rowId: "b:line:0", start: 0 })).toBe(12_000);
+    expect(resolveReviewFindActiveIndex(after, active)).toBe(12_001);
+    expect(resolveReviewFindActiveIndex(after, { rowId: "a:line:0", start: 9_000 })).toBe(9_000);
   });
 
   it("starts at the first match, and falls back to it when the active one is gone", () => {
