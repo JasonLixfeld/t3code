@@ -207,8 +207,12 @@ export function ReviewFileNavigator({
   const handleSelectMatch = (index: number) => afterSheetCloses(() => find.onSelectMatch(index));
   const handleChangeMode = (next: SearchMode) => {
     if (next === mode) return;
-    if (next === "contents" && nameQuery.length > 0) find.onChangeQuery(nameQuery);
-    if (next === "name" && find.query.length > 0) setNameQuery(find.query);
+    if (next === "contents") {
+      find.onChangeQuery(nameQuery);
+      setNameQuery("");
+    } else {
+      setNameQuery(find.query);
+    }
     setMode(next);
   };
 

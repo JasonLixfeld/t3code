@@ -184,6 +184,20 @@ it("searches contents with the find query and lists counts and matching lines", 
   expect(screen.onChangeQuery).toHaveBeenLastCalledWith("twice");
 });
 
+it("switches modes like the web diff: each mode takes the other's text, even when empty", () => {
+  using screen = setup();
+  screen.render("app");
+  screen.type("SRC");
+
+  screen.chooseMode("Contents");
+  expect(screen.onChangeQuery).toHaveBeenLastCalledWith("SRC");
+  screen.render("");
+  expect(screen.container.querySelector("input")!.value).toBe("");
+
+  screen.chooseMode("Name");
+  expect(screen.container.querySelector("input")!.value).toBe("");
+});
+
 it("closes the inspector sheet before jumping to a chosen match", () => {
   let afterClose: (() => void) | undefined;
   using screen = setup((then) => {
