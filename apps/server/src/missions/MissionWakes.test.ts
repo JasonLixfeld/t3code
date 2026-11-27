@@ -537,11 +537,22 @@ it.effect(
       yield* world.leadRead;
       yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
     });
+    const runEventRecordedWhileLeadBusy = (runId: string, status: string) =>
+      Effect.gen(function* () {
+        world.set(lead, busy);
+        yield* Queue.clear(world.live("leadReads"));
+        yield* world.run(first, runId, status);
+        yield* world.run(lead, `lead-${runId}`, "running");
+        yield* world.leadRead;
+        assert.deepEqual(yield* world.live("store").missionsWithUpdates, [MISSION]);
+        world.set(lead, free);
+        yield* world.run(lead, `lead-${runId}`, "completed");
+      });
     return withWakes(
       world,
       Effect.gen(function* () {
         world.set(first, { unreadable: true });
-        yield* world.run(first, "f1", "completed");
+        yield* runEventRecordedWhileLeadBusy("f1", "completed");
         assert.equal(
           yield* nextText(world),
           told(["member 1 on this machine finished its turn and is idle."]),
@@ -553,7 +564,7 @@ it.effect(
         world.set(first, { pendingBackgroundTasks: [subagent] });
         yield* world.runThenWaitForMemberShellRead(first, world.run(first, "f2", "completed"));
         world.set(first, { unreadable: true, pendingBackgroundTasks: [] });
-        yield* world.run(first, "f3", "failed");
+        yield* runEventRecordedWhileLeadBusy("f3", "failed");
         assert.equal(yield* nextText(world), told(["member 1 on this machine failed."]));
         yield* settle;
         world.set(first, { unreadable: false });

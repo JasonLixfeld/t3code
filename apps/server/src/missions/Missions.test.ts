@@ -2266,48 +2266,62 @@ it.effect("releasing replaces the member's tag; a lead cannot be released", () =
   );
 });
 
-it.effect("threads with one id on two machines, and in two missions, are told apart", () => {
-  const sameHere = ref(HERE, "same");
-  const sameLaptop = ref(LAPTOP, "same");
-  const otherLead = ref(HERE, "other-lead");
-  const world = makeWorld([lead, otherLead, sameHere, sameLaptop]);
-  return withMissions(
-    world,
-    Effect.gen(function* () {
-      const missions = yield* Missions.Missions;
-      const until = yield* openSidebar;
-      const mission = yield* createOne;
-      yield* missions.create({
-        missionId: "ba9876543210",
-        leadThreadId: otherLead.threadId,
-      });
-      yield* missions.addMember({ missionId: mission.missionId, member: sameLaptop });
-      yield* missions.addMember({ missionId: mission.missionId, member: sameHere });
-      const both = yield* listed;
-      assert.deepEqual(membersOf(both.missions[0]), [
-        ["env-here/lead", "active"],
-        ["env-here/same", "active"],
-        ["env-laptop/same", "active"],
-      ]);
-      assert.deepEqual(membersOf(both.missions[1]), [["env-here/other-lead", "active"]]);
+it.effect(
+  "threads with one id on two machines, and in two missions, are told apart and left apart",
+  () => {
+    const sameHere = ref(HERE, "same");
+    const sameLaptop = ref(LAPTOP, "same");
+    const otherLead = ref(HERE, "other-lead");
+    const world = makeWorld([lead, otherLead, sameHere, sameLaptop]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const until = yield* openSidebar;
+        const mission = yield* createOne;
+        yield* missions.create({
+          missionId: "ba9876543210",
+          leadThreadId: otherLead.threadId,
+        });
+        yield* missions.addMember({ missionId: mission.missionId, member: sameLaptop });
+        yield* missions.addMember({ missionId: mission.missionId, member: sameHere });
+        const both = yield* listed;
+        assert.deepEqual(membersOf(both.missions[0]), [
+          ["env-here/lead", "active"],
+          ["env-here/same", "active"],
+          ["env-laptop/same", "active"],
+        ]);
+        assert.deepEqual(membersOf(both.missions[1]), [["env-here/other-lead", "active"]]);
 
-      world.laptop.mode = "offline";
-      yield* missions.releaseMember({ missionId: mission.missionId, member: sameLaptop });
-      assert.deepEqual(yield* world.nextCalls(3), ["join", "release", "release"]);
-      assert.deepEqual(
-        [stateOf(yield* listed, sameLaptop), stateOf(yield* listed, sameHere)],
-        ["release-pending", "active"],
-      );
-      world.laptop.mode = "up";
-      yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
-      yield* until((snapshot) => stateOf(snapshot, sameLaptop) === undefined);
+        world.laptop.mode = "offline";
+        yield* missions.releaseMember({ missionId: mission.missionId, member: sameLaptop });
+        assert.deepEqual(yield* world.nextCalls(3), ["join", "release", "release"]);
+        assert.deepEqual(
+          [stateOf(yield* listed, sameLaptop), stateOf(yield* listed, sameHere)],
+          ["release-pending", "active"],
+        );
+        world.laptop.mode = "up";
+        yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
+        yield* until((snapshot) => stateOf(snapshot, sameLaptop) === undefined);
 
-      assert.deepEqual(world.tags(sameLaptop), [WAS_TAG]);
-      assert.deepEqual(world.tags(sameHere), [TAG]);
-      assert.equal(stateOf(yield* listed, sameHere), "active");
-    }),
-  );
-});
+        assert.deepEqual(world.tags(sameLaptop), [WAS_TAG]);
+        assert.deepEqual(world.tags(sameHere), [TAG]);
+        assert.equal(stateOf(yield* listed, sameHere), "active");
+
+        yield* missions.leaveHere(sameHere.threadId, mission.missionId);
+        yield* missions.addMember({ missionId: "ba9876543210", member: sameHere });
+        const tags = world.tags(sameHere);
+        const refused = yield* missions
+          .leaveHere(sameHere.threadId, mission.missionId)
+          .pipe(Effect.flip);
+        assert.include(refused.message, "now in another mission");
+        assert.deepEqual(world.tags(sameHere), tags);
+        const store = yield* MissionStore.MissionStore;
+        assert.equal((yield* store.claim(sameHere.threadId))?.missionId, "ba9876543210");
+      }),
+    );
+  },
+);
 
 it.effect(
   "an offline or unusable link's members show as last known; a thread its own user frees is dropped",
