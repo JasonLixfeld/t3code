@@ -656,7 +656,6 @@ function CardMetaLine({ className, ...props }: ComponentProps<"div">) {
 
 export type SidebarCardMachine = { readonly kind: EnvironmentMachineKind; readonly label: string };
 
-/** The project, then the machine when there is one; the project name truncates first. */
 function CardPlace(props: {
   readonly project: ProjectFaviconProject | null;
   readonly projectDisplayName: string | null;
@@ -691,7 +690,6 @@ function CardPlace(props: {
   );
 }
 
-/** The two-line sidebar card: title and status on top, project and machine below. */
 export const SidebarCard = {
   Body: CardBody,
   TitleLine: CardTitleLine,

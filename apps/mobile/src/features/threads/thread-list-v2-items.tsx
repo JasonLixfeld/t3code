@@ -449,7 +449,6 @@ export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(pro
 const MISSION_MEMBER_INDENT = 16;
 const MISSION_GROUP_GAP = 12;
 
-// Replaces the card container's own top margin, and the card above adds its bottom margin.
 const MISSION_LEAD_SPACING = { marginTop: MISSION_GROUP_GAP - THREAD_LIST_V2_ROW_OUTER_GAP };
 
 // Undefined without a gap: a zero marginTop would override a row's own marginVertical.
@@ -479,19 +478,12 @@ const missionRowInset = (pane: "screen" | "sidebar" | undefined) =>
     ? THREAD_LIST_V2_SIDEBAR_ROW_STYLE.paddingHorizontal
     : THREAD_LIST_V2_ROW_INSET;
 
-/**
- * A loaded row draws the rail inside its card container. A placeholder row has no container,
- * so it adds the container's outer inset to land on the same x.
- */
 function MissionMemberRail(props: {
   readonly pane?: "screen" | "sidebar" | undefined;
-  readonly outsideContainer?: boolean;
+  readonly outerInset?: number;
 }) {
   const sidebar = props.pane === "sidebar";
-  const left =
-    (props.outsideContainer ? THREAD_LIST_V2_ROW_OUTER_INSET : 0) +
-    missionRowInset(props.pane) +
-    MISSION_MEMBER_INDENT / 2;
+  const left = (props.outerInset ?? 0) + missionRowInset(props.pane) + MISSION_MEMBER_INDENT / 2;
   return (
     <View
       pointerEvents="none"
@@ -501,7 +493,6 @@ function MissionMemberRail(props: {
   );
 }
 
-/** A card's second line opens with its project; capped at half the line so the rest still fits. */
 function ThreadListV2ProjectPrefix(props: {
   readonly environmentId: EnvironmentId;
   readonly project: EnvironmentProject;
@@ -645,7 +636,9 @@ export const ThreadListV2MissionMemberRow = memo(function ThreadListV2MissionMem
             }
       }
     >
-      {lead ? null : <MissionMemberRail pane={props.pane} outsideContainer />}
+      {lead ? null : (
+        <MissionMemberRail pane={props.pane} outerInset={THREAD_LIST_V2_ROW_OUTER_INSET} />
+      )}
       <ThreadListV2MissionToggle
         place={props.place}
         title={title}
@@ -1803,7 +1796,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       </View>
       <View className="mt-1 flex-row items-center gap-2" style={{ paddingLeft: titleTextInset }}>
         <View className="min-w-0 flex-1 flex-row items-center gap-1">
-          {/* Error and mission-state text take the whole line, as before the project moved here. */}
           {props.project && !lastError && !missionState ? (
             <ThreadListV2ProjectPrefix
               environmentId={thread.environmentId}
@@ -2095,7 +2087,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const leadSpacing = missionLeadSpacing(mission);
   const baseContainerStyle = rowAppearance.swipeContainerStyle;
-  // The gap goes on the card container itself, so it replaces that container's top margin.
   const containerStyle = leadSpacing ? [baseContainerStyle, leadSpacing] : baseContainerStyle;
   if (!canSwipe) return <View style={containerStyle}>{rowContent(() => {})}</View>;
 

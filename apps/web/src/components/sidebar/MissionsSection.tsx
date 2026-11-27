@@ -874,8 +874,7 @@ export function SidebarMissions(props: {
         return (
           <li
             key={mission.key}
-            // The list's gap-px adds the twelfth pixel between missions.
-            className={cn("list-none", index > 0 && "mt-2.75")}
+            className={cn("list-none", index > 0 && "mt-[calc(0.75rem_-_1px)]")}
             data-mission-drop={mission.key}
           >
             <ul
