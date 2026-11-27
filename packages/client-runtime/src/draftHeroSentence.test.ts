@@ -3,20 +3,19 @@ import { describe, expect, it } from "vite-plus/test";
 import { MISSION_SLOT, PROJECT_SLOT, splitDraftHeroSentence } from "./draftHeroSentence.ts";
 
 describe("splitDraftHeroSentence", () => {
-  it("splits at the project and the mission", () => {
-    expect(splitDraftHeroSentence(`Build in ${PROJECT_SLOT}, in ${MISSION_SLOT}?`)).toEqual({
-      beforeProject: "Build in ",
-      beforeMission: ", in ",
-      afterMission: "?",
-    });
-  });
-
-  it("keeps a sentence without the project whole before the mission", () => {
-    expect(splitDraftHeroSentence(`Work in ${MISSION_SLOT}?`)).toEqual({
-      beforeProject: "",
-      beforeMission: "Work in ",
-      afterMission: "?",
-    });
+  it.each([
+    [
+      "at the project and the mission",
+      `Build in ${PROJECT_SLOT}, in ${MISSION_SLOT}?`,
+      { beforeProject: "Build in ", beforeMission: ", in ", afterMission: "?" },
+    ],
+    [
+      "a sentence without the project before the mission",
+      `Work in ${MISSION_SLOT}?`,
+      { beforeProject: "", beforeMission: "Work in ", afterMission: "?" },
+    ],
+  ])("splits %s", (_, sentence, parts) => {
+    expect(splitDraftHeroSentence(sentence)).toEqual(parts);
   });
 
   it.each([

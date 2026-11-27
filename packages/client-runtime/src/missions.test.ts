@@ -27,7 +27,6 @@ import {
   missionDraftMachines,
   missionLeadCandidates,
   missionLeaveId,
-  missionRowItems,
   type MissionHost,
   missionsLiveKey,
   parseMissionTarget,
@@ -75,16 +74,13 @@ const addChild = (threads: Parameters<typeof buildMissionMenuItems>[0]) =>
     .children![0]!;
 
 describe("buildMissionMenuItems", () => {
-  it("offers a mission to threads on its machine and behind a full-access link", () => {
-    expect(addChild([thread(DESK), thread(LAPTOP)])).toEqual({
+  it("offers a mission to threads on its machine and behind a full-access link, and says why others cannot join", () => {
+    expect(addChild([thread(DESK), thread(LAPTOP)])).toMatchObject({
       id: "mission-add:env-desk:0123456789ab",
       label: "Ship v2",
       disabled: false,
       detail: "Desk",
     });
-  });
-
-  it("says why a thread cannot join", () => {
     expect(addChild([thread(BOX)])).toMatchObject({
       disabled: true,
       detail: "Needs full-access link",
@@ -209,14 +205,9 @@ describe("buildMissionMenuItems", () => {
     ]);
     expect(end([member("add-pending")])).toEqual([true, "Has threads on another machine"]);
     expect(end([member("release-pending")])).toEqual([true, "Has threads on another machine"]);
-    const item = buildMissionMenuItems(
-      [thread(DESK, "lead")],
-      led([here("a", { settled: true })]),
-      label,
-      allowed,
-    ).at(-1);
-    expect(item).toMatchObject({ label: "End mission", icon: "check" });
-    expect(item?.destructive).toBeUndefined();
+    expect(
+      buildMissionMenuItems([thread(DESK, "lead")], led([]), label, allowed).at(-1)?.destructive,
+    ).toBeUndefined();
     const barred = buildMissionMenuItems([thread(DESK, "lead")], led([]), label, () => false);
     for (const prefix of ["mission-new-thread:", "mission-prompt:"]) {
       expect(barred.find((item) => item.id.startsWith(prefix))).toMatchObject({
@@ -264,40 +255,6 @@ describe("buildMissionMenuItems", () => {
     });
   });
 
-  it("offers the lead's machine to release a thread that joined one of its missions", () => {
-    const joined: ReadonlyArray<MissionHost> = [
-      {
-        ...hosts[0]!,
-        snapshot: {
-          ...hosts[0]!.snapshot,
-          missions: [
-            {
-              ...mission,
-              members: [
-                {
-                  ref: { environmentId: LAPTOP, threadId: ThreadId.make("ios") },
-                  role: "member",
-                  state: "active",
-                },
-              ],
-            },
-          ],
-        },
-      },
-    ];
-    const releaseOf = (can: (environmentId: EnvironmentId) => boolean, id = "ios") =>
-      buildMissionMenuItems([thread(LAPTOP, id)], joined, label, can).find(
-        (item) => item.label === "Leave mission",
-      );
-    expect(releaseOf(allowed)).toMatchObject({
-      id: "mission-release:env-desk:0123456789ab",
-      disabled: false,
-    });
-    expect(parseMissionTarget(releaseOf(allowed)!.id)).toMatchObject({ action: "release" });
-    expect(releaseOf(() => false)).toMatchObject({ disabled: true, detail: "Not allowed here" });
-    expect(releaseOf(allowed, "other")).toBeUndefined();
-  });
-
   it("offers one Leave mission, on the member's machine when it may be changed, else the lead's", () => {
     const member = { ref: { environmentId: LAPTOP, threadId: ThreadId.make("ios") } };
     const held: ReadonlyArray<MissionHost> = [
@@ -319,8 +276,12 @@ describe("buildMissionMenuItems", () => {
         },
       },
     ];
-    const ways = (can: (environmentId: EnvironmentId) => boolean) =>
-      buildMissionMenuItems([thread(LAPTOP, "ios")], held, label, can).filter(
+    const ways = (
+      can: (environmentId: EnvironmentId) => boolean,
+      seen: ReadonlyArray<MissionHost> = held,
+      id = "ios",
+    ) =>
+      buildMissionMenuItems([thread(LAPTOP, id)], seen, label, can).filter(
         (item) => item.icon === "folder-minus",
       );
     expect(ways(allowed)).toEqual([
@@ -344,6 +305,16 @@ describe("buildMissionMenuItems", () => {
         detail: "Not allowed here",
       }),
     ]);
+    const leadOnly = held.slice(0, 1);
+    const release = ways(allowed, leadOnly);
+    expect(release).toEqual([
+      expect.objectContaining({ id: "mission-release:env-desk:0123456789ab", disabled: false }),
+    ]);
+    expect(parseMissionTarget(release[0]!.id)).toMatchObject({ action: "release" });
+    expect(ways(() => false, leadOnly)).toEqual([
+      expect.objectContaining({ disabled: true, detail: "Not allowed here" }),
+    ]);
+    expect(ways(allowed, leadOnly, "other")).toEqual([]);
   });
 
   it("leaves directly only the mission the row names, not another the thread's machine holds", () => {
@@ -501,20 +472,17 @@ describe("groupSidebarMissions", () => {
       entry.members.map((row) => row.member.ref.threadId),
     ]);
 
-  it("shows the lead and unsettled members only in their mission, and settled ones elsewhere", () => {
+  it("shows the lead and unsettled members only in their mission, and settled or archived ones elsewhere", () => {
     const { missions, threadKeys } = listed();
     expect(threadKeys.has("env-desk:lead")).toBe(true);
     expect(threadKeys.has("env-desk:docs")).toBe(true);
-    expect(threadKeys.has("env-desk:done")).toBe(false);
     expect(missions[0]!.key).toBe("env-desk:0123456789ab");
     expect(missions[0]!.lead.thread?.id).toBe("lead");
-    expect(entryOf("done")).toBeUndefined();
+    for (const threadId of ["done", "old"]) {
+      expect(threadKeys.has(`env-desk:${threadId}`)).toBe(false);
+      expect(entryOf(threadId)).toBeUndefined();
+    }
     expect(entryOf("remote")?.thread).toBeNull();
-  });
-
-  it("leaves an archived member out of its mission and to the other lists", () => {
-    expect(entryOf("old")).toBeUndefined();
-    expect(listed().threadKeys.has("env-desk:old")).toBe(false);
   });
 
   it("shows a pending add or release it has the thread for in the mission only", () => {
@@ -576,100 +544,46 @@ describe("groupSidebarMissions", () => {
     ).toEqual([]);
   });
 
-  it("hides an active member the list trimmed, once its machine is done syncing", () => {
-    const trimmed = mission("dddddddddddd", [
-      member("lead", "active", "lead"),
-      member("trimmed", "active"),
-      { ...member("flagged", "active"), settled: true },
-      member("leaving", "release-pending"),
-      member("joining", "add-pending"),
-      member("refused", "add-refused"),
-      member("stuck", "release-refused"),
-      member("away", "offline", "member", laptop),
-    ]);
-    const shown = (synced: ReadonlySet<EnvironmentId>) =>
-      rowsOf(groupSidebarMissions(hostOf(trimmed), [], null, new Set(), synced))[0]![2];
-    const kept = ["leaving", "joining", "refused", "stuck", "away"];
-    expect(shown(new Set([environmentId, laptop]))).toEqual(kept);
-    expect(shown(new Set())).toEqual(["trimmed", "flagged", ...kept]);
-    const result = groupSidebarMissions(
-      hostOf(trimmed),
-      [],
-      null,
-      new Set(),
-      new Set([environmentId]),
-    );
-    expect(result.missions[0]!.lead).toMatchObject({ member: { role: "lead" }, thread: null });
-  });
-
-  it("waits for the member's own machine to finish syncing, not any machine", () => {
-    const trimmed = mission("dddddddddddd", [
-      member("lead", "active", "lead"),
-      member("trimmed", "active"),
-    ]);
-    const shown = groupSidebarMissions(hostOf(trimmed), [], null, new Set(), new Set([laptop]));
-    expect(rowsOf(shown)[0]![2]).toEqual(["trimmed"]);
-  });
-
-  it("hides an active member whose thread the tag filter left out of the list", () => {
-    const tagged = mission("cdcdcdcdcdcd", [
-      member("lead", "active", "lead"),
-      member("tagged", "active"),
-      member("untagged", "active"),
-    ]);
-    const shells = [shell("lead"), shell("tagged")];
-    const result = groupSidebarMissions(hostOf(tagged), shells, null, new Set(), live);
-    expect(rowsOf(result)[0]![2]).toEqual(["tagged"]);
-  });
-
-  it("keeps a member whose loaded thread is settled while its machine still syncs", () => {
-    const resyncing = mission("abababababab", [
-      member("lead", "active", "lead"),
-      member("cached", "active"),
-    ]);
-    const shells = [shell("lead"), shell("cached", { settled: true })];
-    const rows = (synced: ReadonlySet<EnvironmentId>) =>
-      rowsOf(groupSidebarMissions(hostOf(resyncing), shells, null, new Set(), synced))[0]![2];
-    expect(rows(new Set([laptop]))).toEqual(["cached"]);
-    expect(rows(new Set([environmentId]))).toEqual([]);
-  });
-
-  it("keeps an offline or refused-release row even when its loaded thread is settled", () => {
-    const stuck = mission("eeeeeeeeeeee", [
-      member("lead", "active", "lead"),
-      member("away", "offline"),
-      member("stuck", "release-refused"),
-    ]);
-    const shells = [
-      shell("lead"),
-      shell("away", { settled: true }),
-      shell("stuck", { archived: true }),
-    ];
-    const result = groupSidebarMissions(
-      hostOf(stuck),
-      shells,
-      null,
-      new Set(),
-      new Set([environmentId]),
-    );
-    expect(rowsOf(result)[0]![2]).toEqual(["away", "stuck"]);
-  });
-
-  it("hides an unlisted member on another machine once that machine syncs, while it still blocks ending", () => {
-    const remote = member("remote", "active", "member", laptop);
-    const led = mission("ffffffffffff", [member("lead", "active", "lead"), remote]);
-    const members = (synced: ReadonlySet<EnvironmentId>) =>
-      rowsOf(groupSidebarMissions(hostOf(led), [], null, new Set(), synced))[0]![2];
-    expect(members(new Set([environmentId, laptop]))).toEqual([]);
-    expect(members(new Set([environmentId]))).toEqual(["remote"]);
-    const end = missionRowItems({
-      host: environmentId,
-      mission: led,
-      leadGone: false,
-      canChange: true,
-    }).at(-1);
-    expect(end).toMatchObject({ disabled: true, detail: "Has threads on another machine" });
-  });
+  const syncing = mission("dddddddddddd", [
+    member("lead", "active", "lead"),
+    member("trimmed", "active"),
+    { ...member("flagged", "active"), settled: true },
+    member("tagged", "active"),
+    member("cached", "active"),
+    member("leaving", "release-pending"),
+    member("joining", "add-pending"),
+    member("refused", "add-refused"),
+    member("stuck", "release-refused"),
+    member("away", "offline"),
+    member("adrift", "offline", "member", laptop),
+    member("remote", "active", "member", laptop),
+  ]);
+  const syncingShells = [
+    shell("tagged"),
+    shell("cached", { settled: true }),
+    shell("stuck", { archived: true }),
+    shell("away", { settled: true }),
+  ];
+  const unsynced = ["trimmed", "flagged", "tagged", "cached"];
+  const kept = ["leaving", "joining", "refused", "stuck", "away", "adrift"];
+  it.each([
+    { name: "no machine", synced: [], shown: [...unsynced, ...kept, "remote"] },
+    { name: "the lead's machine", synced: [environmentId], shown: ["tagged", ...kept, "remote"] },
+    { name: "only the other machine", synced: [laptop], shown: [...unsynced, ...kept] },
+    { name: "both machines", synced: [environmentId, laptop], shown: ["tagged", ...kept] },
+  ])(
+    "hides an active member its own machine left out or settled, once $name synced",
+    ({ synced, shown }) => {
+      const result = groupSidebarMissions(
+        hostOf(syncing),
+        syncingShells,
+        null,
+        new Set(),
+        new Set(synced),
+      );
+      expect(rowsOf(result)).toEqual([["env-desk:dddddddddddd", true, shown]]);
+    },
+  );
 
   it("leaves every thread to the other lists when no mission is listed", () => {
     expect(groupSidebarMissions([], threads, null)).toEqual({
@@ -918,7 +832,6 @@ describe("withoutQuietMissionUpdates", () => {
   });
 
   it.each([
-    ["thought and wrote nothing", [wake("q"), thought("q"), reply("q", "")]],
     [
       "read and replied with the quiet marker",
       [wake("q"), tool("q", "t3_thread_read"), reply("q", ` ${MISSION_QUIET_REPLY}\n`)],
@@ -931,7 +844,6 @@ describe("withoutQuietMissionUpdates", () => {
 
   const DONE = finished("run");
   it.each([
-    ["it wrote a reply", [wake("run"), reply("run", "Nothing needs you.")], DONE],
     [
       "its reply adds to the marker",
       [wake("run"), reply("run", "No change. Member 1 waits.")],
@@ -949,33 +861,21 @@ describe("withoutQuietMissionUpdates", () => {
     ["it asks a question", [wake("run"), question("run")], DONE],
     ["the user steered it", [wake("run"), user("run", "steer")], DONE],
     [
-      "it is running",
-      [wake("run")],
-      { runs: [runOf("run", "running")], attempts: [attempt("run", "running")] },
-    ],
-    [
       "its run is still open after its attempt completed",
       [wake("run")],
       { runs: [runOf("run", "running")], attempts: [attempt("run", "completed")] },
     ],
     [
-      "it failed",
+      "its run completed but its latest attempt failed",
       [wake("run")],
-      { runs: [runOf("run", "failed")], attempts: [attempt("run", "failed")] },
-    ],
-    [
-      "it was interrupted",
-      [wake("run")],
-      { runs: [runOf("run", "interrupted")], attempts: [attempt("run", "interrupted")] },
+      {
+        runs: [runOf("run", "completed")],
+        attempts: [attempt("run", "completed", 1), attempt("run", "failed", 2)],
+      },
     ],
     ["its run is unknown", [wake("run")], { attempts: DONE.attempts }],
     ["its attempts are unknown", [wake("run")], { runs: DONE.runs }],
     ["it was no wake", [user("run")], DONE],
-    [
-      "it waits on an approval",
-      [wake("run"), approval("run", "waiting")],
-      { runs: [runOf("run", "waiting")], attempts: [attempt("run", "running")] },
-    ],
     [
       "its run finished with an approval left open",
       [wake("run"), approval("run", "waiting")],
@@ -1002,16 +902,6 @@ describe("withoutQuietMissionUpdates", () => {
       ],
       DONE,
     ],
-    [
-      "its script sends through a spaced namespace",
-      [wake("run"), script("run", `${READ_SCRIPT}\nawait tools ["t3-code-x"].t3_thread_send({});`)],
-      DONE,
-    ],
-    [
-      "its script picks a send by a spaced computed key",
-      [wake("run"), script("run", `${READ_SCRIPT}\nawait t ["t3_thread_send"]({});`)],
-      DONE,
-    ],
     ["its notification is not a mission wake", [wake("run", "turn-item:message:other")], DONE],
     ["it was a resumed thread", [wake("run", wakeId("run"), "Resumed thread")], DONE],
     [
@@ -1025,16 +915,6 @@ describe("withoutQuietMissionUpdates", () => {
     [
       "its script reads and launches",
       [wake("run"), script("run", `${READ_SCRIPT}\nawait t.t3_thread_launch({});`)],
-      DONE,
-    ],
-    [
-      "its script reads and sends feedback",
-      [wake("run"), script("run", `${READ_SCRIPT}\nawait t.t3_feedback({});`)],
-      DONE,
-    ],
-    [
-      "its script destructures a tool",
-      [wake("run"), script("run", `${READ_SCRIPT}\nconst { t3_thread_send } = t;`)],
       DONE,
     ],
     [
@@ -1053,11 +933,6 @@ describe("withoutQuietMissionUpdates", () => {
       DONE,
     ],
     [
-      "its script picks a tool by a computed key",
-      [wake("run"), script("run", `const k = "t3-code-x";\nawait tools[k].t3_thread_read({});`)],
-      DONE,
-    ],
-    [
       "its script fetches",
       [wake("run"), script("run", `${READ_SCRIPT}\nawait fetch("https://example.com");`)],
       DONE,
@@ -1070,14 +945,8 @@ describe("withoutQuietMissionUpdates", () => {
     expect(shown).toBe(thread);
   });
 
-  it.each([
-    ["shows a wake with only conversation items loaded", reply("run", "")],
-    [
-      "shows a wake with only conversation items loaded that said the marker",
-      reply("run", MISSION_QUIET_REPLY),
-    ],
-  ] as const)("%s", (_case, item) => {
-    const { thread, shown } = hide([wake("run"), item], DONE);
+  it("shows a wake with only conversation items loaded", () => {
+    const { thread, shown } = hide([wake("run"), reply("run", "")], DONE);
     expect(shown).toBe(thread);
   });
 

@@ -11,33 +11,6 @@ import * as Scope from "effect/Scope";
 import * as KeyedLock from "./KeyedLock.ts";
 
 describe("KeyedLock", () => {
-  it.effect("runs a try-lock only while the key is free, and leaves no entry behind", () =>
-    Effect.gen(function* () {
-      const lock = yield* KeyedLock.make<string>();
-      const entered = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const holder = yield* lock
-        .withLock(
-          "key",
-          Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
-        )
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(entered);
-      assert.isTrue(Option.isNone(yield* lock.withLockIfAvailable("key", Effect.succeed(1))));
-      assert.deepStrictEqual(
-        yield* lock.withLockIfAvailable("other", Effect.succeed(2)),
-        Option.some(2),
-      );
-      yield* Deferred.succeed(release, undefined);
-      yield* Fiber.join(holder);
-      assert.deepStrictEqual(
-        yield* lock.withLockIfAvailable("key", Effect.succeed(3)),
-        Option.some(3),
-      );
-      assert.deepStrictEqual(yield* lock.activeKeys, []);
-    }),
-  );
-
   it.effect("runs one holder of a key at a time, waiters in the order they queued", () =>
     Effect.gen(function* () {
       const lock = yield* KeyedLock.make<string>();
@@ -91,11 +64,17 @@ describe("KeyedLock", () => {
     }),
   );
 
-  it.effect("keeps no lock for a key once its holders and waiters are gone", () =>
+  it.effect("keeps no lock for a key once its holders, waiters and try-locks are gone", () =>
     Effect.gen(function* () {
       const lock = yield* KeyedLock.make<string>();
       const entered = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
+      const tried = yield* Ref.make<ReadonlyArray<string>>([]);
+      const tryLock = (key: string) =>
+        lock.withLockIfAvailable(
+          key,
+          Ref.update(tried, (current) => [...current, key]).pipe(Effect.as(key)),
+        );
 
       const holder = yield* lock
         .withLock(
@@ -104,6 +83,8 @@ describe("KeyedLock", () => {
         )
         .pipe(Effect.forkChild);
       yield* Deferred.await(entered);
+      assert.isTrue(Option.isNone(yield* tryLock("key")));
+      assert.deepStrictEqual(yield* tryLock("other"), Option.some("other"));
       const abandoned = yield* lock.withLock("key", Effect.void).pipe(Effect.forkChild);
       const waiting = yield* lock.withLock("key", Effect.void).pipe(Effect.forkChild);
       yield* Effect.yieldNow;
@@ -113,6 +94,8 @@ describe("KeyedLock", () => {
       assert.deepStrictEqual(yield* lock.activeKeys, ["key"]);
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.joinAll([holder, waiting]);
+      assert.deepStrictEqual(yield* tryLock("key"), Option.some("key"));
+      assert.deepStrictEqual(yield* Ref.get(tried), ["other", "key"]);
       assert.strictEqual(
         yield* lock.withLock("other", Effect.fail("boom")).pipe(Effect.flip),
         "boom",

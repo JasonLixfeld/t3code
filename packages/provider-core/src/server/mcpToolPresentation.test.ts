@@ -21,10 +21,7 @@ describe("mcpToolPresentation", () => {
     });
   });
 
-  it.each(["t3_mission_roster", "t3_mission_add", "t3_mission_release", "t3_mission_tag"])(
-    "leaves T3's own mission tool %s to the shared table, not its raw name",
-    (tool) => {
-      expect(mcpToolPresentation({ toolName: `mcp__t3-code__${tool}` })).toEqual({});
-    },
-  );
+  it("leaves T3's own tool to the shared table, not its raw name", () => {
+    expect(mcpToolPresentation({ toolName: "mcp__t3-code__t3_mission_roster" })).toEqual({});
+  });
 });

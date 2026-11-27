@@ -297,22 +297,39 @@ describe("Pi MCP tool exposure", () => {
     assert.include(bridge.declaredTools(), "mcp__t3-code__delegate_task");
   });
 
-  it("keeps the old catalog when tools/list fails at agent start", async () => {
-    const { bridge, nextAgentStart } = await startGatewaySession();
-    const declared = bridge.declaredTools();
-    const registrations = bridge.registrations();
+  it.each([
+    { name: "fails", hang: false },
+    { name: "hangs past its deadline", hang: true },
+  ])(
+    "keeps the old catalog when tools/list $name at agent start, and lists again at the next",
+    async ({ hang }) => {
+      const { bridge, nextAgentStart } = await startGatewaySession();
+      const declared = bridge.declaredTools();
+      const registrations = bridge.registrations();
 
-    bridge.catalog.push(rosterTool);
-    bridge.failListing(true);
-    await nextAgentStart();
-    assert.equal(bridge.requests.at(-1)?.method, "tools/list");
-    assert.equal(bridge.registrations(), registrations);
-    assert.deepEqual(bridge.declaredTools(), declared);
+      bridge.catalog.push(rosterTool);
+      if (hang) {
+        const hung = bridge.hangNextListing();
+        const agentStarted = nextAgentStart();
+        const deadline = await hung;
+        assert.isDefined(deadline, "tools/list has no deadline");
+        assert.isAtLeast(deadline.ms, 2_000);
+        assert.isAtMost(deadline.ms, 3_000);
+        deadline.expire();
+        await agentStarted;
+      } else {
+        bridge.failListing(true);
+        await nextAgentStart();
+        bridge.failListing(false);
+      }
+      assert.equal(bridge.requests.at(-1)?.method, "tools/list");
+      assert.equal(bridge.registrations(), registrations);
+      assert.deepEqual(bridge.declaredTools(), declared);
 
-    bridge.failListing(false);
-    await nextAgentStart();
-    assert.include(bridge.declaredTools(), roster);
-  });
+      await nextAgentStart();
+      assert.include(bridge.declaredTools(), roster);
+    },
+  );
 
   it("keeps another extension's tool restriction when T3 shows new tools", async () => {
     const { bridge, nextAgentStart } = await startGatewaySession({
@@ -381,24 +398,6 @@ describe("Pi MCP tool exposure", () => {
     },
   );
 
-  it("gives up on a hung tools/list at its deadline and lists again at the next agent start", async () => {
-    const { bridge, nextAgentStart } = await startGatewaySession();
-    const declared = bridge.declaredTools();
-    bridge.catalog.push(rosterTool);
-    const hung = bridge.hangNextListing();
-    const agentStarted = nextAgentStart();
-    const deadline = await hung;
-    assert.isDefined(deadline, "tools/list has no deadline");
-    assert.isAtLeast(deadline.ms, 2_000);
-    assert.isAtMost(deadline.ms, 3_000);
-
-    deadline.expire();
-    await agentStarted;
-    assert.deepEqual(bridge.declaredTools(), declared);
-    await nextAgentStart();
-    assert.include(bridge.declaredTools(), roster);
-  });
-
   it("does not turn on another extension's tool under T3's name for a gateway model", async () => {
     const { bridge, nextAgentStart } = await startGatewaySession();
     const audit = "mcp__t3-code__audit";
@@ -410,26 +409,27 @@ describe("Pi MCP tool exposure", () => {
     assert.notInclude(bridge.getActiveTools(), audit);
   });
 
-  it("keeps another extension's active tool under T3's alias prefix on through discovery", async () => {
-    const { bridge, nextAgentStart } = await startGatewaySession();
-    const alias = "mcp__t3_code__audit";
-    bridge.registerUserTool(alias);
+  it.each([
+    { name: "an active one on", active: true, collides: false },
+    {
+      name: "an inactive one beside a T3 tool of the same name off",
+      active: false,
+      collides: true,
+    },
+  ])(
+    "keeps another extension's tool under T3's alias prefix through discovery: $name",
+    async ({ active, collides }) => {
+      const { bridge, nextAgentStart } = await startGatewaySession();
+      const alias = "mcp__t3_code__audit";
+      if (collides) bridge.registerUserTool("mcp__t3-code__audit", { active });
+      bridge.registerUserTool(alias, { active });
 
-    await nextAgentStart();
-    assert.include(bridge.getActiveTools(), alias);
-  });
-
-  it("keeps another extension's inactive tool under T3's alias prefix off", async () => {
-    const { bridge, nextAgentStart } = await startGatewaySession();
-    const alias = "mcp__t3_code__audit";
-    bridge.registerUserTool("mcp__t3-code__audit", { active: false });
-    bridge.registerUserTool(alias, { active: false });
-
-    bridge.catalog.push({ ...rosterTool, name: "audit" });
-    await nextAgentStart();
-    await nextAgentStart();
-    assert.notInclude(bridge.getActiveTools(), alias);
-  });
+      if (collides) bridge.catalog.push({ ...rosterTool, name: "audit" });
+      await nextAgentStart();
+      await nextAgentStart();
+      assert.equal(bridge.getActiveTools().includes(alias), active);
+    },
+  );
 
   it("leaves a model call to another extension's tool under T3's alias prefix alone", async () => {
     const { bridge } = await startGatewaySession();
@@ -467,20 +467,14 @@ describe("Pi MCP tool exposure", () => {
     assert.include(bridge.getActiveTools(), "tool_search");
   });
 
-  it("lists tools before the agent starts on a released Pi with a build tag", async () => {
-    const bridge = await loadMcpBridge({ modern: true, version: "1.2.0+build.5" });
-    const requests = bridge.requests.length;
-    await bridge.handlers.get("before_agent_start")?.({ systemPrompt: "" }, discoveryContext);
-    assert.equal(bridge.requests.at(requests)?.method, "tools/list");
-  });
-
   it.each([
-    { name: "1.1.0, which is not busy before the hook", version: "1.1.0" },
-    { name: "a 1.2.0 prerelease", version: "1.2.0-rc.1" },
-    { name: "an incomplete version", version: "1.2.0garbage" },
-    { name: "a build without VERSION", version: undefined },
-  ])("does not list tools before the agent starts on Pi $name", async ({ version }) => {
-    const bridge = await loadMcpBridge({ modern: true, version });
+    { name: "a released Pi with a build tag", version: "1.2.0+build.5", lists: true },
+    { name: "1.1.0, which is not busy before the hook", version: "1.1.0", lists: false },
+    { name: "a 1.2.0 prerelease", version: "1.2.0-rc.1", lists: false },
+    { name: "an incomplete version", version: "1.2.0garbage", lists: false },
+    { name: "a build without VERSION", version: undefined, lists: false },
+  ])("lists tools before the agent starts only on a supported Pi: $name", async (input) => {
+    const bridge = await loadMcpBridge({ modern: true, version: input.version });
     await bridge.handlers.get("session_start")?.({ systemPrompt: "" }, discoveryContext);
     const requests = bridge.requests.length;
     bridge.catalog.push(rosterTool);
@@ -488,8 +482,12 @@ describe("Pi MCP tool exposure", () => {
       { systemPrompt: "" },
       discoveryContext,
     );
-    assert.isFalse(typeof (result as { then?: unknown } | undefined)?.then === "function");
-    assert.equal(bridge.requests.length, requests);
+    assert.equal(
+      typeof (result as { then?: unknown } | undefined)?.then === "function",
+      input.lists,
+    );
+    await result;
+    assert.equal(bridge.requests.at(requests)?.method, input.lists ? "tools/list" : undefined);
   });
 
   const legacyNames = [
