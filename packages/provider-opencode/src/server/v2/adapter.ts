@@ -318,6 +318,8 @@ interface Wake {
   readonly reports: Array<BackgroundWorkReport>;
   readonly detail: string | null;
   dropped: boolean;
+  /** T3 has dispatched its continuation run, or gave up on it. */
+  dispatched: boolean;
   readonly after: string | undefined;
   readonly first: string | undefined;
   readonly children: Set<string>;
@@ -1884,7 +1886,29 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             : [],
         ),
       );
-      const allTasks = roster.concat(imageTasks);
+      // A subagent's report reaches T3 only as the continuation run of its wake, so until that run
+      // is dispatched the report is still owed work.
+      const owedWakes =
+        state.subagent !== undefined
+          ? []
+          : [
+              ...[...state.reports.values()].flatMap(({ inboxId, childId, report }) =>
+                report.kind === "subagent" && !state.stoppedChildren.has(childId)
+                  ? [{ taskId: `report:${inboxId}`, report }]
+                  : [],
+              ),
+              ...state.wakes.flatMap((wake) => {
+                const report = wake.reports.find((each) => each.kind === "subagent");
+                return report === undefined || wake.dispatched || wake.messageId === undefined
+                  ? []
+                  : [{ taskId: `wake:${wake.messageId}`, report }];
+              }),
+            ].map(({ taskId, report }) => ({
+              taskId,
+              kind: "background_task" as const,
+              ...(report.label?.trim() ? { description: report.label.trim() } : {}),
+            }));
+      const allTasks = roster.concat(imageTasks, owedWakes);
       const current = state.providerThread.pendingBackgroundTasks ?? [];
       if (
         state.publishedBackgroundWork === hasBackground(state) &&
@@ -2391,6 +2415,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const route = state.providerThread.appThreadId;
       if (route === null || wake.messageId === undefined) return;
       const notification = backgroundWorkNotification(wake.reports);
+      const release = lock.withPermit(
+        Effect.suspend(() => {
+          if (wake.dispatched) return Effect.void;
+          wake.dispatched = true;
+          return syncRoster(state);
+        }),
+      );
       yield* continuationRequests.offer({
         threadId: route,
         providerThreadId: state.providerThread.id,
@@ -2399,7 +2430,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         messageId: wake.messageId,
         ...(notification === null ? {} : { notification }),
         dispatchIfCurrent: (dispatch) =>
-          wake.dropped ? Effect.succeedNone : Effect.asSome(dispatch),
+          (wake.dropped ? Effect.succeedNone : Effect.asSome(dispatch)).pipe(
+            Effect.ensuring(release),
+          ),
+        clearIfCurrent: () => release,
       });
     });
 
@@ -3118,7 +3152,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     const onWake = Effect.fnUntraced(function* (state: ThreadState) {
       const { delivered, stopped } = yield* takeReports(state);
-      if (stopped) return;
+      if (stopped) return yield* syncRoster(state);
       const route = state.providerThread.appThreadId;
       // History begins at whichever OpenCode queued first: a report or another client's prompt.
       // A prompt leads only this wake, so one dropped undelivered cannot move a later boundary.
@@ -3134,6 +3168,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         reports: delivered.map((entry) => entry.report),
         detail: delivered.length === 0 ? null : delivered.map((entry) => entry.text).join("\n\n"),
         dropped: false,
+        dispatched: false,
         after: delivered.at(-1)?.inboxId,
         first: leading ?? delivered[0]?.inboxId,
         children: new Set(),
@@ -3141,6 +3176,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ended: new Map(),
       };
       state.wakes.push(wake);
+      yield* syncRoster(state);
       yield* Effect.logInfo("OpenCode started a turn on its own; asking for a continuation.", {
         providerThreadId: state.providerThread.id,
       });
@@ -3609,6 +3645,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ) {
           yield* emitDeliveredReport(state, turn, event.data.inboxID, report.report);
         }
+        if (report !== undefined) yield* syncRoster(state);
         return;
       }
       // No T3 turn existed while a wake held these, so its user items came from another client.
