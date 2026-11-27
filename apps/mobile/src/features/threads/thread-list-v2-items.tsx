@@ -447,8 +447,9 @@ export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(pro
 const MISSION_MEMBER_INDENT = 16;
 const MISSION_GROUP_GAP = 12;
 
+// Undefined without a gap: a zero marginTop would override a row's own marginVertical.
 const missionLeadSpacing = (place: ThreadListV2MissionPlace | null) =>
-  place?.toggle && !place.toggle.firstMission ? MISSION_GROUP_GAP : 0;
+  place?.toggle && !place.toggle.firstMission ? { marginTop: MISSION_GROUP_GAP } : undefined;
 
 function MissionLeadIcon(props: { readonly height: number }) {
   return (
@@ -593,7 +594,7 @@ export const ThreadListV2MissionMemberRow = memo(function ThreadListV2MissionMem
       )}
       style={
         lead
-          ? { marginTop: missionLeadSpacing(props.place) }
+          ? missionLeadSpacing(props.place)
           : { paddingLeft: missionRowInset(props.pane) + MISSION_MEMBER_INDENT }
       }
     >
@@ -2051,7 +2052,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       </RowPressable>
     );
 
-  const leadSpacing = { marginTop: missionLeadSpacing(mission) };
+  const leadSpacing = missionLeadSpacing(mission);
   if (!canSwipe)
     return (
       <View style={[rowAppearance.swipeContainerStyle, leadSpacing]}>{rowContent(() => {})}</View>
