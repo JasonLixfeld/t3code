@@ -542,7 +542,8 @@ describe("ProviderContinuationService", () => {
     "reads",
     "fails its first read",
     "loses its thread before it reads again",
-    "sees its thread deleted",
+    "sees its thread deleted before its run started",
+    "sees its thread deleted after its run started",
   ] as const)(
     "tells a request its run ended, also after T3 marked the run started, when its watch %s",
     (watch) =>
@@ -555,6 +556,11 @@ describe("ProviderContinuationService", () => {
         const cursors: Array<number | undefined> = [];
         let unstarted = 0;
         let threadGone = false;
+        const deletedLive = watch.startsWith("sees its thread deleted");
+        const runState =
+          watch === "sees its thread deleted after its run started"
+            ? { status: "running", startedAt: "2026-01-01T00:00:00.000Z" }
+            : { status: "queued", startedAt: null };
         const failsFirstRead =
           watch === "fails its first read" || watch === "loses its thread before it reads again";
         const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
@@ -566,7 +572,7 @@ describe("ProviderContinuationService", () => {
                     cause: new ProjectionStoreThreadNotFoundError({ threadId }),
                   }),
                 )
-              : Effect.succeed(projection),
+              : Effect.succeed({ ...projection, runs: [{ id: runId, ...runState }] } as never),
           dispatch: () =>
             Effect.succeed({
               sequence: dispatchSequence,
@@ -579,7 +585,7 @@ describe("ProviderContinuationService", () => {
           streamStoredEventsFrom: (input) => {
             if (input?.eventType === "thread.deleted") {
               return (
-                watch === "sees its thread deleted"
+                deletedLive
                   ? Stream.make({ event: { type: "thread.deleted", payload: {} } })
                   : Stream.never
               ) as never;
@@ -616,7 +622,10 @@ describe("ProviderContinuationService", () => {
             yield* TestClock.adjust("1 second");
           }
           yield* Deferred.await(ended);
-          assert.equal(unstarted, threadGone || watch === "sees its thread deleted" ? 1 : 0);
+          assert.equal(
+            unstarted,
+            watch === "sees its thread deleted before its run started" ? 1 : 0,
+          );
           assert.deepEqual(
             cursors,
             watch === "fails its first read"

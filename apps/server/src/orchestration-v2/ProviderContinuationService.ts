@@ -112,21 +112,26 @@ export const layer = Layer.effectDiscard(
               eventType,
             }),
           );
-        const stored = Effect.suspend(() =>
+        const runOf = Effect.suspend(() =>
           threads.getThreadRecords(request.threadId, ["runs"]),
         ).pipe(
-          Effect.map((records) => {
-            const run = (records.runs ?? []).find((each) => each.id === runId);
-            const ended =
-              records.thread.deletedAt !== null ||
-              (run !== undefined && ThreadManagementService.isTerminalRunStatus(run.status));
-            return ended
-              ? Option.some({ started: (run?.startedAt ?? null) !== null })
-              : Option.none();
-          }),
+          Effect.map((records) => ({
+            deleted: records.thread.deletedAt !== null,
+            run: (records.runs ?? []).find((each) => each.id === runId),
+          })),
           Effect.catchIf(
             (error) => isThreadNotFound(error.cause),
-            () => Effect.succeedSome({ started: false }),
+            () => Effect.succeed({ deleted: true, run: undefined }),
+          ),
+        );
+        const startedOf = (run: { readonly startedAt: unknown } | undefined) =>
+          run === undefined ? undefined : run.startedAt !== null;
+        const stored = runOf.pipe(
+          Effect.map(({ deleted, run }) =>
+            deleted ||
+            (run !== undefined && ThreadManagementService.isTerminalRunStatus(run.status))
+              ? Option.some({ started: startedOf(run) })
+              : Option.none(),
           ),
         );
         const live = Stream.merge(
@@ -135,12 +140,14 @@ export const layer = Layer.effectDiscard(
               event.type === "run.updated" &&
               event.payload.id === runId &&
               ThreadManagementService.isTerminalRunStatus(event.payload.status)
-                ? Result.succeed({ started: event.payload.startedAt !== null })
+                ? Result.succeed(Effect.succeed({ started: event.payload.startedAt !== null }))
                 : Result.failVoid,
             ),
           ),
-          tail("thread.deleted").pipe(Stream.map(() => ({ started: false }))),
-        ).pipe(Stream.runHead, Effect.flatMap(Effect.fromOption));
+          tail("thread.deleted").pipe(
+            Stream.map(() => Effect.map(runOf, ({ run }) => ({ started: startedOf(run) }))),
+          ),
+        ).pipe(Stream.runHead, Effect.flatMap(Effect.fromOption), Effect.flatten);
         yield* stored.pipe(
           Effect.flatMap((ended) => (Option.isSome(ended) ? Effect.succeed(ended.value) : live)),
           Effect.tapCause((cause) =>
@@ -153,7 +160,7 @@ export const layer = Layer.effectDiscard(
           Effect.retry({ schedule: Schedule.spaced(RUN_WATCH_RETRY) }),
           Effect.flatMap(({ started }) =>
             Effect.andThen(
-              !started && onRunEndedWithoutStarting !== undefined
+              started === false && onRunEndedWithoutStarting !== undefined
                 ? onRunEndedWithoutStarting()
                 : Effect.void,
               onRunEnded?.() ?? Effect.void,
