@@ -370,7 +370,6 @@ it.each([
     ...mark,
     thread: { environmentId: target.environmentId, threadId },
   });
-  // A draft that stays behind leaves the folder's project open at its latest thread.
   expect(screen.router!.state.location.pathname).toBe(
     allowed ? `/draft/${draftId}` : `/${latest.environmentId}/${latest.id}`,
   );
