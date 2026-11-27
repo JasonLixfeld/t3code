@@ -1617,7 +1617,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ? primaryAction.swipeHint
       : primaryAction.swipeSnoozeHint;
 
-  const titleTextInset = project || leadToggle ? projectIconSize + 8 : 0;
+  const titleTextInset = leadToggle ? projectIconSize + 8 : 0;
+  const lastError =
+    rawStatus === "failed" || rawStatus === "limited" ? thread.runtime?.lastError : undefined;
+  const hasMetaDetail = Boolean(lastError || missionState || props.environmentLabel);
+  const metaTextClassName = selected
+    ? selectedThreadRowColors.mutedForegroundClassName
+    : rowAppearance.tertiaryForegroundClassName;
   const missionToggle =
     leadToggle && mission ? (
       <>
@@ -1636,18 +1642,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     <>
       <View className="flex-row items-start gap-2">
         {missionToggle}
-        {project ? (
-          <View className="justify-center" style={{ height: titleLineHeight }}>
-            <ProjectFavicon
-              environmentId={thread.environmentId}
-              faviconPath={project.faviconPath}
-              projectIcon={project.projectIcon}
-              size={projectIconSize}
-              projectTitle={project.title}
-              workspaceRoot={project.workspaceRoot}
-            />
-          </View>
-        ) : null}
         <Text
           className={cn(
             "flex-1 text-base",
@@ -1770,60 +1764,60 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         </View>
       ) : null}
       <View className="mt-1 flex-row items-center gap-2" style={{ paddingLeft: titleTextInset }}>
-        {(rawStatus === "failed" || rawStatus === "limited") && thread.runtime?.lastError ? (
-          <Text
-            className={cn(
-              "flex-1 text-xs",
-              selected
-                ? selectedThreadRowColors.mutedForegroundClassName
-                : status === "limited"
-                  ? "text-warning-foreground"
-                  : "text-danger-foreground",
-            )}
-            numberOfLines={1}
-          >
-            {thread.runtime.lastError}
-          </Text>
-        ) : missionState ? (
-          <Text
-            className={cn(
-              "flex-1 text-xs",
-              selected
-                ? selectedThreadRowColors.mutedForegroundClassName
-                : rowAppearance.tertiaryForegroundClassName,
-            )}
-            numberOfLines={1}
-          >
-            {missionState}
-          </Text>
-        ) : props.environmentLabel ? (
-          <View className="min-w-0 flex-1 flex-row items-center gap-1">
-            {props.environmentMachine ? (
-              <EnvironmentMachineSymbol
-                kind={props.environmentMachine}
-                size={machineIconSize}
-                tintColorClassName={
-                  selected
-                    ? selectedThreadRowColors.mutedIconTintClassName
-                    : rowAppearance.tertiaryIconTintClassName
-                }
+        <View className="min-w-0 flex-1 flex-row items-center gap-1">
+          {props.project ? (
+            <View className="shrink flex-row items-center gap-1" style={{ maxWidth: "50%" }}>
+              <ProjectFavicon
+                environmentId={thread.environmentId}
+                faviconPath={props.project.faviconPath}
+                projectIcon={props.project.projectIcon}
+                size={machineIconSize + 2}
+                projectTitle={props.project.title}
+                workspaceRoot={props.project.workspaceRoot}
               />
-            ) : null}
+              <Text className={cn("shrink text-xs", metaTextClassName)} numberOfLines={1}>
+                {props.project.title}
+              </Text>
+              {hasMetaDetail ? <Text className={cn("text-xs", metaTextClassName)}>·</Text> : null}
+            </View>
+          ) : null}
+          {lastError ? (
             <Text
               className={cn(
-                "shrink text-xs",
+                "flex-1 text-xs",
                 selected
                   ? selectedThreadRowColors.mutedForegroundClassName
-                  : rowAppearance.tertiaryForegroundClassName,
+                  : status === "limited"
+                    ? "text-warning-foreground"
+                    : "text-danger-foreground",
               )}
               numberOfLines={1}
             >
-              {props.environmentLabel}
+              {lastError}
             </Text>
-          </View>
-        ) : (
-          <View className="flex-1" />
-        )}
+          ) : missionState ? (
+            <Text className={cn("flex-1 text-xs", metaTextClassName)} numberOfLines={1}>
+              {missionState}
+            </Text>
+          ) : props.environmentLabel ? (
+            <View className="min-w-0 flex-1 flex-row items-center gap-1">
+              {props.environmentMachine ? (
+                <EnvironmentMachineSymbol
+                  kind={props.environmentMachine}
+                  size={machineIconSize}
+                  tintColorClassName={
+                    selected
+                      ? selectedThreadRowColors.mutedIconTintClassName
+                      : rowAppearance.tertiaryIconTintClassName
+                  }
+                />
+              ) : null}
+              <Text className={cn("shrink text-xs", metaTextClassName)} numberOfLines={1}>
+                {props.environmentLabel}
+              </Text>
+            </View>
+          ) : null}
+        </View>
         {pr ? (
           <Pressable
             // Padding cancelled by negative margin grows the touch target into

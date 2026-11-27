@@ -522,11 +522,11 @@ describe("missions in the sidebar", () => {
     expect(ids).toContain("unsnooze");
   });
 
-  it("names the lead's row without a project, and its chevron with the mission and its size", async () => {
+  it("names the lead's row with its project, and its chevron with the mission and its size", async () => {
     await using screen = await renderSidebar();
     await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
     const lead = screen.container.querySelector<HTMLElement>('[data-sidebar-row="local:lead"]')!;
-    expect(lead.getAttribute("aria-label")).toBe("Plan the v2 release");
+    expect(lead.getAttribute("aria-label")).toBe("Plan the v2 release, web");
     expect(
       screen.getByRole("button", {
         name: "Collapse mission Plan the v2 release, 5 threads",
@@ -564,6 +564,21 @@ describe("missions in the sidebar", () => {
     for (const [above, below] of groups.slice(1).map((group, index) => [groups[index]!, group])) {
       const space = below!.getBoundingClientRect().top - above!.getBoundingClientRect().bottom;
       expect(space).toBeGreaterThanOrEqual(12);
+    }
+  });
+
+  it("puts each card's title on its first line, and its project on the line below", async () => {
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
+    for (const title of ["Update the release notes", "Unrelated bug"]) {
+      const card = rowOf(screen.container, title);
+      const titleLine = screen.getByText(title, { exact: true }).element().parentElement!;
+      expect(card.contains(titleLine)).toBe(true);
+      expect(titleLine.querySelector("[data-testid=sidebar-row-project]")).toBeNull();
+      const project = titleLine.nextElementSibling!.querySelector(
+        "[data-testid=sidebar-row-project]",
+      );
+      expect(project?.textContent).toBeTruthy();
     }
   });
 
@@ -798,18 +813,21 @@ describe("missions in the sidebar", () => {
     await expect.element(prompt).not.toBeInTheDocument();
   });
 
-  it("heads a mission with the lead's title beside its chevron, and names no project", async () => {
+  it("heads a mission with the lead's title beside its chevron, and its project below", async () => {
     await using screen = await renderSidebar();
     await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
     const navigate = vi.spyOn(screen.router!, "navigate").mockResolvedValue(undefined);
     const lead = screen.container.querySelector<HTMLElement>('[data-sidebar-row="local:lead"]')!;
-    expect(lead.textContent).not.toMatch(/web|WB/);
     const chevron = lead.querySelector<HTMLElement>('[aria-label^="Collapse mission"]')!;
-    expect(chevron.parentElement!.textContent).toContain("Plan the v2 release");
+    const titleLine = chevron.parentElement!;
+    expect(titleLine.textContent).toContain("Plan the v2 release");
+    expect(titleLine.textContent).not.toMatch(/web|WB/);
     const icon = chevron.nextElementSibling!;
     expect(icon.getAttribute("data-testid")).toBe("mission-lead-icon");
     expect(icon.nextElementSibling!.textContent).toBe("Plan the v2 release");
-    expect(chevron.parentElement!.nextElementSibling).toBeNull();
+    expect(
+      titleLine.nextElementSibling!.querySelector("[data-testid=sidebar-row-project]")!.textContent,
+    ).toBe("web");
     const members = screen.container.querySelector("[data-testid=sidebar-mission-members]")!;
     expect(rowOf(members, "Write the migration guide").textContent).toContain(
       "Add pending (machine offline)",
@@ -1552,9 +1570,9 @@ describe("dragging threads into and out of missions", () => {
     }
   });
 
-  const shortViewport = (root: Element) => {
+  const shortViewport = (root: Element, height = "200px") => {
     const viewport = root.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]")!;
-    Object.assign(viewport.style, { height: "200px", overflow: "auto" });
+    Object.assign(viewport.style, { height, overflow: "auto" });
     return viewport;
   };
 
@@ -1590,7 +1608,7 @@ describe("dragging threads into and out of missions", () => {
     using _drag = allowDrag();
     await using screen = await renderSidebar();
     await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
-    const viewport = shortViewport(screen.container);
+    const viewport = shortViewport(screen.container, "120px");
     const areas = [...screen.container.querySelectorAll<HTMLElement>("[data-mission-drop]")];
     viewport.scrollTop =
       areas.at(-1)!.getBoundingClientRect().bottom - viewport.getBoundingClientRect().top + 20;

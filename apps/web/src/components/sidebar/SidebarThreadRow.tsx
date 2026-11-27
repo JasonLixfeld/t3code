@@ -1123,7 +1123,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const accessibility = resolveSidebarRowAccessibility({
     title: thread.title,
     statusLabel: pendingSync ? gt("Pending") : (topStatus?.label ?? null),
-    projectDisplayName: props.missionToggle ? null : props.projectDisplayName,
+    projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
   });
 
@@ -1354,20 +1354,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     issueBadge === null &&
     diff === null &&
     runningTerminalIds.length === 0;
-  const metaLine = metaLineEmpty ? null : (
-    <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-      {props.environmentLabel !== null ? (
-        <>
-          <EnvironmentMachineIcon
-            aria-hidden
-            kind={props.environmentMachine}
-            className="size-3.5 shrink-0 text-icon-muted"
-          />
-          <span className="min-w-0 flex-1 truncate">{props.environmentLabel}</span>
-        </>
-      ) : (
-        <span className="flex-1" />
-      )}
+  const machineIcon =
+    props.environmentLabel === null ? null : (
+      <EnvironmentMachineIcon
+        aria-hidden
+        kind={props.environmentMachine}
+        className="size-3.5 shrink-0 text-icon-muted"
+      />
+    );
+  const metaTrailing = (
+    <>
       {terminalStatusIcon}
       {prBadge}
       {issueBadge}
@@ -1386,16 +1382,30 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           providerEntryByInstanceId={props.providerEntryByInstanceId}
         />
       </span>
+    </>
+  );
+  const metaLine = metaLineEmpty ? null : (
+    <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
+      {props.environmentLabel !== null ? (
+        <>
+          {machineIcon}
+          <span className="min-w-0 flex-1 truncate">{props.environmentLabel}</span>
+        </>
+      ) : (
+        <span className="flex-1" />
+      )}
+      {metaTrailing}
     </div>
   );
-  const titleLineIcons = metaLineEmpty ? (
+  const providerStack = (
     <span aria-hidden className="inline-flex shrink-0 items-center gap-1">
       <SidebarProviderStack
         thread={thread}
         providerEntryByInstanceId={props.providerEntryByInstanceId}
       />
     </span>
-  ) : null;
+  );
+  const titleLineIcons = metaLineEmpty ? providerStack : null;
 
   if (variant !== "card") {
     const multiline = variant === "folder-multiline";
@@ -1614,10 +1624,35 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     );
   }
 
-  const hasMissionMeta =
-    Boolean(topStatus) ||
-    metaLine !== null ||
-    props.providerEntryByInstanceId.has(resolveThreadProviderStack(thread).at(-1)!);
+  const hasProject = props.project !== null || props.projectDisplayName !== null;
+  const cardMetaLine =
+    metaLineEmpty && !hasProject ? null : (
+      <div
+        className={cn(
+          "mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs",
+          missionToggle && "ps-5.5",
+        )}
+      >
+        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+          {props.project ? (
+            <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+          ) : null}
+          {props.projectDisplayName ? (
+            <span data-testid="sidebar-row-project" className="min-w-7 truncate">
+              {props.projectDisplayName}
+            </span>
+          ) : null}
+          {hasProject && props.environmentLabel !== null ? <span aria-hidden>·</span> : null}
+          {machineIcon}
+          {props.environmentLabel !== null ? (
+            <span className={cn("truncate", hasProject ? "max-w-1/2 shrink-0" : "min-w-0")}>
+              {props.environmentLabel}
+            </span>
+          ) : null}
+        </span>
+        {metaTrailing}
+      </div>
+    );
   const statusLabel = pendingSync ? (
     <PendingSyncLabel />
   ) : topStatus ? (
@@ -1676,8 +1711,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       // The hints are the rendered heights inside py-0.5. Revealing the open thread measures rows
       // that have not rendered yet, so a hint off by a pixel lands it a pixel short per row above.
       className={cn(
-        "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
-        metaLineEmpty && "[contain-intrinsic-size:auto_60px]",
+        "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_--spacing(13.5)]",
+        cardMetaLine === null && "[contain-intrinsic-size:auto_--spacing(9)]",
         sortable?.isDragging && "relative z-20",
       )}
     >
@@ -1708,31 +1743,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       >
         <div
           className={cn(
-            "relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
-            (metaLineEmpty || missionToggle || props.footer !== undefined) && "h-auto",
+            "relative z-10 h-13.5 px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
+            (cardMetaLine === null || props.footer !== undefined) && "h-auto",
           )}
         >
           <div className="flex h-5 min-w-0 items-center gap-1.5">
             {draftIndicator}
             {missionChevron}
-            {missionToggle || !props.project ? null : (
-              <ProjectFavicon project={props.project} className="size-4 shrink-0" />
-            )}
             {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
             {pinIndicator}
-            {missionToggle ? (
-              title
-            ) : props.projectDisplayName ? (
-              <span
-                className={cn("min-w-0 flex-1 truncate font-normal text-secondary-label text-xs")}
-              >
-                {props.projectDisplayName}
-              </span>
-            ) : (
-              <span className="flex-1" />
-            )}
+            {title}
             {missionCount}
+            {cardMetaLine === null ? providerStack : null}
             {sortable?.isDragging ? (
               dragDestination
             ) : (
@@ -1745,14 +1768,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               >
                 <span
                   className={cn(
-                    isWokeStatus && !missionToggle
+                    isWokeStatus
                       ? "pointer-events-auto"
                       : "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:right-0 group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-any-hover/sidebar-row:absolute group-any-hover/sidebar-row:right-0 group-any-hover/sidebar-row:opacity-0",
                     "flex items-center self-center justify-self-end tabular-nums text-secondary-label",
                     snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                   )}
                 >
-                  {statusLabel !== null && !missionToggle ? (
+                  {statusLabel !== null ? (
                     statusLabel
                   ) : (
                     <RelativeTimeLabel timestamp={resolveThreadActivityTimestamp(thread)} />
@@ -1824,26 +1847,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             )}
             {props.sweepAction !== null ? dragDestination : null}
           </div>
-          {missionToggle ? (
-            !hasMissionMeta ? null : (
-              <div className="mt-1 flex min-w-0 items-center gap-1.5 ps-5.5 text-secondary-label text-xs">
-                {statusLabel}
-                {metaLine === null ? (
-                  <span className="ml-auto">{titleLineIcons}</span>
-                ) : (
-                  <div className="min-w-0 flex-1">{metaLine}</div>
-                )}
-              </div>
-            )
-          ) : (
-            <>
-              <div className="mt-1 flex min-w-0 items-center gap-1.5">
-                {title}
-                {titleLineIcons}
-              </div>
-              {metaLine}
-            </>
-          )}
+          {cardMetaLine}
           {props.footer}
           {isRegeneratingTitle ? (
             <span role="status" className="sr-only">
