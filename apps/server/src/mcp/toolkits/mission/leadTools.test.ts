@@ -265,7 +265,7 @@ it.effect(
       assert.lengthOf(rest.members, 2);
       assert.isNull(rest.nextCursor);
 
-      // Long labels are cut so each page fits 30,000 bytes, and a small workspace stays.
+      // Long labels are cut so each page fits 30,000 bytes; a small workspace stays, one too large alone goes.
       const rows = [
         { ...row(0, "idle"), project: "p".repeat(40_000) },
         { ...row(1, "idle"), machine: "m".repeat(40_000) },
@@ -278,6 +278,21 @@ it.effect(
             repositories: [],
             truncated: false,
             otherPullRequests: [],
+            stale: false,
+          },
+        },
+        {
+          ...row(4, "idle"),
+          workspace: {
+            kind: "project" as const,
+            repositories: [],
+            truncated: false,
+            otherPullRequests: Array.from({ length: 400 }, (_, number) => ({
+              number,
+              state: "open" as const,
+              url: `https://github.com/acme/app/pull/${number}?${"x".repeat(60)}`,
+              repository: "github.com/acme/app",
+            })),
             stale: false,
           },
         },
@@ -315,16 +330,17 @@ it.effect(
         };
         for (const member of page.members) {
           seen.push(
-            `${member.threadRef.threadId} ${member.title.length < 40_000} ${member.project.length < 40_000} ${member.machine.length < 40_000} ${typeof member.workspace}`,
+            `${member.threadRef.threadId} ${member.title.length < 40_000} ${member.project.length < 40_000} ${member.machine.length < 40_000} ${typeof member.workspace === "string" ? member.workspace : "listed"}`,
           );
         }
         cursor = page.nextCursor;
       }
       assert.deepEqual(seen, [
-        "t0 true true true string",
-        "t1 true true true string",
-        "t2 true true true string",
-        "t3 true true true object",
+        "t0 true true true unknown",
+        "t1 true true true unknown",
+        "t2 true true true unknown",
+        "t3 true true true listed",
+        "t4 true true true tooLarge",
       ]);
     }),
 );

@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
-import { missionTag } from "./mission.ts";
+import { MISSION_PROMPT_MAX_LENGTH, MissionSetPromptInput, missionTag } from "./mission.ts";
 import { ThreadTag } from "./threadTags.ts";
 
 const isTag = Schema.is(ThreadTag);
@@ -17,4 +17,11 @@ it.each([
   assert.isAtMost(tag.length, 64);
   assert.isTrue(isTag(tag));
   assert.isTrue(`mission:0123456789ab:${name}`.startsWith(tag));
+});
+
+it("a mission prompt longer than the bound is refused before it is saved", () => {
+  const accepts = Schema.is(MissionSetPromptInput);
+  const prompt = (length: number) => ({ missionId: "0123456789ab", prompt: "x".repeat(length) });
+  assert.isTrue(accepts(prompt(MISSION_PROMPT_MAX_LENGTH)));
+  assert.isFalse(accepts(prompt(MISSION_PROMPT_MAX_LENGTH + 1)));
 });

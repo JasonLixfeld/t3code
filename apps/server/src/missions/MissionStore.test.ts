@@ -487,19 +487,38 @@ it.effect("upgrades a version-7 database: its waiting adds keep, and say no draf
   ),
 );
 
-it.effect("deleting a mission removes the updates its lead heard another way", () =>
+it.effect("updates a lead heard another way stay out of its wakes, and go with its mission", () =>
   withDatabase((filename) =>
     Effect.gen(function* () {
       yield* usingStore(filename, (store) =>
         Effect.gen(function* () {
           yield* store.createMission(claimFor(lead, "m1", "g1"));
-          yield* store.markMissionUpdateHeard({
+          const update = (source: string, event: "completed" | "failed", threadId = member) => ({
             missionId: "m1",
             environmentId: EnvironmentId.make("env-a"),
-            threadId: member,
-            source: "run:r1",
-            event: "completed",
+            threadId,
+            source,
+            event,
           });
+          yield* store.addMissionUpdate(update("run:r1", "completed"));
+          yield* store.addMissionUpdate(update("run:r2", "failed"));
+          yield* store.addMissionUpdate(update("run:r7", "completed", ThreadId.make("other")));
+          // Heard after it was recorded, a failure the wait did not see, and another thread's run.
+          yield* store.markMissionUpdateHeard(update("run:r1", "completed"));
+          yield* store.markMissionUpdateHeard(update("run:r2", "completed"));
+          yield* store.markMissionUpdateHeard(update("run:r7", "completed"));
+          // Heard before it is recorded.
+          yield* store.markMissionUpdateHeard(update("run:r9", "completed"));
+          yield* store.addMissionUpdate(update("run:r9", "completed"));
+          yield* store.addMissionUpdate(update("run:r4", "completed"));
+          const told = Effect.map(store.takeMissionUpdates("m1", lead), ({ updates }) =>
+            updates.map((row) => `${row.threadId} ${row.source}`),
+          );
+          const left = ["member run:r2", "other run:r7", "member run:r4"];
+          assert.deepEqual(yield* told, left);
+          // A wake already took it.
+          yield* store.markMissionUpdateHeard(update("run:r4", "completed"));
+          assert.deepEqual(yield* told, left);
           yield* store.deleteMission({
             missionId: "m1",
             lead,
