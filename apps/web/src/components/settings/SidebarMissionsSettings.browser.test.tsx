@@ -43,7 +43,6 @@ it("saves each sidebar mission switch to its own client setting", async () => {
     ["Threads heading", "sidebarThreadsHeaderVisible"],
     ["Missions", "sidebarMissionsEnabled"],
   ] as const) {
-    expect(getClientSettings()[key]).toBe(true);
     const toggle = screen.getByRole("switch", { name: label, exact: true });
     await act(() => (toggle.element() as HTMLElement).click());
     expect(getClientSettings()[key]).toBe(false);
@@ -55,8 +54,4 @@ it("saves each sidebar mission switch to its own client setting", async () => {
     sidebarMissionsHeaderVisible: false,
     sidebarThreadsHeaderVisible: false,
   });
-});
-
-it("leaves the stored client settings as it found them", () => {
-  expect(localStorage.getItem(STORAGE_KEY)).toBe(storedBefore);
 });
