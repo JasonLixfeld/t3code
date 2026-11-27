@@ -685,7 +685,6 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     let nextCollapsedFileIds = decodeFileIdSet(collapsedFileIdsJson)
     let changedFileIds = contentView.collapsedFileIds.symmetricDifference(nextCollapsedFileIds)
     let scrollAnchor: ReviewDiffScrollAnchor?
-    // A match jump waiting for this fold to open places the viewport itself.
     if pendingMatch == nil, changedFileIds.count == 1, let changedFileId = changedFileIds.first {
       scrollAnchor = contentView.scrollAnchor(forFileId: changedFileId)
     } else {
@@ -898,8 +897,10 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
   }
 
   private func applyTheme() {
-    contentView.isDarkAppearance = appearanceScheme == "dark"
-    contentView.theme = ReviewDiffNativeTheme.resolve(appearanceScheme, payload: themePayload)
+    contentView.setTheme(
+      ReviewDiffNativeTheme.resolve(appearanceScheme, payload: themePayload),
+      isDark: appearanceScheme == "dark"
+    )
     backgroundColor = contentView.theme.background
     scrollView.backgroundColor = contentView.theme.background
     contentView.backgroundColor = contentView.theme.background
@@ -955,7 +956,6 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     applyPendingScrollIfNeeded()
   }
 
-  /// Waits for the row to be decoded and its file open, since JS opens a fold just before this.
   func scrollToMatch(_ rowId: String, start: Int, end: Int, animated: Bool) {
     guard start >= 0, end > start else { return }
     pendingScrollFileId = nil
@@ -1033,7 +1033,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
 
   private func applyPendingMatchIfNeeded() {
     guard let pending = pendingMatch, bounds.height > 0,
-          let rect = contentView.revealSearchMatch(pending.match) else {
+          let matchRectInContent = contentView.revealSearchMatchHorizontally(pending.match) else {
       return
     }
     pendingMatch = nil
@@ -1042,12 +1042,12 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     let headerHeight = contentView.style.fileHeaderHeight
     let visibleMinY = scrollView.contentOffset.y + top + headerHeight
     let visibleMaxY = scrollView.contentOffset.y + bounds.height - bottom
-    if rect.minY >= visibleMinY, rect.maxY <= visibleMaxY {
+    if matchRectInContent.minY >= visibleMinY, matchRectInContent.maxY <= visibleMaxY {
       return
     }
     let visibleHeight = bounds.height - top - bottom
-    let screenY = max(headerHeight, (visibleHeight - rect.height) * 0.3)
-    setVerticalContentOffset(rect.minY - screenY, animated: pending.animated)
+    let screenY = max(headerHeight, (visibleHeight - matchRectInContent.height) * 0.3)
+    setVerticalContentOffset(matchRectInContent.minY - screenY, animated: pending.animated)
   }
 
   private func applyPendingScrollIfNeeded() {
@@ -1259,9 +1259,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   }
   private var searchRangesByRowId: [String: [NSRange]] = [:]
   private var activeSearchMatch: ReviewDiffSearchMatch?
-  /// The web diff's find colors: a translucent orange match and its modified blue at 45%.
-  /// Set before `theme`, whose change redecorates rows.
-  var isDarkAppearance = false
   private var searchMatchColor: UIColor {
     UIColor(red: 1, green: 150 / 255, blue: 50 / 255, alpha: isDarkAppearance ? 0x66 / 255 : 0x88 / 255)
   }
@@ -1271,7 +1268,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       : UIColor(red: 0, green: 0x9f / 255, blue: 1, alpha: 0.45)
   }
 
-  /// Paint-only: row geometry does not depend on search highlights.
   func setSearchHighlights(_ ranges: [String: [NSRange]], active: ReviewDiffSearchMatch?) {
     searchRangesByRowId = ranges
     activeSearchMatch = active
@@ -1291,7 +1287,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       }
     }
     let active = activeSearchMatch?.rowId == row.id ? activeSearchMatch?.range : nil
-    // The current match replaces its match color, as on web, instead of stacking on it.
     for range in searchRangesByRowId[row.id] ?? [] where range != active {
       highlights.append(ReviewDiffCodeHighlight(range: range, color: searchMatchColor))
     }
@@ -1301,9 +1296,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     return highlights
   }
 
-  /// Scrolls the match's file horizontally into view and returns the match's rect in content
-  /// coordinates, or nil while its row is not laid out or its file is folded.
-  func revealSearchMatch(_ match: ReviewDiffSearchMatch) -> CGRect? {
+  func revealSearchMatchHorizontally(_ match: ReviewDiffSearchMatch) -> CGRect? {
     guard let index = rows.firstIndex(where: { $0.id == match.rowId }),
           let rowFrame = frameForRow(at: index), rowFrame.height > 0 else {
       return nil
@@ -1355,13 +1348,19 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   }
   var verticalOffset: CGFloat = 0
   var topContentInset: CGFloat = 0
-  var theme = ReviewDiffNativeTheme.resolve("light") {
+  private(set) var isDarkAppearance = false
+  private(set) var theme = ReviewDiffNativeTheme.resolve("light") {
     didSet {
       tokenColorsByHex.removeAll()
       codeDecorationVersion += 1
       tokenAttributedStringsByRowId.removeAll()
       setNeedsDisplayForVisibleBounds()
     }
+  }
+
+  func setTheme(_ theme: ReviewDiffNativeTheme, isDark: Bool) {
+    isDarkAppearance = isDark
+    self.theme = theme
   }
   private(set) var contentHeight: CGFloat = 0
 
