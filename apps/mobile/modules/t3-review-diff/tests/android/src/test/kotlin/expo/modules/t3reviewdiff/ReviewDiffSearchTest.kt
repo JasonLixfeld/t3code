@@ -183,6 +183,41 @@ class ReviewDiffSearchTest {
   }
 
   @Test
+  fun aMatchInStyledCodeIsPaintedWhereTheRevealJudgedIt() {
+    withView { view, canvas, _ ->
+      view.setStyleJson("{\"codeFontSize\":26}")
+      val italic = listOf("x".repeat(300), "needle", "y".repeat(300)).map { DiffToken(it, null, 1) }
+      canvas.javaClass.getMethod("setTokensByRowId", Map::class.java)
+        .invoke(canvas, mapOf(TARGET_ROW to italic))
+      val style = canvas.javaClass.getMethod("getStyle").invoke(canvas) as DiffStyle
+      val unstyledLeft = Paint().apply {
+        typeface = Typeface.create("monospace", Typeface.NORMAL)
+        textSize = style.codeFontSizePx
+      }.measureText("x".repeat(300))
+      canvas.javaClass.getMethod("setHorizontalOffset", Int::class.javaPrimitiveType)
+        .invoke(canvas, unstyledLeft.toInt() - 5)
+
+      view.scrollToMatch(TARGET_ROW, 300, 306, false)
+      view.setSearchHighlightsJson(
+        JSONObject().put("ranges", JSONObject())
+          .put("active", JSONObject().put("rowId", TARGET_ROW).put("start", 300).put("end", 306))
+          .toString(),
+      )
+
+      val active = over(Color.argb(115, 0x00, 0x9f, 0xff), DiffTheme.fallback("light").background)
+      val bitmap = draw(canvas)
+      val columns = (0 until bitmap.width).filter { x ->
+        (0 until bitmap.height).any { y -> sameColor(bitmap.getPixel(x, y), active) }
+      }
+      val codeLeft = style.changeBarWidthPx + style.gutterWidthPx
+      assertTrue(
+        "the revealed match is painted whole inside the code area",
+        columns.isNotEmpty() && columns.first() > codeLeft + 1 && columns.last() < bitmap.width - 1,
+      )
+    }
+  }
+
+  @Test
   fun aContentResetEndsTheDeferredVisibleFileEvent() {
     withView { view, _, _ ->
       view.scrollToMatch(TARGET_ROW, 300, 306, true)
@@ -246,7 +281,13 @@ class ReviewDiffSearchTest {
   }
 
   private fun codeRow(file: String, line: Int): JSONObject {
-    val content = if (line == 80) "x".repeat(300) + "needle" else "plain code $line"
+    val content = if (line ==
+      80
+    ) {
+      "x".repeat(300) + "needle" + "y".repeat(300)
+    } else {
+      "plain code $line"
+    }
     return JSONObject().put("kind", "line").put("id", "$file:line:$line").put("fileId", file)
       .put("change", "context").put("content", content)
   }
@@ -263,6 +304,11 @@ class ReviewDiffSearchTest {
       channel(Color.blue(color), Color.blue(background)),
     )
   }
+
+  private fun sameColor(pixel: Int, color: Int): Boolean =
+    abs(Color.red(pixel) - Color.red(color)) <= 2 &&
+      abs(Color.green(pixel) - Color.green(color)) <= 2 &&
+      abs(Color.blue(pixel) - Color.blue(color)) <= 2
 
   private fun has(bitmap: Bitmap, color: Int): Boolean {
     for (y in 0 until bitmap.height) {

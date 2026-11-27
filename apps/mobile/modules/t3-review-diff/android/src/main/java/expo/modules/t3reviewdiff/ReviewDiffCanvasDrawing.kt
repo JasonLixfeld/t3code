@@ -456,6 +456,31 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     )
   }
 
+  /** Where `offset` of the row's code is painted, from the same styled pieces as drawCode. */
+  fun paintedCodeOffsetX(
+    row: DiffRow,
+    tokens: List<DiffToken>?,
+    lines: CodeLines,
+    offset: Int,
+    style: DiffStyle
+  ): Float {
+    var found: Float? = null
+    var lineEndX = 0f
+    forEachCodePiece(row, tokens, style, lines) { text, start, end, tokenStart, x, _, _ ->
+      val advance = textPaint.measureText(text, start, end)
+      val at = offset - tokenStart
+      if (found == null && at in start..end) {
+        found = x + when (at) {
+          end -> advance
+          else -> textPaint.getRunAdvance(text, start, end, start, end, false, at)
+        }
+      }
+      lineEndX = x + advance
+      advance
+    }
+    return found ?: lineEndX
+  }
+
   @Suppress("LongParameterList")
   fun fillRanges(
     canvas: Canvas,

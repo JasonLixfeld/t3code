@@ -872,6 +872,7 @@ private class DiffCanvasView(context: Context) : View(context) {
     set(value) {
       val previous = field
       field = value
+      drawing.search.tokensByRowId = value
       if (style.wordWrap) {
         // ASCII uses fixed-pitch geometry. Native layouts also carry their painted spans.
         if (codeWrap.needsTokenLayout(previous, value)) {
