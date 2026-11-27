@@ -28,6 +28,7 @@ private extension T3ReviewDiffView {
           "The current match replaces its match color")
 
     setAppearanceScheme("dark")
+    check(contentView.searchHighlights(rowId: "a.ts:line:1") == ["match"], "Dark paints the match color")
     check(contentView.searchHighlights(rowId: target) == ["active"], "Dark keeps the current match")
 
     let before = scrollView.contentOffset.y
