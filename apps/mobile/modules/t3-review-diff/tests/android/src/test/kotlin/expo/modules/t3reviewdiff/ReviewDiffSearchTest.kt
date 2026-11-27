@@ -59,6 +59,11 @@ class ReviewDiffSearchTest {
         "dark uses the web's dark match color",
         has(draw(canvas), over(Color.argb(0x66, 0xff, 0x96, 0x32), dark))
       )
+      view.setSearchHighlightsJson(highlights(active = MATCH_ROW))
+      assertTrue(
+        "dark uses the web's dark current-match color",
+        has(draw(canvas), over(Color.argb(115, 0x69, 0xb1, 0xff), dark))
+      )
 
       view.setAppearanceScheme("light")
       view.setSearchHighlightsJson("")
