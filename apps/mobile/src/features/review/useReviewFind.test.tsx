@@ -15,17 +15,20 @@ function setup() {
   const root = createRoot(container);
   const onReveal = vi.fn();
   const latest: { current: ReturnType<typeof useReviewFind> | null } = { current: null };
-  function Probe() {
-    latest.current = useReviewFind({ rows, onReveal });
+  function Probe(props: { readonly rows: ReadonlyArray<NativeReviewDiffRow> }) {
+    latest.current = useReviewFind({ rows: props.rows, onReveal });
     return null;
   }
-  act(() => root.render(<Probe />));
+  act(() => root.render(<Probe rows={rows} />));
   const find = () => latest.current!;
   return {
     find,
     onReveal,
     run(action: (find: ReturnType<typeof useReviewFind>) => void) {
       act(() => action(find()));
+    },
+    loadRows(next: ReadonlyArray<NativeReviewDiffRow>) {
+      act(() => root.render(<Probe rows={next} />));
     },
     [Symbol.dispose]() {
       act(() => root.unmount());
@@ -83,4 +86,26 @@ it("reveals the exact match chosen under an older query", () => {
 
   expect(screen.onReveal).toHaveBeenLastCalledWith(chosen);
   expect(chosen).toMatchObject({ start: 4, end: 7 });
+});
+
+it("keeps the revealed match when an earlier file's rows load, and replaces it only when it goes", () => {
+  using screen = setup();
+  screen.run((find) => find.changeQuery("apple"));
+  expect(screen.onReveal).toHaveBeenCalledTimes(1);
+  const earlier: NativeReviewDiffRow = {
+    kind: "line",
+    id: "0:line:0",
+    fileId: "0",
+    content: "apple",
+    change: "context",
+  };
+
+  screen.loadRows([earlier, ...rows]);
+  expect(screen.find().activeIndex).toBe(1);
+  expect(screen.onReveal).toHaveBeenCalledTimes(1);
+
+  screen.loadRows([earlier]);
+  expect(screen.find().activeIndex).toBe(0);
+  expect(screen.onReveal).toHaveBeenLastCalledWith(expect.objectContaining({ rowId: "0:line:0" }));
+  expect(screen.onReveal).toHaveBeenCalledTimes(2);
 });
