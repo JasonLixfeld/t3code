@@ -3843,6 +3843,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         jumpLabelByDraftId={draftJumpLabelById}
                         projectByKey={projectByKey}
                         projectDisplayNameByKey={projectDisplayNameByKey}
+                        environmentLabelById={environmentLabelById}
+                        environmentMachineById={environmentMachineById}
                         routeDraftId={routeDraftIdForRows}
                         onNavigateToDraft={navigateToDraft}
                         onDraftContextMenu={handleDraftContextMenu}

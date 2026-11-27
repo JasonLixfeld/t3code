@@ -13,13 +13,13 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, EnvironmentMachineKind } from "@t3tools/contracts";
 import { useShallow } from "zustand/react/shallow";
 import { terminalContextDisplayLabels } from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
 import { useTerminalLabelsByThreadKey } from "~/state/terminalSessions";
 import { resolveSidebarRowAccessibility } from "../Sidebar.logic";
-import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
+import type { ProjectFaviconProject } from "../ProjectFavicon";
 import {
   composerDraftHasUserContent,
   DraftId,
@@ -32,6 +32,8 @@ import {
   draftSurfaceClassName,
   JUMP_HINT_SLOT_CLASS_NAME,
   JumpHintBadge,
+  SidebarCard,
+  type SidebarCardMachine,
 } from "./SidebarThreadRow";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
@@ -72,6 +74,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   terminalLabel: string | null;
   project: ProjectFaviconProject | null;
   projectDisplayName: string | null;
+  machine: SidebarCardMachine | null;
   isActive: boolean;
   jumpLabel: string | null;
   onNavigate: (draftId: DraftId) => void;
@@ -123,6 +126,8 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
   });
+  const hasPlace =
+    props.project !== null || props.projectDisplayName !== null || props.machine !== null;
   const handleActivate = () => onNavigate(draftId);
   const handleKeyDown = (event: ReactKeyboardEvent) => {
     // Keys targeting the nested discard button belong to the button:
@@ -164,14 +169,11 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
         onContextMenu={handleContextMenu}
         onKeyDown={handleKeyDown}
       >
-        <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
-          <div className="flex h-5 min-w-0 items-center gap-1.5">
+        <SidebarCard.Body className={cn(!hasPlace && "h-auto")}>
+          <SidebarCard.TitleLine>
             <SquarePenIcon aria-hidden className={draftPenClassName} />
-            {props.project ? (
-              <ProjectFavicon project={props.project} className="size-4 shrink-0" />
-            ) : null}
-            <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
-              {props.projectDisplayName}
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground/90">
+              {preview}
             </span>
             <span
               className={cn(
@@ -198,9 +200,17 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               />
               {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
             </span>
-          </div>
-          <div className="mt-0.5 truncate text-sm font-medium text-foreground/90">{preview}</div>
-        </div>
+          </SidebarCard.TitleLine>
+          {hasPlace ? (
+            <SidebarCard.MetaLine>
+              <SidebarCard.Place
+                project={props.project}
+                projectDisplayName={props.projectDisplayName}
+                machine={props.machine}
+              />
+            </SidebarCard.MetaLine>
+          ) : null}
+        </SidebarCard.Body>
       </div>
     </li>
   );
@@ -267,6 +277,8 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   jumpLabelByDraftId: ReadonlyMap<DraftId, string> | null;
   projectByKey: ReadonlyMap<string, EnvironmentProject>;
   projectDisplayNameByKey: ReadonlyMap<string, string>;
+  environmentLabelById: ReadonlyMap<EnvironmentId, string | null>;
+  environmentMachineById: ReadonlyMap<EnvironmentId, EnvironmentMachineKind>;
   routeDraftId: string | null;
   onNavigateToDraft: (draftId: DraftId) => void;
   onDraftContextMenu: (
@@ -298,6 +310,7 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
     <>
       {drafts.map(({ composer, draftId, session }) => {
         const projectKey = `${session.environmentId}:${session.projectId}`;
+        const environmentLabel = props.environmentLabelById.get(session.environmentId) ?? null;
         return (
           <SidebarDraftRow
             key={draftId}
@@ -306,6 +319,14 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
             terminalLabel={draftTerminalLabel(session, props.terminalLabels)}
             project={props.projectByKey.get(projectKey) ?? null}
             projectDisplayName={props.projectDisplayNameByKey.get(projectKey) ?? null}
+            machine={
+              environmentLabel === null
+                ? null
+                : {
+                    kind: props.environmentMachineById.get(session.environmentId) ?? "server",
+                    label: environmentLabel,
+                  }
+            }
             isActive={draftId === props.routeDraftId}
             jumpLabel={props.jumpLabelByDraftId?.get(draftId) ?? null}
             onNavigate={props.onNavigateToDraft}

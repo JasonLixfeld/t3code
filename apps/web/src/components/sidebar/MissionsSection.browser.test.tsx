@@ -19,6 +19,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
+import "~/index.css";
 import { act, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
@@ -147,6 +148,10 @@ const commandFor = (label: string) => {
   commands.set(label, command);
   return command;
 };
+const working = (thread: ReturnType<typeof shell>) => ({
+  ...thread,
+  runtime: { ...thread.runtime!, status: "running" as const },
+});
 const shells = (options: { leadSettled?: boolean; docsSnoozed?: boolean } = {}) => [
   shell("lead", "Plan the v2 release", { settled: options.leadSettled === true }),
   shell("docs", "Update the release notes", { snoozed: options.docsSnoozed === true }),
@@ -237,6 +242,7 @@ async function renderSidebar(
   settings: Partial<typeof DEFAULT_CLIENT_SETTINGS> = {},
   options: {
     leadSettled?: boolean;
+    unconfigured?: ReadonlyArray<EnvironmentId>;
     docsSnoozed?: boolean;
     scope?: Project;
     later?: ReadonlyArray<ReturnType<typeof shell>>;
@@ -282,7 +288,7 @@ async function renderSidebar(
   );
   vi.mocked(useServerConfigs).mockReturnValue(
     new Map(
-      CONNECTED.map((environmentId) => [
+      CONNECTED.filter((id) => !(options.unconfigured ?? []).includes(id)).map((environmentId) => [
         environmentId,
         {
           scratchWorkspaceRoot: null,
@@ -521,11 +527,11 @@ describe("missions in the sidebar", () => {
     expect(ids).toContain("unsnooze");
   });
 
-  it("names the lead's row without a project, and its chevron with the mission and its size", async () => {
+  it("names the lead's row with its project, and its chevron with the mission and its size", async () => {
     await using screen = await renderSidebar();
     await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
     const lead = screen.container.querySelector<HTMLElement>('[data-sidebar-row="local:lead"]')!;
-    expect(lead.getAttribute("aria-label")).toBe("Plan the v2 release");
+    expect(lead.getAttribute("aria-label")).toBe("Plan the v2 release, web");
     expect(
       screen.getByRole("button", {
         name: "Collapse mission Plan the v2 release, 5 threads",
@@ -538,6 +544,67 @@ describe("missions in the sidebar", () => {
     expect(
       screen.container.querySelector('[data-sidebar-row="local:docs"]')!.getAttribute("aria-label"),
     ).toBe("Update the release notes, web");
+  });
+
+  it("marks a lead, read in or not, with the mission icon and a bold title, and spaces missions apart", async () => {
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    const loaded = screen.container.querySelector<HTMLElement>('[data-sidebar-row="local:lead"]')!;
+    const unloaded = screen
+      .getByRole("button", { name: "Collapse mission Archive the old site, 0 threads" })
+      .element()
+      .closest("li")!;
+    for (const [lead, title] of [
+      [loaded, "Plan the v2 release"],
+      [unloaded, "Archive the old site"],
+    ] as const) {
+      expect(lead.querySelector("[data-testid=mission-lead-icon]")).not.toBeNull();
+      const text = [...lead.querySelectorAll("span")].find((span) => span.textContent === title)!;
+      expect(getComputedStyle(text).fontWeight).toBe("600");
+    }
+    const docs = screen.container.querySelector<HTMLElement>('[data-sidebar-row="local:docs"]')!;
+    expect(docs.querySelector("[data-testid=mission-lead-icon]")).toBeNull();
+    const groups = [...screen.container.querySelectorAll<HTMLElement>("[data-mission-drop]")];
+    expect(groups.length).toBeGreaterThan(1);
+    for (const [above, below] of groups.slice(1).map((group, index) => [groups[index]!, group])) {
+      const space = below!.getBoundingClientRect().top - above!.getBoundingClientRect().bottom;
+      expect(space).toBeCloseTo(12, 0);
+    }
+  });
+
+  it("keeps a working lead's status on hover when its machine offers no row actions", async () => {
+    listedMissions.push({
+      missionId: "eeeeeeeeeeee",
+      name: "Laptop work",
+      createdAt: "2026-11-23T00:00:00.000Z",
+      members: [{ ref: ref(LAPTOP, "far-lead"), role: "lead", state: "active" }],
+    });
+    onTestFinished(() => {
+      listedMissions.pop();
+    });
+    const farLead = working({ ...shell("far-lead", "Far lead"), environmentId: LAPTOP });
+    await using screen = await renderSidebar({}, { extra: [farLead], unconfigured: [LAPTOP] });
+    await expect.element(screen.getByText("Far lead", { exact: true })).toBeInTheDocument();
+    const lead = () =>
+      screen.container.querySelector<HTMLElement>(`[data-sidebar-row="${LAPTOP}:far-lead"]`)!;
+    const label = () =>
+      [...lead().querySelectorAll<HTMLElement>("span")].find((span) =>
+        [...span.childNodes].some(
+          (node) => node.nodeType === Node.TEXT_NODE && node.textContent === "Working",
+        ),
+      )!;
+    const shown = (element: HTMLElement) => {
+      for (let node = element; node !== lead(); node = node.parentElement!) {
+        if (getComputedStyle(node).opacity === "0") return false;
+      }
+      return true;
+    };
+    await userEvent.hover(lead());
+    expect(lead().matches(":hover")).toBe(true);
+    expect(lead().dataset.testid).toBe("sidebar-row-card");
+    expect(lead().querySelector('[aria-label^="Collapse mission"]')).not.toBeNull();
+    expect(lead().querySelector('[aria-label="Settle thread"]')).toBeNull();
+    expect(shown(label())).toBe(true);
   });
 
   it("sweeps Settle from the lead over its members in the same state only", async () => {
@@ -771,16 +838,22 @@ describe("missions in the sidebar", () => {
     await expect.element(prompt).not.toBeInTheDocument();
   });
 
-  it("heads a mission with the lead's title beside its chevron, and names no project", async () => {
+  it("heads a mission with the lead's title beside its chevron, and every card's project below its title", async () => {
     await using screen = await renderSidebar();
     await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
     const navigate = vi.spyOn(screen.router!, "navigate").mockResolvedValue(undefined);
     const lead = screen.container.querySelector<HTMLElement>('[data-sidebar-row="local:lead"]')!;
-    expect(lead.textContent).not.toMatch(/web|WB/);
     const chevron = lead.querySelector<HTMLElement>('[aria-label^="Collapse mission"]')!;
-    expect(chevron.parentElement!.textContent).toContain("Plan the v2 release");
-    expect(chevron.nextElementSibling!.textContent).toBe("Plan the v2 release");
-    expect(chevron.parentElement!.nextElementSibling).toBeNull();
+    const icon = chevron.nextElementSibling!;
+    expect(icon.getAttribute("data-testid")).toBe("mission-lead-icon");
+    expect(icon.nextElementSibling!.textContent).toBe("Plan the v2 release");
+    for (const title of ["Plan the v2 release", "Update the release notes", "Unrelated bug"]) {
+      const card = rowOf(screen.container, title);
+      const titleBox = screen.getByText(title, { exact: true }).element().getBoundingClientRect();
+      const project = card.querySelector("[data-testid=sidebar-row-project]")!;
+      expect(project.textContent).toBe("web");
+      expect(project.getBoundingClientRect().top).toBeGreaterThanOrEqual(titleBox.bottom);
+    }
     const members = screen.container.querySelector("[data-testid=sidebar-mission-members]")!;
     expect(rowOf(members, "Write the migration guide").textContent).toContain(
       "Add pending (machine offline)",
@@ -1523,9 +1596,9 @@ describe("dragging threads into and out of missions", () => {
     }
   });
 
-  const shortViewport = (root: Element) => {
+  const shortViewport = (root: Element, height = "200px") => {
     const viewport = root.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]")!;
-    Object.assign(viewport.style, { height: "200px", overflow: "auto" });
+    Object.assign(viewport.style, { height, overflow: "auto" });
     return viewport;
   };
 
@@ -1561,7 +1634,7 @@ describe("dragging threads into and out of missions", () => {
     using _drag = allowDrag();
     await using screen = await renderSidebar();
     await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
-    const viewport = shortViewport(screen.container);
+    const viewport = shortViewport(screen.container, "120px");
     const areas = [...screen.container.querySelectorAll<HTMLElement>("[data-mission-drop]")];
     viewport.scrollTop =
       areas.at(-1)!.getBoundingClientRect().bottom - viewport.getBoundingClientRect().top + 20;

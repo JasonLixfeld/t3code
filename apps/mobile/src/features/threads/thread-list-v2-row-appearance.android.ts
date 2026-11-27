@@ -6,6 +6,9 @@ import type { MobileThemeVariables } from "../../lib/mobileTheme";
 
 export const THREAD_LIST_V2_MONO_FONT = "monospace";
 export const THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME = "px-3 py-2.5";
+export const THREAD_LIST_V2_ROW_INSET = 12;
+export const THREAD_LIST_V2_ROW_OUTER_INSET = 8;
+export const THREAD_LIST_V2_ROW_OUTER_GAP = 2;
 export const THREAD_LIST_V2_ROW_DIVIDERS = false;
 export const THREAD_LIST_V2_SIDEBAR_ROW_STYLE = {
   borderRadius: 20,
@@ -15,8 +18,8 @@ export const THREAD_LIST_V2_SIDEBAR_ROW_STYLE = {
 export const THREAD_LIST_V2_SIDEBAR_ROW_CONTAINER_STYLE = {
   borderRadius: 20,
   overflow: "hidden",
-  marginHorizontal: 8,
-  marginVertical: 2,
+  marginHorizontal: THREAD_LIST_V2_ROW_OUTER_INSET,
+  marginVertical: THREAD_LIST_V2_ROW_OUTER_GAP,
 } satisfies ViewStyle;
 
 export const selectedThreadRowColors = {

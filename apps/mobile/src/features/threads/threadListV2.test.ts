@@ -924,11 +924,17 @@ describe("buildThreadListV2ListItems", () => {
                 member("unloaded"),
               ],
             },
+            {
+              missionId: "m2",
+              name: "Ship v3",
+              createdAt: NOW,
+              members: [{ ...member("next"), role: "lead" }],
+            },
           ],
         },
       },
     ];
-    const threads = ["lead", "member", "plain"].map((id) =>
+    const threads = ["lead", "member", "next", "plain"].map((id) =>
       makeThread({ id: ThreadId.make(id), title: id }),
     );
     const names = (items: ReadonlyArray<ThreadListV2ListItem>) =>
@@ -965,12 +971,20 @@ describe("buildThreadListV2ListItems", () => {
       "lead (lead)",
       "member (member)",
       "missing unloaded",
+      "next (lead)",
       "# threads",
       "plain",
     ]);
-    expect(expanded[1]).toMatchObject({ mission: { toggle: { expanded: true, memberCount: 2 } } });
+    expect(expanded[1]).toMatchObject({
+      mission: { toggle: { expanded: true, memberCount: 2, firstMission: true } },
+    });
     expect(expanded[2]).toMatchObject({ mission: { member: { state: "release-pending" } } });
-    expect(names(list([`${environmentId}:m1`], false))).toEqual(["lead (lead)", "plain"]);
+    expect(expanded[4]).toMatchObject({ mission: { toggle: { firstMission: false } } });
+    expect(names(list([`${environmentId}:m1`], false))).toEqual([
+      "lead (lead)",
+      "next (lead)",
+      "plain",
+    ]);
     expect(threadListV2ListItemsAreEqual(expanded[1]!, list([`${environmentId}:m1`])[1]!)).toBe(
       false,
     );
@@ -984,7 +998,7 @@ describe("buildThreadListV2ListItems", () => {
     });
     expect(
       names(buildThreadListV2ListItems({ items: flat.items, pendingTasks: [] })).sort(),
-    ).toEqual(["lead", "member", "plain"]);
+    ).toEqual(["lead", "member", "next", "plain"]);
   });
 
   it("filters a mission by its members' machines, not by the machine that hosts it", () => {
