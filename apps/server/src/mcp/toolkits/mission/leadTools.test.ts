@@ -265,7 +265,6 @@ it.effect(
       assert.lengthOf(rest.members, 2);
       assert.isNull(rest.nextCursor);
 
-      // Long labels are cut so each page fits 30,000 bytes; a small workspace stays, one too large alone goes.
       const rows = [
         { ...row(0, "idle"), project: "p".repeat(40_000) },
         { ...row(1, "idle"), machine: "m".repeat(40_000) },

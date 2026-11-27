@@ -5427,8 +5427,17 @@ const memberBlocked =
   "Member 1 in <t3-thread://v2/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee/11111111-1111-4111-8111-111111111111> is building sign-in rate limiting and is blocked on one choice.";
 const bothConsequences =
   "Per device lets attackers switch devices, and per account can lock a user out. I recommend per account.";
-// The question case's userTextMust patterns, in order.
-const QUESTION_PARTS = ["link", "topic", "question", "device", "account", "recommend", "blocked"];
+const QUESTION_PART_BY_PATTERN_START = {
+  "t3-thread://": "link",
+  "[Rr]ate": "topic",
+  "(?:[Pp]er.device": "question",
+  "[Pp]er.device(?:": "device",
+  "[Pp]er.account(?:": "account",
+  "[Rr]ecommend": "recommend",
+  "[Bb]locked": "blocked",
+};
+const questionPart = (pattern: string) =>
+  Object.entries(QUESTION_PART_BY_PATTERN_START).find(([start]) => pattern.startsWith(start))?.[1];
 
 it.each<
   [
@@ -5602,10 +5611,9 @@ it.each<
       .map((check) => {
         const kind = check.check.replace(/ .*$/s, "");
         const pattern = check.check.slice(kind.length + 2, -1);
-        return kind === "userTextMust"
-          ? (QUESTION_PARTS[(expect.userTextMust ?? []).indexOf(pattern)] ?? kind)
-          : kind;
-      }),
-    [...failures],
+        return kind === "userTextMust" ? (questionPart(pattern) ?? kind) : kind;
+      })
+      .toSorted(),
+    failures.toSorted(),
   );
 });

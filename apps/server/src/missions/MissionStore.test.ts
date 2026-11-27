@@ -503,22 +503,20 @@ it.effect("updates a lead heard another way stay out of its wakes, and go with i
           yield* store.addMissionUpdate(update("run:r1", "completed"));
           yield* store.addMissionUpdate(update("run:r2", "failed"));
           yield* store.addMissionUpdate(update("run:r7", "completed", ThreadId.make("other")));
-          // Heard after it was recorded, a failure the wait did not see, and another thread's run.
           yield* store.markMissionUpdateHeard(update("run:r1", "completed"));
           yield* store.markMissionUpdateHeard(update("run:r2", "completed"));
           yield* store.markMissionUpdateHeard(update("run:r7", "completed"));
-          // Heard before it is recorded.
           yield* store.markMissionUpdateHeard(update("run:r9", "completed"));
           yield* store.addMissionUpdate(update("run:r9", "completed"));
           yield* store.addMissionUpdate(update("run:r4", "completed"));
-          const told = Effect.map(store.takeMissionUpdates("m1", lead), ({ updates }) =>
-            updates.map((row) => `${row.threadId} ${row.source}`),
+          const takeWakeBatchSources = Effect.map(
+            store.takeMissionUpdates("m1", lead),
+            ({ updates }) => updates.map((row) => `${row.threadId} ${row.source}`),
           );
           const left = ["member run:r2", "other run:r7", "member run:r4"];
-          assert.deepEqual(yield* told, left);
-          // A wake already took it.
+          assert.deepEqual(yield* takeWakeBatchSources, left);
           yield* store.markMissionUpdateHeard(update("run:r4", "completed"));
-          assert.deepEqual(yield* told, left);
+          assert.deepEqual(yield* takeWakeBatchSources, left);
           yield* store.deleteMission({
             missionId: "m1",
             lead,

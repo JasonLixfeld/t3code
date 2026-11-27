@@ -519,7 +519,6 @@ it.effect(
       yield* Deferred.succeed(gate, undefined);
       yield* TestClock.adjust(READ_STEP);
       assert.equal(yield* workspaces.cached(inProject()), "pending");
-      // The next read starts over, and a thread forgotten after a finished read starts over too.
       yield* TestClock.adjust(READ_STEP);
       yield* TestClock.adjust(READ_STEP);
       assert.notEqual(yield* workspaces.cached(inProject()), "pending");

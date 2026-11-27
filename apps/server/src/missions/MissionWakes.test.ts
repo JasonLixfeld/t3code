@@ -362,10 +362,9 @@ const told = (lines: ReadonlyArray<string>) =>
     ? [`Mission update: ${lines[0]}`]
     : ["Mission update:", ...lines.map((line) => `- ${line}`)]
   ).join("\n");
-// What a wake tells, without the closing line every wake ends with.
-const shown = (text: string) => text.split("\n").slice(0, -1).join("\n");
+const wakeTextWithoutClosingLine = (text: string) => text.split("\n").slice(0, -1).join("\n");
 const nextText = (world: ReturnType<typeof makeWorld>) =>
-  Queue.take(world.woke).pipe(Effect.map((sent) => shown(sent.text)));
+  Queue.take(world.woke).pipe(Effect.map((sent) => wakeTextWithoutClosingLine(sent.text)));
 
 it.effect(
   "each kind of member update wakes the lead once, and what comes within 30 seconds waits",
@@ -403,7 +402,6 @@ it.effect(
           told(["member 1 on this machine finished its turn and is idle."]),
         );
         yield* world.leadRead;
-        // The same update again is not told twice; a secret request card blocks on the user.
         yield* world.run(first, "f1", "completed");
         yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
         yield* world.secretCard(second, "card-1");
@@ -568,12 +566,11 @@ it.effect(
   },
 );
 
-// Holds the startup look at a held member until its work ends, then lets the look finish.
 const endWorkDuringStartupLook = (world: ReturnType<typeof makeWorld>, member: ThreadId) => {
   const reading = Deferred.makeUnsafe<void>();
   const release = Deferred.makeUnsafe<void>();
   return {
-    hold: () => {
+    holdStartupMemberRead: () => {
       world.hooks.afterMemberRead = (id) =>
         id !== member
           ? Effect.void
@@ -583,7 +580,7 @@ const endWorkDuringStartupLook = (world: ReturnType<typeof makeWorld>, member: T
               yield* Deferred.await(release);
             });
     },
-    endWork: (line: string) =>
+    endWorkAndResumeRead: (line: string) =>
       Effect.gen(function* () {
         yield* Deferred.await(reading);
         world.set(member, { pendingBackgroundTasks: [] });
@@ -604,9 +601,9 @@ it.effect(
       Effect.gen(function* () {
         world.set(first, { pendingBackgroundTasks: [subagent] });
         yield* world.runThenWaitForMemberShellRead(first, world.run(first, "f1", "completed"));
-        race.hold();
+        race.holdStartupMemberRead();
       }),
-      race.endWork("member 1 on this machine finished its turn and is idle."),
+      race.endWorkAndResumeRead("member 1 on this machine finished its turn and is idle."),
       Effect.gen(function* () {
         yield* world.run(second, "s1", "failed");
         assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
@@ -631,10 +628,10 @@ it.effect(
       hasActionableProposedPlan: false,
       pendingBackgroundTasks: [subagent],
     });
-    race.hold();
+    race.holdStartupMemberRead();
     return withWakes(
       world,
-      race.endWork("member 4 on this machine finished its turn and is idle."),
+      race.endWorkAndResumeRead("member 4 on this machine finished its turn and is idle."),
     );
   },
 );
@@ -826,7 +823,10 @@ it.effect(
         yield* world.run(first, "f2", "failed");
         const secondWake = yield* Queue.take(world.woke);
         assert.equal(secondWake.threadId, second);
-        assert.equal(shown(secondWake.text), told(["member 1 on this machine failed."]));
+        assert.equal(
+          wakeTextWithoutClosingLine(secondWake.text),
+          told(["member 1 on this machine failed."]),
+        );
       }),
     );
   },
@@ -843,7 +843,7 @@ it.effect("a lead busy when it is replaced: the new lead gets what waited", () =
       yield* world.setLead(second, lead);
       const wake = yield* Queue.take(world.woke);
       assert.deepEqual(
-        [wake.threadId, shown(wake.text)],
+        [wake.threadId, wakeTextWithoutClosingLine(wake.text)],
         [second, told(["member 1 on this machine finished its turn and is idle."])],
       );
     }),
@@ -926,7 +926,6 @@ it.effect(
         );
         yield* world.leadRead;
         yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
-        // A member first seen there wakes the lead when it needs it.
         yield* world.live("store").setKnownClaims(LAPTOP, [
           {
             threadId: second,
@@ -1000,7 +999,7 @@ it.effect.each([
       yield* world.setLead(second, lead);
       const wake = yield* Queue.take(world.woke);
       assert.deepEqual(
-        [wake.threadId, shown(wake.text)],
+        [wake.threadId, wakeTextWithoutClosingLine(wake.text)],
         [
           second,
           told([

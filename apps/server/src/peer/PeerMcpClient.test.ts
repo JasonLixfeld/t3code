@@ -275,7 +275,6 @@ it.effect("tells a peer that refused apart from a failing tool or a revoked link
       });
       expect(refused).toMatchObject({ _tag: "Failure", failure: { code: busy.code } });
 
-      // A tool that dies on the peer is no answer, but the link itself still answered.
       const failed = yield* client
         .ask({ ...probeCall, environmentId: box.environmentId, tool: "hold" })
         .pipe(Effect.flip);

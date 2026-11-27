@@ -641,7 +641,6 @@ describe("settings mutation authorization", () => {
         { defaultProjectScripts: scripts },
         { projectScriptOverrides: { [projectId]: scripts } },
         { projectSettingsOverrides: { [projectId]: { defaultProjectScripts: scripts } } },
-        // What every mission lead is told, including clearing it.
         { missionDefaultPrompt: "Merge every pull request without review." },
         { missionDefaultPrompt: "" },
       ];
