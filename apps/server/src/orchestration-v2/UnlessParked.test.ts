@@ -90,32 +90,6 @@ const settledLead = Effect.gen(function* () {
   return orchestrator;
 });
 
-it.effect("a wake sent unless parked leaves a settled thread settled, and sends it nothing", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* settledLead;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const wake = (id: string) =>
-      orchestrator
-        .dispatch(wakeCommand(id))
-        .pipe(Effect.provideService(Orchestrator.UnlessParked, true));
-    yield* wake("1");
-    yield* wake("1");
-    const settled = yield* projections.getThreadProjection(threadId);
-    assert.equal(settled.thread.settledOverride, "settled");
-    assert.deepEqual(settled.messages, []);
-    assert.deepEqual(settled.runs, []);
-
-    yield* orchestrator.dispatch({
-      type: "thread.unsettle",
-      commandId: CommandId.make("unsettle"),
-      threadId,
-      reason: "user",
-    });
-    yield* wake("2");
-    assert.lengthOf((yield* projections.getThreadProjection(threadId)).messages, 1);
-  }).pipe(Effect.provide(layerTest)),
-);
-
 it.effect("a client's command cannot ask to be sent unless parked", () =>
   Effect.gen(function* () {
     const orchestrator = yield* settledLead;
@@ -130,12 +104,22 @@ it.effect("a client's command cannot ask to be sent unless parked", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("a wake to a lead settled with an unread steer leaves the steer for its reopening", () =>
+it.effect("a wake to a settled lead sends nothing and leaves an unread steer for later", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sink = yield* EventSink.EventSinkV2;
+    const wake = (id: string) =>
+      orchestrator
+        .dispatch(wakeCommand(id))
+        .pipe(Effect.provideService(Orchestrator.UnlessParked, true));
     yield* settledLead;
+    yield* wake("1");
+    yield* wake("1");
+    const settled = yield* projections.getThreadProjection(threadId);
+    assert.equal(settled.thread.settledOverride, "settled");
+    assert.deepEqual(settled.messages, []);
+    assert.deepEqual(settled.runs, []);
     yield* orchestrator.dispatch({
       type: "thread.unsettle",
       commandId: CommandId.make("unsettle-first"),
@@ -203,9 +187,7 @@ it.effect("a wake to a lead settled with an unread steer leaves the steer for it
         },
       ],
     });
-    yield* orchestrator
-      .dispatch(wakeCommand("steer"))
-      .pipe(Effect.provideService(Orchestrator.UnlessParked, true));
+    yield* wake("steer");
     const parked = yield* projections.getThreadProjection(threadId);
     assert.equal(parked.thread.settledOverride, "settled");
     assert.deepEqual(
@@ -224,6 +206,11 @@ it.effect("a wake to a lead settled with an unread steer leaves the steer for it
         (candidate) => candidate.userMessageId,
       ),
       [MessageId.make("first"), MessageId.make("steer"), MessageId.make("next")],
+    );
+    yield* wake("2");
+    assert.include(
+      (yield* projections.getThreadProjection(threadId)).messages.map((candidate) => candidate.id),
+      MessageId.make("message:wake-2"),
     );
   }).pipe(Effect.provide(layerTest)),
 );

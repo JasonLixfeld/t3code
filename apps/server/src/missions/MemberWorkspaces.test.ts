@@ -269,60 +269,48 @@ it.effect("a member in the project's own checkout reads its branch there, once i
   }).pipe(Effect.provide(machine(gitCalls)));
 });
 
-it.effect("a shared checkout lists its root repository and the repositories it tracks", () =>
-  Effect.gen(function* () {
-    const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-    const workspace = yield* readAfterBackgroundRead(
-      workspaces,
-      inProject({
-        pullRequests: [
-          link("https://github.com/acme/app/pull/1", "open"),
-          link("https://github.com/acme/api/pull/2", "open"),
-        ],
-      }),
-    );
-    assert.deepEqual(workspace.repositories, [
+it.effect.each([
+  {
+    name: "a shared checkout lists its root repository and the repositories it tracks",
+    options: {
+      projectRoot: "/code/app",
+      tracked: [folder("/code/app/api")],
+      repositories: ["/code/app", "/code/app/api"],
+      identities: { "/code/app": github("acme/app"), "/code/app/api": github("acme/api") },
+    },
+    pullRequests: [
+      link("https://github.com/acme/app/pull/1", "open"),
+      link("https://github.com/acme/api/pull/2", "open"),
+    ],
+    expected: [
       repository("/code/app", "/code/app", "main", "github.com/acme/app", [
         { number: 1, state: "open", url: "https://github.com/acme/app/pull/1" },
       ]),
       repository("/code/app/api", "/code/app/api", "main", "github.com/acme/api", [
         { number: 2, state: "open", url: "https://github.com/acme/api/pull/2" },
       ]),
-    ]);
-    assert.deepEqual(workspace.otherPullRequests, []);
-  }).pipe(
-    Effect.provide(
-      machine([], {
-        projectRoot: "/code/app",
-        tracked: [folder("/code/app/api")],
-        repositories: ["/code/app", "/code/app/api"],
-        identities: { "/code/app": github("acme/app"), "/code/app/api": github("acme/api") },
-      }),
-    ),
-  ),
-);
-
-it.effect("a plain project folder is no repository; the repositories it tracks are", () =>
+    ],
+  },
+  {
+    name: "a plain project folder is no repository; the repositories it tracks are",
+    options: {
+      projectRoot: "/code/app",
+      tracked: [folder("/code/app/api"), folder("/code/app/web"), folder("/code/app/notes", false)],
+      repositories: ["/code/app/api", "/code/app/web"],
+    },
+    pullRequests: noLinks,
+    expected: [
+      repository("/code/app/api", "/code/app/api", "main", "github.com/acme/api"),
+      repository("/code/app/web", "/code/app/web", "main", "github.com/acme/web"),
+    ],
+  },
+])("$name", ({ options, pullRequests, expected }) =>
   Effect.gen(function* () {
     const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-    const workspace = yield* readAfterBackgroundRead(workspaces, inProject());
-    assert.deepEqual(
-      workspace.repositories.map((checkout) => checkout.path),
-      ["/code/app/api", "/code/app/web"],
-    );
-  }).pipe(
-    Effect.provide(
-      machine([], {
-        projectRoot: "/code/app",
-        tracked: [
-          folder("/code/app/api"),
-          folder("/code/app/web"),
-          folder("/code/app/notes", false),
-        ],
-        repositories: ["/code/app/api", "/code/app/web"],
-      }),
-    ),
-  ),
+    const workspace = yield* readAfterBackgroundRead(workspaces, inProject({ pullRequests }));
+    assert.deepEqual(workspace.repositories, expected);
+    assert.deepEqual(workspace.otherPullRequests, []);
+  }).pipe(Effect.provide(machine([], options))),
 );
 
 it.effect(
@@ -519,35 +507,34 @@ it.effect(
     ),
 );
 
-it.effect("a forgotten thread is read again from the start", () => {
-  const gitCalls: Array<string> = [];
-  return Effect.gen(function* () {
-    const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-    yield* readAfterBackgroundRead(workspaces, inProject());
-    yield* workspaces.forget(threadId);
-    assert.equal(yield* workspaces.cached(inProject()), "pending");
-  }).pipe(Effect.provide(machine(gitCalls)));
-});
-
-it.effect("a read that ends after its thread is forgotten stores nothing", () => {
-  const gate = Deferred.makeUnsafe<void>();
-  return Effect.gen(function* () {
-    const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
-    assert.equal(yield* workspaces.cached(inProject()), "pending");
-    yield* TestClock.adjust(READ_STEP);
-    yield* workspaces.forget(threadId);
-    yield* Deferred.succeed(gate, undefined);
-    yield* TestClock.adjust(READ_STEP);
-    assert.equal(yield* workspaces.cached(inProject()), "pending");
-  }).pipe(
-    Effect.provide(
-      machine([], {
-        resolve: () =>
-          Deferred.await(gate).pipe(Effect.andThen(Effect.sleep(READ_STEP)), Effect.as(null)),
-      }),
-    ),
-  );
-});
+it.effect(
+  "a forgotten thread is read again from the start, and a read it outlives stores nothing",
+  () => {
+    const gate = Deferred.makeUnsafe<void>();
+    return Effect.gen(function* () {
+      const workspaces = yield* MemberWorkspaces.MemberWorkspaces;
+      assert.equal(yield* workspaces.cached(inProject()), "pending");
+      yield* TestClock.adjust(READ_STEP);
+      yield* workspaces.forget(threadId);
+      yield* Deferred.succeed(gate, undefined);
+      yield* TestClock.adjust(READ_STEP);
+      assert.equal(yield* workspaces.cached(inProject()), "pending");
+      // The next read starts over, and a thread forgotten after a finished read starts over too.
+      yield* TestClock.adjust(READ_STEP);
+      yield* TestClock.adjust(READ_STEP);
+      assert.notEqual(yield* workspaces.cached(inProject()), "pending");
+      yield* workspaces.forget(threadId);
+      assert.equal(yield* workspaces.cached(inProject()), "pending");
+    }).pipe(
+      Effect.provide(
+        machine([], {
+          resolve: () =>
+            Deferred.await(gate).pipe(Effect.andThen(Effect.sleep(READ_STEP)), Effect.as(null)),
+        }),
+      ),
+    );
+  },
+);
 
 it.effect("past its cap the cache drops the thread read least recently", () =>
   Effect.gen(function* () {

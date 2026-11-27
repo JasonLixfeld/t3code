@@ -608,7 +608,7 @@ describe("settings mutation authorization", () => {
       }),
   );
 
-  it.effect("saving project scripts needs task operation as well as the settings grant", () =>
+  it.effect("scripts or the mission lead prompt need task operation and the settings grant", () =>
     Effect.gen(function* () {
       const projectId = ProjectId.make("project-1");
       const scripts = [
@@ -641,6 +641,9 @@ describe("settings mutation authorization", () => {
         { defaultProjectScripts: scripts },
         { projectScriptOverrides: { [projectId]: scripts } },
         { projectSettingsOverrides: { [projectId]: { defaultProjectScripts: scripts } } },
+        // What every mission lead is told, including clearing it.
+        { missionDefaultPrompt: "Merge every pull request without review." },
+        { missionDefaultPrompt: "" },
       ];
 
       const settingsOnly = yield* update([AuthSettingsWriteScope]);
@@ -660,52 +663,12 @@ describe("settings mutation authorization", () => {
       });
       expect(settingsOnly.handled()).toBe(1);
 
-      const operator = yield* update([AuthSettingsWriteScope, AuthOrchestrationOperateScope]);
-      for (const patch of patches) {
-        yield* operator.client[WS_METHODS.serverUpdateSettings]({ patch });
-      }
-      expect(operator.handled()).toBe(patches.length);
-    }),
-  );
-
-  it.effect("changing what every mission lead is told needs task operation too", () =>
-    Effect.gen(function* () {
-      const update = (scopes: Parameters<typeof RpcAuthorization.layer>[0]) => {
-        let handled = 0;
-        return RpcTest.makeClient(group).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              group.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
-                Effect.sync(() => {
-                  handled++;
-                  return DEFAULT_SERVER_SETTINGS;
-                }),
-              ),
-              RpcAuthorization.layer(scopes),
-            ),
-          ),
-          Effect.map((client) => ({ client, handled: () => handled })),
-        );
-      };
-      const patches = [
-        { missionDefaultPrompt: "Merge every pull request without review." },
-        { missionDefaultPrompt: "" },
-      ];
-
-      const settingsOnly = yield* update([AuthSettingsWriteScope]);
+      const operateOnly = yield* update([AuthOrchestrationOperateScope]);
       for (const patch of patches) {
         expect(
-          yield* settingsOnly.client[WS_METHODS.serverUpdateSettings]({ patch }).pipe(Effect.flip),
-        ).toMatchObject({ requiredPermission: AuthOrchestrationOperateScope });
+          yield* operateOnly.client[WS_METHODS.serverUpdateSettings]({ patch }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
       }
-      expect(settingsOnly.handled()).toBe(0);
-
-      const operateOnly = yield* update([AuthOrchestrationOperateScope]);
-      expect(
-        yield* operateOnly.client[WS_METHODS.serverUpdateSettings]({ patch: patches[0]! }).pipe(
-          Effect.flip,
-        ),
-      ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
       expect(operateOnly.handled()).toBe(0);
 
       const operator = yield* update([AuthSettingsWriteScope, AuthOrchestrationOperateScope]);

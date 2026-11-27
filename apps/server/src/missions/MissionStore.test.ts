@@ -40,42 +40,6 @@ const usingStore = <A, E>(
     Effect.provide(MissionStore.layerFromPath(filename)),
   );
 
-it.effect("keeps its own migration history and reopens without migrating again", () =>
-  withDatabase((filename) =>
-    Effect.gen(function* () {
-      yield* usingStore(filename, (store) => store.createMission(claimFor(lead, "m1", "g1")));
-      const reopened = yield* usingStore(filename, (store) => store.missions);
-      assert.deepEqual(
-        reopened.map((mission) => mission.name),
-        ["M1"],
-      );
-      const recorded = yield* Effect.provide(
-        Effect.gen(function* () {
-          const sql = yield* SqlClient.SqlClient;
-          return yield* sql<{
-            readonly migration_id: number;
-            readonly name: string;
-          }>`SELECT migration_id, name FROM effect_sql_migrations`;
-        }),
-        NodeSqliteClient.layer({ filename }),
-      );
-      assert.deepEqual(
-        recorded.map((row) => [row.migration_id, row.name]),
-        [
-          [1, "Missions"],
-          [2, "LastKnown"],
-          [3, "PendingAdds"],
-          [4, "AddIntents"],
-          [5, "AddLinkAndAge"],
-          [6, "MissionTombstones"],
-          [7, "MissionLeadPrompt"],
-          [8, "JoinedWithPriorWork"],
-        ],
-      );
-    }),
-  ),
-);
-
 it.effect(
   "starting a mission adds it with its lead's claim, a retry returns it, and a refusal changes nothing",
   () =>
@@ -160,23 +124,45 @@ it.effect("a leave meant for one mission removes nothing once the claim is anoth
 );
 
 it.effect(
-  "the production store writes missions.sqlite in the state folder, not the main database",
+  "the production store writes missions.sqlite in the state folder and reopens it without migrating again",
   () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-mission-home-" });
       const config = ServerConfig.layerTest(process.cwd(), baseDir);
-      const { stateDir, dbPath } = yield* Effect.gen(function* () {
-        yield* Effect.flatMap(MissionStore.MissionStore, (store) =>
-          store.createMission(claimFor(lead, "m1", "g1")),
-        ).pipe(Effect.provide(MissionStore.layer));
-        return yield* ServerConfig.ServerConfig;
-      }).pipe(Effect.provide(config));
+      const withProductionStore = <A, E>(
+        use: (store: MissionStore.MissionStore["Service"]) => Effect.Effect<A, E>,
+      ) =>
+        Effect.flatMap(MissionStore.MissionStore, use).pipe(
+          Effect.provide(MissionStore.layer),
+          Effect.provide(config),
+        );
+      yield* withProductionStore((store) => store.createMission(claimFor(lead, "m1", "g1")));
+      const { stateDir, dbPath } = yield* Effect.provide(ServerConfig.ServerConfig, config);
 
       const missionsFile = path.join(stateDir, "missions.sqlite");
       assert.notEqual(missionsFile, dbPath);
       assert.isTrue(yield* fileSystem.exists(missionsFile));
+      const migrationsIn = Effect.provide(
+        Effect.flatMap(
+          SqlClient.SqlClient,
+          (sql) =>
+            sql<{
+              readonly migration_id: number;
+              readonly created_at: string;
+            }>`SELECT migration_id, created_at FROM effect_sql_migrations ORDER BY migration_id`,
+        ),
+        NodeSqliteClient.layer({ filename: missionsFile }),
+      );
+      const migrated = yield* migrationsIn;
+      assert.lengthOf(migrated, Object.keys(MissionStore.MIGRATIONS).length);
+      const reopened = yield* withProductionStore((store) => store.missions);
+      assert.deepEqual(
+        reopened.map((mission) => mission.name),
+        ["M1"],
+      );
+      assert.deepEqual(yield* migrationsIn, migrated);
       const tablesIn = (filename: string) =>
         Effect.provide(
           Effect.flatMap(
