@@ -1,4 +1,3 @@
-import { quietMissionUpdateRunIds } from "@t3tools/client-runtime/missions";
 import { ThreadId, type WorktreeSetupSnapshot } from "@t3tools/contracts";
 import {
   CheckpointRef,
@@ -5334,7 +5333,6 @@ describe("quiet mission updates", () => {
     sourceItemId: turnItem.id,
     item: turnItem,
   }));
-  const runs = RUNS.map((run) => ({ id: RunId.make(run), status: "completed" as const }));
   const attempts = RUNS.map((run) => ({
     id: RunAttemptId.make(`attempt:${run}`),
     runId: RunId.make(run),
@@ -5365,24 +5363,22 @@ describe("quiet mission updates", () => {
         optimisticMessages: [],
         attempts,
       }),
-      hiddenRunIds: quietMissionUpdateRunIds(visibleTurnItems, runs, attempts),
+      hiddenRunIds: new Set([RunId.make("quiet")]),
       isWorking: false,
       turnDiffSummaries: checkpoints,
       supportsConversationRollback: true,
       threadStartCheckpointAvailable: true,
     });
 
-  it("leaves out a finished wake that only read, and the turns around it keep their rows", () => {
-    const shown = timelineRows(turnItems).map((row) => row.id);
+  it("leaves out a hidden wake, and the turns around it keep their rows and rewind past it", () => {
+    const rows = timelineRows(turnItems);
+    const shown = rows.map((row) => row.id);
     expect(shown).toContain(`turn-item:message:message%3Amission-update%3Am1%3Aspoke`);
     expect(shown.some((id) => id.includes("quiet"))).toBe(false);
     expect(shown).toEqual(
       timelineRows(turnItems.filter(({ item }) => item.runId !== "quiet")).map((row) => row.id),
     );
-  });
-
-  it("rewinds the message after a hidden wake to the hidden wake's checkpoint", () => {
-    const next = timelineRows(turnItems).find(
+    const next = rows.find(
       (row): row is Extract<MessagesTimelineRow, { kind: "message" }> =>
         row.kind === "message" && row.message.id === "next:user",
     );

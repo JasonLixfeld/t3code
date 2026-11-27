@@ -535,27 +535,17 @@ describe("resolveThreadSwitchTimeline", () => {
 
   const held = { threadKey: "env-1:thread-a", entries: ["a1", "a2"] };
 
-  it("paints a remembered destination instead of the last-viewed thread", () => {
-    rememberReadyThreadTimeline(held);
-    rememberReadyThreadTimeline({ threadKey: "env-1:thread-b", entries: ["b1", "b2"] });
-    expect(peekRememberedThreadTimeline<string[]>("env-1:thread-a")).toEqual(["a1", "a2"]);
-    expect(
-      resolveThreadSwitchTimeline({
-        loading: true,
-        activeThreadKey: "env-1:thread-a",
-        nextEntries: [],
-      }),
-    ).toEqual(["a1", "a2"]);
-  });
-
-  it("hides the runs the remembered timeline hid while it stands in for a loading one", () => {
+  it("paints a remembered destination and the runs it hid instead of the last-viewed thread", () => {
     const hiddenRunIds = new Set([RunId.make("quiet")]);
     rememberReadyThreadTimeline({ ...held, hiddenRunIds });
+    rememberReadyThreadTimeline({ threadKey: "env-1:thread-b", entries: ["b1", "b2"] });
+    expect(peekRememberedThreadTimeline<string[]>("env-1:thread-a")).toEqual(["a1", "a2"]);
     const shown = resolveThreadSwitchTimeline({
       loading: true,
       activeThreadKey: "env-1:thread-a",
       nextEntries: [],
     });
+    expect(shown).toEqual(["a1", "a2"]);
     expect(rememberedThreadTimelineHiddenRunIds("env-1:thread-a", shown)).toBe(hiddenRunIds);
     expect(rememberedThreadTimelineHiddenRunIds("env-1:thread-a", [])).toBeUndefined();
   });
