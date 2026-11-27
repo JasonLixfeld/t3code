@@ -17,7 +17,12 @@ import { cn } from "../../lib/cn";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { InspectorSheetContext } from "../layout/workspace-inspector-sheet";
 import { ReviewFindPartialHint } from "./ReviewFindBar";
-import type { ReviewFindFile, ReviewFindLine, ReviewFindResult } from "./reviewFind";
+import type {
+  ReviewFindFile,
+  ReviewFindLine,
+  ReviewFindMatch,
+  ReviewFindResult,
+} from "./reviewFind";
 import { resolveSelectedReviewFileId } from "./reviewPaneSelection";
 
 export interface ReviewNavigatorFile {
@@ -37,7 +42,7 @@ export interface ReviewFileNavigatorFind {
   readonly activeIndex: number | null;
   readonly partial: boolean;
   readonly onChangeQuery: (query: string) => void;
-  readonly onSelectMatch: (index: number) => void;
+  readonly onSelectMatch: (match: ReviewFindMatch) => void;
 }
 
 type SearchMode = "name" | "contents";
@@ -204,7 +209,10 @@ export function ReviewFileNavigator({
     setFileSelection({ sectionId, fileId });
     afterSheetCloses(() => onSelectFile(fileId));
   };
-  const handleSelectMatch = (index: number) => afterSheetCloses(() => find.onSelectMatch(index));
+  const handleSelectMatch = (index: number) => {
+    const match = find.result.matches[index];
+    if (match) afterSheetCloses(() => find.onSelectMatch(match));
+  };
   const handleChangeMode = (next: SearchMode) => {
     if (next === mode) return;
     if (next === "contents") {

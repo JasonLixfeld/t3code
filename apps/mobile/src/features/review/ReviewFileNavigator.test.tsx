@@ -211,5 +211,5 @@ it("closes the inspector sheet before jumping to a chosen match", () => {
 
   expect(screen.onSelectMatch).not.toHaveBeenCalled();
   act(() => afterClose?.());
-  expect(screen.onSelectMatch).toHaveBeenCalledWith(2);
+  expect(screen.onSelectMatch).toHaveBeenCalledWith(findInReviewRows(rows, "app").matches[2]);
 });
