@@ -417,51 +417,41 @@ describe("useNewThreadHandler", () => {
   });
 });
 
-describe("a Mission draft", () => {
+it("does not reuse a Mission draft for a new thread, wherever it was drafted", async () => {
   const remote = { environmentId: "environment-ssh", projectId: "project-remote" } as never;
-  const markDraft = (draftId: string, environmentId: string) => {
+  const stored = (environmentId: string, projectId: string) => ({
+    draftId: "draft-marked",
+    environmentId,
+    projectId,
+    promotedTo: null,
+    threadId: "thread-marked",
+  });
+  for (const { markedDraft, environmentId, open } of [
+    {
+      markedDraft: stored("environment-primary", "project-primary"),
+      environmentId: "environment-primary",
+      open: false,
+    },
+    { markedDraft: null, environmentId: "environment-primary", open: true },
+    {
+      markedDraft: stored("environment-ssh", "project-remote"),
+      environmentId: "environment-ssh",
+      open: false,
+    },
+  ]) {
+    testState.reset(markedDraft);
+    const draftId = open ? "draft-open" : "draft-marked";
+    if (open) testState.openEmptyDraft(draftId);
     markMissionDraft(draftId as never, {
       intent: { kind: "new" },
       thread: { environmentId, threadId: "thread-marked" } as never,
     });
     onTestFinished(() => clearMissionDraft(draftId as never));
-  };
-
-  it("is not reused for the same project's copy on another machine", async () => {
-    const marked = {
-      draftId: "draft-marked",
-      environmentId: "environment-primary",
-      projectId: "project-primary",
-      promotedTo: null,
-      threadId: "thread-marked",
-    };
-    testState.reset(marked);
-    markDraft("draft-marked", "environment-primary");
-    const opened = await useNewThreadHandler()(remote);
-    expect(opened).toEqual({ draftId: "draft-delayed", threadId: "thread-delayed" });
-  });
-
-  it("is not reused when it is the open draft and another copy is asked for", async () => {
-    testState.reset(null);
-    testState.openEmptyDraft("draft-open");
-    markDraft("draft-open", "environment-primary");
-    const opened = await useNewThreadHandler()(remote);
-    expect(opened?.draftId).toBe("draft-delayed");
-  });
-
-  it("is not reused even for its own project on its own machine", async () => {
-    const marked = {
-      draftId: "draft-marked",
-      environmentId: "environment-ssh",
-      projectId: "project-remote",
-      promotedTo: null,
-      threadId: "thread-marked",
-    };
-    testState.reset(marked);
-    markDraft("draft-marked", "environment-ssh");
-    const opened = await useNewThreadHandler()(remote);
-    expect(opened?.draftId).toBe("draft-delayed");
-  });
+    expect(await useNewThreadHandler()(remote)).toEqual({
+      draftId: "draft-delayed",
+      threadId: "thread-delayed",
+    });
+  }
 });
 
 describe("default project selection", () => {
