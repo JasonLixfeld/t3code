@@ -115,6 +115,12 @@ const target = {
   environmentId: EnvironmentId.make("undo-env"),
   threadId: ThreadId.make("thread"),
 };
+function markMission(ref: typeof target) {
+  markMissionDraft(serverThreadMissionDraftId(ref), { intent: { kind: "new" }, thread: ref });
+  onTestFinished(() => clearServerThreadMissionDraft(ref));
+}
+const hasMissionMark = (ref: typeof target) =>
+  missionDraftOf(serverThreadMissionDraftId(ref)) !== undefined;
 function currentUndo() {
   const notice = useThreadUndoNotice.getState().notice;
   expect(notice).not.toBeNull();
@@ -230,10 +236,12 @@ describe("archive Undo", () => {
       environmentId: target.environmentId,
       threadId: target.threadId,
     };
+    markMission(target);
     const actions = useThreadActions();
     await actions.archiveThread(target);
     expect(useThreadUndoNotice.getState().notice).toMatchObject({ action: "Archived", count: 1 });
     expect(add).not.toHaveBeenCalled();
+    expect(hasMissionMark(target)).toBe(false);
     await currentUndo()();
     expect(commands.unarchive).toHaveBeenCalledExactlyOnceWith({
       environmentId: target.environmentId,
@@ -425,47 +433,33 @@ describe("archive and delete Undo expiry", () => {
       },
     );
 
-    it("keeps the earlier Undo when the request fails", async () => {
+    it("keeps the earlier Undo and the mission mark when the request fails", async () => {
+      markMission(target);
       const actions = useThreadActions();
       await actions.settleThread(target);
       commands[lifecycle === "archiveThread" ? "archive" : "delete"].mockResolvedValue(failure);
       await actions[lifecycle](target);
+      expect(hasMissionMark(target)).toBe(true);
       expect(useThreadUndoNotice.getState().notice).toMatchObject({ action: "Settled" });
       await currentUndo()();
       expect(commands.unsettle).toHaveBeenCalledOnce();
     });
   });
 
-  it.each([
-    ["archiveThread", "archive", true],
-    ["deleteThread", "delete", true],
-    ["deleteThread", "delete", false],
-  ] as const)(
-    "%s clears that thread's mission mark only once the %s succeeds, with shell loaded: %s",
-    async (lifecycle, command, loaded) => {
-      shellLoaded.current = loaded;
-      for (const ref of [target, otherThread]) {
-        markMissionDraft(serverThreadMissionDraftId(ref), { intent: { kind: "new" }, thread: ref });
-        onTestFinished(() => clearServerThreadMissionDraft(ref));
-      }
-      const actions = useThreadActions();
-      commands[command].mockResolvedValueOnce(failure);
-      await actions[lifecycle](target);
-      expect(missionDraftOf(serverThreadMissionDraftId(target))).toBeDefined();
-      await actions[lifecycle](target);
-      expect(missionDraftOf(serverThreadMissionDraftId(target))).toBeUndefined();
-      expect(missionDraftOf(serverThreadMissionDraftId(otherThread))).toBeDefined();
-    },
-  );
-
   it.each([true, false])(
-    "expires the Archived Undo when deleting with shell loaded: %s",
+    "expires the Archived Undo and only that thread's mission mark when deleting with shell loaded: %s",
     async (loaded) => {
       const actions = useThreadActions();
       await actions.archiveThread(target);
       const staleUndo = currentUndo();
       shellLoaded.current = loaded;
+      for (const ref of [target, otherThread]) markMission(ref);
+      commands.delete.mockResolvedValueOnce(failure);
       await actions.deleteThread(target);
+      expect(hasMissionMark(target)).toBe(true);
+      await actions.deleteThread(target);
+      expect(hasMissionMark(target)).toBe(false);
+      expect(hasMissionMark(otherThread)).toBe(true);
       expect(useThreadUndoNotice.getState().notice).toBeNull();
       await staleUndo();
       expect(commands.unarchive).not.toHaveBeenCalled();

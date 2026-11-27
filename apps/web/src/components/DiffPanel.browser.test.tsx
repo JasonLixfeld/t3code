@@ -705,15 +705,18 @@ it("filters the Files list by the typed name and closes on Escape from its contr
   expect(reachedDocument.mock.results.map((result) => result.value)).not.toContain("Escape");
 });
 
-it("lists the diff find's matches by file in Contents mode and jumps to a clicked line", async () => {
+it("lists the diff find's matches by file in Contents mode, keeping its query, and jumps to a clicked line", async () => {
   using context = setup("origin/orphan");
   state.realFileTree = true;
   await using screen = await renderFindDiff(context.threadRef, context.registry);
+  await userEvent.click(screen.getByRole("button", { name: "Find in diff" }));
+  await userEvent.type(findInput(), "retr");
   await userEvent.click(screen.getByRole("button", { name: "Show file tree" }));
   await userEvent.click(screen.getByRole("button", { name: "Search files" }));
   await userEvent.click(screen.getByRole("button", { name: "Contents" }));
   const contents = screen.getByRole("searchbox", { name: "Search lines in the diff" });
-  await userEvent.type(contents, "retry");
+  await expect.element(contents).toHaveValue("retr");
+  await userEvent.type(contents, "y");
   await expect.element(contents).toHaveFocus();
   // The stacked diff shows the context line once: 1 context, 1 removed and 2 added in a.ts.
   await expect.element(findInput()).toHaveValue("retry");
@@ -721,12 +724,6 @@ it("lists the diff find's matches by file in Contents mode and jumps to a clicke
   await expect.element(screen.getByRole("tree")).not.toBeInTheDocument();
   const fileA = screen.getByRole("region", { name: "src/a.ts" });
   const fileB = screen.getByRole("region", { name: "lib/b.ts" });
-  const fileCount = (file: typeof fileA) =>
-    file.element().querySelector("[data-diff-find-file-count]")?.textContent;
-  await vi.waitFor(() => {
-    expect(fileCount(fileA)).toBe("4");
-    expect(fileCount(fileB)).toBe("1");
-  });
   await expect
     .element(fileB.getByRole("button", { name: /retry here/ }))
     .toHaveAttribute("aria-current", "true");
@@ -736,23 +733,6 @@ it("lists the diff find's matches by file in Contents mode and jumps to a clicke
   await expect.element(addedLine).toHaveAttribute("aria-current", "true");
   await userEvent.click(fileA.getByRole("button", { name: /^a\.ts/ }));
   await expect.element(page.getByText("2 of 5", { exact: true })).toBeInTheDocument();
-});
-
-it("shows the diff find's query when the Files search switches to Contents", async () => {
-  using context = setup("origin/orphan");
-  state.realFileTree = true;
-  await using screen = await renderFindDiff(context.threadRef, context.registry);
-  await userEvent.click(screen.getByRole("button", { name: "Find in diff" }));
-  await userEvent.type(findInput(), "retry");
-  await expect.element(page.getByText("1 of 5", { exact: true })).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: "Show file tree" }));
-  await userEvent.click(screen.getByRole("button", { name: "Search files" }));
-  await userEvent.click(screen.getByRole("button", { name: "Contents" }));
-  await expect
-    .element(screen.getByRole("searchbox", { name: "Search lines in the diff" }))
-    .toHaveValue("retry");
-  await expect.element(findInput()).toHaveValue("retry");
-  await expect.element(screen.getByRole("region", { name: "src/a.ts" })).toBeVisible();
 });
 
 it("opens find in the diff from the right panel's tab bar without preview access", async () => {

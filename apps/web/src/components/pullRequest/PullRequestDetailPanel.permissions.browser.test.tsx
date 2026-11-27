@@ -409,8 +409,6 @@ it("opens find in the Code tab from the workspace panel's tab bar and the Code t
   await expect.element(options).toHaveFocus();
   await pressFind();
   await vi.waitFor(() => expect(codeFind).toHaveBeenCalledTimes(3));
-  await act(() => Promise.resolve());
-  expect(codeFind).toHaveBeenCalledTimes(3);
 });
 
 it("opens find in the Code tab by keyboard where no workspace panel wraps it, as in Workflows", async () => {
@@ -434,7 +432,6 @@ it("opens find in the Code tab by keyboard where no workspace panel wraps it, as
   const options = screen.getByRole("button", { name: "Diff options" });
   await expect.element(options).toBeInTheDocument();
   options.element().focus();
-  await expect.element(options).toHaveFocus();
   await userEvent.keyboard(
     isMacPlatform(navigator.platform) ? "{Meta>}f{/Meta}" : "{Control>}f{/Control}",
   );

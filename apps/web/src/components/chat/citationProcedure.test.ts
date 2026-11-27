@@ -172,14 +172,11 @@ describe("resolveCitationPhase", () => {
     expect(phase({ history: "found" })).toEqual({ _tag: "loading" });
   });
 
-  it("settles a cited response in a hidden quiet mission update without waiting for its row", () => {
+  it("expands the turn that folds the cited response, but settles one in a hidden quiet mission update", () => {
+    expect(phase({ entries: [entry] })).toEqual({ _tag: "expanding" });
     expect(phase({ entries: [entry], hiddenRunIds: new Set([runId]) })).toEqual({
       _tag: "failed",
     });
-  });
-
-  it("expands the turn that folds the cited response", () => {
-    expect(phase({ entries: [entry] })).toEqual({ _tag: "expanding" });
   });
 
   it("is ready once the cited response has a row, even before paging settles", () => {

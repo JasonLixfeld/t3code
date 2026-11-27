@@ -82,17 +82,6 @@ describe("uiStateStore pure functions", () => {
     expect(setProjectExpanded(next, keys, false)).toBe(next);
   });
 
-  it("keeps a mission expanded by default and remembers only collapsed ones", () => {
-    const collapsed = setMissionExpanded(makeUiState(), "env-a:0123456789ab", false);
-    expect(collapsed.missionExpandedById).toEqual({ "env-a:0123456789ab": false });
-    expect(setMissionExpanded(collapsed, "env-a:0123456789ab", false)).toBe(collapsed);
-    expect(setMissionExpanded(collapsed, "env-a:0123456789ab", true).missionExpandedById).toEqual(
-      {},
-    );
-    const untouched = makeUiState();
-    expect(setMissionExpanded(untouched, "env-b:ba9876543210", true)).toBe(untouched);
-  });
-
   it("moves grouped project members together", () => {
     const keyALocal = "env-local:proj-a";
     const keyARemote = "env-remote:proj-a";
@@ -191,12 +180,24 @@ describe("uiStateStore persistence", () => {
     vi.unstubAllGlobals();
   });
 
-  it("persists raw UI preferences including thread visit markers", () => {
+  it("persists raw UI preferences including thread visit markers and collapsed missions only", () => {
+    const untouched = makeUiState();
+    expect(setMissionExpanded(untouched, "env-b:ba9876543210", true)).toBe(untouched);
+    const collapsed = setMissionExpanded(
+      setMissionExpanded(
+        setMissionExpanded(untouched, "env-b:ba9876543210", false),
+        "env-a:0123456789ab",
+        false,
+      ),
+      "env-b:ba9876543210",
+      true,
+    );
+    expect(setMissionExpanded(collapsed, "env-a:0123456789ab", false)).toBe(collapsed);
     const state = makeUiState({
       projectExpandedById: {
         logical: false,
       },
-      missionExpandedById: { "env-a:0123456789ab": false },
+      missionExpandedById: collapsed.missionExpandedById,
       projectOrder: ["physical-b", "physical-a"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",

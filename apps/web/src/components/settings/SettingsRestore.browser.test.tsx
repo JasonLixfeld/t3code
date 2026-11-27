@@ -7,6 +7,7 @@ import { useSettingsRestore } from "./SettingsPanels";
 
 const state = vi.hoisted(() => ({
   mixedKeys: [] as ReadonlyArray<string>,
+  writes: true,
   operates: true,
   update: vi.fn(),
 }));
@@ -16,7 +17,7 @@ vi.mock(import("./useScopedSettings"), async (original) => ({
   useScopedSettings: (() => DEFAULT_UNIFIED_SETTINGS) as never,
   useScopedSettingsMixed: (keys) => keys.some((key) => state.mixedKeys.includes(key)),
   useScopedSettingsWriteAllowed: (scope?: AuthEnvironmentScope) =>
-    scope !== AuthOrchestrationOperateScope || state.operates,
+    scope === AuthOrchestrationOperateScope ? state.operates : state.writes,
   useUpdateScopedSettings: () => state.update,
 }));
 vi.mock(import("../../localApi"), async (original) => ({
@@ -35,17 +36,23 @@ function Probe() {
 
 it("resets a mission prompt another selected environment set, only with both scopes", async () => {
   state.mixedKeys = ["missionDefaultPrompt"];
-  for (const operates of [true, false]) {
+  for (const [writes, operates] of [
+    [true, true],
+    [true, false],
+    [false, true],
+  ] as const) {
+    state.writes = writes;
     state.operates = operates;
     state.update.mockClear();
+    const resets = writes && operates;
     await using screen = await render(<Probe />);
     const button = screen.getByRole("button").element() as HTMLElement;
-    expect(button.textContent).toBe(operates ? "Mission prompt" : "Nothing to restore");
+    expect(button.textContent).toBe(resets ? "Mission prompt" : "Nothing to restore");
     await act(() => button.click());
     await vi.waitFor(() =>
       expect(
         state.update.mock.calls.some(([patch]) => Object.hasOwn(patch, "missionDefaultPrompt")),
-      ).toBe(operates),
+      ).toBe(resets),
     );
   }
 });
