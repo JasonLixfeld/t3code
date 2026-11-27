@@ -20,6 +20,8 @@ export function ReviewFindBar(props: {
   readonly query: string;
   readonly result: ReviewFindResult;
   readonly activeIndex: number | null;
+  readonly autoFocus: boolean;
+  readonly resultIsStale: boolean;
   readonly partial: boolean;
   readonly onChangeQuery: (query: string) => void;
   readonly onStep: (direction: 1 | -1) => void;
@@ -42,6 +44,7 @@ export function ReviewFindBar(props: {
       <View className="flex-row items-center gap-1">
         <SearchField
           inputRef={inputRef}
+          autoFocus={props.autoFocus}
           accessibilityLabel={gt("Find in diff")}
           clearAccessibilityLabel={gt("Clear search")}
           placeholder={gt("Find in diff")}
@@ -57,13 +60,13 @@ export function ReviewFindBar(props: {
         <IconButton
           accessibilityLabel={gt("Previous match")}
           icon="chevron.up"
-          disabled={total === 0}
+          disabled={total === 0 || props.resultIsStale}
           onPress={() => props.onStep(-1)}
         />
         <IconButton
           accessibilityLabel={gt("Next match")}
           icon="chevron.down"
-          disabled={total === 0}
+          disabled={total === 0 || props.resultIsStale}
           onPress={() => props.onStep(1)}
         />
         <IconButton accessibilityLabel={gt("Close find")} icon="xmark" onPress={props.onClose} />
