@@ -54,12 +54,12 @@ describe("findInReviewRows", () => {
       ["a", 3, 0],
       ["b", 1, 3],
     ]);
-    expect(result.files[0]!.lines[0]).toMatchObject({
+    expect(result.files[0]!.previewLines[0]).toMatchObject({
       change: "add",
       lineNumber: 1,
       matchCount: 3,
     });
-    expect(result.files[1]!.lines[0]).toMatchObject({ change: "delete", lineNumber: 7 });
+    expect(result.files[1]!.previewLines[0]).toMatchObject({ change: "delete", lineNumber: 7 });
   });
 
   it("does not match the note of a cut line", () => {
@@ -85,7 +85,7 @@ describe("findInReviewRows", () => {
 
     const [file] = findInReviewRows(rows, "match").files;
 
-    expect(file!.lines).toHaveLength(REVIEW_FIND_LINES_PER_FILE);
+    expect(file!.previewLines).toHaveLength(REVIEW_FIND_LINES_PER_FILE);
     expect(file!.lineCount).toBe(REVIEW_FIND_LINES_PER_FILE + 5);
     expect(file!.matchCount).toBe(REVIEW_FIND_LINES_PER_FILE + 5);
   });
@@ -96,13 +96,13 @@ describe("findInReviewRows", () => {
     const result = findInReviewRows(rows, "x");
 
     expect(result.matches).toHaveLength(REVIEW_FIND_MAX_MATCHES);
-    expect(result.limited).toBe(true);
+    expect(result.matchesTruncated).toBe(true);
   });
 
   it("trims a long line preview around its first match and shifts the highlight", () => {
     const content = `${"a".repeat(100)}needle${"b".repeat(300)}`;
 
-    const [preview] = findInReviewRows([line("a", 0, content)], "needle").files[0]!.lines;
+    const [preview] = findInReviewRows([line("a", 0, content)], "needle").files[0]!.previewLines;
 
     expect(preview!.text.startsWith("…")).toBe(true);
     expect(preview!.text.endsWith("…")).toBe(true);

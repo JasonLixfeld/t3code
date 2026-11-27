@@ -13,7 +13,6 @@ const HIGHLIGHTS_PER_LINE = 10;
 export interface ReviewFindMatch {
   readonly rowId: string;
   readonly fileId: string;
-  /** UTF-16 offsets into the row's content. */
   readonly start: number;
   readonly end: number;
 }
@@ -32,26 +31,23 @@ export interface ReviewFindFile {
   readonly fileId: string;
   readonly matchCount: number;
   readonly firstMatchIndex: number;
-  /** Every matching line, including those past `lines`. */
   readonly lineCount: number;
-  readonly lines: ReadonlyArray<ReviewFindLine>;
+  readonly previewLines: ReadonlyArray<ReviewFindLine>;
 }
 
 export interface ReviewFindResult {
   readonly matches: ReadonlyArray<ReviewFindMatch>;
   readonly files: ReadonlyArray<ReviewFindFile>;
-  /** Matching stopped at `REVIEW_FIND_MAX_MATCHES`. */
-  readonly limited: boolean;
+  readonly matchesTruncated: boolean;
 }
 
 export const EMPTY_REVIEW_FIND_RESULT: ReviewFindResult = {
   matches: [],
   files: [],
-  limited: false,
+  matchesTruncated: false,
 };
 
-// Folds one UTF-16 unit at a time so match offsets index the original text.
-function foldCase(text: string): string {
+function foldCasePreservingUtf16Offsets(text: string): string {
   const lower = text.toLowerCase();
   if (lower.length === text.length) return lower;
   return text.replace(/[\s\S]/g, (unit) => {
@@ -95,28 +91,26 @@ function presentLine(
   };
 }
 
-/** Case-insensitive literal matches in the code of the loaded diff rows, in render order. */
 export function findInReviewRows(
   rows: ReadonlyArray<NativeReviewDiffRow>,
   query: string,
 ): ReviewFindResult {
   if (query.length === 0) return EMPTY_REVIEW_FIND_RESULT;
-  const needle = foldCase(query);
+  const needle = foldCasePreservingUtf16Offsets(query);
   const matches: ReviewFindMatch[] = [];
   const files: Array<{
     fileId: string;
     matchCount: number;
     firstMatchIndex: number;
     lineCount: number;
-    lines: ReviewFindLine[];
+    previewLines: ReviewFindLine[];
   }> = [];
   let shownLines = 0;
-  let limited = false;
+  let matchesTruncated = false;
   for (const row of rows) {
     if (row.kind !== "line" || !row.content) continue;
-    // A cut line's note is not code.
     const code = row.noteStart === undefined ? row.content : row.content.slice(0, row.noteStart);
-    const haystack = foldCase(code);
+    const haystack = foldCasePreservingUtf16Offsets(code);
     const rowStart = matches.length;
     for (
       let at = haystack.indexOf(needle);
@@ -124,7 +118,7 @@ export function findInReviewRows(
       at = haystack.indexOf(needle, at + needle.length)
     ) {
       if (matches.length === REVIEW_FIND_MAX_MATCHES) {
-        limited = true;
+        matchesTruncated = true;
         break;
       }
       matches.push({ rowId: row.id, fileId: row.fileId ?? "", start: at, end: at + needle.length });
@@ -133,25 +127,24 @@ export function findInReviewRows(
       const fileId = row.fileId ?? "";
       let file = files.at(-1);
       if (file?.fileId !== fileId) {
-        file = { fileId, matchCount: 0, firstMatchIndex: rowStart, lineCount: 0, lines: [] };
+        file = { fileId, matchCount: 0, firstMatchIndex: rowStart, lineCount: 0, previewLines: [] };
         files.push(file);
       }
       file.matchCount += matches.length - rowStart;
       file.lineCount += 1;
-      if (file.lines.length < REVIEW_FIND_LINES_PER_FILE && shownLines < REVIEW_FIND_MAX_LINES) {
-        file.lines.push(presentLine(row, code, matches.slice(rowStart), rowStart));
+      if (
+        file.previewLines.length < REVIEW_FIND_LINES_PER_FILE &&
+        shownLines < REVIEW_FIND_MAX_LINES
+      ) {
+        file.previewLines.push(presentLine(row, code, matches.slice(rowStart), rowStart));
         shownLines += 1;
       }
     }
-    if (limited) break;
+    if (matchesTruncated) break;
   }
-  return { matches, files, limited };
+  return { matches, files, matchesTruncated };
 }
 
-/**
- * The active match, found by its row and start so rows loading around it do not move it. With
- * none chosen, or when it is gone, the first match is active.
- */
 export function resolveReviewFindActiveIndex(
   matches: ReadonlyArray<ReviewFindMatch>,
   active: { readonly rowId: string; readonly start: number } | null,
@@ -163,12 +156,10 @@ export function resolveReviewFindActiveIndex(
   return Math.max(0, index);
 }
 
-/** Steps to the next or previous match, wrapping at both ends. */
 export function stepReviewFindIndex(index: number, direction: 1 | -1, count: number): number {
   return (index + direction + count) % count;
 }
 
-/** Sparse ranges near the active match; the native surface paints only rows on screen. */
 export function reviewFindHighlightsJson(
   matches: ReadonlyArray<ReviewFindMatch>,
   activeIndex: number | null,

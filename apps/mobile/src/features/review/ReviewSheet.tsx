@@ -463,11 +463,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const [find, setFind] = useState<{
     readonly open: boolean;
     readonly query: string;
-    /** Kept by identity, so rows loading around it do not move it. */
     readonly active: { readonly rowId: string; readonly start: number } | null;
-    /** Each step, choice or new query asks for one reveal. */
-    readonly revision: number;
-  }>({ open: false, query: "", active: null, revision: 0 });
+    readonly revealRequestId: number;
+  }>({ open: false, query: "", active: null, revealRequestId: 0 });
   const findQuery = useDeferredValue(find.query);
   const findResult = useMemo(
     () => findInReviewRows(nativeReviewDiffData.rows, findQuery),
@@ -487,11 +485,16 @@ export function ReviewSheet(props: ReviewSheetProps) {
       ...current,
       open: true,
       active: { rowId: match.rowId, start: match.start },
-      revision: current.revision + 1,
+      revealRequestId: current.revealRequestId + 1,
     }));
   };
   const changeFindQuery = (query: string) =>
-    setFind((current) => ({ open: true, query, active: null, revision: current.revision + 1 }));
+    setFind((current) => ({
+      open: true,
+      query,
+      active: null,
+      revealRequestId: current.revealRequestId + 1,
+    }));
   const stepFind = (direction: 1 | -1) => {
     if (findActiveIndex === null) return;
     selectFindMatch(stepReviewFindIndex(findActiveIndex, direction, findMatches.length));
@@ -501,11 +504,10 @@ export function ReviewSheet(props: ReviewSheetProps) {
     closeFind();
     return true;
   });
-  const revealedFindRevision = useRef(-1);
+  const lastRevealedRequestId = useRef(-1);
   const revealActiveMatch = useEffectEvent(async () => {
     if (!activeMatch) return;
-    revealedFindRevision.current = find.revision;
-    // Opening a fold leaves its viewed state alone; native waits for the opened rows.
+    lastRevealedRequestId.current = find.revealRequestId;
     if (collapsedFileIds.includes(activeMatch.fileId)) toggleExpandedFile(activeMatch.fileId);
     const nativeView = nativeReviewDiffViewRef.current;
     if (!nativeView) return;
@@ -529,12 +531,12 @@ export function ReviewSheet(props: ReviewSheetProps) {
       !find.open ||
       !findResultIsCurrent ||
       !hasActiveMatch ||
-      revealedFindRevision.current === find.revision
+      lastRevealedRequestId.current === find.revealRequestId
     ) {
       return;
     }
     void revealActiveMatch();
-  }, [find.open, find.revision, findResultIsCurrent, hasActiveMatch]);
+  }, [find.open, find.revealRequestId, findResultIsCurrent, hasActiveMatch]);
   const renderInspector = () => (
     <ReviewFileNavigator
       ref={reviewFileNavigatorRef}

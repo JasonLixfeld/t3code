@@ -30,7 +30,6 @@ export interface ReviewFileNavigatorHandle {
   readonly setVisibleFile: (fileId: string | null) => void;
 }
 
-/** The find query and matches the Contents search shares with the find row. */
 export interface ReviewFileNavigatorFind {
   readonly query: string;
   readonly result: ReviewFindResult;
@@ -90,7 +89,7 @@ function ReviewFindFileResult(props: {
 }) {
   const gt = useGT();
   const { file, activeIndex } = props;
-  const hiddenLineCount = file.lineCount - file.lines.length;
+  const hiddenLineCount = file.lineCount - file.previewLines.length;
   return (
     <View className="pb-2">
       <PaneListItem selected={false} onPress={() => props.onSelectMatch(file.firstMatchIndex)}>
@@ -101,7 +100,7 @@ function ReviewFindFileResult(props: {
           <Text className="text-2xs font-t3-bold text-foreground-muted">{file.matchCount}</Text>
         </View>
       </PaneListItem>
-      {file.lines.map((line) => (
+      {file.previewLines.map((line) => (
         <PaneListItem
           key={line.rowId}
           selected={
@@ -197,7 +196,6 @@ export function ReviewFileNavigator({
     [availableFileIds, sectionId],
   );
 
-  // In a sheet, the diff behind it moves only once the sheet is gone.
   const afterSheetCloses = (run: () => void) =>
     closeInspectorSheet ? closeInspectorSheet(run) : run();
   const handleSelectFile = (fileId: string | null) => {
