@@ -216,7 +216,7 @@ export function ReviewFileNavigator({
   const handleChangeMode = (next: SearchMode) => {
     if (next === mode) return;
     if (next === "contents") {
-      find.onChangeQuery(nameQuery);
+      if (nameQuery.length > 0) find.onChangeQuery(nameQuery);
       setNameQuery("");
     } else {
       setNameQuery(find.query);

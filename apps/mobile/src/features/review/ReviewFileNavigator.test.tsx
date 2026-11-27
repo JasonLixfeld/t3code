@@ -98,25 +98,36 @@ const rows: NativeReviewDiffRow[] = [
 function setup(closeSheet: ((then?: () => void) => void) | null = null) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const container = document.body.appendChild(document.createElement("div"));
-  const root = createRoot(container);
+  let root = createRoot(container);
+  let findQuery = "";
   const onSelectMatch = vi.fn();
-  const onChangeQuery = vi.fn();
-  const render = (query: string) => {
+  const tree = () => {
     const find: ReviewFileNavigatorFind = {
-      query,
-      result: findInReviewRows(rows, query),
+      query: findQuery,
+      result: findInReviewRows(rows, findQuery),
       activeIndex: null,
       partial: false,
       onChangeQuery,
       onSelectMatch,
     };
-    act(() =>
-      root.render(
-        <InspectorSheetContext value={closeSheet}>
-          <ReviewFileNavigator files={files} sectionId="s" onSelectFile={() => {}} find={find} />
-        </InspectorSheetContext>,
-      ),
+    return (
+      <InspectorSheetContext value={closeSheet}>
+        <ReviewFileNavigator files={files} sectionId="s" onSelectFile={() => {}} find={find} />
+      </InspectorSheetContext>
     );
+  };
+  const onChangeQuery = vi.fn((query: string) => {
+    findQuery = query;
+    root.render(tree());
+  });
+  const render = (query: string) => {
+    findQuery = query;
+    act(() => root.render(tree()));
+  };
+  const reopen = () => {
+    act(() => root.unmount());
+    root = createRoot(container);
+    act(() => root.render(tree()));
   };
   const type = (value: string) => {
     const input = container.querySelector("input")!;
@@ -133,6 +144,7 @@ function setup(closeSheet: ((then?: () => void) => void) | null = null) {
   return {
     container,
     render,
+    reopen,
     type,
     chooseMode,
     buttons,
@@ -184,18 +196,31 @@ it("searches contents with the find query and lists counts and matching lines", 
   expect(screen.onChangeQuery).toHaveBeenLastCalledWith("twice");
 });
 
-it("switches modes like the web diff: each mode takes the other's text, even when empty", () => {
+it("switches modes like the web diff: Contents takes typed Name text, Name takes the find query", () => {
   using screen = setup();
   screen.render("app");
   screen.type("SRC");
 
   screen.chooseMode("Contents");
   expect(screen.onChangeQuery).toHaveBeenLastCalledWith("SRC");
-  screen.render("");
-  expect(screen.container.querySelector("input")!.value).toBe("");
+  expect(screen.container.querySelector("input")!.value).toBe("SRC");
+  screen.type("");
 
   screen.chooseMode("Name");
   expect(screen.container.querySelector("input")!.value).toBe("");
+});
+
+it("keeps an active find query when Contents opens with an empty Name field", () => {
+  using screen = setup();
+  screen.render("app");
+
+  screen.chooseMode("Contents");
+  expect(screen.container.querySelector("input")!.value).toBe("app");
+
+  screen.reopen();
+  screen.chooseMode("Contents");
+  expect(screen.onChangeQuery).not.toHaveBeenCalledWith("");
+  expect(screen.container.querySelector("input")!.value).toBe("app");
 });
 
 it("closes the inspector sheet before jumping to a chosen match", () => {
