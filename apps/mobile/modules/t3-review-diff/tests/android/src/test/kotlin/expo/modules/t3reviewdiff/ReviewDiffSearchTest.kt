@@ -128,18 +128,18 @@ class ReviewDiffSearchTest {
     }
   }.toString()
 
-  private fun rows(): String = JSONArray().apply {
-    for (file in listOf("a.ts", "b.ts")) {
-      put(JSONObject().put("kind", "file").put("id", "$file:header").put("fileId", file))
-      for (line in 0 until 100) {
-        val content = if (line == 80) "x".repeat(300) + "needle" else "plain code $line"
-        put(
-          JSONObject().put("kind", "line").put("id", "$file:line:$line").put("fileId", file)
-            .put("change", "context").put("content", content),
-        )
-      }
-    }
-  }.toString()
+  private fun rows(): String = JSONArray(
+    listOf("a.ts", "b.ts").flatMap { file ->
+      listOf(JSONObject().put("kind", "file").put("id", "$file:header").put("fileId", file)) +
+        (0 until 100).map { line -> codeRow(file, line) }
+    },
+  ).toString()
+
+  private fun codeRow(file: String, line: Int): JSONObject {
+    val content = if (line == 80) "x".repeat(300) + "needle" else "plain code $line"
+    return JSONObject().put("kind", "line").put("id", "$file:line:$line").put("fileId", file)
+      .put("change", "context").put("content", content)
+  }
 
   private fun draw(canvas: View): Bitmap =
     Bitmap.createBitmap(320, 320, Bitmap.Config.ARGB_8888).also { canvas.draw(Canvas(it)) }

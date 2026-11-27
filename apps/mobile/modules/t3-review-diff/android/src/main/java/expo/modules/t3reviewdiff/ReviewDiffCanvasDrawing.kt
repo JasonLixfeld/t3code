@@ -186,6 +186,9 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
 
   var codeLayouts = CodeLayoutCache()
 
+  /** Paint-only: row geometry does not depend on search highlights. */
+  val search = ReviewDiffSearchPainter(this)
+
   /** Capture paint on the UI thread; the decode worker owns the new cache until publication. */
   fun prepareRows(
     tokens: Map<String, List<DiffToken>>,
@@ -227,7 +230,6 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
   private var asciiCharacterWidth = 0f
   private var asciiFixedPitch = false
   private var wordDiffLefts = FloatArray(0)
-  private val selectionPath = Path()
 
   fun tokensChangeWidth(
     previous: Map<String, List<DiffToken>>,
@@ -439,54 +441,8 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     )
   }
 
-  /** Paints search matches without touching the cached layouts, so geometry stays as it is. */
   @Suppress("LongParameterList")
-  fun drawSearchRanges(
-    canvas: Canvas,
-    row: DiffRow,
-    tokens: List<DiffToken>?,
-    codeX: Float,
-    top: Int,
-    bottom: Int,
-    baseline: Float,
-    lines: CodeLines,
-    style: DiffStyle,
-    ranges: List<DiffWordDiffRange>,
-    color: Int
-  ) {
-    if (ranges.isEmpty()) return
-    val nativeLayout = lines.nativeLayout
-    if (nativeLayout == null) {
-      fillRanges(canvas, row, tokens, codeX, top, bottom, lines, style, ranges, color)
-      return
-    }
-    backgroundPaint.color = color
-    canvas.save()
-    canvas.translate(codeX, baseline - nativeLayout.getLineBaseline(0))
-    val length = nativeLayout.text.length
-    for (range in ranges) {
-      selectionPath.reset()
-      nativeLayout.getSelectionPath(
-        range.start.coerceIn(0, length),
-        range.end.coerceIn(0, length),
-        selectionPath,
-      )
-      canvas.drawPath(selectionPath, backgroundPaint)
-    }
-    canvas.restore()
-  }
-
-  /** Where `offset` of the row's code starts, from the code's left edge. */
-  fun codeOffsetX(row: DiffRow, lines: CodeLines, offset: Int, style: DiffStyle): Float {
-    lines.nativeLayout?.let { return it.getPrimaryHorizontal(offset.coerceIn(0, it.text.length)) }
-    val line = lines.lineForOffset(offset)
-    configureCodePaint(theme.text, 0, style)
-    val start = lines.starts[line].coerceIn(0, row.content.length)
-    return textPaint.measureText(row.content, start, offset.coerceIn(start, row.content.length))
-  }
-
-  @Suppress("LongParameterList")
-  private fun fillRanges(
+  fun fillRanges(
     canvas: Canvas,
     row: DiffRow,
     tokens: List<DiffToken>?,
