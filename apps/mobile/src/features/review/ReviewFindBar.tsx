@@ -8,7 +8,6 @@ import { IconButton } from "../../components/ui/IconButton";
 import { SearchField } from "../../components/ui/SearchField";
 import type { ReviewFindResult } from "./reviewFind";
 
-/** Says a partial diff hides lines from find. */
 export function ReviewFindPartialHint() {
   return (
     <Text className="text-xs text-foreground-muted">
@@ -36,7 +35,7 @@ export function ReviewFindBar(props: {
         ? gt("No results", { $context: "find in diff counter" })
         : gt("{current} of {total}", {
             current: props.activeIndex + 1,
-            total: props.result.limited ? `${total}+` : total,
+            total: props.result.matchesTruncated ? `${total}+` : total,
           });
   return (
     <ContentBand>

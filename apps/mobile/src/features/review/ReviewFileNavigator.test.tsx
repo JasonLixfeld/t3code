@@ -69,7 +69,6 @@ import { ReviewFileNavigator } from "./ReviewFileNavigator";
 const files = [
   { id: "src/app.ts", path: "src/app.ts", additions: 2, deletions: 1 },
   { id: "docs/guide.md", path: "docs/guide.md", additions: 4, deletions: 0 },
-  // A lazy file that has not loaded: it has metadata but no rows.
   { id: "src/unloaded.ts", path: "src/unloaded.ts", additions: 9, deletions: 0 },
 ];
 const rows: NativeReviewDiffRow[] = [
