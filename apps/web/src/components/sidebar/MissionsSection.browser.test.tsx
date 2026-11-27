@@ -713,6 +713,9 @@ describe("missions in the sidebar", () => {
     );
     const loading = screen.getByText("Archive the old site").element().closest("li")!;
     await menuOf(loading, "mission-delete:local:cccccccccccc");
+    expect(
+      (show.mock.lastCall![0] as ReadonlyArray<{ readonly id: string }>).map((item) => item.id),
+    ).toContain("mission-delete:local:cccccccccccc");
     await vi.waitFor(() =>
       expect(commandFor("mission delete")).toHaveBeenCalledExactlyOnceWith({
         environmentId: LOCAL,
@@ -1006,19 +1009,22 @@ const shipArea = (root: Element) =>
 const hintIn = (element: Element) => element.querySelector('[role="status"]')?.textContent ?? null;
 
 describe("dragging threads into and out of missions", () => {
-  it("adds a dragged thread to the mission it is dropped on", async () => {
+  it("adds a dragged thread, even one with no messages, to the mission it is dropped on", async () => {
     using _drag = allowDrag();
-    await using screen = await renderSidebar();
-    await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
+    await using screen = await renderSidebar(
+      {},
+      { extra: [shell("empty", "Empty thread", { empty: true })] },
+    );
+    await expect.element(screen.getByText("Empty thread")).toBeInTheDocument();
     const drag = await dragBetween(
-      rowOf(screen.container, "Unrelated bug"),
+      rowOf(screen.container, "Empty thread"),
       rowOf(screen.container, "Plan the v2 release"),
     );
     expect(hintIn(shipArea(screen.container))).toBe("Add to mission");
     await drag.release();
     expect(commandFor("mission add member")).toHaveBeenCalledExactlyOnceWith({
       environmentId: LOCAL,
-      input: { missionId: "0123456789ab", member: ref(LOCAL, "plain") },
+      input: { missionId: "0123456789ab", member: ref(LOCAL, "empty") },
     });
     expect(hintIn(shipArea(screen.container))).toBeNull();
   });

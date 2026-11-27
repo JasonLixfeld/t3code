@@ -157,7 +157,10 @@ it("starts one mission led by an empty server thread its menu marked, with the m
   const start = screen.getByRole("button", { name: "Start mission from this thread" });
   await userEvent.click(start);
   await userEvent.click(screen.getByRole("button", { name: "Send as a plain thread" }));
+  await screen.stream("sent");
+  expect(commandFor("mission create")).not.toHaveBeenCalled();
   expect(missionDraftOf(markId)).toBeUndefined();
+  await screen.stream("empty");
   await userEvent.click(start);
   const mark = missionDraftOf(markId);
   expect(mark).toMatchObject({ intent: { kind: "new" }, thread, step: "waiting" });

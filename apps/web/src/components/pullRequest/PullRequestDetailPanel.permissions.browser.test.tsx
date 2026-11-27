@@ -397,6 +397,7 @@ it("opens find in the Code tab from the workspace panel's tab bar and the Code t
   const code = screen.getByRole("button", { name: "Code", exact: true });
   await userEvent.click(code);
   await expect.element(screen.getByRole("button", { name: "Diff options" })).toBeInTheDocument();
+  await expect.element(code).toHaveFocus();
   await pressFind();
   await vi.waitFor(() => expect(codeFind).toHaveBeenCalledTimes(1));
   screen.container.querySelector<HTMLElement>("[data-active-tab='true'] button")!.focus();
@@ -405,6 +406,7 @@ it("opens find in the Code tab from the workspace panel's tab bar and the Code t
   // The detail panel claims a key from inside Code, so the tab bar does not send it again.
   const options = screen.getByRole("button", { name: "Diff options" });
   options.element().focus();
+  await expect.element(options).toHaveFocus();
   await pressFind();
   await vi.waitFor(() => expect(codeFind).toHaveBeenCalledTimes(3));
 });

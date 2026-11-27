@@ -907,7 +907,7 @@ it("opening another thread before No project is ready leaves the user there", as
   expect(vi.mocked(opened).mock.calls[0]?.[2]).toMatchObject({ aborted: true });
 });
 
-it("drops No project with a note when the mission's link loses full access first", async () => {
+it("offers a member's mission the projects its full-access link reaches, and drops No project with a note when the link loses full access first", async () => {
   const { finish } = holdScratch([ENVIRONMENT_ID]);
   using _environment = installFakeEnvironment([], {
     extraProjects: [{ id: alphaProject.id, title: "alpha" }],
@@ -923,7 +923,8 @@ it("drops No project with a note when the mission's link loses full access first
     missionId: shipV2.missionId,
     name: "Ship v2",
   });
-  await pickNoProject();
+  expect(await projectOptions()).toContainEqual(expect.stringMatching(/render$/));
+  await page.getByRole("option", { name: "No project" }).click();
   await act(() => {
     missionHosts.listed = linked(false);
     for (const listener of missionHosts.listeners) listener();

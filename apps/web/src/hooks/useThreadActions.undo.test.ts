@@ -454,6 +454,9 @@ describe("archive and delete Undo expiry", () => {
       const staleUndo = currentUndo();
       shellLoaded.current = loaded;
       for (const ref of [target, otherThread]) markMission(ref);
+      commands.delete.mockResolvedValueOnce(failure);
+      await actions.deleteThread(target);
+      expect(hasMissionMark(target)).toBe(true);
       await actions.deleteThread(target);
       expect(hasMissionMark(target)).toBe(false);
       expect(hasMissionMark(otherThread)).toBe(true);

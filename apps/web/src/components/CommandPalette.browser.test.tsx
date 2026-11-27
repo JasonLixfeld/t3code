@@ -472,10 +472,21 @@ describe("CommandPalette open intents", () => {
     await expect.element(page.getByRole("option", { name: /No project/ })).toBeVisible();
   });
 
-  it("marks the draft a mission's project pick makes, offering only the lead's machine", async () => {
+  it("marks the draft a mission's project pick makes, offering a member machines its mission links to and a lead only its machine", async () => {
     const local = makeProject("web");
     const remote = { ...makeProject("api"), environmentId: EnvironmentId.make("remote") };
     setup({ projects: [local, remote] });
+    vi.mocked(useMissionHosts).mockReturnValue([
+      {
+        environmentId: local.environmentId,
+        snapshot: {
+          missions: [],
+          claims: [],
+          links: [{ environmentId: remote.environmentId, label: "Remote", fullAccess: true }],
+        },
+      },
+    ]);
+    onTestFinished(() => vi.mocked(useMissionHosts).mockRestore());
     const created = { draftId: DraftId.make("lead-draft"), threadId: ThreadId.make("lead-thread") };
     onTestFinished(() => clearMissionDraft(created.draftId));
     entities.handleNewThread.mockResolvedValueOnce(created as never);
@@ -488,6 +499,16 @@ describe("CommandPalette open intents", () => {
       expectedLead: ThreadId.make("deleted-lead"),
     } as const;
 
+    openCommandPalette({
+      open: "new-thread-in",
+      mission: {
+        kind: "member",
+        host: local.environmentId,
+        missionId: "0123456789ab",
+        name: "Ship v2",
+      },
+    });
+    await expect.element(page.getByRole("option", { name: /api/ })).toBeInTheDocument();
     openCommandPalette({ open: "new-thread-in", mission: intent });
     await expect.element(page.getByRole("option", { name: /web/ })).toBeInTheDocument();
     await expect.element(page.getByRole("option", { name: /api/ })).not.toBeInTheDocument();
@@ -963,7 +984,10 @@ describe("CommandPalette mission thread actions", () => {
     openCommandPalette();
     await page.getByRole("option", { name: /^Leave mission/ }).click();
     await vi.waitFor(() =>
-      expect(realMissionMenu.commands.get("mission leave")).toHaveBeenCalledOnce(),
+      expect(realMissionMenu.commands.get("mission leave")).toHaveBeenCalledExactlyOnceWith({
+        environmentId: LOCAL,
+        input: { threadId: thread.id, missionId: "ba9876543210" },
+      }),
     );
   });
 });
