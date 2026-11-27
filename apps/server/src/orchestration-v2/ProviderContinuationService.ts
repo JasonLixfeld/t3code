@@ -114,7 +114,6 @@ export const layer = Layer.effectDiscard(
           ),
           Stream.runHead,
           Effect.flatMap(Effect.fromOption),
-          // The run may still take its wake, so a failed watch reads again from the same cursor.
           Effect.tapCause((cause) =>
             Effect.logWarning("orchestration-v2.provider-continuation.run-watch-failed", {
               threadId: request.threadId,

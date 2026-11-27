@@ -2147,6 +2147,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }),
   );
 
+  const ROUTED_AFTER_HELD_WAKE = "thinking";
+  const routedAfterHeldWake = event("session.model.selected", {
+    sessionID: SESSION,
+    model: { providerID: "opencode", id: "big-pickle", variant: ROUTED_AFTER_HELD_WAKE },
+  });
+
   it.effect.each(["delivered", "cancelled"] as const)(
     "settles an earlier child's report held by a wake that is given up, report %s",
     (fate) =>
@@ -2162,17 +2168,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           event("session.execution.started", { sessionID: SESSION }),
           event("session.execution.succeeded", { sessionID: CHILD }),
           childReport("msg_report", "CHILD_OK"),
-          // OpenCode cancels a report it never delivered only after its execution ends.
           ...(fate === "delivered" ? [settle] : []),
           event(`session.execution.${fate === "delivered" ? "succeeded" : "interrupted"}`, {
             sessionID: SESSION,
           }),
           ...(fate === "cancelled" ? [settle] : []),
-          // Routed once the held execution ended, so its update proves the report was held.
-          event("session.model.selected", {
-            sessionID: SESSION,
-            model: { providerID: "opencode", id: "big-pickle", variant: "thinking" },
-          }),
+          routedAfterHeldWake,
         ]).pipe(
           Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
             offer: (request) => Effect.sync(() => void offers.push(request)),
@@ -2181,8 +2182,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         );
         const watch = yield* watchCalls(runtime, thread);
         yield* runtime.startTurn(withLineage(thread));
-        yield* watch.until(() => offers.length === 1 && watch.state.variant === "thinking");
-        assert.equal(watch.calls.get("Sleep")?.status, "running");
+        yield* watch.until(
+          () => offers.length === 1 && watch.state.variant === ROUTED_AFTER_HELD_WAKE,
+        );
+        assert.equal(
+          watch.calls.get("Sleep")?.status,
+          "running",
+          "the wake still holds the report",
+        );
         yield* offers[0]!.clearIfCurrent!();
         yield* watch.until(
           () =>
@@ -2244,10 +2251,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         event("session.execution.interrupted", { sessionID: LATE }),
         event("session.deleted", { sessionID: LATE }, undefined, 2),
         event("session.execution.succeeded", { sessionID: SESSION }),
-        event("session.model.selected", {
-          sessionID: SESSION,
-          model: { providerID: "opencode", id: "big-pickle", variant: "thinking" },
-        }),
+        routedAfterHeldWake,
       ]).pipe(
         Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
           offer: (request) => Effect.sync(() => void offers.push(request)),
@@ -2256,7 +2260,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       const watch = yield* watchCalls(runtime, thread);
       yield* runtime.startTurn(withLineage(thread));
-      yield* watch.until(() => offers.length === 1 && watch.state.variant === "thinking");
+      yield* watch.until(
+        () => offers.length === 1 && watch.state.variant === ROUTED_AFTER_HELD_WAKE,
+      );
       yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
       yield* watch.until(
         () => watch.calls.get("Late")?.status === "interrupted" && watch.state.roster?.length === 0,

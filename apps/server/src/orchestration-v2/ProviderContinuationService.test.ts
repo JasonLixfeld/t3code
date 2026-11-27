@@ -545,21 +545,22 @@ describe("ProviderContinuationService", () => {
         const messageId = MessageId.make("message-provider-continuation-wake");
         const ended = yield* Deferred.make<void>();
         const firstRead = yield* Deferred.make<void>();
-        let reads = 0;
+        const dispatchSequence = 7;
+        const cursors: Array<number | undefined> = [];
         let unstarted = 0;
         const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: () => Effect.succeed(projection),
           dispatch: () =>
             Effect.succeed({
-              sequence: 1,
+              sequence: dispatchSequence,
               storedEvents: [
                 {
                   event: { type: "run.created", payload: { id: runId, userMessageId: messageId } },
                 },
               ],
             } as never),
-          streamStoredEventsFrom: () => {
-            reads += 1;
+          streamStoredEventsFrom: (input) => {
+            cursors.push(input?.afterSequence);
             const terminal = Stream.make({
               event: {
                 type: "run.updated",
@@ -567,7 +568,7 @@ describe("ProviderContinuationService", () => {
               },
             } as never);
             return (
-              watch === "fails its first read" && reads === 1
+              watch === "fails its first read" && cursors.length === 1
                 ? Stream.fromEffect(Deferred.succeed(firstRead, undefined)).pipe(
                     Stream.flatMap(() => Stream.fail(new Error("event store read failed"))),
                   )
@@ -590,7 +591,10 @@ describe("ProviderContinuationService", () => {
           }
           yield* Deferred.await(ended);
           assert.equal(unstarted, 0);
-          assert.equal(reads, watch === "reads" ? 1 : 2);
+          assert.deepEqual(
+            cursors,
+            watch === "reads" ? [dispatchSequence] : [dispatchSequence, dispatchSequence],
+          );
         }).pipe(
           Effect.provide(
             Layer.merge(

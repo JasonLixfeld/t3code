@@ -321,7 +321,7 @@ interface Wake {
   continuationPending: boolean;
   readonly after: string | undefined;
   readonly first: string | undefined;
-  readonly children: Set<string>;
+  readonly childrenLaunchedByWake: Set<string>;
   readonly awaited: Set<string>;
   /** Held shell launches whose end report arrived first; the report already cleared their status. */
   readonly ended: Map<
@@ -2423,8 +2423,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
     });
 
-    // Reports from children attached before this wake outlive it; its own children are retired with it.
-    const outlivesWake = (
+    const replaysAfterWakeRetires = (
       state: ThreadState,
       wake: Wake,
       event: OpenCode2Client.OpenCode2StreamEvent,
@@ -2434,7 +2433,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         event.type === "session.inbox.cancelled" ||
         (event.type === "session.inbox.enqueued" &&
           event.data.item.type === "synthetic" &&
-          !wake.children.has(stringField(event.data.item.payload.metadata, "childID") ?? "")));
+          !wake.childrenLaunchedByWake.has(
+            stringField(event.data.item.payload.metadata, "childID") ?? "",
+          )));
 
     const offerWake = Effect.fnUntraced(function* (state: ThreadState, wake: Wake) {
       const appThreadId = state.providerThread.appThreadId;
@@ -2456,7 +2457,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             if (index >= 0) {
               discardWakes(state, state.wakes.splice(index, 1));
               for (const event of wake.events) {
-                if (!outlivesWake(state, wake, event)) continue;
+                if (!replaysAfterWakeRetires(state, wake, event)) continue;
                 yield* route(event, state.sessionId, true).pipe(Effect.ignore({ log: true }));
               }
             }
@@ -3220,7 +3221,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         continuationPending: true,
         after: delivered.at(-1)?.inboxId,
         first: leading ?? delivered[0]?.inboxId,
-        children: new Set(),
+        childrenLaunchedByWake: new Set(),
         awaited: new Set(),
         ended: new Map(),
       };
@@ -3484,6 +3485,23 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
     });
 
+    const bufferInboxSettlementBehindEnqueue = (event: OpenCode2Client.OpenCode2StreamEvent) => {
+      if (event.type !== "session.inbox.delivered" && event.type !== "session.inbox.cancelled") {
+        return false;
+      }
+      const holding = threads
+        .get(event.data.sessionID)
+        ?.wakes.find((wake) =>
+          wake.events.some(
+            (buffered) =>
+              buffered.type === "session.inbox.enqueued" &&
+              buffered.data.inboxID === event.data.inboxID,
+          ),
+        );
+      holding?.events.push(event);
+      return holding !== undefined;
+    };
+
     const onSessionDeleted = Effect.fnUntraced(function* (sessionId: string) {
       busy.delete(sessionId);
       const deleted = threads.get(sessionId);
@@ -3541,7 +3559,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         yield* syncRosterAncestors(shell.state);
         return;
       }
-      // A root's deletion drops its held wakes at once; anything else waits behind a held wake's events.
+      // A root's deletion drops its held wakes at once.
       if (event.type === "session.deleted") {
         const deleted = threads.get(event.data.sessionID);
         if (deleted !== undefined && deleted.subagent === undefined) {
@@ -3588,23 +3606,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (owner !== undefined) {
           childOwners.set(event.data.sessionID, owner);
           announced.set(event.data.sessionID, event.data);
-          holderOf(event.data.parentID)?.wakes.at(-1)?.children.add(event.data.sessionID);
+          holderOf(event.data.parentID)
+            ?.wakes.at(-1)
+            ?.childrenLaunchedByWake.add(event.data.sessionID);
         }
         return;
       }
-      // An inbox item's delivery or cancel stays behind its enqueue while a wake still holds that.
-      if (event.type === "session.inbox.delivered" || event.type === "session.inbox.cancelled") {
-        const holding = threads
-          .get(event.data.sessionID)
-          ?.wakes.find((wake) =>
-            wake.events.some(
-              (buffered) =>
-                buffered.type === "session.inbox.enqueued" &&
-                buffered.data.inboxID === event.data.inboxID,
-            ),
-          );
-        if (holding !== undefined) return void holding.events.push(event);
-      }
+      if (bufferInboxSettlementBehindEnqueue(event)) return;
       const holder = sessionId === undefined ? undefined : holderOf(sessionId);
       const held = holder?.wakes.at(-1);
       if (holder !== undefined && held !== undefined) {
@@ -4802,7 +4810,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       };
       for (const wake of wakes) {
         wake.dropped = true;
-        for (const childId of wake.children) retire(childId);
+        for (const childId of wake.childrenLaunchedByWake) retire(childId);
       }
       for (let grew = retired.size > 0; grew;) {
         grew = false;
