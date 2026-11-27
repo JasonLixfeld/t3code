@@ -12,6 +12,7 @@ import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SearchField } from "../../components/ui/SearchField";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { SheetPane } from "../../components/ui/SheetPane";
+import { useBarOverlap } from "../../components/ui/useBarInset";
 import { cn } from "../../lib/cn";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { InspectorSheetContext } from "../layout/workspace-inspector-sheet";
@@ -164,6 +165,7 @@ export function ReviewFileNavigator({
 }: ReviewFileNavigatorProps) {
   const gt = useGT();
   const closeInspectorSheet = use(InspectorSheetContext);
+  const barOverlap = useBarOverlap();
   const searchInputRef = useRef<TextInputInstance>(null);
   const [mode, setMode] = useState<SearchMode>("name");
   const [nameQuery, setNameQuery] = useState("");
@@ -238,7 +240,7 @@ export function ReviewFileNavigator({
         hideBottomBorder
       />
       <ScreenContent insetHorizontal>
-        <View className="gap-2 px-2 pt-2">
+        <View className="gap-2 px-2" style={{ paddingTop: barOverlap + 8 }}>
           <SearchField
             inputRef={searchInputRef}
             autoFocus={false}
