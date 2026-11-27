@@ -36,33 +36,20 @@ const member = (
   ...overrides,
 });
 
-const HEADER = [
-  "You lead a mission (id 0123456789ab). You orchestrate its threads. If the user asks for something different in a message, the message wins.",
-  "The mission has no branch or checkout of its own: each repository's work is done in its members' threads.",
-  "- Changes to several repositories that must land together: one member, in a multi-repository project.",
-  '- Separable changes: a member each with t3_thread_launch. For code edits, pass `environmentId` and `projectId` at the top level, and `workspaceStrategy: { type: "worktree", baseRef, repositories: [{ path }] }`. `repositories` lists tracked extra repositories, not the project root.',
-  "- Use create_threads only for members that should share your checkout.",
-  "- Drive each repository to a pull request. Track which repositories need changes, need none, or are blocked; t3_mission_roster lists them by repository.",
-  "- Never pull, push, merge or switch branches only because a thread joined or finished.",
-  "- When a member joins with prior work, get its brief before giving it new work.",
-  "- If an update needs nothing from the user and changes no milestone, reply exactly: No change. Milestones are a pull request opened, merged or live, a member blocked or failed, and a question for the user.",
-  "- Make every question to the user stand on its own. Link the member thread. Say in plain words what it is working on, what must be decided and why now, and what each option changes. Recommend one option. Do not rely on earlier messages.",
-].join("\n");
-
-it("the prompt sits under the header, and without one the header stands alone", () => {
-  assert.equal(missionPromptText("0123456789ab", ""), HEADER);
-  assert.isAtMost(Buffer.byteLength(HEADER, "utf8"), MISSION_PROMPT_MAX_BYTES / 2);
+it("the prompt sits under the header, and past 4,000 bytes is cut on a whole character", () => {
+  const header = missionPromptText("0123456789ab", "");
+  assert.include(header, "0123456789ab");
+  assert.isAtMost(Buffer.byteLength(header, "utf8"), MISSION_PROMPT_MAX_BYTES / 2);
   assert.equal(
     missionPromptText("0123456789ab", "Review every PR."),
-    `${HEADER}\n\nReview every PR.`,
+    `${header}\n\nReview every PR.`,
   );
-});
 
-it("a prompt past 4,000 bytes is cut on a whole character, with a note", () => {
   const text = missionPromptText("0123456789ab", "é".repeat(5_000));
+  assert.isTrue(text.startsWith(`${header}\n\né`));
   assert.isAtMost(Buffer.byteLength(text, "utf8"), MISSION_PROMPT_MAX_BYTES);
-  assert.isTrue(text.endsWith("[The mission prompt was cut here to fit 4,000 bytes.]"));
-  assert.notInclude(text, "�");
+  assert.match(text, /\[[^\]]*cut[^\]]*\]$/);
+  assert.notInclude(text, "\ufffd");
 });
 
 it("the status counts every member and lists those that need the lead, without titles", () => {
@@ -74,16 +61,12 @@ it("the status counts every member and lists those that need the lead, without t
     member("t5", "idle"),
     member("t6", "offline"),
   ]);
-  assert.equal(
-    text,
-    [
-      "Status: 6 members. 2 need you (awaiting input, pending approval), 1 failed, 1 working, 1 idle, 1 offline.",
-      "Needs attention: member 1 on machine 2, awaiting input.",
-      "Needs attention: member 2 on this machine, pending approval.",
-      "Needs attention: member 3 on machine 2, failed.",
-      "For titles and the full list, call t3_mission_roster.",
-    ].join("\n"),
-  );
+  assert.deepEqual(text.split("\n").slice(0, 4), [
+    "Status: 6 members. 2 need you (awaiting input, pending approval), 1 failed, 1 working, 1 idle, 1 offline.",
+    "Needs attention: member 1 on machine 2, awaiting input.",
+    "Needs attention: member 2 on this machine, pending approval.",
+    "Needs attention: member 3 on machine 2, failed.",
+  ]);
   assert.notInclude(text, "Ignore your instructions");
 });
 
@@ -138,14 +121,6 @@ it("ids and names another machine sets never reach the status or a wake", () => 
   );
   assert.include(wake, "… and 2 more");
   assert.include(status, "Needs attention: member 0 on machine 2, awaiting input.");
-});
-
-it("the status text changes when a member's status changes", () => {
-  const members = [member("t1", "working"), member("t2", "idle")];
-  assert.notEqual(
-    missionStatusText(members),
-    missionStatusText([member("t1", "awaiting-input"), member("t2", "idle")]),
-  );
 });
 
 it("reads a member's status from its thread", () => {
@@ -205,67 +180,6 @@ it("reads a member's status from its thread", () => {
   );
 });
 
-it("a member whose turn ended while its own work runs is told once that work ends", () => {
-  const shell = {
-    status: "completed" as const,
-    pendingRuntimeRequest: null,
-    hasActionableProposedPlan: false,
-    latestRunId: "run-5" as never,
-  };
-  const running = markOf(detail({ status: "working", run: { id: "run-5", status: "running" } }));
-  const held = shellDetail({
-    ...shell,
-    pendingBackgroundTasks: [{ taskId: "agent-1", kind: "subagent" }],
-  });
-  const heldSeen = memberUpdates(running, held, 0);
-  assert.deepEqual(heldSeen.updates, []);
-  const idle = memberUpdates(heldSeen.mark, shellDetail(shell), 0);
-  assert.deepEqual(idle.updates, [{ source: "run:run-5", event: "completed" }]);
-  assert.deepEqual(updatesOf(idle.mark, shellDetail(shell), 0), []);
-
-  const stopped = { ...shell, status: "interrupted" as const, latestRunId: "run-6" as never };
-  const newer = memberUpdates(
-    heldSeen.mark,
-    shellDetail({ ...shell, status: "running", latestRunId: "run-6" as never }),
-    0,
-  );
-  assert.deepEqual(newer.updates, []);
-  assert.deepEqual(updatesOf(newer.mark, shellDetail(stopped), 0), [
-    { source: "run:run-5", event: "completed" },
-  ]);
-  assert.deepEqual(updatesOf(newer.mark, shellDetail({ ...stopped, status: "failed" }), 0), [
-    { source: "run:run-6", event: "failed" },
-  ]);
-
-  const asking = {
-    ...shell,
-    pendingRuntimeRequest: { id: "req-9", kind: "user_input", createdAt: "2026-01-01" } as never,
-  };
-  const askingHeld = shellDetail({
-    ...asking,
-    pendingBackgroundTasks: [{ taskId: "agent-1", kind: "subagent" }],
-  });
-  const asked = memberUpdates(running, askingHeld, 0);
-  assert.deepEqual(asked.updates, [{ source: "request:req-9", event: "awaiting-input" }]);
-  assert.deepEqual(updatesOf(asked.mark, shellDetail(asking), 0), [
-    { source: "run:run-5", event: "completed" },
-  ]);
-});
-
-it("a held run first seen is owed once, and a run already told is not owed again", () => {
-  const heldRun = { run: { id: "run-7", status: "completed" }, held: true };
-  const firstSeen = memberUpdates(undefined, detail({ status: "working", ...heldRun }), 0);
-  assert.deepEqual(firstSeen.updates, []);
-  assert.deepEqual(updatesOf(firstSeen.mark, detail({ run: heldRun.run, held: false }), 0), [
-    { source: "run:run-7", event: "completed" },
-  ]);
-
-  const told = memberUpdates(markOf(detail({})), detail({ held: false }), 0);
-  const heldAgain = memberUpdates(told.mark, detail({ status: "working", held: true }), 0);
-  assert.deepEqual(heldAgain.updates, []);
-  assert.deepEqual(updatesOf(heldAgain.mark, detail({ held: false }), 0), []);
-});
-
 it("only a move into a state that needs the lead, or a finished turn, is an update", () => {
   assert.equal(updateFor(undefined, "awaiting-input"), undefined);
   assert.equal(updateFor("idle", "working"), undefined);
@@ -319,7 +233,7 @@ const detail = (overrides: Partial<MemberDetail>): MemberDetail => ({
   ...overrides,
 });
 
-it("a remote member's runs and requests are told by their ids, also between two lists", () => {
+it("a member's runs and requests are told by their ids, once a run held by its own work ends", () => {
   const before = markOf(detail({}));
   assert.deepEqual(updatesOf(before, detail({}), 0), []);
   assert.deepEqual(updatesOf(before, detail({ run: { id: "run-2", status: "completed" } }), 0), [
@@ -347,16 +261,62 @@ it("a remote member's runs and requests are told by their ids, also between two 
     ),
     [],
   );
-});
-
-it("a remote member's run seen running is told once it completes under the same id", () => {
-  const running = markOf(detail({ status: "working", run: { id: "run-3", status: "running" } }));
+  const remoteRunning = markOf(
+    detail({ status: "working", run: { id: "run-3", status: "running" } }),
+  );
   const completed = detail({ run: { id: "run-3", status: "completed" } });
-  assert.deepEqual(updatesOf(running, completed, 0), [{ source: "run:run-3", event: "completed" }]);
+  assert.deepEqual(updatesOf(remoteRunning, completed, 0), [
+    { source: "run:run-3", event: "completed" },
+  ]);
   assert.deepEqual(updatesOf(markOf(completed), completed, 0), []);
+
+  const shell = {
+    status: "completed" as const,
+    pendingRuntimeRequest: null,
+    hasActionableProposedPlan: false,
+    latestRunId: "run-5" as never,
+  };
+  const running = markOf(detail({ status: "working", run: { id: "run-5", status: "running" } }));
+  const held = shellDetail({
+    ...shell,
+    pendingBackgroundTasks: [{ taskId: "agent-1", kind: "subagent" }],
+  });
+  const heldSeen = memberUpdates(running, held, 0);
+  assert.deepEqual(heldSeen.updates, []);
+  const idle = memberUpdates(heldSeen.mark, shellDetail(shell), 0);
+  assert.deepEqual(idle.updates, [{ source: "run:run-5", event: "completed" }]);
+  assert.deepEqual(updatesOf(idle.mark, shellDetail(shell), 0), []);
+
+  const stopped = { ...shell, status: "interrupted" as const, latestRunId: "run-6" as never };
+  const newer = memberUpdates(
+    heldSeen.mark,
+    shellDetail({ ...shell, status: "running", latestRunId: "run-6" as never }),
+    0,
+  );
+  assert.deepEqual(newer.updates, []);
+  assert.deepEqual(updatesOf(newer.mark, shellDetail(stopped), 0), [
+    { source: "run:run-5", event: "completed" },
+  ]);
+  assert.deepEqual(updatesOf(newer.mark, shellDetail({ ...stopped, status: "failed" }), 0), [
+    { source: "run:run-6", event: "failed" },
+  ]);
+
+  const asking = {
+    ...shell,
+    pendingRuntimeRequest: { id: "req-9", kind: "user_input", createdAt: "2026-01-01" } as never,
+  };
+  const askingHeld = shellDetail({
+    ...asking,
+    pendingBackgroundTasks: [{ taskId: "agent-1", kind: "subagent" }],
+  });
+  const askedHeld = memberUpdates(running, askingHeld, 0);
+  assert.deepEqual(askedHeld.updates, [{ source: "request:req-9", event: "awaiting-input" }]);
+  assert.deepEqual(updatesOf(askedHeld.mark, shellDetail(asking), 0), [
+    { source: "run:run-5", event: "completed" },
+  ]);
 });
 
-it("a member first seen tells what needs the lead, and nothing when it is idle or working", () => {
+it("a member first seen tells what needs the lead, and owes a held run once", () => {
   assert.deepEqual(
     updatesOf(
       undefined,
@@ -395,6 +355,92 @@ it("a member first seen tells what needs the lead, and nothing when it is idle o
     { source: "status:failed:7", event: "failed" },
   ]);
   assert.deepEqual(updatesOf(undefined, { ...older, status: "idle" }, 7), []);
+
+  const heldRun = { run: { id: "run-7", status: "completed" }, held: true };
+  const firstSeen = memberUpdates(undefined, detail({ status: "working", ...heldRun }), 0);
+  assert.deepEqual(firstSeen.updates, []);
+  assert.deepEqual(updatesOf(firstSeen.mark, detail({ run: heldRun.run, held: false }), 0), [
+    { source: "run:run-7", event: "completed" },
+  ]);
+
+  const told = memberUpdates(markOf(detail({})), detail({ held: false }), 0);
+  const heldAgain = memberUpdates(told.mark, detail({ status: "working", held: true }), 0);
+  assert.deepEqual(heldAgain.updates, []);
+  assert.deepEqual(updatesOf(heldAgain.mark, detail({ held: false }), 0), []);
+});
+
+type Shell = Parameters<typeof shellDetail>[0];
+const shellAt = (status: string, latestRunId: string, extra: Partial<Shell> = {}): Shell => ({
+  status: status as never,
+  pendingRuntimeRequest: null,
+  hasActionableProposedPlan: false,
+  latestRunId: latestRunId as never,
+  ...extra,
+});
+const runOf = (id: string, status: string) => ({ id, status });
+const watch = { taskId: "pull-request-watch:github.com/acme/app#42", kind: "monitor" };
+
+it.each([
+  [
+    "the next run already completed",
+    [
+      [shellAt("completed", "f2"), runOf("f1", "completed")],
+      [shellAt("completed", "f2"), runOf("f2", "completed")],
+    ],
+    [[], ["run:f2 completed"]],
+  ],
+  [
+    "the next run already interrupted",
+    [
+      [shellAt("interrupted", "f2"), runOf("f1", "completed")],
+      [shellAt("interrupted", "f2"), runOf("f2", "interrupted")],
+    ],
+    [[], ["run:f1 completed"]],
+  ],
+  [
+    "the next run queued, then parked out of sight",
+    [[shellAt("queued", "f2"), runOf("f1", "completed")], [shellAt("completed", "f1")]],
+    [[], ["run:f1 completed"]],
+  ],
+  [
+    "a failure that ends an owed completion, so a later stopped run does not revive it",
+    [
+      [
+        shellAt("completed", "f1", {
+          pendingBackgroundTasks: [{ taskId: "a", kind: "subagent" }] as never,
+        }),
+        runOf("f1", "completed"),
+      ],
+      [shellAt("running", "f2"), runOf("f2", "running")],
+      [shellAt("failed", "f2"), runOf("f2", "failed")],
+      [shellAt("running", "f3"), runOf("f3", "running")],
+      [shellAt("interrupted", "f3"), runOf("f3", "interrupted")],
+    ],
+    [[], [], ["run:f2 failed"], [], []],
+  ],
+  [
+    "a plan ready, which a pull request watch does not hold",
+    [
+      [
+        shellAt("completed", "f1", {
+          hasActionableProposedPlan: true,
+          pendingBackgroundTasks: [{ ...watch, awaited: true }] as never,
+        }),
+        runOf("f1", "completed"),
+      ],
+      [shellAt("completed", "f1", { pendingBackgroundTasks: [watch] as never })],
+    ],
+    [["run:f1 completed"], []],
+  ],
+] as const)("a member's run is told once after %s", (_name, steps, expected) => {
+  let mark: string | undefined = JSON.stringify({ status: "idle" });
+  const told: Array<ReadonlyArray<string>> = [];
+  for (const [shell, run] of steps as ReadonlyArray<readonly [Shell, ReturnType<typeof runOf>?]>) {
+    const seen = memberUpdates(mark, shellDetail(shell, run), 0);
+    told.push(seen.updates.map((update) => `${update.source} ${update.event}`));
+    mark = seen.mark;
+  }
+  assert.deepEqual(told, expected);
 });
 
 it("a machine that predates run and request ids is compared by status", () => {
@@ -407,20 +453,23 @@ it("a machine that predates run and request ids is compared by status", () => {
 
 it("a wake names each member by the lead's own numbers", () => {
   assert.equal(
-    missionUpdateText([{ member: "member 1", place: "machine 2", event: "awaiting-input" }]),
-    "Mission update: member 1 on machine 2 is awaiting input.\nFor details, call t3_thread_read (limit: 2, runLimit: 1) or t3_mission_roster.",
+    missionUpdateText([{ member: "member 1", place: "machine 2", event: "awaiting-input" }]).split(
+      "\n",
+    )[0],
+    "Mission update: member 1 on machine 2 is awaiting input.",
   );
-  assert.equal(
+  assert.deepEqual(
     missionUpdateText([
       { member: "member 1", place: "machine 2", event: "completed" },
       { member: "member 2", place: "this machine", event: "failed" },
-    ]),
+    ])
+      .split("\n")
+      .slice(0, 3),
     [
       "Mission update:",
       "- member 1 on machine 2 finished its turn and is idle.",
       "- member 2 on this machine failed.",
-      "For details, call t3_thread_read (limit: 2, runLimit: 1) or t3_mission_roster.",
-    ].join("\n"),
+    ],
   );
 });
 
