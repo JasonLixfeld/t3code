@@ -248,7 +248,7 @@ it.effect("keeps a link healthy when the peer refuses a call", () =>
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("tells a peer that refused apart from one that no longer accepts the link", () =>
+it.effect("tells a peer that refused apart from a failing tool or a revoked link", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const busy = new OrchestratorMcpFailure({
@@ -257,7 +257,7 @@ it.effect("tells a peer that refused apart from one that no longer accepts the l
       });
       const handlers = McpToolAccess.toLayer(toolkit, {
         probe: McpToolAccess.reads(() => Effect.succeed({ modes: "" })),
-        hold: McpToolAccess.reads(() => Effect.succeed({ modes: "" })),
+        hold: McpToolAccess.reads(() => Effect.die(new Error("database is locked"))),
         refuse: McpToolAccess.reads(() => Effect.fail(busy)),
       });
       const box = descriptorOf("environment-box", "Box");
@@ -265,13 +265,23 @@ it.effect("tells a peer that refused apart from one that no longer accepts the l
       const context = yield* Layer.build(
         layerLinkingEnvironment(descriptorOf("environment-a", "A")),
       );
-      yield* linkTo(Context.get(context, PeerLinks.PeerLinks), b);
-      const refused = yield* Context.get(context, PeerMcpClient.PeerMcpClient).ask({
+      const links = Context.get(context, PeerLinks.PeerLinks);
+      const client = Context.get(context, PeerMcpClient.PeerMcpClient);
+      yield* linkTo(links, b);
+      const refused = yield* client.ask({
         ...probeCall,
         environmentId: box.environmentId,
         tool: "refuse",
       });
       expect(refused).toMatchObject({ _tag: "Failure", failure: { code: busy.code } });
+
+      const failed = yield* client
+        .ask({ ...probeCall, environmentId: box.environmentId, tool: "hold" })
+        .pipe(Effect.flip);
+      expect(failed).toBeInstanceOf(PeerMcpClient.PeerUnanswered);
+      expect(failed.cause.message).toBe("Tool execution failed due to an internal server error.");
+      const link = yield* links.get(box.environmentId);
+      expect(link._tag === "Some" ? link.value.lastError : "missing").toBeNull();
 
       const revoked = HttpClient.make((request) =>
         Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 401 }))),
@@ -281,34 +291,6 @@ it.effect("tells a peer that refused apart from one that no longer accepts the l
       expect(unanswered.cause.code).toBe("capability_denied");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
-);
-
-it.effect(
-  "takes a tool's internal failure on the peer for no answer, and keeps the link healthy",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const handlers = McpToolAccess.toLayer(toolkit, {
-          probe: McpToolAccess.reads(() => Effect.succeed({ modes: "" })),
-          hold: McpToolAccess.reads(() => Effect.die(new Error("database is locked"))),
-          refuse: McpToolAccess.reads(() => Effect.fail(refusal)),
-        });
-        const box = descriptorOf("environment-box", "Box");
-        const b = yield* servePeer(box, McpHttpServer.toolkitRegistration(toolkit, handlers));
-        const context = yield* Layer.build(
-          layerLinkingEnvironment(descriptorOf("environment-a", "A")),
-        );
-        const links = Context.get(context, PeerLinks.PeerLinks);
-        yield* linkTo(links, b);
-        const failed = yield* Context.get(context, PeerMcpClient.PeerMcpClient)
-          .ask({ ...probeCall, environmentId: box.environmentId, tool: "hold" })
-          .pipe(Effect.flip);
-        expect(failed).toBeInstanceOf(PeerMcpClient.PeerUnanswered);
-        expect(failed.cause.message).toBe("Tool execution failed due to an internal server error.");
-        const link = yield* links.get(box.environmentId);
-        expect(link._tag === "Some" ? link.value.lastError : "missing").toBeNull();
-      }),
-    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("keeps the expiry the peer answers with, so a used link outlives its first 30 days", () =>

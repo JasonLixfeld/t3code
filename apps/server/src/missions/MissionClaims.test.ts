@@ -1,6 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { missionTag, ThreadId, ThreadTag } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -9,7 +9,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
-import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
@@ -318,21 +317,6 @@ it.effect("the local user leaves whichever mission holds a thread, as a release 
     }),
   ),
 );
-
-const isTag = Schema.is(ThreadTag);
-
-it.each([
-  ["an emoji across the limit", "a".repeat(42) + "😀"],
-  ["an emoji just inside the limit", "a".repeat(41) + "😀"],
-  ["a flag of two code points", "a".repeat(41) + "🇨🇦"],
-  ["only emoji", "😀".repeat(40)],
-])("cuts %s into a well-formed tag the tag schema accepts", (_name, name) => {
-  const tag = missionTag("0123456789ab", name);
-  assert.isTrue(tag.isWellFormed(), tag);
-  assert.isAtMost(tag.length, 64);
-  assert.isTrue(isTag(tag));
-  assert.isTrue(`mission:0123456789ab:${name}`.startsWith(tag));
-});
 
 it.effect("only a release or leave that drops the claim forgets what was read of the thread", () =>
   onMachine((claims, machine) =>

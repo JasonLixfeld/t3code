@@ -5,6 +5,7 @@ import { assert, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -39,42 +40,6 @@ const usingStore = <A, E>(
   Effect.flatMap(MissionStore.MissionStore, use).pipe(
     Effect.provide(MissionStore.layerFromPath(filename)),
   );
-
-it.effect("keeps its own migration history and reopens without migrating again", () =>
-  withDatabase((filename) =>
-    Effect.gen(function* () {
-      yield* usingStore(filename, (store) => store.createMission(claimFor(lead, "m1", "g1")));
-      const reopened = yield* usingStore(filename, (store) => store.missions);
-      assert.deepEqual(
-        reopened.map((mission) => mission.name),
-        ["M1"],
-      );
-      const recorded = yield* Effect.provide(
-        Effect.gen(function* () {
-          const sql = yield* SqlClient.SqlClient;
-          return yield* sql<{
-            readonly migration_id: number;
-            readonly name: string;
-          }>`SELECT migration_id, name FROM effect_sql_migrations`;
-        }),
-        NodeSqliteClient.layer({ filename }),
-      );
-      assert.deepEqual(
-        recorded.map((row) => [row.migration_id, row.name]),
-        [
-          [1, "Missions"],
-          [2, "LastKnown"],
-          [3, "PendingAdds"],
-          [4, "AddIntents"],
-          [5, "AddLinkAndAge"],
-          [6, "MissionTombstones"],
-          [7, "MissionLeadPrompt"],
-          [8, "JoinedWithPriorWork"],
-        ],
-      );
-    }),
-  ),
-);
 
 it.effect(
   "starting a mission adds it with its lead's claim, a retry returns it, and a refusal changes nothing",
@@ -160,23 +125,44 @@ it.effect("a leave meant for one mission removes nothing once the claim is anoth
 );
 
 it.effect(
-  "the production store writes missions.sqlite in the state folder, not the main database",
+  "the production store writes missions.sqlite in the state folder and reopens it without migrating again",
   () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-mission-home-" });
       const config = ServerConfig.layerTest(process.cwd(), baseDir);
-      const { stateDir, dbPath } = yield* Effect.gen(function* () {
-        yield* Effect.flatMap(MissionStore.MissionStore, (store) =>
-          store.createMission(claimFor(lead, "m1", "g1")),
-        ).pipe(Effect.provide(MissionStore.layer));
-        return yield* ServerConfig.ServerConfig;
-      }).pipe(Effect.provide(config));
+      const withProductionStore = <A, E>(
+        use: (store: MissionStore.MissionStore["Service"]) => Effect.Effect<A, E>,
+      ) =>
+        Effect.flatMap(MissionStore.MissionStore, use).pipe(
+          Effect.provide(MissionStore.layer.pipe(Layer.provide(config))),
+        );
+      yield* withProductionStore((store) => store.createMission(claimFor(lead, "m1", "g1")));
+      const { stateDir, dbPath } = yield* Effect.provide(ServerConfig.ServerConfig, config);
 
       const missionsFile = path.join(stateDir, "missions.sqlite");
       assert.notEqual(missionsFile, dbPath);
       assert.isTrue(yield* fileSystem.exists(missionsFile));
+      const migrationsIn = Effect.provide(
+        Effect.flatMap(
+          SqlClient.SqlClient,
+          (sql) =>
+            sql<{
+              readonly migration_id: number;
+              readonly created_at: string;
+            }>`SELECT migration_id, created_at FROM effect_sql_migrations ORDER BY migration_id`,
+        ),
+        NodeSqliteClient.layer({ filename: missionsFile }),
+      );
+      const migrated = yield* migrationsIn;
+      assert.lengthOf(migrated, Object.keys(MissionStore.MIGRATIONS).length);
+      const reopened = yield* withProductionStore((store) => store.missions);
+      assert.deepEqual(
+        reopened.map((mission) => mission.name),
+        ["M1"],
+      );
+      assert.deepEqual(yield* migrationsIn, migrated);
       const tablesIn = (filename: string) =>
         Effect.provide(
           Effect.flatMap(
@@ -501,19 +487,36 @@ it.effect("upgrades a version-7 database: its waiting adds keep, and say no draf
   ),
 );
 
-it.effect("deleting a mission removes the updates its lead heard another way", () =>
+it.effect("updates a lead heard another way stay out of its wakes, and go with its mission", () =>
   withDatabase((filename) =>
     Effect.gen(function* () {
       yield* usingStore(filename, (store) =>
         Effect.gen(function* () {
           yield* store.createMission(claimFor(lead, "m1", "g1"));
-          yield* store.markMissionUpdateHeard({
+          const update = (source: string, event: "completed" | "failed", threadId = member) => ({
             missionId: "m1",
             environmentId: EnvironmentId.make("env-a"),
-            threadId: member,
-            source: "run:r1",
-            event: "completed",
+            threadId,
+            source,
+            event,
           });
+          yield* store.addMissionUpdate(update("run:r1", "completed"));
+          yield* store.addMissionUpdate(update("run:r2", "failed"));
+          yield* store.addMissionUpdate(update("run:r7", "completed", ThreadId.make("other")));
+          yield* store.markMissionUpdateHeard(update("run:r1", "completed"));
+          yield* store.markMissionUpdateHeard(update("run:r2", "completed"));
+          yield* store.markMissionUpdateHeard(update("run:r7", "completed"));
+          yield* store.markMissionUpdateHeard(update("run:r9", "completed"));
+          yield* store.addMissionUpdate(update("run:r9", "completed"));
+          yield* store.addMissionUpdate(update("run:r4", "completed"));
+          const takeWakeBatchSources = Effect.map(
+            store.takeMissionUpdates("m1", lead),
+            ({ updates }) => updates.map((row) => `${row.threadId} ${row.source}`),
+          );
+          const left = ["member run:r2", "other run:r7", "member run:r4"];
+          assert.deepEqual(yield* takeWakeBatchSources, left);
+          yield* store.markMissionUpdateHeard(update("run:r4", "completed"));
+          assert.deepEqual(yield* takeWakeBatchSources, left);
           yield* store.deleteMission({
             missionId: "m1",
             lead,

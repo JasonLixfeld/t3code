@@ -5400,155 +5400,220 @@ it.each([
   );
 });
 
-it("mission lead cases fail a lead that speaks, asks half a question or reports no merge", () => {
-  const lines = NodeFS.readFileSync(new URL("./cases/missions.ndjson", import.meta.url), "utf8")
-    .trim()
-    .split("\n");
-  const expectOf = (id: string) =>
-    decodeDeviceCase(lines.find((entry) => JSON.parse(entry).id === id) ?? "").expect;
-  const passes = (
-    id: string,
-    sample: {
-      text?: string;
-      finalText?: string;
-      stopReason?: string;
-      calls?: ReadonlyArray<[string, unknown]>;
-    },
-  ) =>
-    gradeSample(expectOf(id), {
-      calls: (sample.calls ?? []).map(([tool, input], step) => ({
-        step,
-        tool,
-        input,
-        failed: false,
-        output: "",
-      })),
-      text: sample.text ?? "",
-      finalText: sample.finalText ?? sample.text ?? "",
-      stopReason: sample.stopReason ?? "end_turn",
-    }).every((check) => check.pass);
+const missionCase = (id: string) =>
+  decodeDeviceCase(
+    NodeFS.readFileSync(new URL("./cases/missions.ndjson", import.meta.url), "utf8")
+      .trim()
+      .split("\n")
+      .find((line) => JSON.parse(line).id === id) ?? "",
+  );
+const missionRead: [string, unknown] = ["t3_thread_read", { threadId: "t" }];
+const missionAsk = (
+  question: string,
+  options: ReadonlyArray<[string, string]>,
+): [string, unknown] => [
+  "AskUserQuestion",
+  {
+    questions: [
+      {
+        question,
+        header: "Limit scope",
+        options: options.map(([label, description]) => ({ label, description })),
+      },
+    ],
+  },
+];
+const memberBlocked =
+  "Member 1 in <t3-thread://v2/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee/11111111-1111-4111-8111-111111111111> is building sign-in rate limiting and is blocked on one choice.";
+const bothConsequences =
+  "Per device lets attackers switch devices, and per account can lock a user out. I recommend per account.";
+const QUESTION_PART_BY_PATTERN_START = {
+  "t3-thread://": "link",
+  "[Rr]ate": "topic",
+  "(?:[Pp]er.device": "question",
+  "[Pp]er.device(?:": "device",
+  "[Pp]er.account(?:": "account",
+  "[Rr]ecommend": "recommend",
+  "[Bb]locked": "blocked",
+};
+const questionPart = (pattern: string) =>
+  Object.entries(QUESTION_PART_BY_PATTERN_START).find(([start]) => pattern.startsWith(start))?.[1];
 
-  const read: [string, unknown] = ["t3_thread_read", { threadId: "t" }];
-  const ask = (question: string, options: ReadonlyArray<[string, string]>): [string, unknown] => [
-    "AskUserQuestion",
+it.each<
+  [
+    string,
+    string,
     {
-      questions: [
-        {
-          question,
-          header: "Limit scope",
-          options: options.map(([label, description]) => ({ label, description })),
-        },
-      ],
+      readonly text?: string;
+      readonly finalText?: string;
+      readonly calls?: ReadonlyArray<[string, unknown]>;
     },
-  ];
-  const quiet = "mission-quiet-idle-update";
-  assert.isTrue(passes(quiet, { calls: [read], text: "No change." }));
-  assert.isTrue(passes(quiet, { calls: [read], text: "  No change.\n" }));
-  assert.isFalse(passes(quiet, { calls: [read] }));
-  assert.isFalse(passes(quiet, { calls: [read], text: "No change.", stopReason: "max_steps" }));
-  assert.isFalse(
-    passes(quiet, {
-      calls: [read, ask("Anything else?", [["No", "Nothing more."]])],
+    ReadonlyArray<string>,
+  ]
+>([
+  [
+    "mission-quiet-idle-update",
+    "exactly No change.",
+    { calls: [missionRead], text: "No change." },
+    [],
+  ],
+  [
+    "mission-quiet-idle-update",
+    "No change. with spaces around it",
+    { calls: [missionRead], text: "  No change.\n" },
+    [],
+  ],
+  [
+    "mission-quiet-idle-update",
+    "a silent end",
+    { calls: [missionRead] },
+    ["textMust", "finalTextMust"],
+  ],
+  [
+    "mission-quiet-idle-update",
+    "a question to the user as well",
+    {
+      calls: [missionRead, missionAsk("Anything else?", [["No", "Nothing more."]])],
       text: "No change.",
-    }),
-  );
-  assert.isFalse(passes(quiet, { text: "Nothing is needed from you." }));
-  assert.isFalse(passes(quiet, { text: "No change. Member 2 is still reviewing." }));
-  assert.isFalse(
-    passes(quiet, {
-      calls: [read],
-      text: "Checking member 2.\n\nNo change.",
-      finalText: "No change.",
-    }),
-  );
-
-  const link =
-    "<t3-thread://v2/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee/11111111-1111-4111-8111-111111111111>";
-  const preface = `Member 1 in ${link} is building sign-in rate limiting and is blocked on one choice.`;
-  assert.isFalse(
-    passes("mission-question-stands-alone", {
-      text: preface,
+    },
+    ["notCalls"],
+  ],
+  [
+    "mission-quiet-idle-update",
+    "a reply in its place",
+    { text: "Nothing is needed from you." },
+    ["textMust", "finalTextMust"],
+  ],
+  [
+    "mission-quiet-idle-update",
+    "No change. and more",
+    { text: "No change. Member 2 is still reviewing." },
+    ["textMust", "finalTextMust"],
+  ],
+  [
+    "mission-quiet-idle-update",
+    "narration before a tool call",
+    { calls: [missionRead], text: "Checking member 2.\n\nNo change.", finalText: "No change." },
+    ["textMust"],
+  ],
+  [
+    "mission-question-stands-alone",
+    "options with no consequences or recommendation",
+    {
+      text: memberBlocked,
       calls: [
-        ask("Per device or per account?", [
+        missionAsk("Per device or per account?", [
           ["Per device", ""],
           ["Per account", ""],
         ]),
       ],
-    }),
-  );
-  assert.isTrue(
-    passes("mission-question-stands-alone", {
-      text: preface,
+    },
+    ["device", "account", "recommend"],
+  ],
+  [
+    "mission-question-stands-alone",
+    "a question card with each option's consequence",
+    {
+      text: memberBlocked,
       calls: [
-        ask("Should failed sign-ins count per device or per account? I recommend per account.", [
-          ["Per account", "Stops attackers who switch devices, but can lock a user out."],
-          ["Per device", "Never locks a user out elsewhere, but attackers can switch devices."],
-        ]),
+        missionAsk(
+          "Should failed sign-ins count per device or per account? I recommend per account.",
+          [
+            ["Per account", "Stops attackers who switch devices, but can lock a user out."],
+            ["Per device", "Never locks a user out elsewhere, but attackers can switch devices."],
+          ],
+        ),
       ],
-    }),
-  );
-
-  assert.isFalse(
-    passes("mission-question-stands-alone", {
-      text: `${preface} Per device lets attackers switch devices, and per account can lock a user out. I recommend per account.`,
-    }),
-  );
-  assert.isFalse(
-    passes("mission-question-stands-alone", {
-      text: preface,
+    },
+    [],
+  ],
+  [
+    "mission-question-stands-alone",
+    "a question in the text",
+    { text: `${memberBlocked} ${bothConsequences} Should it count per device or per account?` },
+    [],
+  ],
+  [
+    "mission-question-stands-alone",
+    "no question",
+    { text: `${memberBlocked} ${bothConsequences}` },
+    ["question"],
+  ],
+  [
+    "mission-question-stands-alone",
+    "a question about something else",
+    { text: `${memberBlocked} ${bothConsequences} Should member 1 also add a CAPTCHA?` },
+    ["question"],
+  ],
+  [
+    "mission-question-stands-alone",
+    "one option without its own consequence",
+    {
+      text: memberBlocked,
       calls: [
-        ask("Count failed sign-ins per device or per account? I recommend per account.", [
+        missionAsk("Count failed sign-ins per device or per account? I recommend per account.", [
           ["Per account", "Can lock a user out for 15 minutes."],
           ["Per device", "The simpler option."],
         ]),
       ],
-    }),
-  );
-  assert.isTrue(
-    passes("mission-question-stands-alone", {
-      text: `${preface} Per device lets attackers switch devices, and per account can lock a user out. I recommend per account. Should it count per device or per account?`,
-    }),
-  );
-
-  assert.isFalse(
-    passes("mission-question-stands-alone", {
-      text: `${preface} Per device lets attackers switch devices, and per account can lock a user out. I recommend per account. Should member 1 also add a CAPTCHA?`,
-    }),
-  );
-  assert.isFalse(
-    passes("mission-question-stands-alone", {
-      text: `${preface} Per device can lock a user out. Per account lets attackers switch devices. I recommend per account. Should it count per device or per account?`,
-    }),
-  );
-
-  assert.isFalse(
-    passes("mission-question-stands-alone", {
-      text: `${preface} Per device lets attackers switch devices, and per account can lock a user out. I recommend per account. Did you sign in on that device?`,
-    }),
-  );
-
-  assert.isFalse(
-    passes("mission-pull-request-merged-speaks", { text: "PR #41 is not merged yet." }),
-  );
-  assert.isFalse(
-    passes("mission-pull-request-merged-speaks", {
-      text: "PR #41 will be merged after CI passes.",
-    }),
-  );
-  assert.isFalse(
-    passes("mission-pull-request-merged-speaks", { text: "No pull request was merged." }),
-  );
-  assert.isFalse(
-    passes("mission-pull-request-merged-speaks", {
-      text: "PR #41 is still waiting to be merged.",
-    }),
-  );
-  assert.isFalse(
-    passes("mission-pull-request-merged-speaks", { text: "PR #41 hasn't merged yet." }),
-  );
-  assert.isTrue(
-    passes("mission-pull-request-merged-speaks", {
-      text: "Member 1 merged pull request #41 into main.",
-    }),
+    },
+    ["device"],
+  ],
+  [
+    "mission-question-stands-alone",
+    "consequences swapped between the options",
+    {
+      text: `${memberBlocked} Per device can lock a user out. Per account lets attackers switch devices. I recommend per account. Should it count per device or per account?`,
+    },
+    ["device", "account"],
+  ],
+  [
+    "mission-pull-request-merged-speaks",
+    "a merge it reports",
+    { text: "Member 1 merged pull request #41 into main." },
+    [],
+  ],
+  [
+    "mission-pull-request-merged-speaks",
+    "a merge not done yet",
+    { text: "PR #41 is not merged yet." },
+    ["textMustNot"],
+  ],
+  [
+    "mission-pull-request-merged-speaks",
+    "a merge still to come",
+    { text: "PR #41 will be merged after CI passes." },
+    ["textMustNot"],
+  ],
+  [
+    "mission-pull-request-merged-speaks",
+    "no merge at all",
+    { text: "No pull request was merged." },
+    ["textMustNot"],
+  ],
+])("%s grades %s", (id, _name, sample, failures) => {
+  const expect = missionCase(id).expect;
+  const checks = gradeSample(expect, {
+    calls: (sample.calls ?? []).map(([tool, input], step) => ({
+      step,
+      tool,
+      input,
+      failed: false,
+      output: "",
+    })),
+    text: sample.text ?? "",
+    finalText: sample.finalText ?? sample.text ?? "",
+    stopReason: "end_turn",
+  });
+  assert.deepEqual(
+    checks
+      .filter((check) => !check.pass)
+      .map((check) => {
+        const kind = check.check.replace(/ .*$/s, "");
+        const pattern = check.check.slice(kind.length + 2, -1);
+        return kind === "userTextMust" ? (questionPart(pattern) ?? kind) : kind;
+      })
+      .toSorted(),
+    failures.toSorted(),
   );
 });

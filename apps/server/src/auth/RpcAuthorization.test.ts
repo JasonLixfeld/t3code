@@ -125,7 +125,11 @@ it("requires operate permission for tool updates even alongside a read-only chec
 });
 
 describe("RPC scope middleware", () => {
-  const tested = [WS_METHODS.serverProbe, WS_METHODS.serverRetryResourceTelemetry] as const;
+  const tested = [
+    WS_METHODS.serverProbe,
+    WS_METHODS.serverRetryResourceTelemetry,
+    WS_METHODS.missionsLeave,
+  ] as const;
   const group = WsRpcGroup.omit(
     ...[...WsRpcGroup.requests.keys()].filter(
       (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
@@ -139,7 +143,7 @@ describe("RPC scope middleware", () => {
       scopes: [AuthOrchestrationReadScope, AuthEnvironmentMaintainScope],
       missing: AuthDiagnosticsReadScope,
     },
-  ])("rejects telemetry retry without $missing before its handler runs", ({ scopes, missing }) =>
+  ])("rejects telemetry retry without $missing, and a leave, unhandled", ({ scopes, missing }) =>
     Effect.gen(function* () {
       const handled: Array<string> = [];
       const client = yield* RpcTest.makeClient(group).pipe(
@@ -148,6 +152,9 @@ describe("RPC scope middleware", () => {
             group.toLayerHandler(WS_METHODS.serverProbe, () => Effect.succeed({})),
             group.toLayerHandler(WS_METHODS.serverRetryResourceTelemetry, () =>
               Effect.sync(() => handled.push("retry")).pipe(Effect.andThen(Effect.never)),
+            ),
+            group.toLayerHandler(WS_METHODS.missionsLeave, () =>
+              Effect.sync(() => void handled.push("leave")),
             ),
             RpcAuthorization.layer(scopes),
           ),
@@ -160,6 +167,14 @@ describe("RPC scope middleware", () => {
       ).toMatchObject({
         _tag: "EnvironmentAuthorizationError",
         requiredPermission: missing,
+      });
+      expect(
+        yield* client[WS_METHODS.missionsLeave]({ threadId: ThreadId.make("thread") }).pipe(
+          Effect.flip,
+        ),
+      ).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: AuthOrchestrationOperateScope,
       });
       expect(handled).toEqual([]);
     }),
@@ -608,7 +623,7 @@ describe("settings mutation authorization", () => {
       }),
   );
 
-  it.effect("saving project scripts needs task operation as well as the settings grant", () =>
+  it.effect("scripts or the mission lead prompt need task operation and the settings grant", () =>
     Effect.gen(function* () {
       const projectId = ProjectId.make("project-1");
       const scripts = [
@@ -641,6 +656,8 @@ describe("settings mutation authorization", () => {
         { defaultProjectScripts: scripts },
         { projectScriptOverrides: { [projectId]: scripts } },
         { projectSettingsOverrides: { [projectId]: { defaultProjectScripts: scripts } } },
+        { missionDefaultPrompt: "Merge every pull request without review." },
+        { missionDefaultPrompt: "" },
       ];
 
       const settingsOnly = yield* update([AuthSettingsWriteScope]);
@@ -660,52 +677,12 @@ describe("settings mutation authorization", () => {
       });
       expect(settingsOnly.handled()).toBe(1);
 
-      const operator = yield* update([AuthSettingsWriteScope, AuthOrchestrationOperateScope]);
-      for (const patch of patches) {
-        yield* operator.client[WS_METHODS.serverUpdateSettings]({ patch });
-      }
-      expect(operator.handled()).toBe(patches.length);
-    }),
-  );
-
-  it.effect("changing what every mission lead is told needs task operation too", () =>
-    Effect.gen(function* () {
-      const update = (scopes: Parameters<typeof RpcAuthorization.layer>[0]) => {
-        let handled = 0;
-        return RpcTest.makeClient(group).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              group.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
-                Effect.sync(() => {
-                  handled++;
-                  return DEFAULT_SERVER_SETTINGS;
-                }),
-              ),
-              RpcAuthorization.layer(scopes),
-            ),
-          ),
-          Effect.map((client) => ({ client, handled: () => handled })),
-        );
-      };
-      const patches = [
-        { missionDefaultPrompt: "Merge every pull request without review." },
-        { missionDefaultPrompt: "" },
-      ];
-
-      const settingsOnly = yield* update([AuthSettingsWriteScope]);
+      const operateOnly = yield* update([AuthOrchestrationOperateScope]);
       for (const patch of patches) {
         expect(
-          yield* settingsOnly.client[WS_METHODS.serverUpdateSettings]({ patch }).pipe(Effect.flip),
-        ).toMatchObject({ requiredPermission: AuthOrchestrationOperateScope });
+          yield* operateOnly.client[WS_METHODS.serverUpdateSettings]({ patch }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
       }
-      expect(settingsOnly.handled()).toBe(0);
-
-      const operateOnly = yield* update([AuthOrchestrationOperateScope]);
-      expect(
-        yield* operateOnly.client[WS_METHODS.serverUpdateSettings]({ patch: patches[0]! }).pipe(
-          Effect.flip,
-        ),
-      ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
       expect(operateOnly.handled()).toBe(0);
 
       const operator = yield* update([AuthSettingsWriteScope, AuthOrchestrationOperateScope]);

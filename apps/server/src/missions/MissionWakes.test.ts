@@ -26,6 +26,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as MissionStore from "./MissionStore.ts";
 import * as Missions from "./Missions.ts";
 import * as MissionWakes from "./MissionWakes.ts";
+import { GET_THE_BRIEF } from "./missionStatus.ts";
 
 const HERE = EnvironmentId.make("env-here");
 const LAPTOP = EnvironmentId.make("env-laptop");
@@ -357,17 +358,16 @@ const withWakes = (
 const busy = { activeRunId: "run-lead" };
 const free = { activeRunId: null };
 const told = (lines: ReadonlyArray<string>) =>
-  [
-    ...(lines.length === 1
-      ? [`Mission update: ${lines[0]}`]
-      : ["Mission update:", ...lines.map((line) => `- ${line}`)]),
-    "For details, call t3_thread_read (limit: 2, runLimit: 1) or t3_mission_roster.",
-  ].join("\n");
+  (lines.length === 1
+    ? [`Mission update: ${lines[0]}`]
+    : ["Mission update:", ...lines.map((line) => `- ${line}`)]
+  ).join("\n");
+const wakeTextWithoutClosingLine = (text: string) => text.split("\n").slice(0, -1).join("\n");
 const nextText = (world: ReturnType<typeof makeWorld>) =>
-  Queue.take(world.woke).pipe(Effect.map((sent) => sent.text));
+  Queue.take(world.woke).pipe(Effect.map((sent) => wakeTextWithoutClosingLine(sent.text)));
 
 it.effect(
-  "each kind of member update wakes the lead, and what comes within 30 seconds waits",
+  "each kind of member update wakes the lead once, and what comes within 30 seconds waits",
   () => {
     const world = makeWorld();
     return withWakes(
@@ -381,8 +381,11 @@ it.effect(
         yield* world.run(second, "s1", "failed");
         yield* world.leadRead;
         yield* world.leadRead;
+        yield* world.run(lead, "l1", "running");
+        yield* world.leadRead;
+        yield* TestClock.adjust(Duration.subtract(MissionWakes.WAKE_INTERVAL, Duration.millis(1)));
         assert.equal(yield* Queue.size(world.woke), 0);
-        yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+        yield* TestClock.adjust(Duration.millis(1));
         assert.equal(
           yield* nextText(world),
           told([
@@ -398,7 +401,12 @@ it.effect(
           yield* nextText(world),
           told(["member 1 on this machine finished its turn and is idle."]),
         );
-        assert.equal(world.sent.length, 3);
+        yield* world.leadRead;
+        yield* world.run(first, "f1", "completed");
+        yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+        yield* world.secretCard(second, "card-1");
+        assert.equal(yield* nextText(world), told(["member 2 on this machine is awaiting input."]));
+        assert.equal(world.sent.length, 4);
       }),
     );
   },
@@ -493,7 +501,7 @@ it.effect.each(["starts", "never starts"] as const)(
   },
 );
 
-it.effect.each(["interrupted", "completed"] as const)(
+it.effect.each(["interrupted", "completed", "parked out of sight"] as const)(
   "a run that completes while the next is queued is told once, when the next one is %s",
   (next) => {
     const world = makeWorld();
@@ -505,146 +513,13 @@ it.effect.each(["interrupted", "completed"] as const)(
           first,
           world.event(first, "run.updated", { id: "f1", status: "completed" }),
         );
-        yield* world.run(first, "f2", "running");
-        yield* world.run(first, "f2", next);
-        assert.equal(
-          yield* nextText(world),
-          told(["member 1 on this machine finished its turn and is idle."]),
-        );
-        yield* world.leadRead;
-        yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
-        yield* world.run(second, "s1", "failed");
-        assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
-        assert.equal(world.sent.length, 2);
-      }),
-    );
-  },
-);
-
-it.effect("a run owed behind a queued run is told once that run is parked out of sight", () => {
-  const world = makeWorld();
-  return withWakes(
-    world,
-    Effect.gen(function* () {
-      world.set(first, { status: "queued", latestRunId: "f2" });
-      yield* world.runThenWaitForMemberShellRead(
-        first,
-        world.event(first, "run.updated", { id: "f1", status: "completed" }),
-      );
-      world.set(first, { status: "completed", latestRunId: "f1" });
-      yield* world.event(first, "run.updated", { id: "f2", status: "queued", queueHeld: true });
-      assert.equal(
-        yield* nextText(world),
-        told(["member 1 on this machine finished its turn and is idle."]),
-      );
-    }),
-  );
-});
-
-it.effect.each(["completed", "interrupted"] as const)(
-  "a completion handled after the next run is already %s is told once",
-  (next) => {
-    const world = makeWorld();
-    return withWakes(
-      world,
-      Effect.gen(function* () {
-        world.set(first, { status: next, latestRunId: "f2" });
-        yield* world.runThenWaitForMemberShellRead(
-          first,
-          world.event(first, "run.updated", { id: "f1", status: "completed" }),
-        );
-        yield* world.run(first, "f2", next);
-        assert.equal(
-          yield* nextText(world),
-          told(["member 1 on this machine finished its turn and is idle."]),
-        );
-        yield* world.leadRead;
-        yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
-        yield* world.run(second, "s1", "failed");
-        assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
-        assert.equal(world.sent.length, 2);
-      }),
-    );
-  },
-);
-
-it.effect("a completion is told from its event when the member's thread cannot be read", () => {
-  const world = makeWorld();
-  return withWakes(
-    world,
-    Effect.gen(function* () {
-      world.set(first, { unreadable: true });
-      yield* world.run(first, "f1", "completed");
-      assert.equal(
-        yield* nextText(world),
-        told(["member 1 on this machine finished its turn and is idle."]),
-      );
-      yield* world.leadRead;
-      yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
-      world.set(first, { unreadable: false });
-      yield* world.run(first, "f1", "completed");
-      yield* world.run(second, "s1", "failed");
-      assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
-      assert.equal(world.sent.length, 2);
-    }),
-  );
-});
-
-it.effect("a failure is told from its event when the member's thread cannot be read", () => {
-  const world = makeWorld();
-  return withWakes(
-    world,
-    Effect.gen(function* () {
-      world.set(first, { pendingBackgroundTasks: [subagent] });
-      yield* world.runThenWaitForMemberShellRead(first, world.run(first, "f1", "completed"));
-      world.set(first, { unreadable: true, pendingBackgroundTasks: [] });
-      yield* world.run(first, "f2", "failed");
-      assert.equal(yield* nextText(world), told(["member 1 on this machine failed."]));
-      yield* world.leadRead;
-      yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
-      world.set(first, { unreadable: false });
-      yield* world.run(first, "f3", "interrupted");
-      yield* world.run(second, "s1", "failed");
-      assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
-      assert.equal(world.sent.length, 2);
-    }),
-  );
-});
-
-it.effect("a failure ends an owed completion, so a later stopped run does not revive it", () => {
-  const world = makeWorld();
-  return withWakes(
-    world,
-    Effect.gen(function* () {
-      world.set(first, { pendingBackgroundTasks: [subagent] });
-      yield* world.runThenWaitForMemberShellRead(first, world.run(first, "f1", "completed"));
-      world.set(first, { pendingBackgroundTasks: [] });
-      yield* world.runThenWaitForMemberShellRead(first, world.run(first, "f2", "running"));
-      yield* world.run(first, "f2", "failed");
-      assert.equal(yield* nextText(world), told(["member 1 on this machine failed."]));
-      yield* world.leadRead;
-      yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
-      yield* world.run(first, "f3", "running");
-      yield* world.run(first, "f3", "interrupted");
-      yield* world.run(second, "s1", "failed");
-      assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
-      assert.equal(world.sent.length, 2);
-    }),
-  );
-});
-
-it.effect(
-  "a held completion is told once the member is idle, though a newer run was stopped",
-  () => {
-    const world = makeWorld();
-    return withWakes(
-      world,
-      Effect.gen(function* () {
-        world.set(first, { pendingBackgroundTasks: [subagent] });
-        yield* world.runThenWaitForMemberShellRead(first, world.run(first, "f1", "completed"));
-        yield* world.runThenWaitForMemberShellRead(first, world.run(first, "f2", "running"));
-        world.set(first, { pendingBackgroundTasks: [] });
-        yield* world.run(first, "f2", "interrupted");
+        if (next === "parked out of sight") {
+          world.set(first, { status: "completed", latestRunId: "f1" });
+          yield* world.event(first, "run.updated", { id: "f2", status: "queued", queueHeld: true });
+        } else {
+          yield* world.run(first, "f2", "running");
+          yield* world.run(first, "f2", next);
+        }
         assert.equal(
           yield* nextText(world),
           told(["member 1 on this machine finished its turn and is idle."]),
@@ -660,35 +535,91 @@ it.effect(
 );
 
 it.effect(
-  "a startup look at a held member and a later event about it do not undo each other",
+  "a completion or failure is told from its event when the member's thread cannot be read",
   () => {
     const world = makeWorld();
-    const reading = Deferred.makeUnsafe<void>();
-    const release = Deferred.makeUnsafe<void>();
+    const settle = Effect.gen(function* () {
+      yield* world.leadRead;
+      yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+    });
+    const runEventRecordedWhileLeadBusy = (runId: string, status: string) =>
+      Effect.gen(function* () {
+        world.set(lead, busy);
+        yield* Queue.clear(world.live("leadReads"));
+        yield* world.run(first, runId, status);
+        yield* world.run(lead, `lead-${runId}`, "running");
+        yield* world.leadRead;
+        assert.deepEqual(yield* world.live("store").missionsWithUpdates, [MISSION]);
+        world.set(lead, free);
+        yield* world.run(lead, `lead-${runId}`, "completed");
+      });
     return withWakes(
       world,
       Effect.gen(function* () {
+        world.set(first, { unreadable: true });
+        yield* runEventRecordedWhileLeadBusy("f1", "completed");
+        assert.equal(
+          yield* nextText(world),
+          told(["member 1 on this machine finished its turn and is idle."]),
+        );
+        yield* settle;
+        world.set(first, { unreadable: false });
+        yield* world.run(first, "f1", "completed");
+
         world.set(first, { pendingBackgroundTasks: [subagent] });
-        yield* world.runThenWaitForMemberShellRead(first, world.run(first, "f1", "completed"));
-        world.hooks.afterMemberRead = (id) =>
-          id !== first
-            ? Effect.void
-            : Effect.gen(function* () {
-                world.hooks.afterMemberRead = () => Effect.void;
-                yield* Deferred.succeed(reading, undefined);
-                yield* Deferred.await(release);
-              });
+        yield* world.runThenWaitForMemberShellRead(first, world.run(first, "f2", "completed"));
+        world.set(first, { unreadable: true, pendingBackgroundTasks: [] });
+        yield* runEventRecordedWhileLeadBusy("f3", "failed");
+        assert.equal(yield* nextText(world), told(["member 1 on this machine failed."]));
+        yield* settle;
+        world.set(first, { unreadable: false });
+        yield* world.run(first, "f4", "interrupted");
+        yield* world.run(second, "s1", "failed");
+        assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
+        assert.equal(world.sent.length, 3);
       }),
+    );
+  },
+);
+
+const endWorkDuringStartupLook = (world: ReturnType<typeof makeWorld>, member: ThreadId) => {
+  const reading = Deferred.makeUnsafe<void>();
+  const release = Deferred.makeUnsafe<void>();
+  return {
+    holdStartupMemberRead: () => {
+      world.hooks.afterMemberRead = (id) =>
+        id !== member
+          ? Effect.void
+          : Effect.gen(function* () {
+              world.hooks.afterMemberRead = () => Effect.void;
+              yield* Deferred.succeed(reading, undefined);
+              yield* Deferred.await(release);
+            });
+    },
+    endWorkAndResumeRead: (line: string) =>
       Effect.gen(function* () {
         yield* Deferred.await(reading);
-        world.set(first, { pendingBackgroundTasks: [] });
-        yield* world.event(first, "subagent.updated", { status: "completed" });
+        world.set(member, { pendingBackgroundTasks: [] });
+        yield* world.event(member, "subagent.updated", { status: "completed" });
         yield* Deferred.succeed(release, undefined);
-        assert.equal(
-          yield* nextText(world),
-          told(["member 1 on this machine finished its turn and is idle."]),
-        );
+        assert.equal(yield* nextText(world), told([line]));
       }),
+  };
+};
+
+it.effect(
+  "a held member's work that ends during the startup look is told once, for a member seen before",
+  () => {
+    const world = makeWorld();
+    const race = endWorkDuringStartupLook(world, first);
+    return withWakes(
+      world,
+      Effect.gen(function* () {
+        world.set(first, { pendingBackgroundTasks: [subagent] });
+        yield* world.runThenWaitForMemberShellRead(first, world.run(first, "f1", "completed"));
+        race.holdStartupMemberRead();
+      }),
+      race.endWorkAndResumeRead("member 1 on this machine finished its turn and is idle."),
       Effect.gen(function* () {
         yield* world.run(second, "s1", "failed");
         assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
@@ -698,38 +629,11 @@ it.effect(
   },
 );
 
-it.effect("a run that ends with a plan ready is told at once, though a watch would hold it", () => {
-  const world = makeWorld();
-  const watch = { taskId: "pull-request-watch:github.com/acme/app#42", kind: "monitor" };
-  return withWakes(
-    world,
-    Effect.gen(function* () {
-      world.set(first, {
-        hasActionableProposedPlan: true,
-        pendingBackgroundTasks: [{ ...watch, awaited: true }],
-      });
-      yield* world.run(first, "f1", "completed");
-      assert.equal(
-        yield* nextText(world),
-        told(["member 1 on this machine finished its turn and is idle."]),
-      );
-      yield* world.leadRead;
-      yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
-      world.set(first, { pendingBackgroundTasks: [watch] });
-      yield* world.event(first, "thread.pull-request-synced", {});
-      yield* world.run(second, "s1", "failed");
-      assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
-      assert.equal(world.sent.length, 2);
-    }),
-  );
-});
-
 it.effect(
-  "a release event that arrives while the startup look records a hold is not missed",
+  "a held member's work that ends during the startup look is told once, for a member never seen",
   () => {
     const world = makeWorld();
-    const reading = Deferred.makeUnsafe<void>();
-    const release = Deferred.makeUnsafe<void>();
+    const race = endWorkDuringStartupLook(world, third);
     world.joinedUnseen.push(third);
     world.set(third, {
       id: third,
@@ -740,87 +644,62 @@ it.effect(
       hasActionableProposedPlan: false,
       pendingBackgroundTasks: [subagent],
     });
-    world.hooks.afterMemberRead = (id) =>
-      id !== third
-        ? Effect.void
-        : Effect.gen(function* () {
-            world.hooks.afterMemberRead = () => Effect.void;
-            yield* Deferred.succeed(reading, undefined);
-            yield* Deferred.await(release);
-          });
+    race.holdStartupMemberRead();
     return withWakes(
       world,
-      Effect.gen(function* () {
-        yield* Deferred.await(reading);
-        world.set(third, { pendingBackgroundTasks: [] });
-        yield* world.event(third, "subagent.updated", { status: "completed" });
-        yield* Deferred.succeed(release, undefined);
-        assert.equal(
-          yield* nextText(world),
-          told(["member 4 on this machine finished its turn and is idle."]),
-        );
-      }),
+      race.endWorkAndResumeRead("member 4 on this machine finished its turn and is idle."),
     );
   },
 );
 
-it.effect("a member held by its pull request watch is told once it is settled or archived", () => {
-  const world = makeWorld();
-  const watching = (id: ThreadId) => ({
-    pendingBackgroundTasks: [
-      { taskId: `pull-request-watch:github.com/acme/app#${id}`, kind: "monitor", awaited: true },
-    ],
-  });
-  return withWakes(
-    world,
-    Effect.gen(function* () {
-      for (const [member, runId, parked, type, line] of [
-        [first, "f1", { settledAt: "2026-01-02" }, "thread.settled", "member 1"],
-        [second, "s1", { archivedAt: "2026-01-02" }, "thread.archived", "member 2"],
-      ] as const) {
-        world.set(member, watching(member));
-        yield* world.runThenWaitForMemberShellRead(member, world.run(member, runId, "completed"));
-        world.set(member, { ...parked, pendingBackgroundTasks: [] });
-        yield* world.event(member, type, {});
+it.effect(
+  "a member held by its pull request watch is told once the watch stops holding, or it is parked",
+  () => {
+    const world = makeWorld();
+    const watch = { taskId: "pull-request-watch:github.com/acme/app#42", kind: "monitor" };
+    return withWakes(
+      world,
+      Effect.gen(function* () {
+        world.set(first, { pendingBackgroundTasks: [{ ...watch, awaited: true }] });
+        yield* world.run(first, "f1", "completed");
+        yield* world.run(second, "s1", "failed");
+        assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
+        yield* world.leadRead;
+        yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+        world.set(first, { pendingBackgroundTasks: [watch] });
+        yield* world.event(first, "thread.pull-request-synced", {});
         assert.equal(
           yield* nextText(world),
-          told([`${line} on this machine finished its turn and is idle.`]),
+          told(["member 1 on this machine finished its turn and is idle."]),
         );
         yield* world.leadRead;
         yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
-      }
-      assert.equal(world.sent.length, 2);
-    }),
-  );
-});
+        yield* world.event(first, "thread.pull-request-link-updated", {});
+        yield* world.run(second, "s2", "failed");
+        assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
+        yield* world.leadRead;
+        yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
 
-it.effect("a member held by its pull request watch is told once the watch stops holding", () => {
-  const world = makeWorld();
-  const watch = { taskId: "pull-request-watch:github.com/acme/app#42", kind: "monitor" };
-  return withWakes(
-    world,
-    Effect.gen(function* () {
-      world.set(first, { pendingBackgroundTasks: [{ ...watch, awaited: true }] });
-      yield* world.run(first, "f1", "completed");
-      yield* world.run(second, "s1", "failed");
-      assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
-      yield* world.leadRead;
-      yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
-      world.set(first, { pendingBackgroundTasks: [watch] });
-      yield* world.event(first, "thread.pull-request-synced", {});
-      assert.equal(
-        yield* nextText(world),
-        told(["member 1 on this machine finished its turn and is idle."]),
-      );
-      yield* world.leadRead;
-      yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
-      yield* world.event(first, "thread.pull-request-link-updated", {});
-      yield* world.run(second, "s2", "failed");
-      assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
-      assert.equal(world.sent.length, 3);
-    }),
-  );
-});
+        for (const [member, runId, parked, type, line] of [
+          [first, "f2", { settledAt: "2026-01-02" }, "thread.settled", "member 1"],
+          [second, "s3", { archivedAt: "2026-01-02" }, "thread.archived", "member 2"],
+        ] as const) {
+          world.set(member, { pendingBackgroundTasks: [{ ...watch, awaited: true }] });
+          yield* world.runThenWaitForMemberShellRead(member, world.run(member, runId, "completed"));
+          world.set(member, { ...parked, pendingBackgroundTasks: [] });
+          yield* world.event(member, type, {});
+          assert.equal(
+            yield* nextText(world),
+            told([`${line} on this machine finished its turn and is idle.`]),
+          );
+          yield* world.leadRead;
+          yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+        }
+        assert.equal(world.sent.length, 5);
+      }),
+    );
+  },
+);
 
 it.effect("a member held by its own work when the server stops is told once the work ends", () => {
   const world = makeWorld();
@@ -847,17 +726,6 @@ it.effect("a member held by its own work when the server stops is told once the 
       yield* world.run(second, "s2", "failed");
       assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
       assert.equal(world.sent.length, 3);
-    }),
-  );
-});
-
-it.effect("a member's secret request card wakes the lead, as the card blocks on the user", () => {
-  const world = makeWorld();
-  return withWakes(
-    world,
-    Effect.gen(function* () {
-      yield* world.secretCard(first, "card-1");
-      assert.equal(yield* nextText(world), told(["member 1 on this machine is awaiting input."]));
     }),
   );
 });
@@ -971,7 +839,10 @@ it.effect(
         yield* world.run(first, "f2", "failed");
         const secondWake = yield* Queue.take(world.woke);
         assert.equal(secondWake.threadId, second);
-        assert.equal(secondWake.text, told(["member 1 on this machine failed."]));
+        assert.equal(
+          wakeTextWithoutClosingLine(secondWake.text),
+          told(["member 1 on this machine failed."]),
+        );
       }),
     );
   },
@@ -988,7 +859,7 @@ it.effect("a lead busy when it is replaced: the new lead gets what waited", () =
       yield* world.setLead(second, lead);
       const wake = yield* Queue.take(world.woke);
       assert.deepEqual(
-        [wake.threadId, wake.text],
+        [wake.threadId, wakeTextWithoutClosingLine(wake.text)],
         [second, told(["member 1 on this machine finished its turn and is idle."])],
       );
     }),
@@ -1048,7 +919,7 @@ it.effect("a stop after the wake was taken and before it was cleared sends it on
 });
 
 it.effect(
-  "a member on another machine is told by its run and request ids, also after a restart",
+  "a member on another machine is told by its run and request ids, also first seen and after a restart",
   () => {
     const world = makeWorld();
     const laptop = { environmentId: LAPTOP, threadId: first };
@@ -1069,55 +940,29 @@ it.effect(
           yield* nextText(world),
           told(["member 3 on machine 2 finished its turn and is idle."]),
         );
+        yield* world.leadRead;
+        yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+        yield* world.live("store").setKnownClaims(LAPTOP, [
+          {
+            threadId: second,
+            missionId: MISSION,
+            name: "Ship",
+            role: "member",
+            generation: "g-s",
+          },
+        ]);
+        yield* world.listed(
+          { environmentId: LAPTOP, threadId: second },
+          { status: "pending-approval", requests: [{ id: "q1", kind: "command" }] },
+        );
+        assert.equal(
+          yield* nextText(world),
+          told(["member 4 on machine 2 has a pending approval."]),
+        );
       }),
     );
   },
 );
-
-it.effect("a lead is not woken again within 30 seconds, nor twice for one update", () => {
-  const world = makeWorld();
-  return withWakes(
-    world,
-    Effect.gen(function* () {
-      yield* world.run(first, "f1", "completed");
-      yield* Queue.take(world.woke);
-      yield* world.leadRead;
-      yield* world.run(first, "f2", "completed");
-      yield* world.leadRead;
-      yield* world.run(lead, "l1", "running");
-      yield* world.leadRead;
-      yield* TestClock.adjust(Duration.subtract(MissionWakes.WAKE_INTERVAL, Duration.millis(1)));
-      assert.equal(yield* Queue.size(world.woke), 0);
-      yield* TestClock.adjust(Duration.millis(1));
-      yield* Queue.take(world.woke);
-      yield* world.leadRead;
-      yield* world.run(first, "f2", "completed");
-      yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
-      yield* world.run(second, "s1", "failed");
-      assert.equal(yield* nextText(world), told(["member 2 on this machine failed."]));
-      assert.equal(world.sent.length, 3);
-    }),
-  );
-});
-
-it.effect("a member first seen on another machine wakes the lead when it needs it", () => {
-  const world = makeWorld();
-  return withWakes(
-    world,
-    Effect.gen(function* () {
-      yield* world
-        .live("store")
-        .setKnownClaims(LAPTOP, [
-          { threadId: second, missionId: MISSION, name: "Ship", role: "member", generation: "g-s" },
-        ]);
-      yield* world.listed(
-        { environmentId: LAPTOP, threadId: second },
-        { status: "pending-approval", requests: [{ id: "q1", kind: "command" }] },
-      );
-      assert.equal(yield* nextText(world), told(["member 4 on machine 2 has a pending approval."]));
-    }),
-  );
-});
 
 it.effect("ids another machine sets never reach a wake", () => {
   const world = makeWorld();
@@ -1138,55 +983,57 @@ it.effect("ids another machine sets never reach a wake", () => {
         },
       ]);
       yield* world.listed(hostile, { status: "failed", run: { id: "run-1", status: "failed" } });
-      const text = yield* nextText(world);
-      assert.equal(text, told(["member 4 on machine 3 failed."]));
+      const { text } = yield* Queue.take(world.woke);
+      assert.equal(wakeTextWithoutClosingLine(text), told(["member 4 on machine 3 failed."]));
       assert.notInclude(text, "SYSTEM");
     }),
   );
 });
 
-it.effect(
-  "a wake a stop cut off goes to a new lead, under a new command, with what came since",
-  () => {
-    const world = makeWorld();
-    return withWakes(
-      world,
-      Effect.gen(function* () {
-        world.hooks.afterDispatch = () => {
-          world.hooks.afterDispatch = () => Effect.void;
-          world.set(lead, busy);
-          return Effect.die("the server stopped");
-        };
-        yield* world.run(first, "f1", "completed");
-        assert.equal((yield* Queue.take(world.woke)).threadId, lead);
-      }),
-      Effect.gen(function* () {
-        yield* world.leadRead;
+it.effect.each([
+  { since: "what came since", asked: true },
+  { since: "nothing new", asked: false },
+])("a wake a stop cut off goes to a new lead, under a new command, with $since", ({ asked }) => {
+  const world = makeWorld();
+  return withWakes(
+    world,
+    Effect.gen(function* () {
+      world.hooks.afterDispatch = () => {
+        world.hooks.afterDispatch = () => Effect.void;
+        world.set(lead, busy);
+        return Effect.die("the server stopped");
+      };
+      yield* world.run(first, "f1", "completed");
+      assert.equal((yield* Queue.take(world.woke)).threadId, lead);
+    }),
+    Effect.gen(function* () {
+      yield* world.leadRead;
+      if (asked) {
         yield* world.ask(first, "r1", "user_input");
         yield* world.leadRead;
-        yield* world.setLead(second, lead);
-        const wake = yield* Queue.take(world.woke);
-        assert.deepEqual(
-          [wake.threadId, wake.text],
-          [
-            second,
-            told([
-              "member 1 on this machine finished its turn and is idle.",
-              "member 1 on this machine is awaiting input.",
-            ]),
-          ],
-        );
-        assert.notEqual(wake.commandId, world.sent[0]!.commandId);
-        yield* world.leadRead;
-        yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
-        yield* world.run(second, "l1", "completed");
-        yield* world.leadRead;
-        assert.equal(yield* Queue.size(world.woke), 0);
-        assert.equal(world.sent.length, 2);
-      }),
-    );
-  },
-);
+      }
+      yield* world.setLead(second, lead);
+      const wake = yield* Queue.take(world.woke);
+      assert.deepEqual(
+        [wake.threadId, wakeTextWithoutClosingLine(wake.text)],
+        [
+          second,
+          told([
+            "member 1 on this machine finished its turn and is idle.",
+            ...(asked ? ["member 1 on this machine is awaiting input."] : []),
+          ]),
+        ],
+      );
+      assert.notEqual(wake.commandId, world.sent[0]!.commandId);
+      yield* world.leadRead;
+      yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
+      yield* world.run(second, "l1", "completed");
+      yield* world.leadRead;
+      assert.equal(yield* Queue.size(world.woke), 0);
+      assert.equal(world.sent.length, 2);
+    }),
+  );
+});
 
 it.effect(
   "a wake the orchestrator turned down goes again under a new command, with newer updates",
@@ -1277,35 +1124,6 @@ it.effect("a member here found at a start waiting on an approval wakes the lead 
   );
 });
 
-it.effect(
-  "a wake cut off by a stop goes to a new lead under its own command, with nothing new",
-  () => {
-    const world = makeWorld();
-    return withWakes(
-      world,
-      Effect.gen(function* () {
-        world.hooks.afterDispatch = () => {
-          world.hooks.afterDispatch = () => Effect.void;
-          world.set(lead, busy);
-          return Effect.die("the server stopped");
-        };
-        yield* world.run(first, "f1", "completed");
-        assert.equal((yield* Queue.take(world.woke)).threadId, lead);
-      }),
-      Effect.gen(function* () {
-        yield* world.leadRead;
-        yield* world.setLead(second, lead);
-        const wake = yield* Queue.take(world.woke);
-        assert.deepEqual(
-          [wake.threadId, wake.text],
-          [second, told(["member 1 on this machine finished its turn and is idle."])],
-        );
-        assert.notEqual(wake.commandId, world.sent[0]!.commandId);
-      }),
-    );
-  },
-);
-
 const joinedWithPriorWork = (
   world: ReturnType<typeof makeWorld>,
   environmentId: EnvironmentId,
@@ -1322,14 +1140,7 @@ const joinedWithPriorWork = (
     });
     yield* Queue.offer(world.live("joined"), MISSION);
   });
-const GET_THE_BRIEF =
-  'Get its brief before giving it new work: queue a message asking for it with t3_thread_send (mode "queue", outputSchema a JSON Schema object with additionalProperties false whose required "brief" property is a string with maxLength 4000), then call t3_thread_wait with the runId it returned and untilOutput: true. If the send is refused or the member is settled, read it with t3_thread_read (limit: 2, runLimit: 1, maxCharsPerItem: 4000) instead.';
-const joinedText = (line: string) =>
-  [
-    `Mission update: ${line}`,
-    GET_THE_BRIEF,
-    "For details, call t3_thread_read (limit: 2, runLimit: 1) or t3_mission_roster.",
-  ].join("\n");
+const joinedText = (line: string) => [`Mission update: ${line}`, GET_THE_BRIEF].join("\n");
 
 it.effect(
   "a member that joins with prior work wakes its lead with its number, machine and status only",
@@ -1364,7 +1175,6 @@ it.effect(
             "- member 2 on this machine joined with prior work (status: settled).",
             "- member 3 on machine 2 joined with prior work (status: unknown).",
             GET_THE_BRIEF,
-            "For details, call t3_thread_read (limit: 2, runLimit: 1) or t3_mission_roster.",
           ].join("\n"),
         );
       }),
@@ -1441,40 +1251,24 @@ it.effect(
   },
 );
 
-it.effect("a member that joins while its lead is settled is told once the lead is back", () => {
-  const world = makeWorld();
-  return withWakes(
-    world,
-    Effect.gen(function* () {
-      world.set(lead, { settledAt: "2026-01-02T00:00:00.000Z" });
-      yield* joinedWithPriorWork(world, HERE, first, "joined:g1");
-      yield* world.run(second, "s1", "failed");
-      yield* world.leadRead;
-      yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
-      assert.equal(world.sent.length, 0);
-      world.set(lead, { settledAt: null });
-      yield* Queue.offer(world.live("events"), { type: "thread.unsettled", threadId: lead });
-      assert.equal(
-        yield* nextText(world),
-        joinedText("member 1 on this machine joined with prior work (status: idle)."),
-      );
-    }),
-  );
-});
-
-it.effect(
-  "a member that joins while its lead is archived is told once the lead is unarchived",
-  () => {
+it.effect.each([
+  { parked: "settled", field: "settledAt", back: "thread.unsettled" },
+  { parked: "archived", field: "archivedAt", back: "thread.unarchived" },
+] as const)(
+  "a member that joins while its lead is $parked is told once the lead is back",
+  ({ field, back }) => {
     const world = makeWorld();
     return withWakes(
       world,
       Effect.gen(function* () {
-        world.set(lead, { archivedAt: "2026-01-02T00:00:00.000Z" });
+        world.set(lead, { [field]: "2026-01-02T00:00:00.000Z" });
         yield* joinedWithPriorWork(world, HERE, first, "joined:g1");
+        yield* world.run(second, "s1", "failed");
         yield* world.leadRead;
+        yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
         assert.equal(world.sent.length, 0);
-        world.set(lead, { archivedAt: null });
-        yield* Queue.offer(world.live("events"), { type: "thread.unarchived", threadId: lead });
+        world.set(lead, { [field]: null });
+        yield* Queue.offer(world.live("events"), { type: back, threadId: lead });
         assert.equal(
           yield* nextText(world),
           joinedText("member 1 on this machine joined with prior work (status: idle)."),

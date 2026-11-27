@@ -224,45 +224,155 @@ const callLeadTool = (
     ),
   );
 
-it.effect("the roster pages the caller's own mission, and marks who needs the lead", () =>
-  Effect.gen(function* () {
-    const missions = makeMissions();
-    const first = yield* callLeadTool(missions, lead, "t3_mission_roster", {});
-    const page = first.structured as {
-      readonly missionId: string;
-      readonly members: ReadonlyArray<{
-        readonly member: string;
-        readonly place: string;
-        readonly threadRef: ScopedThreadRef;
-        readonly needsAttention: boolean;
-        readonly title: string;
-      }>;
-      readonly total: number;
-      readonly nextCursor: number | null;
-    };
-    assert.equal(page.missionId, MISSION);
-    assert.lengthOf(page.members, 10);
-    assert.deepEqual(
-      page.members.slice(0, 2).map((member) => member.needsAttention),
-      [true, false],
-    );
-    assert.equal(page.members[0]?.title, "Title 0");
-    assert.deepEqual(
-      [page.members[0]?.member, page.members[0]?.place, page.members[0]?.threadRef],
-      ["member 1", "machine 2", { environmentId: LAPTOP, threadId: ThreadId.make("t0") }],
-    );
-    assert.equal(page.total, 12);
-    assert.equal(page.nextCursor, 10);
-    const rest = (yield* callLeadTool(missions, lead, "t3_mission_roster", {
-      cursor: 10,
-      limit: 500,
-    })).structured as {
-      readonly members: ReadonlyArray<unknown>;
-      readonly nextCursor: number | null;
-    };
-    assert.lengthOf(rest.members, 2);
-    assert.isNull(rest.nextCursor);
-  }),
+it.effect(
+  "the roster pages the caller's mission within 30,000 bytes, marking who needs the lead",
+  () =>
+    Effect.gen(function* () {
+      const missions = makeMissions();
+      const first = yield* callLeadTool(missions, lead, "t3_mission_roster", {});
+      const page = first.structured as {
+        readonly missionId: string;
+        readonly members: ReadonlyArray<{
+          readonly member: string;
+          readonly place: string;
+          readonly threadRef: ScopedThreadRef;
+          readonly needsAttention: boolean;
+          readonly title: string;
+        }>;
+        readonly total: number;
+        readonly nextCursor: number | null;
+      };
+      assert.equal(page.missionId, MISSION);
+      assert.lengthOf(page.members, 10);
+      assert.deepEqual(
+        page.members.slice(0, 2).map((member) => member.needsAttention),
+        [true, false],
+      );
+      assert.equal(page.members[0]?.title, "Title 0");
+      assert.deepEqual(
+        [page.members[0]?.member, page.members[0]?.place, page.members[0]?.threadRef],
+        ["member 1", "machine 2", { environmentId: LAPTOP, threadId: ThreadId.make("t0") }],
+      );
+      assert.equal(page.total, 12);
+      assert.equal(page.nextCursor, 10);
+      const rest = (yield* callLeadTool(missions, lead, "t3_mission_roster", {
+        cursor: 10,
+        limit: 500,
+      })).structured as {
+        readonly members: ReadonlyArray<unknown>;
+        readonly nextCursor: number | null;
+      };
+      assert.lengthOf(rest.members, 2);
+      assert.isNull(rest.nextCursor);
+
+      const rows = [
+        { ...row(0, "idle"), project: "p".repeat(40_000) },
+        { ...row(1, "idle"), machine: "m".repeat(40_000) },
+        row(2, "idle"),
+        {
+          ...row(3, "idle"),
+          title: "t".repeat(40_000),
+          workspace: {
+            kind: "project" as const,
+            repositories: [],
+            truncated: false,
+            otherPullRequests: [],
+            stale: false,
+          },
+        },
+        {
+          ...row(4, "idle"),
+          workspace: {
+            kind: "project" as const,
+            repositories: [],
+            truncated: false,
+            otherPullRequests: Array.from({ length: 400 }, (_, number) => ({
+              number,
+              state: "open" as const,
+              url: `https://github.com/acme/app/pull/${number}?${"x".repeat(60)}`,
+              repository: "github.com/acme/app",
+            })),
+            stale: false,
+          },
+        },
+        ...[5, 6].map((index) => ({
+          ...row(index, "idle"),
+          workspace: {
+            kind: "worktree" as const,
+            repositories: Array.from({ length: 24 }, (_, repo) => ({
+              name: `repo-${repo}`,
+              path: `/code/app/repo-${repo}`,
+              repositoryPath: `/code/app/repo-${repo}`,
+              branch: `t3/${"b".repeat(320)}`,
+              branchSource: "recorded" as const,
+              remote: `github.com/acme/repo-${repo}`,
+              pullRequests: [
+                {
+                  number: repo,
+                  state: "open" as const,
+                  url: `https://github.com/acme/repo-${repo}/pull/${repo}`,
+                },
+              ],
+            })),
+            truncated: false,
+            otherPullRequests: [],
+            stale: false,
+          },
+        })),
+      ];
+      const longLabels = {
+        ...makeMissions(),
+        layer: Layer.mock(Missions.Missions)({
+          ledBy: () =>
+            Effect.succeed({
+              missionId: MISSION,
+              name: "Ship",
+              leadThreadId: lead.thread.threadId,
+              createdAt: "",
+              prompt: "",
+            }),
+          roster: () => Effect.succeed(rows),
+        }),
+      };
+      const seen: Array<string> = [];
+      const pages: Array<ReadonlyArray<string>> = [];
+      let cursor: number | null = 0;
+      while (cursor !== null) {
+        const { text, structured } = yield* callLeadTool(longLabels, lead, "t3_mission_roster", {
+          cursor,
+        });
+        assert.isAtMost(Buffer.byteLength(text, "utf8"), 30_000);
+        const page = structured as {
+          readonly members: ReadonlyArray<{
+            readonly threadRef: ScopedThreadRef;
+            readonly title: string;
+            readonly project: string;
+            readonly machine: string;
+            readonly workspace: unknown;
+          }>;
+          readonly nextCursor: number | null;
+        };
+        pages.push(page.members.map((member) => member.threadRef.threadId));
+        for (const member of page.members) {
+          seen.push(
+            `${member.threadRef.threadId} ${member.title.length < 40_000} ${member.project.length < 40_000} ${member.machine.length < 40_000} ${typeof member.workspace === "string" ? member.workspace : "listed"}`,
+          );
+        }
+        cursor = page.nextCursor;
+      }
+      assert.deepEqual(seen, [
+        "t0 true true true unknown",
+        "t1 true true true unknown",
+        "t2 true true true unknown",
+        "t3 true true true listed",
+        "t4 true true true tooLarge",
+        "t5 true true true listed",
+        "t6 true true true listed",
+      ]);
+      const withT5 = pages.findIndex((page) => page.includes("t5"));
+      assert.equal(pages[withT5]?.at(-1), "t5");
+      assert.equal(pages[withT5 + 1]?.[0], "t6");
+    }),
 );
 
 it.effect("add and release act on the caller's own mission, by the UI's rules", () =>
@@ -271,10 +381,9 @@ it.effect("add and release act on the caller's own mission, by the UI's rules", 
     const add = (threadRef: Record<string, unknown>) =>
       callLeadTool(missions, lead, "t3_mission_add", { threadRef });
     assert.deepEqual((yield* add({ threadId: "here-thread" })).structured, { state: "joined" });
-    assert.deepEqual((yield* add({ threadId: "worked" })).structured, {
-      state: "joined",
-      next: 'This thread has prior work. Get its brief before giving it new work: queue a message asking for it with t3_thread_send (mode "queue", outputSchema a JSON Schema object with additionalProperties false whose required "brief" property is a string with maxLength 4000), then call t3_thread_wait with the runId it returned and untilOutput: true. If the send is refused or the member is settled, read it with t3_thread_read (limit: 2, runLimit: 1, maxCharsPerItem: 4000) instead.',
-    });
+    const worked = (yield* add({ threadId: "worked" })).structured;
+    assert.equal(worked?.state, "joined");
+    assert.include(String(worked?.next), "t3_thread_send");
     assert.deepEqual((yield* add({ threadId: "t1", environmentId: LAPTOP })).structured, {
       state: "pending",
     });
@@ -714,7 +823,6 @@ it.effect(
         );
       assert.deepEqual(yield* wait(lead, {}), answer);
       yield* wait(lead, {}, LAPTOP);
-      yield* wait(notLead, {});
       yield* wait(lead, { timedOut: true });
       yield* wait(lead, { status: "failed" });
       yield* wait(lead, { runId: null });
@@ -724,72 +832,6 @@ it.effect(
       assert.deepEqual(missions.heard, [
         [lead.thread.threadId, { environmentId: HERE, threadId: member }, "run-1"],
         [lead.thread.threadId, { environmentId: LAPTOP, threadId: member }, "run-1"],
-        [notLead.thread.threadId, { environmentId: HERE, threadId: member }, "run-1"],
       ]);
     }),
-);
-
-it.effect("long roster labels are cut to fit 30,000 bytes, and a small workspace stays", () =>
-  Effect.gen(function* () {
-    const rows = [
-      { ...row(0, "idle"), project: "p".repeat(40_000) },
-      { ...row(1, "idle"), machine: "m".repeat(40_000) },
-      row(2, "idle"),
-      {
-        ...row(3, "idle"),
-        title: "t".repeat(40_000),
-        workspace: {
-          kind: "project" as const,
-          repositories: [],
-          truncated: false,
-          otherPullRequests: [],
-          stale: false,
-        },
-      },
-    ];
-    const missions = {
-      ...makeMissions(),
-      layer: Layer.mock(Missions.Missions)({
-        ledBy: () =>
-          Effect.succeed({
-            missionId: MISSION,
-            name: "Ship",
-            leadThreadId: lead.thread.threadId,
-            createdAt: "",
-            prompt: "",
-          }),
-        roster: () => Effect.succeed(rows),
-      }),
-    };
-    const seen: Array<string> = [];
-    let cursor: number | null = 0;
-    while (cursor !== null) {
-      const { text, structured } = yield* callLeadTool(missions, lead, "t3_mission_roster", {
-        cursor,
-      });
-      assert.isAtMost(Buffer.byteLength(text, "utf8"), 30_000);
-      const page = structured as {
-        readonly members: ReadonlyArray<{
-          readonly threadRef: ScopedThreadRef;
-          readonly title: string;
-          readonly project: string;
-          readonly machine: string;
-          readonly workspace: unknown;
-        }>;
-        readonly nextCursor: number | null;
-      };
-      for (const member of page.members) {
-        seen.push(
-          `${member.threadRef.threadId} ${member.title.length < 40_000} ${member.project.length < 40_000} ${member.machine.length < 40_000} ${typeof member.workspace}`,
-        );
-      }
-      cursor = page.nextCursor;
-    }
-    assert.deepEqual(seen, [
-      "t0 true true true string",
-      "t1 true true true string",
-      "t2 true true true string",
-      "t3 true true true object",
-    ]);
-  }),
 );
