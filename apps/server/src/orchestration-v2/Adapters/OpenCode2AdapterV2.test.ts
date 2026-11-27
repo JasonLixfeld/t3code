@@ -2218,6 +2218,84 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  it.effect("drops the wake a deleted root still held", () =>
+    Effect.gen(function* () {
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport("msg_report", "CHILD_OK"),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.deleted", { sessionID: SESSION }, undefined, 2),
+      ]).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) => Effect.sync(() => void offers.push(request)),
+          take: Effect.never,
+        }),
+      );
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(() => offers.length === 1 && watch.state.roster?.length === 0);
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }),
+  );
+
+  it.effect.each(["comes back", "cannot come back"] as const)(
+    "drops a held wake's hold when the stream is lost and %s",
+    (recovery) =>
+      Effect.gen(function* () {
+        const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+        const gate = makeProviderReplayGate(["lost"]);
+        const { runtime, thread } = yield* resumed(
+          [
+            ...launchedAndRunning,
+            event("session.execution.succeeded", { sessionID: SESSION }),
+            event("session.execution.succeeded", { sessionID: CHILD }),
+            childReport("msg_report", "CHILD_OK"),
+            event("session.execution.started", { sessionID: SESSION }),
+            event(
+              "session.model.selected",
+              {
+                sessionID: SESSION,
+                model: {
+                  providerID: "opencode",
+                  id: "big-pickle",
+                  variant: ROUTED_AFTER_HELD_WAKE,
+                },
+              },
+              "lost",
+            ),
+            { type: "runtime_exit", status: "success" },
+            out("event.subscribe"),
+            out("session.active"),
+            recovery === "comes back"
+              ? replyData("session.active", {})
+              : reply("session.active", { status: 401, body: { message: "Unauthorized" } }),
+          ],
+          { replayGate: gate },
+        ).pipe(
+          Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+            offer: (request) => Effect.sync(() => void offers.push(request)),
+            take: Effect.never,
+          }),
+        );
+        const watch = yield* watchCalls(runtime, thread);
+        yield* runtime.startTurn(withLineage(thread));
+        assert.isTrue(yield* Effect.promise(() => gate.waitForReached("lost")));
+        yield* watch.until(
+          () =>
+            offers.length === 1 &&
+            watch.state.roster?.some((task) => task.taskId === `wake:${offers[0]!.messageId}`) ===
+              true,
+        );
+        gate.release("lost");
+        yield* watch.until(() => watch.state.roster?.length === 0);
+        assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+      }),
+  );
+
   it.effect.each(["its own child", "its child's child"] as const)(
     "settles a subagent deleted before the held wake that launched it is taken, %s",
     (depth) =>

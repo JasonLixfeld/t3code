@@ -15,6 +15,7 @@ import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -550,11 +551,12 @@ describe("ProviderContinuationService", () => {
       Effect.gen(function* () {
         const runId = RunId.make("run-provider-continuation-wake");
         const messageId = MessageId.make("message-provider-continuation-wake");
-        const ended = yield* Deferred.make<void>();
+        const ended = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
         const firstRead = yield* Deferred.make<void>();
         const dispatchSequence = 7;
         const cursors: Array<number | undefined> = [];
         let unstarted = 0;
+        let runEnded = 0;
         let threadGone = false;
         const deletedLive = watch.startsWith("sees its thread deleted");
         const runState =
@@ -613,7 +615,11 @@ describe("ProviderContinuationService", () => {
             ...request(),
             messageId,
             onRunEndedWithoutStarting: () => Effect.sync(() => void (unstarted += 1)),
-            onRunEnded: () => Deferred.succeed(ended, undefined).pipe(Effect.asVoid),
+            onRunEnded: () =>
+              Effect.withFiber((watcher) => {
+                runEnded += 1;
+                return Deferred.succeed(ended, watcher).pipe(Effect.asVoid);
+              }),
           });
           if (failsFirstRead) {
             yield* Deferred.await(firstRead);
@@ -621,7 +627,8 @@ describe("ProviderContinuationService", () => {
             threadGone = watch === "loses its thread before it reads again";
             yield* TestClock.adjust("1 second");
           }
-          yield* Deferred.await(ended);
+          yield* Fiber.await(yield* Deferred.await(ended));
+          assert.equal(runEnded, 1);
           assert.equal(
             unstarted,
             watch === "sees its thread deleted before its run started" ? 1 : 0,
