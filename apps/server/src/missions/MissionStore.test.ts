@@ -342,7 +342,7 @@ it.effect(
             yield* store.addMissionUpdate(of("run:r1"));
             yield* store.addMissionUpdate(of("request:q1", "awaiting-input"));
             const taken = yield* store.takeMissionUpdates("m1", lead);
-            assert.deepEqual(taken.updates, [of("run:r1"), of("request:q1", "awaiting-input")]);
+            assert.deepEqual(taken.updates, [of("request:q1", "awaiting-input")]);
             yield* store.addMissionUpdate(of("run:r2"));
             return taken;
           }),
@@ -364,6 +364,105 @@ it.effect(
 );
 
 it.effect(
+  "a member's newest waiting update replaces its older ones, and a waiting join stays",
+  () =>
+    withDatabase((filename) =>
+      Effect.gen(function* () {
+        const other = ThreadId.make("other");
+        const of = (
+          threadId: ThreadId,
+          source: string,
+          event: "completed" | "failed" | "awaiting-input" | "joined" = "completed",
+        ) => ({
+          missionId: "m1",
+          environmentId: EnvironmentId.make("env-a"),
+          threadId,
+          source,
+          event,
+        });
+        yield* Effect.provide(
+          Effect.gen(function* () {
+            yield* Migrator.make({})({ loader: Migrator.fromRecord(MissionStore.MIGRATIONS) });
+            const sql = yield* SqlClient.SqlClient;
+            yield* sql`
+              INSERT INTO mission_updates (mission_id, environment_id, thread_id, source, event)
+              VALUES ('m1', 'env-a', ${member}, 'run:r0', 'completed'),
+                ('m1', 'env-a', ${member}, 'run:r1', 'failed')
+            `;
+          }),
+          NodeSqliteClient.layer({ filename }),
+        );
+        yield* usingStore(filename, (store) =>
+          Effect.gen(function* () {
+            yield* store.createMission(claimFor(lead, "m1", "g1"));
+            const left = yield* store.takeMissionUpdates("m1", lead);
+            assert.deepEqual(left.updates, [of(member, "run:r1", "failed")]);
+            yield* store.clearMissionUpdates("m1", left.key);
+            yield* store.addMissionUpdate(of(member, "run:r2"));
+            yield* store.addMissionUpdate(of(other, "joined:g1", "joined"));
+            yield* store.addMissionUpdate(of(member, "run:r3"));
+            yield* store.addMissionUpdate(of(other, "run:o1", "failed"));
+            yield* store.addMissionUpdate(of(member, "request:q1", "awaiting-input"));
+            const taken = yield* store.takeMissionUpdates("m1", lead);
+            assert.deepEqual(taken.updates, [
+              of(other, "joined:g1", "joined"),
+              of(member, "request:q1", "awaiting-input"),
+            ]);
+            yield* store.addMissionUpdate(of(member, "run:r4"));
+            assert.deepEqual(yield* store.takeMissionUpdates("m1", lead), taken);
+            yield* store.rekeyMissionUpdates("m1", taken.key);
+            const again = yield* store.takeMissionUpdates("m1", lead);
+            assert.deepEqual(again.updates, [
+              of(other, "joined:g1", "joined"),
+              of(member, "run:r4"),
+            ]);
+            assert.notEqual(again.key, taken.key);
+          }),
+        );
+      }),
+    ),
+);
+
+it.effect.each([
+  {
+    order: "a late wait for an older run keeps the newer line its lead has not heard",
+    early: true,
+  },
+  { order: "a heard update stays heard after a newer one is taken", early: false },
+])("$order", ({ early }) =>
+  withDatabase((filename) =>
+    usingStore(filename, (store) =>
+      Effect.gen(function* () {
+        const of = (source: string) => ({
+          missionId: "m1",
+          environmentId: EnvironmentId.make("env-a"),
+          threadId: member,
+          source,
+          event: "completed" as const,
+        });
+        yield* store.createMission(claimFor(lead, "m1", "g1"));
+        if (early) {
+          yield* store.addMissionUpdate(of("run:r1"));
+          const sent = yield* store.takeMissionUpdates("m1", lead);
+          yield* store.clearMissionUpdates("m1", sent.key);
+          yield* store.addMissionUpdate(of("run:r2"));
+          yield* store.markMissionUpdateHeard(of("run:r1"));
+          assert.deepEqual((yield* store.takeMissionUpdates("m1", lead)).updates, [of("run:r2")]);
+          return;
+        }
+        yield* store.markMissionUpdateHeard(of("run:r1"));
+        yield* store.addMissionUpdate(of("run:r2"));
+        const sent = yield* store.takeMissionUpdates("m1", lead);
+        assert.deepEqual(sent.updates, [of("run:r2")]);
+        yield* store.clearMissionUpdates("m1", sent.key);
+        yield* store.addMissionUpdate(of("run:r1"));
+        assert.deepEqual((yield* store.takeMissionUpdates("m1", lead)).updates, []);
+      }),
+    ),
+  ),
+);
+
+it.effect(
   "a wake under way to one lead goes to a new lead under a new key, with what came since",
   () =>
     withDatabase((filename) =>
@@ -382,7 +481,7 @@ it.effect(
           const old = yield* store.takeMissionUpdates("m1", lead);
           yield* store.addMissionUpdate(of("run:r2"));
           const moved = yield* store.takeMissionUpdates("m1", next);
-          assert.deepEqual(moved.updates, [of("run:r1"), of("run:r2")]);
+          assert.deepEqual(moved.updates, [of("run:r2")]);
           assert.notEqual(moved.key, old.key);
           assert.deepEqual(yield* store.takeMissionUpdates("m1", next), moved);
           yield* store.rekeyMissionUpdates("m1", moved.key);
@@ -530,6 +629,8 @@ it.effect(
         yield* usingStore(filename, (store) =>
           Effect.gen(function* () {
             yield* store.createMission(claimFor(lead, "m1", "g1"));
+            const failing = ThreadId.make("failing");
+            const later = ThreadId.make("later");
             const update = (source: string, event: "completed" | "failed", threadId = member) => ({
               missionId: "m1",
               environmentId: EnvironmentId.make("env-a"),
@@ -538,21 +639,21 @@ it.effect(
               event,
             });
             yield* store.addMissionUpdate(update("run:r1", "completed"));
-            yield* store.addMissionUpdate(update("run:r2", "failed"));
+            yield* store.addMissionUpdate(update("run:r2", "failed", failing));
             yield* store.addMissionUpdate(update("run:r7", "completed", ThreadId.make("other")));
             yield* store.markMissionUpdateHeard(update("run:r1", "completed"));
-            yield* store.markMissionUpdateHeard(update("run:r2", "completed"));
+            yield* store.markMissionUpdateHeard(update("run:r2", "completed", failing));
             yield* store.markMissionUpdateHeard(update("run:r7", "completed"));
             yield* store.markMissionUpdateHeard(update("run:r9", "completed"));
             yield* store.addMissionUpdate(update("run:r9", "completed"));
-            yield* store.addMissionUpdate(update("run:r4", "completed"));
+            yield* store.addMissionUpdate(update("run:r4", "completed", later));
             const takeWakeBatchSources = Effect.map(
               store.takeMissionUpdates("m1", lead),
               ({ updates }) => updates.map((row) => `${row.threadId} ${row.source}`),
             );
-            const left = ["member run:r2", "other run:r7", "member run:r4"];
+            const left = ["failing run:r2", "other run:r7", "later run:r4"];
             assert.deepEqual(yield* takeWakeBatchSources, left);
-            yield* store.markMissionUpdateHeard(update("run:r4", "completed"));
+            yield* store.markMissionUpdateHeard(update("run:r4", "completed", later));
             assert.deepEqual(yield* takeWakeBatchSources, left);
             yield* store.deleteMission({
               missionId: "m1",

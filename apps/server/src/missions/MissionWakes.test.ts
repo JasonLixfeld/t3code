@@ -731,13 +731,16 @@ it.effect("a member held by its own work when the server stops is told once the 
 });
 
 it.effect(
-  "a running lead hears once it is idle, in one message, and its own runs wake nobody",
+  "a running lead hears once it is idle, in one message with each member once, and its own runs wake nobody",
   () => {
     const world = makeWorld();
     return withWakes(
       world,
       Effect.gen(function* () {
         world.set(lead, busy);
+        yield* world.run(first, "f0", "running");
+        yield* world.run(first, "f0", "completed");
+        yield* world.leadRead;
         yield* world.run(first, "f1", "running");
         yield* world.run(second, "s1", "running");
         yield* world.run(first, "f1", "completed");
@@ -1019,8 +1022,9 @@ it.effect.each([
         [
           second,
           told([
-            "member 1 on this machine finished its turn and is idle.",
-            ...(asked ? ["member 1 on this machine is awaiting input."] : []),
+            asked
+              ? "member 1 on this machine is awaiting input."
+              : "member 1 on this machine finished its turn and is idle.",
           ]),
         ],
       );
@@ -1182,24 +1186,30 @@ it.effect(
   },
 );
 
-it.effect("a wake keeps the updates it leaves out for the next one", () => {
+it.effect("a wake keeps the updates it leaves out for the next one, each member's newest", () => {
   const world = makeWorld();
+  const update = (index: number, source: string, event: "failed" | "awaiting-input") =>
+    world.live("store").addMissionUpdate({
+      missionId: MISSION,
+      environmentId: HERE,
+      threadId: ThreadId.make(`member-${index}`),
+      source,
+      event,
+    });
   return withWakes(
     world,
     Effect.gen(function* () {
+      world.hooks.afterDispatch = () => {
+        world.hooks.afterDispatch = () => Effect.void;
+        return update(11, "request:q11", "awaiting-input");
+      };
       for (let index = 0; index < 12; index += 1) {
-        yield* world.live("store").addMissionUpdate({
-          missionId: MISSION,
-          environmentId: HERE,
-          threadId: second,
-          source: `run:s${index}`,
-          event: "failed",
-        });
+        yield* update(index, `run:r${index}`, "failed");
       }
       yield* Queue.offer(world.live("joined"), MISSION);
       const text = yield* nextText(world);
       assert.lengthOf(
-        text.split("\n").filter((line) => line === "- member 2 on this machine failed."),
+        text.split("\n").filter((line) => line === "- a member on this machine failed."),
         10,
       );
       assert.include(text, "… and 2 more");
@@ -1207,7 +1217,7 @@ it.effect("a wake keeps the updates it leaves out for the next one", () => {
       yield* TestClock.adjust(MissionWakes.WAKE_INTERVAL);
       assert.equal(
         yield* nextText(world),
-        told(["member 2 on this machine failed.", "member 2 on this machine failed."]),
+        told(["a member on this machine failed.", "a member on this machine is awaiting input."]),
       );
     }),
   );
