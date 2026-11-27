@@ -1722,29 +1722,43 @@ it.effect("a release goes to the live claim, not to a refusal the view hides beh
 it.effect(
   "a member deleted here, or while the server was stopped, drops out and does not hold off delete",
   () => {
-    const world = makeWorld([lead, localMember, otherMember]);
+    const marked = ref(HERE, "marked");
+    const leadB = ref(HERE, "lead-b");
+    const world = makeWorld([lead, localMember, marked, leadB, otherMember]);
     return withMissions(
       world,
       Effect.gen(function* () {
         const missions = yield* Missions.Missions;
         const mission = yield* createOne;
         yield* missions.addMember({ missionId: mission.missionId, member: localMember });
-        yield* missions.addMember({ missionId: mission.missionId, member: otherMember });
+        yield* missions.addMember({ missionId: mission.missionId, member: marked });
         world.remove(localMember);
         assert.equal(stateOf(yield* listed, localMember), undefined);
+        world.shell(marked, { deletedAt: "2026-01-03T00:00:00.000Z" });
+        const view = yield* missions.setLead({
+          missionId: mission.missionId,
+          lead,
+          expectedLead: lead.threadId,
+        });
+        assert.deepEqual(membersOf(view), [["env-here/lead", "active"]]);
+        yield* missions.deleteMission({ missionId: mission.missionId });
+        assert.deepEqual(yield* listed, { ...(yield* listed), missions: [], claims: [] });
+
+        const other = yield* missions.create({
+          missionId: "ba9876543210",
+          leadThreadId: leadB.threadId,
+        });
+        yield* missions.addMember({ missionId: other.missionId, member: otherMember });
         world.whileStopped = Effect.sync(() => world.remove(otherMember));
       }),
       Effect.gen(function* () {
-        const missions = yield* Missions.Missions;
         yield* eventually((snapshot) =>
           snapshot.claims.every((claim) => claim.threadId !== otherMember.threadId),
         );
         assert.deepEqual(
           (yield* listed).claims.map((claim) => claim.threadId),
-          [lead.threadId],
+          [leadB.threadId],
         );
-        yield* missions.deleteMission({ missionId: "0123456789ab" });
-        assert.deepEqual(yield* listed, { ...(yield* listed), missions: [], claims: [] });
       }),
     );
   },
@@ -2362,7 +2376,7 @@ it.effect(
 );
 
 it.effect(
-  "a release the member's machine does not answer is pending, and is sent again until it answers",
+  "a release the member's machine does not answer is pending, sent again, and sent first by a re-add",
   () => {
     const world = makeWorld([lead, laptopMember]);
     return withMissions(
@@ -2372,6 +2386,7 @@ it.effect(
         const until = yield* openSidebar;
         const mission = yield* createOne;
         yield* missions.addMember({ missionId: mission.missionId, member: laptopMember });
+        const [first] = yield* world.laptop.claims!.list(LEAD_ON_LAPTOP);
         world.laptop.mode = "hanging";
         const releasing = yield* Effect.forkChild(
           missions.releaseMember({ missionId: mission.missionId, member: laptopMember }),
@@ -2388,10 +2403,18 @@ it.effect(
         assert.equal(stateOf(yield* listed, laptopMember), "release-pending");
 
         world.laptop.mode = "up";
-        yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
-        yield* until((snapshot) => stateOf(snapshot, laptopMember) === undefined);
-        assert.deepEqual(yield* world.laptop.claims!.list(LEAD_ON_LAPTOP), []);
-        assert.deepEqual(world.tags(laptopMember), [WAS_TAG]);
+        const sent = world.laptop.calls.length;
+        yield* missions.addMember({ missionId: mission.missionId, member: laptopMember });
+        assert.deepEqual(world.laptop.calls.slice(sent), ["release", "join"]);
+        yield* world.laptop.claims!.release(LEAD_ON_LAPTOP, {
+          threadId: laptopMember.threadId,
+          missionId: mission.missionId,
+          generation: first!.generation,
+        });
+        const [again] = yield* world.laptop.claims!.list(LEAD_ON_LAPTOP);
+        assert.notEqual(again?.generation, first!.generation);
+        assert.deepEqual(world.tags(laptopMember), [TAG]);
+        assert.equal(stateOf(yield* listed, laptopMember), "active");
       }),
     );
   },
@@ -2524,7 +2547,7 @@ it.effect(
           activeRunId: "run-1",
           pendingRuntimeRequest: { id: "r1", kind: "user_input", createdAt: "2026-01-01" },
         });
-        world.shell(hostile, { status: "running" });
+        world.shell(hostile, { status: "failed" });
         yield* listed;
         yield* world.untilAnswered("list");
 
@@ -2532,8 +2555,9 @@ it.effect(
           role: "lead",
           prompt: `${HEADER}\n\nReview every pull request.`,
           status: [
-            "Status: 2 members. 1 need you (awaiting input, pending approval), 0 failed, 1 working, 0 idle, 0 offline.",
+            "Status: 2 members. 1 need you (awaiting input, pending approval), 1 failed, 0 working, 0 idle, 0 offline.",
             "Needs attention: member 1 on this machine, awaiting input.",
+            "Needs attention: member 2 on machine 2, failed.",
             "For titles and the full list, call t3_mission_roster.",
           ].join("\n"),
         });

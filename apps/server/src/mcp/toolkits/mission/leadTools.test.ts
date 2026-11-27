@@ -295,6 +295,30 @@ it.effect(
             stale: false,
           },
         },
+        ...[5, 6].map((index) => ({
+          ...row(index, "idle"),
+          workspace: {
+            kind: "worktree" as const,
+            repositories: Array.from({ length: 24 }, (_, repo) => ({
+              name: `repo-${repo}`,
+              path: `/code/app/repo-${repo}`,
+              repositoryPath: `/code/app/repo-${repo}`,
+              branch: `t3/${"b".repeat(400)}`,
+              branchSource: "recorded" as const,
+              remote: `github.com/acme/repo-${repo}`,
+              pullRequests: [
+                {
+                  number: repo,
+                  state: "open" as const,
+                  url: `https://github.com/acme/repo-${repo}/pull/${repo}`,
+                },
+              ],
+            })),
+            truncated: false,
+            otherPullRequests: [],
+            stale: false,
+          },
+        })),
       ];
       const longLabels = {
         ...makeMissions(),
@@ -311,6 +335,7 @@ it.effect(
         }),
       };
       const seen: Array<string> = [];
+      const pages: Array<ReadonlyArray<string>> = [];
       let cursor: number | null = 0;
       while (cursor !== null) {
         const { text, structured } = yield* callLeadTool(longLabels, lead, "t3_mission_roster", {
@@ -327,6 +352,7 @@ it.effect(
           }>;
           readonly nextCursor: number | null;
         };
+        pages.push(page.members.map((member) => member.threadRef.threadId));
         for (const member of page.members) {
           seen.push(
             `${member.threadRef.threadId} ${member.title.length < 40_000} ${member.project.length < 40_000} ${member.machine.length < 40_000} ${typeof member.workspace === "string" ? member.workspace : "listed"}`,
@@ -340,7 +366,12 @@ it.effect(
         "t2 true true true unknown",
         "t3 true true true listed",
         "t4 true true true tooLarge",
+        "t5 true true true listed",
+        "t6 true true true listed",
       ]);
+      const withT5 = pages.findIndex((page) => page.includes("t5"));
+      assert.equal(pages[withT5]?.at(-1), "t5");
+      assert.equal(pages[withT5 + 1]?.[0], "t6");
     }),
 );
 

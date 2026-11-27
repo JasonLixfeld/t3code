@@ -501,7 +501,7 @@ it.effect.each(["starts", "never starts"] as const)(
   },
 );
 
-it.effect.each(["interrupted", "completed"] as const)(
+it.effect.each(["interrupted", "completed", "parked out of sight"] as const)(
   "a run that completes while the next is queued is told once, when the next one is %s",
   (next) => {
     const world = makeWorld();
@@ -513,8 +513,13 @@ it.effect.each(["interrupted", "completed"] as const)(
           first,
           world.event(first, "run.updated", { id: "f1", status: "completed" }),
         );
-        yield* world.run(first, "f2", "running");
-        yield* world.run(first, "f2", next);
+        if (next === "parked out of sight") {
+          world.set(first, { status: "completed", latestRunId: "f1" });
+          yield* world.event(first, "run.updated", { id: "f2", status: "queued", queueHeld: true });
+        } else {
+          yield* world.run(first, "f2", "running");
+          yield* world.run(first, "f2", next);
+        }
         assert.equal(
           yield* nextText(world),
           told(["member 1 on this machine finished its turn and is idle."]),
@@ -978,8 +983,8 @@ it.effect("ids another machine sets never reach a wake", () => {
         },
       ]);
       yield* world.listed(hostile, { status: "failed", run: { id: "run-1", status: "failed" } });
-      const text = yield* nextText(world);
-      assert.equal(text, told(["member 4 on machine 3 failed."]));
+      const { text } = yield* Queue.take(world.woke);
+      assert.equal(wakeTextWithoutClosingLine(text), told(["member 4 on machine 3 failed."]));
       assert.notInclude(text, "SYSTEM");
     }),
   );

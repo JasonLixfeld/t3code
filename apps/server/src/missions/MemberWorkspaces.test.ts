@@ -519,16 +519,23 @@ it.effect(
       yield* Deferred.succeed(gate, undefined);
       yield* TestClock.adjust(READ_STEP);
       assert.equal(yield* workspaces.cached(inProject()), "pending");
-      yield* TestClock.adjust(READ_STEP);
-      yield* TestClock.adjust(READ_STEP);
-      assert.notEqual(yield* workspaces.cached(inProject()), "pending");
+      yield* readAfterBackgroundRead(workspaces, inProject());
       yield* workspaces.forget(threadId);
       assert.equal(yield* workspaces.cached(inProject()), "pending");
     }).pipe(
       Effect.provide(
         machine([], {
           resolve: () =>
-            Deferred.await(gate).pipe(Effect.andThen(Effect.sleep(READ_STEP)), Effect.as(null)),
+            Deferred.isDone(gate).pipe(
+              Effect.flatMap((opened) =>
+                opened
+                  ? Effect.succeed(null)
+                  : Deferred.await(gate).pipe(
+                      Effect.andThen(Effect.sleep(READ_STEP)),
+                      Effect.as(null),
+                    ),
+              ),
+            ),
         }),
       ),
     );
