@@ -1,5 +1,5 @@
 import { T, useGT } from "gt-react-native";
-import { useEffect, useRef } from "react";
+import { useEffect, useEffectEvent, useRef } from "react";
 import { type TextInputInstance, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -20,7 +20,8 @@ export function ReviewFindBar(props: {
   readonly query: string;
   readonly result: ReviewFindResult;
   readonly activeIndex: number | null;
-  readonly focusRequestId: number;
+  readonly focusRequested: boolean;
+  readonly onFocused: () => void;
   readonly resultIsStale: boolean;
   readonly partial: boolean;
   readonly onChangeQuery: (query: string) => void;
@@ -30,10 +31,13 @@ export function ReviewFindBar(props: {
   const gt = useGT();
   const inputRef = useRef<TextInputInstance>(null);
   const total = props.result.matchCount;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the native input on each header Find press, including while it is already shown
+  const markFocused = useEffectEvent(props.onFocused);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the native input once per header Find press, including while it is already shown
   useEffect(() => {
-    if (props.focusRequestId > 0) inputRef.current?.focus();
-  }, [props.focusRequestId]);
+    if (!props.focusRequested) return;
+    inputRef.current?.focus();
+    markFocused();
+  }, [props.focusRequested]);
   const counter =
     props.query.length === 0
       ? null
