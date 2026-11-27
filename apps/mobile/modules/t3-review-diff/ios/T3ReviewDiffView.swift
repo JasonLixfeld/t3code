@@ -1040,6 +1040,10 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
       return
     }
     pendingMatch = nil
+    if isProgrammaticScrollActive || scrollView.isDecelerating {
+      scrollView.setContentOffset(scrollView.contentOffset, animated: false)
+      finishVerticalScroll()
+    }
     let top = scrollView.contentInset.top
     let bottom = scrollView.contentInset.bottom
     let headerHeight = contentView.style.fileHeaderHeight
@@ -1304,6 +1308,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
           let rowFrame = frameForRow(at: index), rowFrame.height > 0 else {
       return nil
     }
+    stopHorizontalDeceleration()
     let row = rows[index]
     let rect: CGRect
     if let layout = codeLayoutsByRowId[row.id], let textRect = layout.textContainerRect(for: match.range) {
