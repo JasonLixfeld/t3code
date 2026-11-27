@@ -659,8 +659,8 @@ export const ThreadListV2MissionMemberRow = memo(function ThreadListV2MissionMem
               !props.place.toggle
                 ? "text-foreground-muted"
                 : props.pane === "sidebar"
-                  ? "font-t3-semibold text-drawer-foreground"
-                  : "font-t3-semibold text-foreground",
+                  ? "font-t3-bold text-drawer-foreground"
+                  : "font-t3-bold text-foreground",
             )}
             numberOfLines={1}
           >
@@ -1691,7 +1691,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         <Text
           className={cn(
             "flex-1 text-base",
-            leadToggle ? "font-t3-semibold" : !recede && "font-t3-medium",
+            leadToggle ? "font-t3-bold" : !recede && "font-t3-medium",
             selected
               ? selectedThreadRowColors.foregroundClassName
               : rowAppearance.foregroundClassName,
@@ -2022,7 +2022,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             <Text
               className={cn(
                 "text-base",
-                leadToggle && "font-t3-semibold",
+                leadToggle && "font-t3-bold",
                 selected
                   ? selectedThreadRowColors.foregroundClassName
                   : leadToggle
