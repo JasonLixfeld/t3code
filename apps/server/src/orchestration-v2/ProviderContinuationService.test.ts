@@ -27,6 +27,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
+import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 const threadId = ThreadId.make("thread-provider-continuation");
@@ -537,7 +538,12 @@ describe("ProviderContinuationService", () => {
     });
   });
 
-  it.effect.each(["reads", "fails its first read"] as const)(
+  it.effect.each([
+    "reads",
+    "fails its first read",
+    "loses its thread before it reads again",
+    "sees its thread deleted",
+  ] as const)(
     "tells a request its run ended, also after T3 marked the run started, when its watch %s",
     (watch) =>
       Effect.gen(function* () {
@@ -548,8 +554,19 @@ describe("ProviderContinuationService", () => {
         const dispatchSequence = 7;
         const cursors: Array<number | undefined> = [];
         let unstarted = 0;
+        let threadGone = false;
+        const failsFirstRead =
+          watch === "fails its first read" || watch === "loses its thread before it reads again";
         const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getThreadRecords: () => Effect.succeed(projection),
+          getThreadRecords: () =>
+            threadGone
+              ? Effect.fail(
+                  new Orchestrator.OrchestratorProjectionError({
+                    threadId,
+                    cause: new ProjectionStoreThreadNotFoundError({ threadId }),
+                  }),
+                )
+              : Effect.succeed(projection),
           dispatch: () =>
             Effect.succeed({
               sequence: dispatchSequence,
@@ -560,6 +577,13 @@ describe("ProviderContinuationService", () => {
               ],
             } as never),
           streamStoredEventsFrom: (input) => {
+            if (input?.eventType === "thread.deleted") {
+              return (
+                watch === "sees its thread deleted"
+                  ? Stream.make({ event: { type: "thread.deleted", payload: {} } })
+                  : Stream.never
+              ) as never;
+            }
             cursors.push(input?.afterSequence);
             const terminal = Stream.make({
               event: {
@@ -567,12 +591,13 @@ describe("ProviderContinuationService", () => {
                 payload: { id: runId, status: "failed", startedAt: "2026-01-01T00:00:00.000Z" },
               },
             } as never);
+            if (failsFirstRead && cursors.length === 1) {
+              return Stream.fromEffect(Deferred.succeed(firstRead, undefined)).pipe(
+                Stream.flatMap(() => Stream.fail(new Error("event store read failed"))),
+              ) as never;
+            }
             return (
-              watch === "fails its first read" && cursors.length === 1
-                ? Stream.fromEffect(Deferred.succeed(firstRead, undefined)).pipe(
-                    Stream.flatMap(() => Stream.fail(new Error("event store read failed"))),
-                  )
-                : terminal
+              watch === "reads" || watch === "fails its first read" ? terminal : Stream.never
             ) as never;
           },
         });
@@ -584,16 +609,19 @@ describe("ProviderContinuationService", () => {
             onRunEndedWithoutStarting: () => Effect.sync(() => void (unstarted += 1)),
             onRunEnded: () => Deferred.succeed(ended, undefined).pipe(Effect.asVoid),
           });
-          if (watch === "fails its first read") {
+          if (failsFirstRead) {
             yield* Deferred.await(firstRead);
             assert.isFalse(yield* Deferred.isDone(ended));
+            threadGone = watch === "loses its thread before it reads again";
             yield* TestClock.adjust("1 second");
           }
           yield* Deferred.await(ended);
-          assert.equal(unstarted, 0);
+          assert.equal(unstarted, threadGone || watch === "sees its thread deleted" ? 1 : 0);
           assert.deepEqual(
             cursors,
-            watch === "reads" ? [dispatchSequence] : [dispatchSequence, dispatchSequence],
+            watch === "fails its first read"
+              ? [dispatchSequence, dispatchSequence]
+              : [dispatchSequence],
           );
         }).pipe(
           Effect.provide(

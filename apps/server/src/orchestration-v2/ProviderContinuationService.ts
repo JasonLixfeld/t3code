@@ -6,8 +6,11 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -16,9 +19,11 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import type * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
+import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
 
 const CONTINUATION_MESSAGE_TEXT = "Background task completed.";
 const RUN_WATCH_RETRY = "1 second";
+const isThreadNotFound = Schema.is(ProjectionStoreThreadNotFoundError);
 
 function delegatedCompletionText(taskIds: ReadonlyArray<string>): string {
   const taskList = taskIds.join(", ");
@@ -99,21 +104,45 @@ export const layer = Layer.effectDiscard(
             : [],
         )[0];
         if (runId === undefined) return;
-        yield* Stream.suspend(() =>
-          threads.streamStoredEventsFrom({
-            threadId: request.threadId,
-            afterSequence: dispatched.sequence,
-            eventType: "run.updated",
-          }),
+        const tail = (eventType: "run.updated" | "thread.deleted") =>
+          Stream.suspend(() =>
+            threads.streamStoredEventsFrom({
+              threadId: request.threadId,
+              afterSequence: dispatched.sequence,
+              eventType,
+            }),
+          );
+        const stored = Effect.suspend(() =>
+          threads.getThreadRecords(request.threadId, ["runs"]),
         ).pipe(
-          Stream.filter(
-            ({ event }) =>
+          Effect.map((records) => {
+            const run = (records.runs ?? []).find((each) => each.id === runId);
+            const ended =
+              records.thread.deletedAt !== null ||
+              (run !== undefined && ThreadManagementService.isTerminalRunStatus(run.status));
+            return ended
+              ? Option.some({ started: (run?.startedAt ?? null) !== null })
+              : Option.none();
+          }),
+          Effect.catchIf(
+            (error) => isThreadNotFound(error.cause),
+            () => Effect.succeedSome({ started: false }),
+          ),
+        );
+        const live = Stream.merge(
+          tail("run.updated").pipe(
+            Stream.filterMap(({ event }) =>
               event.type === "run.updated" &&
               event.payload.id === runId &&
-              ThreadManagementService.isTerminalRunStatus(event.payload.status),
+              ThreadManagementService.isTerminalRunStatus(event.payload.status)
+                ? Result.succeed({ started: event.payload.startedAt !== null })
+                : Result.failVoid,
+            ),
           ),
-          Stream.runHead,
-          Effect.flatMap(Effect.fromOption),
+          tail("thread.deleted").pipe(Stream.map(() => ({ started: false }))),
+        ).pipe(Stream.runHead, Effect.flatMap(Effect.fromOption));
+        yield* stored.pipe(
+          Effect.flatMap((ended) => (Option.isSome(ended) ? Effect.succeed(ended.value) : live)),
           Effect.tapCause((cause) =>
             Effect.logWarning("orchestration-v2.provider-continuation.run-watch-failed", {
               threadId: request.threadId,
@@ -122,14 +151,14 @@ export const layer = Layer.effectDiscard(
             }),
           ),
           Effect.retry({ schedule: Schedule.spaced(RUN_WATCH_RETRY) }),
-          Effect.flatMap(({ event }) => {
-            if (event.type !== "run.updated") return Effect.void;
-            const unstarted =
-              event.payload.startedAt === null && onRunEndedWithoutStarting !== undefined
+          Effect.flatMap(({ started }) =>
+            Effect.andThen(
+              !started && onRunEndedWithoutStarting !== undefined
                 ? onRunEndedWithoutStarting()
-                : Effect.void;
-            return Effect.andThen(unstarted, onRunEnded?.() ?? Effect.void);
-          }),
+                : Effect.void,
+              onRunEnded?.() ?? Effect.void,
+            ),
+          ),
           Effect.forkScoped,
         );
       },
