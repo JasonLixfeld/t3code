@@ -40,6 +40,12 @@ private extension T3ReviewDiffView {
 
     let before = scrollView.contentOffset.y
     scrollToMatch(target, start: 300, end: 306, animated: false)
+    contentView.touchesBegan([], with: nil)
+    setCollapsedFileIdsJson("[]")
+    check(scrollView.contentOffset.y == before, "A touch cancels a match jump still waiting for its fold")
+    setCollapsedFileIdsJson("[\"b.ts\"]")
+
+    scrollToMatch(target, start: 300, end: 306, animated: false)
     check(scrollView.contentOffset.y == before, "A match in a folded file waits for the fold to open")
     setCollapsedFileIdsJson("[]")
     let index = rows.firstIndex { $0.id == target }!
