@@ -8609,105 +8609,112 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect("replays only its own background reply into a continuation turn", () =>
-    Effect.gen(function* () {
-      const CHILD_B = "ses_f1485c529ffeBBBBBBBBBBBBBB";
-      const toolB = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-b" };
-      const report = (inboxID: string, child: string, text: string) =>
-        event("session.inbox.enqueued", {
-          inboxID,
-          sessionID: SESSION,
-          item: {
-            type: "synthetic",
-            payload: {
-              text: `<subagent sessionID="${child}" state="completed" description="Sleep">\n${text}\n</subagent>`,
-              description: "Sleep",
-              metadata: {
-                source: "subagent",
-                childID: child,
-                agent: "General",
-                state: "completed",
+  it.effect.each(["before the older wake", "during the older wake"] as const)(
+    "replays only its own background reply into a continuation turn, second report %s",
+    (when) =>
+      Effect.gen(function* () {
+        const CHILD_B = "ses_f1485c529ffeBBBBBBBBBBBBBB";
+        const toolB = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-b" };
+        const report = (inboxID: string, child: string, text: string) =>
+          event("session.inbox.enqueued", {
+            inboxID,
+            sessionID: SESSION,
+            item: {
+              type: "synthetic",
+              payload: {
+                text: `<subagent sessionID="${child}" state="completed" description="Sleep">\n${text}\n</subagent>`,
+                description: "Sleep",
+                metadata: {
+                  source: "subagent",
+                  childID: child,
+                  agent: "General",
+                  state: "completed",
+                },
               },
+              delivery: "steer",
             },
-            delivery: "steer",
-          },
-        });
-      const reply = (assistantMessageID: string, text: string) =>
-        event("session.text.ended", { sessionID: SESSION, assistantMessageID, ordinal: 0, text });
-      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
-      const bothOffered = yield* Deferred.make<void>();
-      const { runtime, thread } = yield* resumed([
-        ...backgroundLaunch(CHILD),
-        event("session.tool.input.started", { ...toolB, name: "subagent" }),
-        event("session.tool.called", {
-          ...toolB,
-          name: "subagent",
-          input: { description: "Sleep", prompt: "sleep", background: true },
-          executed: false,
-        }),
-        event("session.created", { ...childCreated(CHILD_B), sessionID: CHILD_B }),
-        event("session.tool.progress", {
-          ...toolB,
-          metadata: { sessionID: CHILD_B, status: "running" },
-        }),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        event("session.execution.succeeded", { sessionID: CHILD }),
-        report("msg_report_a", CHILD, "A_OK"),
-        event("session.execution.started", { sessionID: SESSION }),
-        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report_a" }),
-        reply("msg_reply_a", "REPLY_A"),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        event("session.execution.succeeded", { sessionID: CHILD_B }),
-        report("msg_report_b", CHILD_B, "B_OK"),
-        event("session.execution.started", { sessionID: SESSION }),
-        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report_b" }),
-        reply("msg_reply_b", "REPLY_B"),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-      ]).pipe(
-        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
-          offer: (request) =>
-            Effect.suspend(() =>
-              offers.push(request) === 2
-                ? Deferred.succeed(bothOffered, undefined).pipe(Effect.asVoid)
-                : Effect.void,
-            ),
-          take: Effect.never,
-        }),
-      );
-      const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
-      const ended = yield* Deferred.make<void>();
-      yield* runtime.events.pipe(
-        Stream.tap((event) =>
-          Effect.gen(function* () {
-            collected.push(event);
-            if (collected.filter((entry) => entry.type === "turn.terminal").length === 2) {
-              yield* Deferred.succeed(ended, undefined);
-            }
+          });
+        const reply = (assistantMessageID: string, text: string) =>
+          event("session.text.ended", { sessionID: SESSION, assistantMessageID, ordinal: 0, text });
+        const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+        const bothOffered = yield* Deferred.make<void>();
+        const { runtime, thread } = yield* resumed([
+          ...backgroundLaunch(CHILD),
+          event("session.tool.input.started", { ...toolB, name: "subagent" }),
+          event("session.tool.called", {
+            ...toolB,
+            name: "subagent",
+            input: { description: "Sleep", prompt: "sleep", background: true },
+            executed: false,
           }),
-        ),
-        Stream.runDrain,
-        Effect.forkScoped,
-      );
-      yield* runtime.startTurn(withLineage(thread));
-      yield* Deferred.await(bothOffered);
-      yield* runtime.startTurn(continuationTurn(thread, offers[1]!, "wake-b"));
-      yield* Deferred.await(ended);
-      const continuationId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
-        driver: OPENCODE_PROVIDER,
-        nativeTurnId: `${SESSION}:attempt:attempt:opencode2-adapter:wake-b`,
-      });
-      assert.deepEqual(
-        collected.flatMap((event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.type === "assistant_message" &&
-          event.turnItem.providerTurnId === continuationId
-            ? [event.turnItem.text]
-            : [],
-        ),
-        ["REPLY_B"],
-      );
-      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
-    }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
+          event("session.created", { ...childCreated(CHILD_B), sessionID: CHILD_B }),
+          event("session.tool.progress", {
+            ...toolB,
+            metadata: { sessionID: CHILD_B, status: "running" },
+          }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          report("msg_report_a", CHILD, "A_OK"),
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report_a" }),
+          reply("msg_reply_a", "REPLY_A"),
+          ...(when === "before the older wake"
+            ? [event("session.execution.succeeded", { sessionID: SESSION })]
+            : []),
+          event("session.execution.succeeded", { sessionID: CHILD_B }),
+          report("msg_report_b", CHILD_B, "B_OK"),
+          ...(when === "during the older wake"
+            ? [event("session.execution.succeeded", { sessionID: SESSION })]
+            : []),
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report_b" }),
+          reply("msg_reply_b", "REPLY_B"),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ]).pipe(
+          Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+            offer: (request) =>
+              Effect.suspend(() =>
+                offers.push(request) === 2
+                  ? Deferred.succeed(bothOffered, undefined).pipe(Effect.asVoid)
+                  : Effect.void,
+              ),
+            take: Effect.never,
+          }),
+        );
+        const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        const ended = yield* Deferred.make<void>();
+        yield* runtime.events.pipe(
+          Stream.tap((event) =>
+            Effect.gen(function* () {
+              collected.push(event);
+              if (collected.filter((entry) => entry.type === "turn.terminal").length === 2) {
+                yield* Deferred.succeed(ended, undefined);
+              }
+            }),
+          ),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(withLineage(thread));
+        yield* Deferred.await(bothOffered);
+        yield* runtime.startTurn(continuationTurn(thread, offers[1]!, "wake-b"));
+        yield* Deferred.await(ended);
+        const continuationId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+          driver: OPENCODE_PROVIDER,
+          nativeTurnId: `${SESSION}:attempt:attempt:opencode2-adapter:wake-b`,
+        });
+        assert.deepEqual(
+          collected.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.providerTurnId === continuationId
+              ? [event.turnItem.text]
+              : [],
+          ),
+          ["REPLY_B"],
+        );
+        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
   );
 
   it.effect(

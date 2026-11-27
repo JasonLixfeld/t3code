@@ -2437,6 +2437,18 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             stringField(event.data.item.payload.metadata, "childID") ?? "",
           )));
 
+    const retireWakes = (state: ThreadState, wakes: ReadonlyArray<Wake>): Effect.Effect<void> =>
+      Effect.suspend(() => {
+        discardWakes(state, wakes);
+        return Effect.forEach(
+          wakes.flatMap((wake) =>
+            wake.events.filter((event) => replaysAfterWakeRetires(state, wake, event)),
+          ),
+          (event) => route(event, state.sessionId, true).pipe(Effect.ignore({ log: true })),
+          { discard: true },
+        );
+      });
+
     const offerWake = Effect.fnUntraced(function* (state: ThreadState, wake: Wake) {
       const appThreadId = state.providerThread.appThreadId;
       if (appThreadId === null || wake.messageId === undefined) return;
@@ -2454,13 +2466,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             const index = state.wakes.indexOf(wake);
             if (index < 0 && !wake.continuationPending) return false;
             wake.continuationPending = false;
-            if (index >= 0) {
-              discardWakes(state, state.wakes.splice(index, 1));
-              for (const event of wake.events) {
-                if (!replaysAfterWakeRetires(state, wake, event)) continue;
-                yield* route(event, state.sessionId, true).pipe(Effect.ignore({ log: true }));
-              }
-            }
+            if (index >= 0) yield* retireWakes(state, state.wakes.splice(index, 1));
             yield* syncRoster(rootOf(state));
             return index >= 0;
           }),
@@ -4866,7 +4872,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           );
           if (index < 0) return yield* finishTurn(state, { status: "completed" });
           // Continuations cannot reorder; earlier wakes stranded by cancel or failed dispatch would pin the session.
-          discardWakes(state, state.wakes.splice(0, index));
+          yield* retireWakes(state, state.wakes.splice(0, index));
           yield* Effect.forkIn(stopStrays(state), sessionScope);
           const wake = state.wakes.shift()!;
           const turn = state.active;
