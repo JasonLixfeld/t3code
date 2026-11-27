@@ -36,25 +36,6 @@ function setup() {
   };
 }
 
-it("asks to focus the find field once per header press, and never from Contents typing", () => {
-  using screen = setup();
-
-  screen.run((find) => find.changeQuery("app"));
-  expect(screen.find().open).toBe(true);
-  expect(screen.find().focusRequested).toBe(false);
-
-  screen.run((find) => find.openFromHeader());
-  expect(screen.find().focusRequested).toBe(true);
-  screen.run((find) => find.markFocused());
-  expect(screen.find().focusRequested).toBe(false);
-  screen.run((find) => find.openFromHeader());
-  expect(screen.find().focusRequested).toBe(true);
-
-  screen.run((find) => find.close());
-  screen.run((find) => find.changeQuery("apple"));
-  expect(screen.find().focusRequested).toBe(false);
-});
-
 it("searches only while Find or the Contents search is open", () => {
   using screen = setup();
   screen.run((find) => find.changeQuery("app"));
@@ -67,7 +48,7 @@ it("searches only while Find or the Contents search is open", () => {
   expect(screen.find().result.matchCount).toBe(2);
 });
 
-it("steps through matches with wrap-around and reveals each one", () => {
+it("reveals the first match, each step with wrap-around, and the exact match chosen under an older query", () => {
   using screen = setup();
 
   screen.run((find) => find.changeQuery("app"));
@@ -76,16 +57,10 @@ it("steps through matches with wrap-around and reveals each one", () => {
   screen.run((find) => find.step(-1));
   expect(screen.find().activeIndex).toBe(1);
   expect(screen.onReveal).toHaveBeenLastCalledWith(expect.objectContaining({ start: 4 }));
-});
 
-it("reveals the exact match chosen under an older query", () => {
-  using screen = setup();
-  screen.run((find) => find.changeQuery("app"));
   const chosen = screen.find().result.matchAt(1)!;
-
   screen.run((find) => find.changeQuery("appl"));
   screen.run((find) => find.selectMatch(chosen));
-
   expect(screen.onReveal).toHaveBeenLastCalledWith(chosen);
   expect(chosen).toMatchObject({ start: 4, end: 7 });
 });

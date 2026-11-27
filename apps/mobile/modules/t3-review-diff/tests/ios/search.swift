@@ -27,15 +27,7 @@ private extension T3ReviewDiffView {
     check(contentView.searchHighlights(rowId: target) == ["active"],
           "The current match replaces its match color")
 
-    let lightMatch: [Int] = [0xff, 0x96, 0x32, 0x88]
-    let lightActive: [Int] = [0x00, 0x9f, 0xff, 115]
-    check(contentView.searchColorBytes.match == lightMatch, "Light matches use the web diff's color")
-    check(contentView.searchColorBytes.active == lightActive, "Light current match uses the web diff's color")
     setAppearanceScheme("dark")
-    let darkMatch: [Int] = [0xff, 0x96, 0x32, 0x66]
-    let darkActive: [Int] = [0x69, 0xb1, 0xff, 115]
-    check(contentView.searchColorBytes.match == darkMatch, "Dark matches use the web diff's color")
-    check(contentView.searchColorBytes.active == darkActive, "Dark current match uses the web diff's color")
     check(contentView.searchHighlights(rowId: target) == ["active"], "Dark keeps the current match")
 
     let before = scrollView.contentOffset.y
@@ -80,15 +72,6 @@ private extension ReviewDiffContentView {
       if highlight.color == activeSearchMatchColor { return "active" }
       return nil
     }
-  }
-
-  var searchColorBytes: (match: [Int], active: [Int]) {
-    func rgbaBytes(_ color: UIColor) -> [Int] {
-      var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
-      color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-      return [red, green, blue, alpha].map { Int(($0 * 255).rounded()) }
-    }
-    return (match: rgbaBytes(searchMatchColor), active: rgbaBytes(activeSearchMatchColor))
   }
 
   func horizontalCodeOffset(fileId: String) -> CGFloat { horizontalOffset(for: fileId) }

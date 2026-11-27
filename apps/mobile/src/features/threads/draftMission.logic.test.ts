@@ -3,7 +3,6 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { m } from "../../i18n/messages";
-import { clearMissionDraft, markMissionDraft, missionDraftOf } from "../../state/mission-drafts";
 import {
   chosenDraftMissionOption,
   draftHeroTokens,
@@ -44,27 +43,20 @@ const choice = (
   );
 
 describe("draftHeroTokens", () => {
-  it("splits the sentence into whole words and keeps the comma after the project on its line", () => {
-    expect(draftHeroTokens({ scratch: false, mission: "member" }, m)).toMatchObject([
-      { kind: "text", text: "What " },
-      { kind: "text", text: "should " },
-      { kind: "text", text: "we " },
-      { kind: "text", text: "build " },
-      { kind: "text", text: "in " },
-      { kind: "project", glue: ", " },
-      { kind: "text", text: "in " },
-      { kind: "text", text: "mission " },
-      { kind: "mission", glue: "?" },
-    ]);
-  });
-
-  it("leaves the project out of a No project draft's sentence", () => {
-    const tokens = draftHeroTokens({ scratch: true, mission: "lead" }, m);
-    expect(tokens.some((token) => token.kind === "project")).toBe(false);
+  it.each([
+    [
+      { scratch: false, mission: "member" },
+      "What should we build in [project], in mission [mission]?",
+    ],
+    [{ scratch: true, mission: "lead" }, "What should we work on as the new lead for [mission]?"],
+  ] as const)("splits %o into whole words, keeping the glue on its choice", (input, sentence) => {
+    const tokens = draftHeroTokens(input, m);
     expect(
-      tokens.map((token) => (token.kind === "text" ? token.text : `[${token.kind}]`)).join(""),
-    ).toBe("What should we work on as the new lead for [mission]");
-    expect(tokens.at(-1)).toMatchObject({ kind: "mission", glue: "?" });
+      tokens
+        .map((token) => (token.kind === "text" ? token.text : `[${token.kind}]${token.glue}`))
+        .join(""),
+    ).toBe(sentence);
+    expect(tokens.every((token) => token.kind !== "text" || /^\S+ $/.test(token.text))).toBe(true);
     expect(new Set(tokens.map((token) => token.key)).size).toBe(tokens.length);
   });
 });
@@ -105,31 +97,27 @@ describe("draftMissionChoice", () => {
     expect(choice({ kind: "new" })).toMatchObject({ word: "a new mission", label: "New mission" });
   });
 
-  it("clears a new mission or lead mark when the draft is sent as a plain thread", () => {
-    const intents = [
-      { kind: "new" as const },
+  const member = { kind: "member", host: DESK, missionId: "m1", name: "Ship v2" } as const;
+  it.each([
+    ["sends a new mission draft as a plain thread", { kind: "new" }, "none", { intent: null }],
+    [
+      "sends a lead draft as a plain thread",
       {
-        kind: "lead" as const,
+        kind: "lead",
         host: DESK,
         missionId: "m1",
         name: "Ship v2",
         expectedLead: ThreadId.make("gone"),
       },
-    ];
-    for (const intent of intents) {
-      const target = { requestId: `request-${intent.kind}` };
-      markMissionDraft(target, intent, () => "m-new");
-      const option = chosenDraftMissionOption(choice(missionDraftOf(target)?.intent), "none");
-      expect(option).toMatchObject({ label: "Send as a plain thread", intent: null });
-      if (option?.intent === null) clearMissionDraft(target);
-      expect(missionDraftOf(target)).toBeUndefined();
-    }
-  });
-
-  it("ignores the option a member draft already has", () => {
-    const joined = choice({ kind: "member", host: DESK, missionId: "m1", name: "Ship v2" });
-    expect(chosenDraftMissionOption(joined, "env-desk:m1")).toBeUndefined();
-    expect(chosenDraftMissionOption(joined, "none")).toMatchObject({ intent: null });
+      "none",
+      { intent: null },
+    ],
+    ["takes a member draft out of its mission", member, "none", { intent: null }],
+    ["ignores the option a member draft already has", member, "env-desk:m1", undefined],
+  ] as const)("%s", (_name, intent, id, expected) => {
+    expect(chosenDraftMissionOption(choice(intent), id)).toEqual(
+      expected && expect.objectContaining(expected),
+    );
   });
 
   it("hides the choice when Missions are off, or the machine may not start one and none is marked", () => {

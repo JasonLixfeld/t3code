@@ -495,26 +495,20 @@ describe("a mission draft's machines", () => {
     ]);
   });
 
-  it("keeps the usual No project home on a mission machine, else moves it to one that has a root", () => {
-    const input = {
-      environments: [
-        { environmentId: desk, connectionState: "connected" as const },
-        { environmentId: laptop, connectionState: "connecting" as const },
-      ],
-      serverConfigs: new Map([
-        [desk, { scratchWorkspaceRoot: "/desk-scratch" }],
-        [laptop, { scratchWorkspaceRoot: "/laptop-scratch" }],
-      ]),
-      selectedEnvironmentId: desk,
-    };
-    expect(resolveMissionScratchOption({ ...input, machines: null })).toEqual({
-      environmentId: desk,
-      ready: true,
-    });
-    expect(resolveMissionScratchOption({ ...input, machines: new Set([laptop]) })).toEqual({
-      environmentId: laptop,
-      ready: false,
-    });
-    expect(resolveMissionScratchOption({ ...input, machines: new Set() })).toBeNull();
+  it("moves the No project home to a mission machine, ready only once it connects", () => {
+    expect(
+      resolveMissionScratchOption({
+        environments: [
+          { environmentId: desk, connectionState: "connected" as const },
+          { environmentId: laptop, connectionState: "connecting" as const },
+        ],
+        serverConfigs: new Map([
+          [desk, { scratchWorkspaceRoot: "/desk-scratch" }],
+          [laptop, { scratchWorkspaceRoot: "/laptop-scratch" }],
+        ]),
+        selectedEnvironmentId: desk,
+        machines: new Set([laptop]),
+      }),
+    ).toEqual({ environmentId: laptop, ready: false });
   });
 });

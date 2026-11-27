@@ -22,22 +22,23 @@ describe("missionPromptForm", () => {
     });
   });
 
-  it("waits for missions.getPrompt when the list leaves prompts out", () => {
-    expect(form({ promptsOmitted: true, draft: "New" })).toMatchObject({
-      editable: false,
-      changed: false,
-    });
-    expect(form({ promptsOmitted: true, fetchedPrompt: "Read prompt" })).toMatchObject({
-      value: "Read prompt",
-      editable: true,
-    });
-  });
-
-  it("shows the prompt but never saves it without the right to set it", () => {
-    expect(form({ canSave: false, draft: "Changed" })).toMatchObject({
-      value: "Changed",
-      editable: false,
-      changed: false,
-    });
+  it.each([
+    [
+      "waits for missions.getPrompt when the list leaves prompts out",
+      { promptsOmitted: true, draft: "New" },
+      { editable: false, changed: false },
+    ],
+    [
+      "edits the prompt missions.getPrompt read",
+      { promptsOmitted: true, fetchedPrompt: "Read prompt" },
+      { value: "Read prompt", editable: true },
+    ],
+    [
+      "shows the prompt but never saves it without the right to set it",
+      { canSave: false, draft: "Changed" },
+      { value: "Changed", editable: false, changed: false },
+    ],
+  ])("%s", (_name, input, expected) => {
+    expect(form(input)).toMatchObject(expected);
   });
 });

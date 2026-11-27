@@ -29,6 +29,7 @@ import {
   missionLeaveId,
   type MissionHost,
   missionsLiveKey,
+  missionScratchHome,
   parseMissionTarget,
   quietMissionUpdateRunIds,
   withoutQuietMissionUpdates,
@@ -614,6 +615,19 @@ describe("missionDraftMachines", () => {
       snapshot: { ...host.snapshot, links: [], linksHidden: true },
     }));
     expect(missionDraftMachines({ kind: "member", ...joins }, hidden)).toBeNull();
+  });
+});
+
+describe("missionScratchHome", () => {
+  const rootFor = (environmentId: EnvironmentId) => (environmentId === BOX ? null : "/scratch");
+
+  it.each([
+    ["keeps the usual home when the draft may use any machine", null, DESK],
+    ["keeps the usual home on a mission machine", new Set([LAPTOP, DESK]), DESK],
+    ["moves to the first mission machine with a scratch root", new Set([BOX, LAPTOP]), LAPTOP],
+    ["finds no home when no mission machine has a scratch root", new Set([BOX]), null],
+  ])("%s", (_name, machines, expected) => {
+    expect(missionScratchHome(machines, DESK, rootFor)).toBe(expected);
   });
 });
 

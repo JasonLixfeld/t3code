@@ -4,6 +4,7 @@ import { filterSettingsSections } from "./settings-search";
 
 const SECTIONS = [
   { rows: [{ id: "usage", label: "Usage" }] },
+  { rows: [{ id: "SettingsOrganization", label: "General" }] },
   {
     title: "Connections",
     rows: [
@@ -28,8 +29,8 @@ const SECTIONS = [
   },
 ];
 
-function visible(query: string) {
-  return filterSettingsSections(SECTIONS, query, false).map((section) => [
+function visible(query: string, missionsAdvertised = false) {
+  return filterSettingsSections(SECTIONS, query, missionsAdvertised).map((section) => [
     section.title ?? null,
     section.rows.map((row) => row.label),
   ]);
@@ -60,20 +61,15 @@ describe("filterSettingsSections", () => {
     },
     { query: "usage", expected: [[null, ["Usage"]]] },
     { query: "zzzz", expected: [] },
-  ])("$query", ({ query, expected }) => {
-    expect(visible(query)).toEqual(expected);
+    { query: "mission prompt", missions: true, expected: [[null, ["General"]]] },
+    { query: "missions", expected: [] },
+  ])("$query", ({ query, missions, expected }) => {
+    expect(visible(query, missions)).toEqual(expected);
   });
 
   it("drops sections that start empty", () => {
     expect(filterSettingsSections([{ rows: [] }, ...SECTIONS], "", false).length).toBe(
       SECTIONS.length,
     );
-  });
-
-  it("finds the Missions settings by name only while a server advertises Missions", () => {
-    const general = [{ rows: [{ id: "SettingsOrganization", label: "General" }] }];
-    expect(filterSettingsSections(general, "mission prompt", true)).toEqual(general);
-    expect(filterSettingsSections(general, "mission prompt", false)).toEqual([]);
-    expect(filterSettingsSections(general, "missions", false)).toEqual([]);
   });
 });

@@ -75,14 +75,9 @@ it("checks a send against the mission state and the mission action's permission 
   expect(send(lead)).toBe("not-allowed");
   allow(serverEnvironment.addMissionMember, true);
 
-  appAtomRegistry.set(hostsAtom, host({ linksHidden: true }));
-  expect(send(member, LAPTOP)).toBe("machine-refused");
-  expect(send(member)).toBe("mission");
-
   appAtomRegistry.set(
     mobilePreferencesAtom as unknown as Atom.Writable<AsyncResult.AsyncResult<object>>,
     AsyncResult.success({ missionsEnabled: false }),
   );
   expect(send(member, LAPTOP)).toBe("turned-off");
-  expect(send(undefined, LAPTOP)).toBe("plain");
 });

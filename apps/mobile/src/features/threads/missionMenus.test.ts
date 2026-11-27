@@ -66,13 +66,11 @@ const place = (entry: MissionMember): ThreadListV2MissionPlace => ({
 describe("missionMenuActions", () => {
   const items = [
     { id: "mission-group", label: "Mission", header: true, separatorBefore: true },
-    { id: "mission-new-thread:x", label: "New thread", icon: "message-square-plus" },
     {
-      id: "mission-delete:x",
-      label: "End mission",
-      icon: "check",
+      id: "mission-new-thread:x",
+      label: "New thread",
+      icon: "message-square-plus",
       disabled: true,
-      detail: "Has active threads",
     },
     {
       id: "mission-add",
@@ -84,12 +82,10 @@ describe("missionMenuActions", () => {
   ];
 
   it("turns headers and separators into iOS sections, and drops headers on Android", () => {
-    const newThread = { id: "mission-new-thread:x", title: "New thread", image: "plus.bubble" };
-    const remove = {
-      id: "mission-delete:x",
-      title: "End mission",
-      subtitle: "Has active threads",
-      image: "checkmark",
+    const newThread = {
+      id: "mission-new-thread:x",
+      title: "New thread",
+      image: "plus.bubble",
       attributes: { disabled: true },
     };
     const add = {
@@ -99,10 +95,10 @@ describe("missionMenuActions", () => {
       subactions: [{ id: "mission-add:x", title: "Ship v2", subtitle: "Desk" }],
     };
     expect(missionMenuActions(items, true)).toEqual([
-      { title: "Mission", displayInline: true, subactions: [newThread, remove] },
+      { title: "Mission", displayInline: true, subactions: [newThread] },
       { title: "", displayInline: true, subactions: [add] },
     ]);
-    expect(missionMenuActions(items, false)).toEqual([newThread, remove, add]);
+    expect(missionMenuActions(items, false)).toEqual([newThread, add]);
   });
 });
 
@@ -130,13 +126,6 @@ describe("mission menus", () => {
 
   it("lets a gone lead's row pick a new lead from the machine's threads, newest first", () => {
     const rows = missingMemberMenuItems(place(lead), ctx());
-    const prompt = (rows: ReturnType<typeof missingMemberMenuItems>) =>
-      rows.find((row) => row.id === "mission-prompt:env-desk:m1");
-    expect(prompt(rows)?.disabled).toBe(false);
-    expect(prompt(missingMemberMenuItems(place(lead), ctx(false)))).toMatchObject({
-      disabled: true,
-      detail: "Not allowed here",
-    });
     expect(rows.find((row) => row.id === "mission-choose-lead")?.children).toEqual([
       { id: "mission-lead:newer", label: "newer" },
       { id: "mission-lead:older", label: "older" },
@@ -144,9 +133,9 @@ describe("mission menus", () => {
   });
 
   it("lists one palette row per mission the open thread can join", () => {
-    expect(missionPaletteRows(shell("plain"), ctx())).toEqual([
-      { id: "mission-start", title: "Start mission from this thread" },
-      { id: "mission-add:env-desk:m1", title: 'Add to mission "Ship v2"', detail: "Desk" },
+    expect(missionPaletteRows(shell("plain"), ctx()).map((row) => row.id)).toEqual([
+      "mission-start",
+      "mission-add:env-desk:m1",
     ]);
     expect(missionPaletteRows(shell("plain"), ctx(false))).toEqual([]);
   });

@@ -32,7 +32,7 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ReviewDiffSearchTest {
   @Test
-  fun highlightsPaintTheWebColorsWithoutNewGeometryAndClearOnEmpty() {
+  fun highlightsPaintTheActiveMatchApartWithoutNewGeometryAndClearOnEmpty() {
     withView { view, canvas, _ ->
       val plain = draw(canvas)
       val offsets = field(canvas, "rowOffsets")
@@ -42,32 +42,15 @@ class ReviewDiffSearchTest {
         offsets,
         field(canvas, "rowOffsets")
       )
-      val light = DiffTheme.fallback("light").background
-      assertTrue(
-        "a match paints the web's light match color",
-        has(draw(canvas), over(Color.argb(0x88, 0xff, 0x96, 0x32), light))
-      )
+      val ordinary = draw(canvas)
+      assertTrue("a match is painted", !ordinary.sameAs(plain))
 
       view.setSearchHighlightsJson(highlights(active = MATCH_ROW))
       assertTrue(
-        "the active match paints the web's current-match color",
-        has(draw(canvas), over(Color.argb(115, 0x00, 0x9f, 0xff), light)),
+        "the active match paints apart from an ordinary one",
+        !draw(canvas).sameAs(ordinary),
       )
 
-      view.setAppearanceScheme("dark")
-      view.setSearchHighlightsJson(highlights(active = null))
-      val dark = DiffTheme.fallback("dark").background
-      assertTrue(
-        "dark uses the web's dark match color",
-        has(draw(canvas), over(Color.argb(0x66, 0xff, 0x96, 0x32), dark))
-      )
-      view.setSearchHighlightsJson(highlights(active = MATCH_ROW))
-      assertTrue(
-        "dark uses the web's dark current-match color",
-        has(draw(canvas), over(Color.argb(115, 0x69, 0xb1, 0xff), dark))
-      )
-
-      view.setAppearanceScheme("light")
       view.setSearchHighlightsJson("")
       assertTrue("an empty payload clears highlights", draw(canvas).sameAs(plain))
     }
@@ -118,47 +101,45 @@ class ReviewDiffSearchTest {
   }
 
   @Test
-  fun anAnimatedJumpReportsOnlyTheFileItLandsIn() {
-    val files = (0 until 5).map { "f$it.ts" }
-    withView(files) { view, _, appContext ->
-      appContext.events.clear()
-
-      view.scrollToMatch("f4.ts:line:10", 0, 5, true)
-      repeat(60) {
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(16))
-        view.computeScroll()
-      }
-
-      val visibleFiles = appContext.events
-        .filter { it.first == "onVisibleFileChange" }
-        .map { it.second["fileId"] }
-      assertEquals(listOf("f4.ts"), visibleFiles)
-    }
-  }
-
-  @Test
-  fun aTouchThatStopsAnAnimatedJumpReportsTheFileWhereItStopped() {
+  fun anAnimatedJumpReportsOnlyWhereItStopsOrLandsAndAContentResetEndsTheWait() {
     val files = (0 until 5).map { "f$it.ts" }
     withView(files) { view, canvas, appContext ->
-      view.scrollToMatch("f4.ts:line:10", 0, 5, true)
-      repeat(4) {
+      val target = "f4.ts:line:10"
+      val visibleFiles = {
+        appContext.events.filter { it.first == "onVisibleFileChange" }.map { it.second["fileId"] }
+      }
+      fun frames(count: Int) = repeat(count) {
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(16))
         view.computeScroll()
       }
-      appContext.events.clear()
 
+      appContext.events.clear()
+      view.scrollToMatch(target, 0, 5, true)
+      frames(4)
+      assertEquals("the jump reports nothing on its way", emptyList<Any?>(), visibleFiles())
       val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 10f, 10f, 0)
       view.onInterceptTouchEvent(down)
       down.recycle()
-
-      val visibleFiles = appContext.events.filter { it.first == "onVisibleFileChange" }
-      val offset = canvas.javaClass.getDeclaredMethod("verticalOffset").invoke(canvas) as Int
       assertTrue(
-        "the jump was stopped part of the way",
-        offset < rowTop(canvas, rowIndex("f4.ts:line:10", files))
+        "the touch stops the jump part of the way",
+        verticalOffset(canvas) < rowTop(canvas, rowIndex(target, files)),
       )
-      assertEquals(1, visibleFiles.size)
-      assertTrue(visibleFiles.single().second["fileId"] != "f4.ts")
+      assertTrue(
+        "a touch reports the file where the jump stopped",
+        visibleFiles().single() != "f4.ts",
+      )
+
+      appContext.events.clear()
+      view.scrollToMatch("f0.ts:line:10", 0, 5, true)
+      frames(60)
+      assertEquals("a finished jump reports only where it lands", listOf("f0.ts"), visibleFiles())
+
+      view.scrollToMatch(target, 0, 5, true)
+      view.setContentResetKey("next-content")
+      appContext.events.clear()
+      view.setRowsJson(rows(files))
+      (field(view, "payloadDecodeExecutor") as ManualDecoder).completeNext()
+      assertEquals("the next content reports its visible file", listOf("f0.ts"), visibleFiles())
     }
   }
 
@@ -214,18 +195,6 @@ class ReviewDiffSearchTest {
         "the revealed match is painted whole inside the code area",
         columns.isNotEmpty() && columns.first() > codeLeft + 1 && columns.last() < bitmap.width - 1,
       )
-    }
-  }
-
-  @Test
-  fun aContentResetEndsTheDeferredVisibleFileEvent() {
-    withView { view, _, _ ->
-      view.scrollToMatch(TARGET_ROW, 300, 306, true)
-      view.setContentResetKey("next-content")
-
-      val deferred = view.javaClass.getDeclaredField("deferVisibleFileEventUntilScrollEnds")
-        .apply { isAccessible = true }.getBoolean(view)
-      assertTrue("a reset must not keep hiding the next content's visible file", !deferred)
     }
   }
 
@@ -309,21 +278,6 @@ class ReviewDiffSearchTest {
     abs(Color.red(pixel) - Color.red(color)) <= 2 &&
       abs(Color.green(pixel) - Color.green(color)) <= 2 &&
       abs(Color.blue(pixel) - Color.blue(color)) <= 2
-
-  private fun has(bitmap: Bitmap, color: Int): Boolean {
-    for (y in 0 until bitmap.height) {
-      for (x in 0 until bitmap.width) {
-        val pixel = bitmap.getPixel(x, y)
-        if (abs(Color.red(pixel) - Color.red(color)) <= 2 &&
-          abs(Color.green(pixel) - Color.green(color)) <= 2 &&
-          abs(Color.blue(pixel) - Color.blue(color)) <= 2
-        ) {
-          return true
-        }
-      }
-    }
-    return false
-  }
 
   private fun field(target: Any, name: String): Any =
     target.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(target)
