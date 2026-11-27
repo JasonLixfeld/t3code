@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -535,6 +536,55 @@ describe("ProviderContinuationService", () => {
       );
     });
   });
+
+  it.effect("tells a request its run ended, also after T3 marked the run started", () =>
+    Effect.gen(function* () {
+      const runId = RunId.make("run-provider-continuation-wake");
+      const messageId = MessageId.make("message-provider-continuation-wake");
+      const ended = yield* Deferred.make<void>();
+      let unstarted = 0;
+      const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () => Effect.succeed(projection),
+        dispatch: () =>
+          Effect.succeed({
+            sequence: 1,
+            storedEvents: [
+              { event: { type: "run.created", payload: { id: runId, userMessageId: messageId } } },
+            ],
+          } as never),
+        streamStoredEventsFrom: () =>
+          Stream.make({
+            event: {
+              type: "run.updated",
+              payload: { id: runId, status: "failed", startedAt: "2026-01-01T00:00:00.000Z" },
+            },
+          } as never),
+      });
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        yield* requests.offer({
+          ...request(),
+          messageId,
+          onRunEndedWithoutStarting: () => Effect.sync(() => void (unstarted += 1)),
+          onRunEnded: () => Deferred.succeed(ended, undefined).pipe(Effect.asVoid),
+        });
+        yield* Deferred.await(ended);
+        assert.equal(unstarted, 0);
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            ProviderContinuationRequests.layer,
+            ProviderContinuationService.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+              ),
+            ),
+          ),
+        ),
+        Effect.scoped,
+      );
+    }),
+  );
 
   it.effect("dispatches a current request exactly once", () => {
     return Effect.gen(function* () {

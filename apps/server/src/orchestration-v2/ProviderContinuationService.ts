@@ -90,8 +90,8 @@ export const layer = Layer.effectDiscard(
         messageId: MessageId,
         dispatched: Orchestrator.OrchestratorV2DispatchResult,
       ) {
-        const onRunEndedWithoutStarting = request.onRunEndedWithoutStarting;
-        if (onRunEndedWithoutStarting === undefined) return;
+        const { onRunEndedWithoutStarting, onRunEnded } = request;
+        if (onRunEndedWithoutStarting === undefined && onRunEnded === undefined) return;
         const runId = dispatched.storedEvents.flatMap(({ event }) =>
           event.type === "run.created" && event.payload.userMessageId === messageId
             ? [event.payload.id]
@@ -112,13 +112,17 @@ export const layer = Layer.effectDiscard(
                 ThreadManagementService.isTerminalRunStatus(event.payload.status),
             ),
             Stream.runHead,
-            Effect.flatMap((ended) =>
-              Option.isSome(ended) &&
-              ended.value.event.type === "run.updated" &&
-              ended.value.event.payload.startedAt === null
-                ? onRunEndedWithoutStarting()
-                : Effect.void,
-            ),
+            Effect.flatMap((ended) => {
+              if (Option.isNone(ended) || ended.value.event.type !== "run.updated") {
+                return Effect.void;
+              }
+              const unstarted =
+                ended.value.event.payload.startedAt === null &&
+                onRunEndedWithoutStarting !== undefined
+                  ? onRunEndedWithoutStarting()
+                  : Effect.void;
+              return Effect.andThen(unstarted, onRunEnded?.() ?? Effect.void);
+            }),
             Effect.catchCause((cause) =>
               Effect.logWarning("orchestration-v2.provider-continuation.run-watch-failed", {
                 threadId: request.threadId,
