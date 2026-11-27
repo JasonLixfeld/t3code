@@ -6,7 +6,9 @@ import {
   REVIEW_FIND_HIGHLIGHT_LIMIT,
   REVIEW_FIND_LINES_PER_FILE,
   REVIEW_FIND_MAX_MATCHES,
+  resolveReviewFindActiveIndex,
   reviewFindHighlightsJson,
+  stepReviewFindIndex,
 } from "./reviewFind";
 
 function line(
@@ -144,5 +146,34 @@ describe("reviewFindHighlightsJson", () => {
 
     expect(Object.keys(payload.ranges)).toHaveLength(REVIEW_FIND_HIGHLIGHT_LIMIT);
     expect(payload.ranges[matches[activeIndex]!.rowId]).toBeDefined();
+  });
+});
+
+describe("find stepping", () => {
+  it("wraps from the last match to the first and from the first to the last", () => {
+    expect(stepReviewFindIndex(2, 1, 3)).toBe(0);
+    expect(stepReviewFindIndex(0, -1, 3)).toBe(2);
+    expect(stepReviewFindIndex(1, 1, 3)).toBe(2);
+    expect(stepReviewFindIndex(0, 1, 1)).toBe(0);
+  });
+
+  it("keeps the active match by identity when rows load before it", () => {
+    const before = findInReviewRows([line("b", 0, "hit hit")], "hit").matches;
+    const after = findInReviewRows(
+      [line("a", 0, "    hit"), line("b", 0, "hit hit")],
+      "hit",
+    ).matches;
+    const active = { rowId: before[1]!.rowId, start: before[1]!.start };
+
+    expect(resolveReviewFindActiveIndex(before, active)).toBe(1);
+    expect(resolveReviewFindActiveIndex(after, active)).toBe(2);
+  });
+
+  it("starts at the first match, and falls back to it when the active one is gone", () => {
+    const { matches } = findInReviewRows([line("a", 0, "hit hit")], "hit");
+
+    expect(resolveReviewFindActiveIndex(matches, null)).toBe(0);
+    expect(resolveReviewFindActiveIndex(matches, { rowId: "gone", start: 0 })).toBe(0);
+    expect(resolveReviewFindActiveIndex([], null)).toBeNull();
   });
 });

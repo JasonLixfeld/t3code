@@ -148,6 +148,26 @@ export function findInReviewRows(
   return { matches, files, limited };
 }
 
+/**
+ * The active match, found by its row and start so rows loading around it do not move it. With
+ * none chosen, or when it is gone, the first match is active.
+ */
+export function resolveReviewFindActiveIndex(
+  matches: ReadonlyArray<ReviewFindMatch>,
+  active: { readonly rowId: string; readonly start: number } | null,
+): number | null {
+  if (matches.length === 0) return null;
+  const index = active
+    ? matches.findIndex((match) => match.rowId === active.rowId && match.start === active.start)
+    : -1;
+  return Math.max(0, index);
+}
+
+/** Steps to the next or previous match, wrapping at both ends. */
+export function stepReviewFindIndex(index: number, direction: 1 | -1, count: number): number {
+  return (index + direction + count) % count;
+}
+
 /** Sparse ranges near the active match; the native surface paints only rows on screen. */
 export function reviewFindHighlightsJson(
   matches: ReadonlyArray<ReviewFindMatch>,
