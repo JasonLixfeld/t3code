@@ -201,7 +201,7 @@ describe("find stepping", () => {
     expect(resolveReviewFindActiveIndex(after, active)).toBe(2);
   });
 
-  it("finds the active match deep in a dense row without walking every match", () => {
+  it("finds the active match deep in a dense row", () => {
     const result = findInReviewRows([line("a", 0, "x".repeat(12_000)), line("b", 0, "x")], "x");
 
     expect(resolveReviewFindActiveIndex(result, { rowId: "a:line:0", start: 9_000 })).toBe(9_000);
