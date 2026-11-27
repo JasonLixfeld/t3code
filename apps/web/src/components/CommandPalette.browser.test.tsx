@@ -472,7 +472,7 @@ describe("CommandPalette open intents", () => {
     await expect.element(page.getByRole("option", { name: /No project/ })).toBeVisible();
   });
 
-  it("marks the draft a mission's project pick makes, offering a member machines its mission links to and a lead only its machine", async () => {
+  it("marks the draft a mission's project pick makes, offering a member no machine its mission links to without full access, and a lead only its machine", async () => {
     const local = makeProject("web");
     const remote = { ...makeProject("api"), environmentId: EnvironmentId.make("remote") };
     setup({ projects: [local, remote] });
@@ -482,7 +482,7 @@ describe("CommandPalette open intents", () => {
         snapshot: {
           missions: [],
           claims: [],
-          links: [{ environmentId: remote.environmentId, label: "Remote", fullAccess: true }],
+          links: [{ environmentId: remote.environmentId, label: "Remote", fullAccess: false }],
         },
       },
     ]);
@@ -508,7 +508,8 @@ describe("CommandPalette open intents", () => {
         name: "Ship v2",
       },
     });
-    await expect.element(page.getByRole("option", { name: /api/ })).toBeInTheDocument();
+    await expect.element(page.getByRole("option", { name: /web/ })).toBeInTheDocument();
+    await expect.element(page.getByRole("option", { name: /api/ })).not.toBeInTheDocument();
     openCommandPalette({ open: "new-thread-in", mission: intent });
     await expect.element(page.getByRole("option", { name: /web/ })).toBeInTheDocument();
     await expect.element(page.getByRole("option", { name: /api/ })).not.toBeInTheDocument();

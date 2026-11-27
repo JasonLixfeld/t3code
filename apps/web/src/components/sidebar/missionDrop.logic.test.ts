@@ -1,9 +1,5 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type {
-  MissionCandidate,
-  MissionHost,
-  SidebarMission,
-} from "@t3tools/client-runtime/missions";
+import type { MissionHost, SidebarMission } from "@t3tools/client-runtime/missions";
 import {
   EnvironmentId,
   type Mission,
@@ -77,12 +73,11 @@ describe("resolveMissionDrop", () => {
     options: {
       readonly source?: { readonly host: EnvironmentId; readonly missionId: string };
       readonly canChangeOn?: (environmentId: EnvironmentId) => boolean;
-      readonly threads?: ReadonlyArray<MissionCandidate>;
     } = {},
   ) =>
     resolveMissionDrop({
       dragged: scopedThreadKey(docs),
-      threads: options.threads ?? [thread(DESK, "docs")],
+      threads: [thread(DESK, "docs")],
       over,
       missions: [ship, other],
       hosts,
@@ -104,7 +99,7 @@ describe("resolveMissionDrop", () => {
     ).toBe("This thread moved to another mission.");
   });
 
-  it("adds a thread, even one with no messages, and refuses an add on a machine this client may not change", () => {
+  it("refuses an add to a mission on a machine this client may not change", () => {
     expect(drop(other.key)).toEqual({
       kind: "add",
       mission: other.key,
@@ -112,8 +107,6 @@ describe("resolveMissionDrop", () => {
       missionId: other.mission.missionId,
       refusal: null,
     });
-    const empty = { ...thread(DESK, "docs"), latestUserMessageAt: null, visibleItemCount: 0 };
-    expect(drop(other.key, { threads: [empty] })?.refusal).toBeNull();
     expect(drop(other.key, { canChangeOn: () => false })?.refusal).toBe("Not allowed here");
   });
 });

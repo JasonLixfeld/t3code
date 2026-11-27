@@ -885,23 +885,27 @@ it("while No project is preparing, the draft cannot send and its pickers are dis
   expect(document.body.textContent).not.toContain("Preparing No project…");
 });
 
-it("opening another thread before No project is ready leaves the user there", async () => {
+it.each([
+  ["another thread", "/draft/draft-opened-instead"],
+  ["Settings", "/settings/general"],
+] as const)("opening %s before No project is ready leaves the user there", async (_, href) => {
   const { opened, finish } = holdScratch([ENVIRONMENT_ID]);
   using _environment = installFakeEnvironment([], {
     extraProjects: [{ id: alphaProject.id, title: "alpha" }],
   });
   listMissions([hostWith(ENVIRONMENT_ID)]);
-  await using app = await openDraft("draft-scratch-then-leave", { kind: "new" });
+  await using app = await openDraft(`draft-scratch-then-leave-${href.length}`, { kind: "new" });
   const marked = missionDraftOf(app.draftId);
   await pickNoProject();
   const other = DraftId.make("draft-opened-instead");
   useComposerDraftStore
     .getState()
     .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, alphaProject.id), other);
-  await act(() => app.router.navigate({ href: `/draft/${other}` }));
+  await act(() => app.router.navigate({ href }));
   await finish();
   await act(async () => {});
-  expect(app.router.state.location.pathname).toBe(`/draft/${other}`);
+  expect(app.router.state.location.pathname).toBe(href);
+  expect(useComposerDraftStore.getState().getDraftSession(app.draftId)?.projectId).toBe(PROJECT_ID);
   expect(missionDraftOf(app.draftId)).toBe(marked);
   expect(missionDraftOf(other)).toBeUndefined();
   expect(vi.mocked(opened).mock.calls[0]?.[2]).toMatchObject({ aborted: true });
@@ -935,6 +939,7 @@ it("offers a member's mission the projects its full-access link reaches, and dro
     .toBeVisible();
   expect(app.router.state.location.pathname).toBe(`/draft/${app.draftId}`);
   expect(useComposerDraftStore.getState().getDraftSession(app.draftId)?.projectId).toBe(PROJECT_ID);
+  expect((await projectOptions()).some((name) => name?.endsWith("render"))).toBe(false);
 });
 
 it("a No project request that never answers unlocks the draft after the timeout", async () => {
