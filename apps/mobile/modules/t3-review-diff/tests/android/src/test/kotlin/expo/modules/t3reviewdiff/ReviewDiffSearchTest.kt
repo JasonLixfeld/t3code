@@ -163,6 +163,26 @@ class ReviewDiffSearchTest {
   }
 
   @Test
+  fun aJumpRequestedDuringADragIsDroppedSoTheFingerKeepsTheScroll() {
+    withView { view, canvas, _ ->
+      val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 100f, 200f, 0)
+      val move = MotionEvent.obtain(0, 16, MotionEvent.ACTION_MOVE, 100f, 120f, 0)
+      view.onInterceptTouchEvent(down)
+      view.onInterceptTouchEvent(move)
+      down.recycle()
+      move.recycle()
+      val before = canvas.javaClass.getDeclaredMethod("verticalOffset").invoke(canvas) as Int
+
+      view.scrollToMatch(TARGET_ROW, 300, 306, false)
+
+      assertEquals(before, canvas.javaClass.getDeclaredMethod("verticalOffset").invoke(canvas))
+      val pending = view.javaClass.getDeclaredField("pendingMatch").apply { isAccessible = true }
+        .get(view)
+      assertEquals("the user's gesture wins, as on iOS", null, pending)
+    }
+  }
+
+  @Test
   fun aContentResetEndsTheDeferredVisibleFileEvent() {
     withView { view, _, _ ->
       view.scrollToMatch(TARGET_ROW, 300, 306, true)

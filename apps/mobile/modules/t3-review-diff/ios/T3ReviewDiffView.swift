@@ -960,7 +960,9 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
   }
 
   func scrollToMatch(_ rowId: String, start: Int, end: Int, animated: Bool) {
-    guard start >= 0, end > start else { return }
+    guard start >= 0, end > start, !scrollView.isTracking, !contentView.isPanningHorizontally else {
+      return
+    }
     pendingScrollFileId = nil
     pendingMatch = ReviewDiffPendingMatch(
       match: ReviewDiffSearchMatch(rowId: rowId, range: NSRange(location: start, length: end - start)),
@@ -1394,6 +1396,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   }
   private var panStartHorizontalOffset: CGFloat = 0
   private var activePanFileId: String?
+  var isPanningHorizontally: Bool { activePanFileId != nil }
   private var activePanKind: ReviewDiffHorizontalPanKind?
   private var horizontalOffsetsByFileId: [String: CGFloat] = [:]
   private var headerPathOffsetsByFileId: [String: CGFloat] = [:]

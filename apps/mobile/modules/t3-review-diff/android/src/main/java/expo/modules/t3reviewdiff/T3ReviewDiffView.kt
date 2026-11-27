@@ -157,7 +157,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   }
 
   fun scrollToMatch(rowId: String, start: Int, end: Int, animated: Boolean) {
-    if (start < 0 || end <= start) return
+    if (start < 0 || end <= start || dragAxis != null) return
     pendingScrollFileId = null
     pendingMatch = SearchMatch(rowId, start, end)
     pendingMatchAnimated = animated
