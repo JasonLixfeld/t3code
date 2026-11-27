@@ -46,6 +46,8 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   private var pendingMatch: SearchMatch? = null
   private var searchHighlights = SearchHighlights()
   private var pendingMatchAnimated = false
+  private var programmaticScrollActive = false
+  private var firstVisibleIndex = 0
   private var lastVisibleFileId: String? = null
   private var tokensResetKey = ""
   private var contentResetKey = ""
@@ -89,7 +91,9 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
           "totalRows" to rows.size,
         ),
       )
-      emitVisibleFile(first)
+      firstVisibleIndex = first
+      // An animated jump reports only where it lands, so it does not load every file it passes.
+      if (!programmaticScrollActive) emitVisibleFile(first)
     }
 
     addView(
@@ -164,6 +168,8 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   private fun applyPendingMatch() {
     val match = pendingMatch ?: return
     if (canvasView.width <= 0 || canvasView.height <= 0) return
+    verticalScroller.forceFinished(true)
+    horizontalScroller.forceFinished(true)
     val (top, bottom) = canvasView.scrollMatchIntoViewHorizontally(match) ?: return
     pendingMatch = null
     val header = canvasView.style.fileHeaderHeightPx.toInt()
@@ -315,6 +321,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     when (event.actionMasked) {
       MotionEvent.ACTION_DOWN -> {
         pendingMatch = null
+        programmaticScrollActive = false
         verticalScroller.forceFinished(true)
         horizontalScroller.forceFinished(true)
         dragAxis = null
@@ -433,6 +440,9 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     if (verticalScroller.computeScrollOffset()) {
       canvasView.setVerticalOffset(verticalScroller.currY)
       animating = true
+    } else if (programmaticScrollActive) {
+      programmaticScrollActive = false
+      emitVisibleFile(firstVisibleIndex)
     }
     if (horizontalScroller.computeScrollOffset()) {
       canvasView.setHorizontalOffset(horizontalScroller.currX)
@@ -528,6 +538,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
 
   private fun scrollToY(y: Int, animated: Boolean) {
     val target = y.coerceIn(0, canvasView.maxVerticalOffset())
+    programmaticScrollActive = animated
     if (animated) {
       verticalScroller.startScroll(
         0,

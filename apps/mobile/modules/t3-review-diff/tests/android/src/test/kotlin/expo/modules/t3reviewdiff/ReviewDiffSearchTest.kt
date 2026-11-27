@@ -9,6 +9,7 @@ import android.graphics.Typeface
 import android.os.Looper
 import android.view.View
 import expo.modules.kotlin.AppContext
+import java.time.Duration
 import java.util.concurrent.AbstractExecutorService
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
@@ -31,7 +32,7 @@ import org.robolectric.annotation.GraphicsMode
 class ReviewDiffSearchTest {
   @Test
   fun highlightsPaintTheWebColorsWithoutNewGeometryAndClearOnEmpty() {
-    withView { view, canvas ->
+    withView { view, canvas, _ ->
       val plain = draw(canvas)
       val offsets = field(canvas, "rowOffsets")
       view.setSearchHighlightsJson(highlights(active = null))
@@ -73,7 +74,7 @@ class ReviewDiffSearchTest {
 
   @Test
   fun aMatchJumpWaitsForItsFoldAndRevealsTheMatchBelowTheStickyHeader() {
-    withView { view, canvas ->
+    withView { view, canvas, _ ->
       view.setCollapsedFileIdsJson("[\"b.ts\"]")
       view.scrollToMatch(TARGET_ROW, 300, 306, false)
       assertEquals("a match in a folded file waits for the fold to open", 0, verticalOffset(canvas))
@@ -100,9 +101,51 @@ class ReviewDiffSearchTest {
     }
   }
 
-  private fun withView(block: (T3ReviewDiffView, View) -> Unit) {
+  @Test
+  fun aNewJumpStopsInFlightScrollsEvenWhenItsMatchIsAlreadyVisible() {
+    withView { view, _, _ ->
+      val vertical = scroller(view, "verticalScroller")
+      val horizontal = scroller(view, "horizontalScroller")
+      vertical.fling(0, 100, 0, 2000, 0, 0, 0, 10000)
+      horizontal.fling(0, 0, 2000, 0, 0, 10000, 0, 0)
+
+      view.scrollToMatch(MATCH_ROW, 0, 5, false)
+
+      assertTrue("the vertical animation stops", vertical.isFinished)
+      assertTrue("the horizontal fling stops", horizontal.isFinished)
+    }
+  }
+
+  @Test
+  fun anAnimatedJumpReportsOnlyTheFileItLandsIn() {
+    val files = (0 until 5).map { "f$it.ts" }
+    withView(files) { view, _, appContext ->
+      appContext.events.clear()
+
+      view.scrollToMatch("f4.ts:line:10", 0, 5, true)
+      repeat(60) {
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(16))
+        view.computeScroll()
+      }
+
+      val visibleFiles = appContext.events
+        .filter { it.first == "onVisibleFileChange" }
+        .map { it.second["fileId"] }
+      assertEquals(listOf("f4.ts"), visibleFiles)
+    }
+  }
+
+  private fun scroller(view: T3ReviewDiffView, name: String) =
+    view.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(view)
+      as android.widget.OverScroller
+
+  private fun withView(
+    files: List<String> = listOf("a.ts", "b.ts"),
+    block: (T3ReviewDiffView, View, AppContext) -> Unit
+  ) {
     val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
-    val view = T3ReviewDiffView(activity, AppContext())
+    val appContext = AppContext()
+    val view = T3ReviewDiffView(activity, appContext)
     val decoder = ManualDecoder()
     view.javaClass.getDeclaredField("payloadDecodeExecutor").apply { isAccessible = true }
       .set(view, decoder)
@@ -113,9 +156,9 @@ class ReviewDiffSearchTest {
     canvas.layout(0, 0, 320, 320)
     try {
       view.setAppearanceScheme("light")
-      view.setRowsJson(rows())
+      view.setRowsJson(rows(files))
       decoder.completeNext()
-      block(view, canvas)
+      block(view, canvas, appContext)
     } finally {
       view.cleanup()
       activity.finish()
@@ -131,8 +174,8 @@ class ReviewDiffSearchTest {
     }
   }.toString()
 
-  private fun rows(): String = JSONArray(
-    listOf("a.ts", "b.ts").flatMap { file ->
+  private fun rows(files: List<String> = listOf("a.ts", "b.ts")): String = JSONArray(
+    files.flatMap { file ->
       listOf(JSONObject().put("kind", "file").put("id", "$file:header").put("fileId", file)) +
         (0 until 100).map { line -> codeRow(file, line) }
     },
