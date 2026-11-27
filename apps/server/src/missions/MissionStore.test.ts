@@ -5,6 +5,7 @@ import { assert, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -135,8 +136,7 @@ it.effect(
         use: (store: MissionStore.MissionStore["Service"]) => Effect.Effect<A, E>,
       ) =>
         Effect.flatMap(MissionStore.MissionStore, use).pipe(
-          Effect.provide(MissionStore.layer),
-          Effect.provide(config),
+          Effect.provide(MissionStore.layer.pipe(Layer.provide(config))),
         );
       yield* withProductionStore((store) => store.createMission(claimFor(lead, "m1", "g1")));
       const { stateDir, dbPath } = yield* Effect.provide(ServerConfig.ServerConfig, config);

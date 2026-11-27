@@ -440,7 +440,7 @@ it.each([
     told.push(seen.updates.map((update) => `${update.source} ${update.event}`));
     mark = seen.mark;
   }
-  assert.deepEqual(told, expected);
+  assert.deepEqual<ReadonlyArray<ReadonlyArray<string>>>(told, expected);
 });
 
 it("a machine that predates run and request ids is compared by status", () => {
