@@ -1635,7 +1635,6 @@ describe("dragging threads into and out of missions", () => {
 
   it("scrolls up to missions above the list while a thread is held at its top edge", async () => {
     using _drag = allowDrag();
-    // With no heading above it, the first mission comes to rest under the held pointer.
     await using screen = await renderSidebar({ sidebarMissionsHeaderVisible: false });
     await expect.element(screen.getByText("Unrelated bug")).toBeInTheDocument();
     using _timers = fakeTimers();
