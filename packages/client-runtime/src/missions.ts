@@ -448,17 +448,16 @@ function missionIndex(hosts: ReadonlyArray<MissionHost>) {
   return index;
 }
 
-const shouldHideSettledMissionMember = (
+// Once a machine has synced, a member thread missing from the list is one the server trimmed as
+// settled or the tag filter hid, so an older server's missing `settled` flag cannot leave a blank row.
+const isHiddenFromMission = (
   member: MissionMember,
   thread: Pick<ListedThread, "settledOverride" | "archivedAt"> | null,
-  settledOnItsMachine: boolean,
   syncedEnvironments: ReadonlySet<EnvironmentId>,
 ) =>
   member.state === "active" &&
   syncedEnvironments.has(member.ref.environmentId) &&
-  (thread === null
-    ? member.settled === true || settledOnItsMachine
-    : isSettledMissionMember(thread));
+  (thread === null || isSettledMissionMember(thread));
 
 export function groupSidebarMissions<T extends ListedThread>(
   hosts: ReadonlyArray<MissionHost>,
@@ -483,7 +482,7 @@ export function groupSidebarMissions<T extends ListedThread>(
       mission,
     })),
   );
-  const { holders, claims } = missionIndex(hosts);
+  const { holders } = missionIndex(hosts);
   const threadKeys = new Set<string>();
   const leads: Array<SidebarMissionEntry<T>> = [];
   const missions = listed.flatMap(({ key, host, mission }): Array<SidebarMission<T>> => {
@@ -499,12 +498,7 @@ export function groupSidebarMissions<T extends ListedThread>(
       const claimed = member.state !== "deleted" && member.state !== "add-refused";
       if (claimed && holders.get(threadKey)?.key !== key) return [];
       const thread = claimed ? (threadByKey.get(threadKey) ?? null) : null;
-      const claim = claims.get(threadKey);
-      const settledOnItsMachine = claim?.missionId === mission.missionId && claim.settled === true;
-      if (
-        member.role === "member" &&
-        shouldHideSettledMissionMember(member, thread, settledOnItsMachine, syncedEnvironments)
-      ) {
+      if (member.role === "member" && isHiddenFromMission(member, thread, syncedEnvironments)) {
         return [];
       }
       if (thread !== null) threadKeys.add(threadKey);
