@@ -675,7 +675,8 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     query={find.query}
                     result={find.result}
                     activeIndex={find.activeIndex}
-                    focusRequestId={find.focusRequestId}
+                    focusRequested={find.focusRequested}
+                    onFocused={find.markFocused}
                     resultIsStale={find.resultIsStale}
                     partial={findPartial}
                     onChangeQuery={find.changeQuery}

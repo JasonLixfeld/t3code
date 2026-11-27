@@ -22,34 +22,43 @@ vi.mock("../../components/ui/SearchField", () => ({
 }));
 
 import { ReviewFindBar } from "./ReviewFindBar";
-import { EMPTY_REVIEW_FIND_RESULT } from "./reviewFind";
+import { useReviewFind } from "./useReviewFind";
 
-it("focuses the open find field on each header press, but not when it opens from Contents", () => {
+it("focuses the find field once per header press, and a remount does not replay it", () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const root = createRoot(document.createElement("div"));
-  const render = (focusRequestId: number) =>
-    act(() =>
-      root.render(
-        <ReviewFindBar
-          query="app"
-          result={EMPTY_REVIEW_FIND_RESULT}
-          activeIndex={null}
-          focusRequestId={focusRequestId}
-          resultIsStale={false}
-          partial={false}
-          onChangeQuery={() => {}}
-          onStep={() => {}}
-          onClose={() => {}}
-        />,
-      ),
-    );
+  const latest: { current: ReturnType<typeof useReviewFind> | null } = { current: null };
+  function Host(props: { readonly showBar: boolean }) {
+    const find = useReviewFind({ rows: [], onReveal: () => {} });
+    latest.current = find;
+    return props.showBar && find.open ? (
+      <ReviewFindBar
+        query={find.query}
+        result={find.result}
+        activeIndex={find.activeIndex}
+        focusRequested={find.focusRequested}
+        onFocused={find.markFocused}
+        resultIsStale={find.resultIsStale}
+        partial={false}
+        onChangeQuery={find.changeQuery}
+        onStep={find.step}
+        onClose={find.close}
+      />
+    ) : null;
+  }
+  const render = (showBar: boolean) => act(() => root.render(<Host showBar={showBar} />));
   try {
-    render(0);
+    render(true);
+    act(() => latest.current!.changeQuery("app"));
     expect(focus).not.toHaveBeenCalled();
-    render(1);
-    render(1);
+
+    act(() => latest.current!.openFromHeader());
     expect(focus).toHaveBeenCalledTimes(1);
-    render(2);
+    act(() => latest.current!.openFromHeader());
+    expect(focus).toHaveBeenCalledTimes(2);
+
+    render(false);
+    render(true);
     expect(focus).toHaveBeenCalledTimes(2);
   } finally {
     act(() => root.unmount());

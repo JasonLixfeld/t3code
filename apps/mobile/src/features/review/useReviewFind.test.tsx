@@ -36,21 +36,23 @@ function setup() {
   };
 }
 
-it("asks to focus the find field on every header press, and never from Contents typing", () => {
+it("asks to focus the find field once per header press, and never from Contents typing", () => {
   using screen = setup();
 
   screen.run((find) => find.changeQuery("app"));
   expect(screen.find().open).toBe(true);
-  expect(screen.find().focusRequestId).toBe(0);
+  expect(screen.find().focusRequested).toBe(false);
 
   screen.run((find) => find.openFromHeader());
-  const first = screen.find().focusRequestId;
+  expect(screen.find().focusRequested).toBe(true);
+  screen.run((find) => find.markFocused());
+  expect(screen.find().focusRequested).toBe(false);
   screen.run((find) => find.openFromHeader());
-  expect(screen.find().focusRequestId).toBeGreaterThan(first);
+  expect(screen.find().focusRequested).toBe(true);
 
   screen.run((find) => find.close());
   screen.run((find) => find.changeQuery("apple"));
-  expect(screen.find().focusRequestId).toBe(0);
+  expect(screen.find().focusRequested).toBe(false);
 });
 
 it("searches only while Find or the Contents search is open", () => {

@@ -18,6 +18,7 @@ export function useReviewFind(input: {
     readonly open: boolean;
     readonly contentsSearchOpen: boolean;
     readonly focusRequestId: number;
+    readonly focusedRequestId: number;
     readonly query: string;
     readonly chosenMatch: ReviewFindMatch | null;
     readonly chosenQuery: string;
@@ -26,6 +27,7 @@ export function useReviewFind(input: {
     open: false,
     contentsSearchOpen: false,
     focusRequestId: 0,
+    focusedRequestId: 0,
     query: "",
     chosenMatch: null,
     chosenQuery: "",
@@ -64,7 +66,7 @@ export function useReviewFind(input: {
     setState((current) => ({
       ...current,
       open: true,
-      focusRequestId: current.open ? current.focusRequestId : 0,
+      focusedRequestId: current.open ? current.focusedRequestId : current.focusRequestId,
       chosenMatch: match,
       chosenQuery: searchedQuery,
       revealRequestId: current.revealRequestId + 1,
@@ -73,7 +75,7 @@ export function useReviewFind(input: {
     setState((current) => ({
       ...current,
       open: true,
-      focusRequestId: current.open ? current.focusRequestId : 0,
+      focusedRequestId: current.open ? current.focusedRequestId : current.focusRequestId,
       query,
       chosenMatch: null,
       chosenQuery: query,
@@ -92,6 +94,8 @@ export function useReviewFind(input: {
     }));
   const setContentsSearchOpen = (contentsSearchOpen: boolean) =>
     setState((current) => ({ ...current, contentsSearchOpen }));
+  const markFocused = () =>
+    setState((current) => ({ ...current, focusedRequestId: current.focusRequestId }));
   const close = () => setState((current) => ({ ...current, open: false }));
 
   const lastRevealedRequestId = useRef(-1);
@@ -120,7 +124,8 @@ export function useReviewFind(input: {
 
   return {
     open: state.open,
-    focusRequestId: state.focusRequestId,
+    focusRequested: state.focusRequestId > state.focusedRequestId,
+    markFocused,
     query: state.query,
     result,
     resultIsStale,
