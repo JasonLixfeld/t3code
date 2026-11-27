@@ -186,7 +186,6 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
 
   var codeLayouts = CodeLayoutCache()
 
-  /** Paint-only: row geometry does not depend on search highlights. */
   val search = ReviewDiffSearchPainter(this)
 
   /** Capture paint on the UI thread; the decode worker owns the new cache until publication. */

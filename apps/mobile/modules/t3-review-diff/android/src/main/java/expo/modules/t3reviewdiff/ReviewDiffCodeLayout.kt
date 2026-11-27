@@ -28,8 +28,7 @@ internal class CodeLines(
     it.getLineForOffset(offset.coerceIn(0, it.text.length))
   } ?: max(0, starts.indexOfLast { it <= offset })
 
-  /** The line's top from the row's top. */
-  fun lineTop(line: Int): Int = nativeLayout?.getLineTop(line) ?: (line * height)
+  fun lineTopInRow(line: Int): Int = nativeLayout?.getLineTop(line) ?: (line * height)
 
   fun baseline(top: Int, bottom: Int, paint: Paint): Float = nativeLayout?.let {
     top + (bottom - top - it.getLineBottom(0)) / 2f + it.getLineBaseline(0)
