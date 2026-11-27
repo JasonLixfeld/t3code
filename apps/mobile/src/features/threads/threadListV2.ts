@@ -432,7 +432,11 @@ export interface ThreadListV2MissionPlace {
   readonly missionId: string;
   readonly missionName: string;
   readonly member: MissionMember;
-  readonly toggle: { readonly expanded: boolean; readonly memberCount: number } | null;
+  readonly toggle: {
+    readonly expanded: boolean;
+    readonly memberCount: number;
+    readonly firstMission: boolean;
+  } | null;
 }
 
 export interface ThreadListV2MissionEntry {
@@ -565,7 +569,8 @@ function missionPlacesAreEqual(
     previous.member.state === place.member.state &&
     previous.member.detail === place.member.detail &&
     previous.toggle?.expanded === place.toggle?.expanded &&
-    previous.toggle?.memberCount === place.toggle?.memberCount
+    previous.toggle?.memberCount === place.toggle?.memberCount &&
+    previous.toggle?.firstMission === place.toggle?.firstMission
   );
 }
 
@@ -1148,7 +1153,7 @@ function groupThreadListV2Missions(
       isLast: false,
     };
   };
-  const groups = grouped.missions.map((mission): ThreadListV2MissionGroup => {
+  const groups = grouped.missions.map((mission, index): ThreadListV2MissionGroup => {
     const expanded = input.collapsedMissions?.has(mission.key) !== true;
     const entry = (
       listed: (typeof mission.members)[number],
@@ -1165,7 +1170,11 @@ function groupThreadListV2Missions(
       item: listed.thread === null ? null : item(listed.thread),
     });
     return {
-      lead: entry(mission.lead, { expanded, memberCount: mission.members.length }),
+      lead: entry(mission.lead, {
+        expanded,
+        memberCount: mission.members.length,
+        firstMission: index === 0,
+      }),
       members: expanded ? mission.members.map((member) => entry(member)) : [],
     };
   });

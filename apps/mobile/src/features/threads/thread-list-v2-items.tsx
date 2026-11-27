@@ -5,6 +5,8 @@ import {
   THREAD_LIST_V2_MONO_FONT as MONO_FONT,
   THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
   THREAD_LIST_V2_ROW_DIVIDERS,
+  THREAD_LIST_V2_ROW_INSET,
+  THREAD_LIST_V2_SIDEBAR_ROW_STYLE,
   selectedThreadRowColors,
   getThreadListV2NewBranchMenuTitle,
   getThreadListV2RowAppearance,
@@ -443,6 +445,44 @@ export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(pro
 });
 
 const MISSION_MEMBER_INDENT = 16;
+const MISSION_GROUP_GAP = 12;
+
+const missionLeadSpacing = (place: ThreadListV2MissionPlace | null) =>
+  place?.toggle && !place.toggle.firstMission ? MISSION_GROUP_GAP : 0;
+
+function MissionLeadIcon(props: { readonly height: number }) {
+  return (
+    <View
+      className="justify-center"
+      style={{ height: props.height }}
+      importantForAccessibility="no-hide-descendants"
+      accessibilityElementsHidden
+    >
+      <SymbolView
+        name="target"
+        size={13}
+        tintColorClassName="accent-adaptive-blue-600-400"
+        type="monochrome"
+      />
+    </View>
+  );
+}
+
+const missionRowInset = (pane: "screen" | "sidebar" | undefined) =>
+  pane === "sidebar"
+    ? THREAD_LIST_V2_SIDEBAR_ROW_STYLE.paddingHorizontal
+    : THREAD_LIST_V2_ROW_INSET;
+
+function MissionMemberRail(props: { readonly pane?: "screen" | "sidebar" | undefined }) {
+  const sidebar = props.pane === "sidebar";
+  return (
+    <View
+      pointerEvents="none"
+      className={cn("absolute inset-y-0", sidebar ? "bg-drawer-foreground/20" : "bg-foreground/20")}
+      style={{ left: missionRowInset(props.pane) + MISSION_MEMBER_INDENT / 2, width: 1.5 }}
+    />
+  );
+}
 
 type OnMissionAction = (id: string, target: MissionActionTarget) => Promise<void>;
 
@@ -535,6 +575,7 @@ export const ThreadListV2MissionMemberRow = memo(function ThreadListV2MissionMem
   const titleTypography = useScaledTextRole("body");
   const { fontScale } = useWindowDimensions();
   const { member } = props.place;
+  const lead = member.role === "lead";
   const title =
     member.state === "deleted"
       ? gt("Lead deleted", { $context: "the thread that led a mission no longer exists" })
@@ -550,8 +591,13 @@ export const ThreadListV2MissionMemberRow = memo(function ThreadListV2MissionMem
         "min-h-[44px] flex-row items-center gap-2 py-2",
         props.pane === "sidebar" && "px-3",
       )}
-      style={{ marginLeft: member.role === "lead" ? 0 : MISSION_MEMBER_INDENT }}
+      style={
+        lead
+          ? { marginTop: missionLeadSpacing(props.place) }
+          : { paddingLeft: missionRowInset(props.pane) + MISSION_MEMBER_INDENT }
+      }
     >
+      {lead ? null : <MissionMemberRail pane={props.pane} />}
       <ThreadListV2MissionToggle
         place={props.place}
         title={title}
@@ -559,9 +605,22 @@ export const ThreadListV2MissionMemberRow = memo(function ThreadListV2MissionMem
         height={titleTypography.lineHeight * fontScale}
         onToggle={props.onToggleMission}
       />
+      {props.place.toggle ? (
+        <MissionLeadIcon height={titleTypography.lineHeight * fontScale} />
+      ) : null}
       <View className="min-w-0 flex-1">
         {member.state === "add-refused" ? null : (
-          <Text className="text-base text-foreground-muted" numberOfLines={1}>
+          <Text
+            className={cn(
+              "text-base",
+              !props.place.toggle
+                ? "text-foreground-muted"
+                : props.pane === "sidebar"
+                  ? "font-t3-semibold text-drawer-foreground"
+                  : "font-t3-semibold text-foreground",
+            )}
+            numberOfLines={1}
+          >
             {title}
           </Text>
         )}
@@ -1561,14 +1620,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const titleTextInset = project || leadToggle ? projectIconSize + 8 : 0;
   const missionToggle =
     leadToggle && mission ? (
-      <ThreadListV2MissionToggle
-        place={mission}
-        title={thread.title}
-        size={projectIconSize}
-        height={titleLineHeight}
-        onToggle={onToggleMission}
-      />
+      <>
+        <ThreadListV2MissionToggle
+          place={mission}
+          title={thread.title}
+          size={projectIconSize}
+          height={titleLineHeight}
+          onToggle={onToggleMission}
+        />
+        <MissionLeadIcon height={titleLineHeight} />
+      </>
     ) : null;
+  const memberRail = memberIndent > 0 ? <MissionMemberRail pane={props.pane} /> : null;
   const cardContent = (
     <>
       <View className="flex-row items-start gap-2">
@@ -1588,7 +1651,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         <Text
           className={cn(
             "flex-1 text-base",
-            !recede && "font-t3-medium",
+            leadToggle ? "font-t3-semibold" : !recede && "font-t3-medium",
             selected
               ? selectedThreadRowColors.foregroundClassName
               : rowAppearance.foregroundClassName,
@@ -1872,6 +1935,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         }}
         style={rowAppearance.cardStyle}
       >
+        {memberRail}
         {sidebarPane ? (
           fadedCardContent
         ) : (
@@ -1899,6 +1963,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         }}
         style={rowAppearance.style}
       >
+        {memberRail}
         <View
           className={cn(
             THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
@@ -1924,9 +1989,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             <Text
               className={cn(
                 "text-base",
+                leadToggle && "font-t3-semibold",
                 selected
                   ? selectedThreadRowColors.foregroundClassName
-                  : rowAppearance.mutedForegroundClassName,
+                  : leadToggle
+                    ? rowAppearance.foregroundClassName
+                    : rowAppearance.mutedForegroundClassName,
                 isRegeneratingTitle && "opacity-55",
               )}
               numberOfLines={1}
@@ -1989,11 +2057,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       </RowPressable>
     );
 
+  const leadSpacing = { marginTop: missionLeadSpacing(mission) };
   if (!canSwipe)
-    return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
+    return (
+      <View style={[rowAppearance.swipeContainerStyle, leadSpacing]}>{rowContent(() => {})}</View>
+    );
 
   return (
-    <View collapsable={false}>
+    <View collapsable={false} style={leadSpacing}>
       {customSnoozeOpen && (
         <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
       )}

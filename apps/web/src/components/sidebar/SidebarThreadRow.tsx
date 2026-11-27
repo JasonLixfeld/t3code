@@ -56,6 +56,7 @@ import {
   PinOffIcon,
   ShieldQuestionIcon,
   SquarePenIcon,
+  TargetIcon,
   TerminalIcon,
   Undo2Icon,
   UserRoundIcon,
@@ -612,6 +613,18 @@ export type SidebarMissionToggle = {
   onToggle: () => void;
 };
 
+export const MISSION_LEAD_TITLE_CLASS_NAME = "font-semibold text-sidebar-foreground";
+
+export function MissionLeadIcon() {
+  return (
+    <TargetIcon
+      aria-hidden
+      data-testid="mission-lead-icon"
+      className="size-3.25 shrink-0 text-info-foreground"
+    />
+  );
+}
+
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   missionToggle?: SidebarMissionToggle | undefined;
@@ -1129,25 +1142,27 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         shouldRecede ? "font-normal" : "font-medium",
         isRegeneratingTitle
           ? "relative truncate text-muted-foreground"
-          : variant !== "slim"
-            ? cn(
-                "truncate",
-                shouldRecede
-                  ? "text-foreground/75 group-hover/sidebar-row:text-foreground group-focus-visible/sidebar-row:text-foreground"
-                  : status === "failed" && !isUnread && !isWoke
-                    ? "text-foreground/95"
-                    : "text-foreground",
-              )
-            : cn(
-                "truncate group-focus-within/sidebar-row:text-foreground group-hover/sidebar-row:text-foreground",
-                shouldRecede
-                  ? "text-secondary-label"
-                  : props.isActive || isWoke || status === "input" || status === "request"
-                    ? "text-foreground"
-                    : isUnread
-                      ? "text-muted-foreground"
-                      : "text-secondary-label/70",
-              ),
+          : props.missionToggle
+            ? cn("truncate", MISSION_LEAD_TITLE_CLASS_NAME)
+            : variant !== "slim"
+              ? cn(
+                  "truncate",
+                  shouldRecede
+                    ? "text-foreground/75 group-hover/sidebar-row:text-foreground group-focus-visible/sidebar-row:text-foreground"
+                    : status === "failed" && !isUnread && !isWoke
+                      ? "text-foreground/95"
+                      : "text-foreground",
+                )
+              : cn(
+                  "truncate group-focus-within/sidebar-row:text-foreground group-hover/sidebar-row:text-foreground",
+                  shouldRecede
+                    ? "text-secondary-label"
+                    : props.isActive || isWoke || status === "input" || status === "request"
+                      ? "text-foreground"
+                      : isUnread
+                        ? "text-muted-foreground"
+                        : "text-secondary-label/70",
+                ),
       )}
       dir={textDirection(thread.title)}
     >
@@ -1258,32 +1273,35 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   ) : null;
   const { missionToggle } = props;
   const missionChevron = missionToggle ? (
-    <button
-      type="button"
-      aria-expanded={missionToggle.expanded}
-      aria-label={
-        missionToggle.expanded
-          ? gt(
-              "Collapse mission {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
-              { mission: thread.title, count: missionToggle.memberCount },
-            )
-          : gt(
-              "Expand mission {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
-              { mission: thread.title, count: missionToggle.memberCount },
-            )
-      }
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        missionToggle.onToggle();
-      }}
-      className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-sidebar-muted-foreground outline-none hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-    >
-      <ChevronDownIcon
-        aria-hidden
-        className={cn("size-3 transition-transform", !missionToggle.expanded && "-rotate-90")}
-      />
-    </button>
+    <>
+      <button
+        type="button"
+        aria-expanded={missionToggle.expanded}
+        aria-label={
+          missionToggle.expanded
+            ? gt(
+                "Collapse mission {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
+                { mission: thread.title, count: missionToggle.memberCount },
+              )
+            : gt(
+                "Expand mission {mission}, {count, plural, one {{count} thread} other {{count} threads}}",
+                { mission: thread.title, count: missionToggle.memberCount },
+              )
+        }
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          missionToggle.onToggle();
+        }}
+        className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-sidebar-muted-foreground outline-none hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        <ChevronDownIcon
+          aria-hidden
+          className={cn("size-3 transition-transform", !missionToggle.expanded && "-rotate-90")}
+        />
+      </button>
+      <MissionLeadIcon />
+    </>
   ) : null;
   const missionCount =
     missionToggle && !missionToggle.expanded && missionToggle.memberCount > 0 ? (

@@ -102,7 +102,11 @@ import {
 } from "./missionDraftStore";
 import { type MissionDrop, resolveMissionDrop } from "./missionDrop.logic";
 import { SidebarHeading } from "./SidebarListMarkers";
-import type { SidebarMissionToggle } from "./SidebarThreadRow";
+import {
+  MISSION_LEAD_TITLE_CLASS_NAME,
+  MissionLeadIcon,
+  type SidebarMissionToggle,
+} from "./SidebarThreadRow";
 
 export function useMissionHosts(): ReadonlyArray<MissionHost> {
   const enabled = useClientSettings((settings) => settings.sidebarMissionsEnabled);
@@ -597,6 +601,11 @@ function MemberRow(props: {
             />
           </button>
         ) : null}
+        {toggle ? (
+          <span className="flex h-5 shrink-0 items-center self-start">
+            <MissionLeadIcon />
+          </span>
+        ) : null}
         <button
           type="button"
           disabled={thread === null}
@@ -606,7 +615,11 @@ function MemberRow(props: {
           <span
             className={cn(
               "flex min-w-0 items-center gap-1.5 text-sm",
-              active ? "text-sidebar-foreground" : "text-sidebar-muted-foreground",
+              toggle
+                ? MISSION_LEAD_TITLE_CLASS_NAME
+                : active
+                  ? "text-sidebar-foreground"
+                  : "text-sidebar-muted-foreground",
             )}
           >
             {props.stateOnly || dismisses ? null : <span className="truncate">{title}</span>}
@@ -852,14 +865,18 @@ export function SidebarMissions(props: {
       {props.headerVisible ? (
         <SidebarHeading>{gt("Missions", { $context: "sidebar section" })}</SidebarHeading>
       ) : null}
-      {props.missions.map((mission) => {
+      {props.missions.map((mission, index) => {
         const expanded = missionExpandedById[mission.key] ?? true;
         const drop =
           props.dropTarget?.kind === "add" && props.dropTarget.mission === mission.key
             ? props.dropTarget
             : null;
         return (
-          <li key={mission.key} className="list-none" data-mission-drop={mission.key}>
+          <li
+            key={mission.key}
+            className={cn("list-none", index > 0 && "mt-3")}
+            data-mission-drop={mission.key}
+          >
             <ul
               className={cn(
                 "flex flex-col gap-px rounded-md",
@@ -884,7 +901,7 @@ export function SidebarMissions(props: {
               )}
               {expanded && mission.members.length > 0 ? (
                 <li className="list-none" data-testid="sidebar-mission-members">
-                  <ul className="ms-3 flex flex-col gap-px border-s border-sidebar-border ps-1">
+                  <ul className="ms-3 flex flex-col gap-px border-s-2 border-sidebar-foreground/15 ps-1">
                     {mission.members.map((entry) => row(mission, entry))}
                   </ul>
                 </li>

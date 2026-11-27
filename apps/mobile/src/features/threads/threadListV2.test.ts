@@ -987,6 +987,43 @@ describe("buildThreadListV2ListItems", () => {
     ).toEqual(["lead", "member", "plain"]);
   });
 
+  it("marks only the first mission's lead, so later missions get space above them", () => {
+    const lead = (threadId: string) => ({
+      ref: { environmentId, threadId: ThreadId.make(threadId) },
+      role: "lead" as const,
+      state: "active" as const,
+    });
+    const built = buildThreadListV2Items({
+      threads: ["first", "second"].map((id) => makeThread({ id: ThreadId.make(id), title: id })),
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      missionHosts: [
+        {
+          environmentId,
+          snapshot: {
+            links: [],
+            claims: [],
+            missions: ["first", "second"].map((id) => ({
+              missionId: id,
+              name: id,
+              createdAt: NOW,
+              members: [lead(id)],
+            })),
+          },
+        },
+      ],
+    });
+    const leads = buildThreadListV2ListItems({
+      items: built.items,
+      missions: built.missions,
+      pendingTasks: [],
+    }).flatMap((item) =>
+      item.type === "v2-thread" && item.mission?.toggle ? [item.mission.toggle.firstMission] : [],
+    );
+    expect(leads).toEqual([true, false]);
+  });
+
   it("filters a mission by its members' machines, not by the machine that hosts it", () => {
     const laptop = EnvironmentId.make("environment-laptop");
     const hosts: ReadonlyArray<MissionHost> = [

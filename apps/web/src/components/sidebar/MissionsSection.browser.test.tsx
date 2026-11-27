@@ -19,6 +19,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
+import "~/index.css";
 import { act, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
@@ -540,6 +541,32 @@ describe("missions in the sidebar", () => {
     ).toBe("Update the release notes, web");
   });
 
+  it("marks a lead, read in or not, with the mission icon and a bold title, and spaces missions apart", async () => {
+    await using screen = await renderSidebar();
+    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
+    const loaded = screen.container.querySelector<HTMLElement>('[data-sidebar-row="local:lead"]')!;
+    const unloaded = screen
+      .getByRole("button", { name: "Collapse mission Archive the old site, 0 threads" })
+      .element()
+      .closest("li")!;
+    for (const [lead, title] of [
+      [loaded, "Plan the v2 release"],
+      [unloaded, "Archive the old site"],
+    ] as const) {
+      expect(lead.querySelector("[data-testid=mission-lead-icon]")).not.toBeNull();
+      const text = [...lead.querySelectorAll("span")].find((span) => span.textContent === title)!;
+      expect(getComputedStyle(text).fontWeight).toBe("600");
+    }
+    const docs = screen.container.querySelector<HTMLElement>('[data-sidebar-row="local:docs"]')!;
+    expect(docs.querySelector("[data-testid=mission-lead-icon]")).toBeNull();
+    const groups = [...screen.container.querySelectorAll<HTMLElement>("[data-mission-drop]")];
+    expect(groups.length).toBeGreaterThan(1);
+    for (const [above, below] of groups.slice(1).map((group, index) => [groups[index]!, group])) {
+      const space = below!.getBoundingClientRect().top - above!.getBoundingClientRect().bottom;
+      expect(space).toBeGreaterThanOrEqual(12);
+    }
+  });
+
   it("sweeps Settle from the lead over its members in the same state only", async () => {
     await using screen = await renderSidebar({}, { docsSnoozed: true });
     await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
@@ -779,7 +806,9 @@ describe("missions in the sidebar", () => {
     expect(lead.textContent).not.toMatch(/web|WB/);
     const chevron = lead.querySelector<HTMLElement>('[aria-label^="Collapse mission"]')!;
     expect(chevron.parentElement!.textContent).toContain("Plan the v2 release");
-    expect(chevron.nextElementSibling!.textContent).toBe("Plan the v2 release");
+    const icon = chevron.nextElementSibling!;
+    expect(icon.getAttribute("data-testid")).toBe("mission-lead-icon");
+    expect(icon.nextElementSibling!.textContent).toBe("Plan the v2 release");
     expect(chevron.parentElement!.nextElementSibling).toBeNull();
     const members = screen.container.querySelector("[data-testid=sidebar-mission-members]")!;
     expect(rowOf(members, "Write the migration guide").textContent).toContain(
