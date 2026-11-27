@@ -204,6 +204,11 @@ it("re-renders only the Contents group that holds the active match when stepping
   using screen = setup();
   screen.render("app", 0);
   screen.chooseMode("Contents");
+  expect(
+    [...screen.container.querySelectorAll("li")].map(
+      (group) => group.querySelector("button")!.querySelectorAll("span")[1]?.textContent,
+    ),
+  ).toEqual(["2", "3"]);
 
   const renders = () =>
     [...screen.container.querySelectorAll("li")].map((group) =>

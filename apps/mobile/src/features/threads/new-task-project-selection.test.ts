@@ -495,20 +495,22 @@ describe("a mission draft's machines", () => {
     ]);
   });
 
-  it("moves the No project home to a mission machine, ready only once it connects", () => {
-    expect(
-      resolveMissionScratchOption({
-        environments: [
-          { environmentId: desk, connectionState: "connected" as const },
-          { environmentId: laptop, connectionState: "connecting" as const },
-        ],
-        serverConfigs: new Map([
-          [desk, { scratchWorkspaceRoot: "/desk-scratch" }],
-          [laptop, { scratchWorkspaceRoot: "/laptop-scratch" }],
-        ]),
-        selectedEnvironmentId: desk,
-        machines: new Set([laptop]),
-      }),
-    ).toEqual({ environmentId: laptop, ready: false });
+  it("moves the No project home to a mission machine, ready only once it connects, else has none", () => {
+    const input = {
+      environments: [
+        { environmentId: desk, connectionState: "connected" as const },
+        { environmentId: laptop, connectionState: "connecting" as const },
+      ],
+      serverConfigs: new Map([
+        [desk, { scratchWorkspaceRoot: "/desk-scratch" }],
+        [laptop, { scratchWorkspaceRoot: "/laptop-scratch" }],
+      ]),
+      selectedEnvironmentId: desk,
+    };
+    expect(resolveMissionScratchOption({ ...input, machines: new Set([laptop]) })).toEqual({
+      environmentId: laptop,
+      ready: false,
+    });
+    expect(resolveMissionScratchOption({ ...input, machines: new Set() })).toBeNull();
   });
 });

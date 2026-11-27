@@ -51,6 +51,16 @@ class ReviewDiffSearchTest {
         !draw(canvas).sameAs(ordinary),
       )
 
+      view.setAppearanceScheme("dark")
+      view.setSearchHighlightsJson(highlights(active = null))
+      val darkOrdinary = draw(canvas)
+      view.setSearchHighlightsJson(highlights(active = MATCH_ROW))
+      assertTrue(
+        "dark paints the active match apart from an ordinary one",
+        !draw(canvas).sameAs(darkOrdinary),
+      )
+
+      view.setAppearanceScheme("light")
       view.setSearchHighlightsJson("")
       assertTrue("an empty payload clears highlights", draw(canvas).sameAs(plain))
     }

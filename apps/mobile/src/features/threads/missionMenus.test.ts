@@ -130,13 +130,22 @@ describe("mission menus", () => {
       { id: "mission-lead:newer", label: "newer" },
       { id: "mission-lead:older", label: "older" },
     ]);
+    const ids = (entry: MissionMember, allowed = true) =>
+      missingMemberMenuItems(place(entry), ctx(allowed)).map((row) => row.id);
+    expect(ids(lead)).toContain("mission-new-lead");
+    expect(ids({ ...lead, state: "active" })).not.toContain("mission-new-lead");
+    expect(
+      missingMemberMenuItems(place(lead), ctx(false)).find(
+        (row) => row.id === "mission-prompt:env-desk:m1",
+      )?.disabled,
+    ).toBe(true);
   });
 
   it("lists one palette row per mission the open thread can join", () => {
-    expect(missionPaletteRows(shell("plain"), ctx()).map((row) => row.id)).toEqual([
-      "mission-start",
-      "mission-add:env-desk:m1",
-    ]);
+    const rows = missionPaletteRows(shell("plain"), ctx());
+    expect(rows.map((row) => row.id)).toEqual(["mission-start", "mission-add:env-desk:m1"]);
+    expect(rows[1]?.title).toContain("Ship v2");
+    expect(rows[1]?.detail).toBe("Desk");
     expect(missionPaletteRows(shell("plain"), ctx(false))).toEqual([]);
   });
 });
