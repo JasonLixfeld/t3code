@@ -59,6 +59,13 @@ private extension T3ReviewDiffView {
     check(offset > 0 && matchX >= offset && matchX < offset + bounds.width,
           "A match past the right edge scrolls its file horizontally into view")
 
+    isProgrammaticScrollActive = true
+    contentView.startFlingForTest(fileId: "b.ts")
+    check(contentView.isFlingingForTest, "The horizontal fling runs before the jump")
+    scrollToMatch(target, start: 300, end: 306, animated: false)
+    check(!isProgrammaticScrollActive, "A newer jump stops the running vertical animation")
+    check(!contentView.isFlingingForTest, "A newer jump stops the running horizontal fling")
+
     setSearchHighlightsJson("")
     check(contentView.searchHighlights(rowId: target).isEmpty, "An empty payload clears highlights")
     print("Passed search highlights, fold-aware match jump, and horizontal reveal")
@@ -85,6 +92,10 @@ private extension ReviewDiffContentView {
   }
 
   func horizontalCodeOffset(fileId: String) -> CGFloat { horizontalOffset(for: fileId) }
+
+  func startFlingForTest(fileId: String) { startHorizontalDeceleration(fileId: fileId, velocity: -2000) }
+
+  var isFlingingForTest: Bool { decelerationDisplayLink != nil }
 
   var characterWidth: CGFloat { codeCharacterWidth }
 }
