@@ -18,7 +18,7 @@ Threads don't require a project. On web and desktop, pick **No project** from a 
 
 ### Pick a project and a mission
 
-On web and desktop, a new thread shows a **Project** picker and a **Mission** picker under its heading. On mobile, the new thread's draft shows a mission control beside its other composer controls, labeled **Add to a mission** until you pick one. The mission choice appears when Missions is on in Settings and you can start missions on the thread's machine, or when the draft already belongs to a mission.
+On web and desktop, a new thread shows a **Project** picker and a **Mission** picker under its heading. On mobile, the new thread's draft shows a mission control beside its other composer controls, labeled **Add to a mission** until you pick one. The mission choice appears only when Missions is on in Settings, and then when you can start missions on the thread's machine or the draft already belongs to a mission.
 
 - The mission choice starts at **None** and lists the missions on the thread's machine. The thread joins the picked mission when you send it.
 - **New mission (this thread leads)** starts a new mission with this thread as its lead. The mission choice then shows that mission and cannot change it. To undo it, choose **Send as a plain thread** in the note above the message box.

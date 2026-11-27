@@ -245,7 +245,12 @@ import {
   useProjectLookups,
   useSortedProjectGroups,
 } from "./CommandPaletteLookups";
-import { markMissionDraft, missionDraftOf, moveMissionDraft } from "./sidebar/missionDraftStore";
+import {
+  markMissionDraft,
+  missionDraftOf,
+  moveMissionDraft,
+  useMissionDrafts,
+} from "./sidebar/missionDraftStore";
 import { useDraftProjectMachines } from "./chat/DraftMissionSelect";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useMissionHosts, useMissionStartMachines } from "./sidebar/MissionsSection";
@@ -643,13 +648,36 @@ function OpenCommandPaletteDialog(props: {
   const [addProjectDraftId] = useState(() =>
     props.openIntent?.kind === "add-project" ? (props.openIntent.draftId ?? null) : null,
   );
+  const addProjectDraftMark = useMissionDrafts((state) =>
+    addProjectDraftId === null ? undefined : state.drafts.get(addProjectDraftId),
+  );
   const addProjectDraftMachines = useDraftProjectMachines(addProjectDraftId);
-  const readAddProjectDraftMachines = useStableCallback(() => addProjectDraftMachines);
+  const readAddProjectDraftAccess = useStableCallback(() => ({
+    mark: addProjectDraftMark,
+    machines: addProjectDraftMachines,
+  }));
+  // Mission access is read in render, so a closed palette can no longer vouch for it.
+  const addProjectAccessCurrent = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records whether the palette still renders the draft's mission access, which a clone that finishes after close cannot trust
+  useEffect(() => {
+    addProjectAccessCurrent.current = true;
+    return () => {
+      addProjectAccessCurrent.current = false;
+    };
+  }, []);
   const moveDraftToAddedProject = async (project: EnvironmentProject): Promise<boolean> => {
     if (addProjectDraftId === null) return false;
-    const machines = readAddProjectDraftMachines();
-    if (machines !== null && !machines.has(project.environmentId)) return false;
     const mark = missionDraftOf(addProjectDraftId);
+    if (mark !== undefined) {
+      const access = readAddProjectDraftAccess();
+      if (
+        !addProjectAccessCurrent.current ||
+        access.mark !== mark ||
+        access.machines?.has(project.environmentId) !== true
+      ) {
+        return false;
+      }
+    }
     if (!moveDraftToProject(addProjectDraftId, project)) return false;
     const threadId = useComposerDraftStore.getState().getDraftSession(addProjectDraftId)?.threadId;
     if (mark !== undefined && threadId !== undefined) {

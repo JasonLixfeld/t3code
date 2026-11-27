@@ -7,6 +7,7 @@ import {
   AuthSourceControlWriteScope,
   EnvironmentId,
   ProjectId,
+  ThreadId,
 } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -19,12 +20,17 @@ import { AsyncResult } from "effect/reactivity";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { clearMissionDraft, markMissionDraft, missionDraftOf } from "./sidebar/missionDraftStore";
 import { useMissionStartMachines } from "./sidebar/MissionsSection";
+import { makeThreadFixture } from "../test-fixtures";
+import type { Thread } from "../types";
 
 const scopes = vi.hoisted(() => ({
   denied: undefined as string | undefined,
   sourceControl: undefined as unknown,
   lookupRepository: vi.fn(),
   projects: [] as ReadonlyArray<EnvironmentProject>,
+  threads: [] as ReadonlyArray<Thread>,
+  waitForProject: async (): Promise<EnvironmentProject | undefined> => undefined,
+  handleNewThread: vi.fn(async () => undefined),
 }));
 const setup = (deniedScope?: string, sourceControl?: unknown) => {
   scopes.denied = deniedScope;
@@ -78,7 +84,7 @@ vi.mock("../hooks/useHandleNewThread", () => ({
     activeDraftThread: null,
     activeThread: null,
     defaultProjectRef: null,
-    handleNewThread: async () => undefined,
+    handleNewThread: scopes.handleNewThread,
   }),
   useNewThreadHandler: () => async () => undefined,
 }));
@@ -119,12 +125,13 @@ vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
   useProjects: () => scopes.projects,
   useThreadShells: () => [],
-  useVisibleThreadShells: () => [],
+  useVisibleThreadShells: () => scopes.threads,
+  useDelegatedUnderParent: () => new Set(),
   useHiddenThreadKeys: () => new Set(),
   useAnyEnvironmentHiding: () => false,
   useEnvironmentThreadRefs: () => [],
   useServerConfigs: () => new Map(),
-  waitForProject: async () => undefined,
+  waitForProject: () => scopes.waitForProject(),
 }));
 vi.mock("../state/queries", async (original) => ({
   ...(await original<typeof import("../state/queries")>()),
@@ -294,55 +301,117 @@ it("keeps the source list visible after a dismissed repository lookup succeeds",
   expect(sources.element()).toBeVisible();
 });
 
+const homeProject = scopeProjectRef(EnvironmentId.make("home"), ProjectId.make("web"));
+const localProject = (id: string, workspaceRoot: string): EnvironmentProject => ({
+  id: ProjectId.make(id),
+  environmentId: EnvironmentId.make("local"),
+  title: id,
+  workspaceRoot,
+  repositoryIdentity: null,
+  defaultModelSelection: null,
+  createdAt: "2026-03-01T00:00:00.000Z",
+  updatedAt: "2026-03-01T00:00:00.000Z",
+  scripts: [],
+});
+const writeHomeDraft = () => {
+  const draftId = DraftId.make("mission-draft");
+  const store = useComposerDraftStore.getState();
+  store.setProjectDraftThreadId(homeProject, draftId);
+  store.setPrompt(draftId, "Plan the release");
+  onTestFinished(() => {
+    useComposerDraftStore.getState().clearDraftThread(draftId);
+    clearMissionDraft(draftId);
+    scopes.projects = [];
+    scopes.threads = [];
+    scopes.waitForProject = async () => undefined;
+    scopes.handleNewThread.mockClear();
+  });
+  const threadId = store.getDraftSession(draftId)!.threadId;
+  const markForMission = () =>
+    markMissionDraft(draftId, {
+      intent: { kind: "new" },
+      thread: { environmentId: homeProject.environmentId, threadId },
+    });
+  return { draftId, threadId, markForMission };
+};
+const allowMissionsOn = (machines: ReadonlyArray<EnvironmentId>) => {
+  vi.mocked(useMissionStartMachines).mockReturnValue(new Set(machines));
+  onTestFinished(() => vi.mocked(useMissionStartMachines).mockRestore());
+};
+
 it.each([
   { machine: "a machine its mission cannot use", allowed: false },
   { machine: "a machine its mission can start on", allowed: true },
 ])("moves a mission draft to Add project's pick only on $machine", async ({ allowed }) => {
   setup();
-  const home = scopeProjectRef(EnvironmentId.make("home"), ProjectId.make("web"));
-  const api: EnvironmentProject = {
-    id: ProjectId.make("api"),
-    environmentId: EnvironmentId.make("local"),
-    title: "api",
-    workspaceRoot: "/workspace/api",
-    repositoryIdentity: null,
-    defaultModelSelection: null,
-    createdAt: "2026-03-01T00:00:00.000Z",
-    updatedAt: "2026-03-01T00:00:00.000Z",
-    scripts: [],
-  };
+  const api = localProject("api", "/workspace/api");
+  const latest = makeThreadFixture({
+    environmentId: api.environmentId,
+    projectId: api.id,
+    id: ThreadId.make("api-latest"),
+  });
   scopes.projects = [api];
-  onTestFinished(() => {
-    scopes.projects = [];
-  });
-  const draftId = DraftId.make("mission-draft");
-  const store = useComposerDraftStore.getState();
-  store.setProjectDraftThreadId(home, draftId);
-  store.setPrompt(draftId, "Plan the release");
-  onTestFinished(() => useComposerDraftStore.getState().clearDraftThread(draftId));
-  const threadId = store.getDraftSession(draftId)!.threadId;
-  markMissionDraft(draftId, {
-    intent: { kind: "new" },
-    thread: { environmentId: home.environmentId, threadId },
-  });
-  onTestFinished(() => clearMissionDraft(draftId));
+  scopes.threads = [latest];
+  const { draftId, threadId, markForMission } = writeHomeDraft();
+  markForMission();
   const mark = missionDraftOf(draftId)!;
-  if (allowed) {
-    vi.mocked(useMissionStartMachines).mockReturnValue(new Set([api.environmentId]));
-    onTestFinished(() => vi.mocked(useMissionStartMachines).mockRestore());
-  }
+  if (allowed) allowMissionsOn([api.environmentId]);
 
-  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await using screen = await render(<CommandPalette>{null}</CommandPalette>);
   await act(() => openCommandPalette({ open: "add-project", draftId }));
   await page.getByText("Local folder", { exact: true }).click();
   await page.getByRole("combobox").fill(api.workspaceRoot);
   await userEvent.keyboard("{Enter}");
   await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
 
-  const target = allowed ? scopeProjectRef(api.environmentId, api.id) : home;
+  const target = allowed ? scopeProjectRef(api.environmentId, api.id) : homeProject;
   expect(useComposerDraftStore.getState().getDraftSession(draftId)).toMatchObject(target);
   expect(missionDraftOf(draftId)).toEqual({
     ...mark,
     thread: { environmentId: target.environmentId, threadId },
   });
+  // A draft that stays behind leaves the folder's project open at its latest thread.
+  expect(screen.router!.state.location.pathname).toBe(
+    allowed ? `/draft/${draftId}` : `/${latest.environmentId}/${latest.id}`,
+  );
+});
+
+it.each([
+  { change: "the draft joins a mission" },
+  { change: "the draft's mission loses the clone's machine" },
+])("leaves the draft where it is when $change while the clone starts", async ({ change }) => {
+  setup();
+  const cloned = localProject("project-cloned", "/workspace/cloned");
+  const cloneReady = Promise.withResolvers<EnvironmentProject>();
+  scopes.waitForProject = () => cloneReady.promise;
+  const { draftId, threadId, markForMission } = writeHomeDraft();
+  const joins = change === "the draft joins a mission";
+  if (!joins) {
+    markForMission();
+    allowMissionsOn([cloned.environmentId]);
+  }
+
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project", draftId }));
+  await page.getByText("Git URL", { exact: true }).click();
+  await page.getByRole("combobox").fill("https://example.com/team/cloned.git");
+  await userEvent.keyboard("{Enter}");
+  await page.getByRole("combobox").fill(cloned.workspaceRoot);
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+  if (joins) markForMission();
+  else allowMissionsOn([]);
+  const mark = missionDraftOf(draftId);
+
+  await act(async () => cloneReady.resolve(cloned));
+  const draft = () => useComposerDraftStore.getState().getDraftSession(draftId);
+  await vi.waitFor(() =>
+    expect(
+      scopes.handleNewThread.mock.calls.length > 0 ||
+        draft()?.environmentId === cloned.environmentId,
+    ).toBe(true),
+  );
+  expect(draft()).toMatchObject(homeProject);
+  expect(missionDraftOf(draftId)).toEqual(mark);
+  expect(mark?.thread).toEqual({ environmentId: homeProject.environmentId, threadId });
 });
