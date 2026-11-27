@@ -35,7 +35,7 @@ export function ReviewFindBar(props: {
         ? gt("No results", { $context: "find in diff counter" })
         : gt("{current} of {total}", {
             current: props.activeIndex + 1,
-            total: props.result.matchesTruncated ? `${total}+` : total,
+            total,
           });
   return (
     <ContentBand>
