@@ -448,8 +448,8 @@ function missionIndex(hosts: ReadonlyArray<MissionHost>) {
   return index;
 }
 
-// Once a machine has synced, a member thread missing from the list is one the server trimmed as
-// settled or the tag filter hid, so an older server's missing `settled` flag cannot leave a blank row.
+// Once a machine has synced, a member thread missing from the list is hidden whatever the reason
+// (trimmed as settled, tag-filtered, an idle subagent): servers before the `settled` flag never send it.
 const isHiddenFromMission = (
   member: MissionMember,
   thread: Pick<ListedThread, "settledOverride" | "archivedAt"> | null,
