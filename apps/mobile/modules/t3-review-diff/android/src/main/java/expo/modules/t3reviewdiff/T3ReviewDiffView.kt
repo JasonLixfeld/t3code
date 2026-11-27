@@ -124,6 +124,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     pendingInitialScroll = true
     pendingScrollFileId = initialFileId
     pendingMatch = null
+    deferVisibleFileEventUntilScrollEnds = false
     canvasView.setVerticalOffset(0)
     canvasView.resetHorizontalOffsets()
     applyPendingInitialScroll()
@@ -320,7 +321,10 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     when (event.actionMasked) {
       MotionEvent.ACTION_DOWN -> {
         pendingMatch = null
-        deferVisibleFileEventUntilScrollEnds = false
+        if (deferVisibleFileEventUntilScrollEnds) {
+          deferVisibleFileEventUntilScrollEnds = false
+          emitVisibleFile(firstVisibleIndex)
+        }
         verticalScroller.forceFinished(true)
         horizontalScroller.forceFinished(true)
         dragAxis = null
