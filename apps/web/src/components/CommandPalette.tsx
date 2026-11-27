@@ -660,12 +660,12 @@ function OpenCommandPaletteDialog(props: {
   const moveDraftToAddedProject = async (project: EnvironmentProject): Promise<boolean> => {
     if (addProjectDraftId === null) return false;
     const mark = missionDraftOf(addProjectDraftId);
-    if (mark !== undefined) {
-      const access = readAddProjectDraftAccess();
+    const access = readAddProjectDraftAccess();
+    if (mark !== undefined || access.mark !== undefined) {
       if (
         useCommandPaletteStore.getState().openIntent !== addProjectIntent ||
         access.mark !== mark ||
-        access.machines?.has(project.environmentId) !== true
+        (access.machines !== null && !access.machines.has(project.environmentId))
       ) {
         return false;
       }

@@ -19,9 +19,10 @@ import { sourceControlEnvironment } from "../state/sourceControl";
 import { AsyncResult } from "effect/reactivity";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { clearMissionDraft, markMissionDraft, missionDraftOf } from "./sidebar/missionDraftStore";
-import { useMissionStartMachines } from "./sidebar/MissionsSection";
+import { useMissionHosts, useMissionStartMachines } from "./sidebar/MissionsSection";
 import { makeThreadFixture } from "../test-fixtures";
 import type { Thread } from "../types";
+import type { MissionDraftIntent } from "@t3tools/client-runtime/missions";
 
 const scopes = vi.hoisted(() => ({
   denied: undefined as string | undefined,
@@ -35,6 +36,10 @@ const scopes = vi.hoisted(() => ({
 const setup = (deniedScope?: string, sourceControl?: unknown) => {
   scopes.denied = deniedScope;
   scopes.sourceControl = sourceControl;
+  scopes.projects = [];
+  scopes.threads = [];
+  scopes.waitForProject = async () => undefined;
+  scopes.handleNewThread.mockClear();
 };
 const githubAvailable = {
   versionControlSystems: [],
@@ -321,15 +326,11 @@ const writeHomeDraft = () => {
   onTestFinished(() => {
     useComposerDraftStore.getState().clearDraftThread(draftId);
     clearMissionDraft(draftId);
-    scopes.projects = [];
-    scopes.threads = [];
-    scopes.waitForProject = async () => undefined;
-    scopes.handleNewThread.mockClear();
   });
   const threadId = store.getDraftSession(draftId)!.threadId;
-  const markForMission = () =>
+  const markForMission = (intent: MissionDraftIntent = { kind: "new" }) =>
     markMissionDraft(draftId, {
-      intent: { kind: "new" },
+      intent,
       thread: { environmentId: homeProject.environmentId, threadId },
     });
   return { draftId, threadId, markForMission };
@@ -340,77 +341,107 @@ const allowMissionsOn = (machines: ReadonlyArray<EnvironmentId>) => {
 };
 
 it.each([
-  { machine: "a machine its mission cannot use", allowed: false },
-  { machine: "a machine its mission can start on", allowed: true },
-])("moves a mission draft to Add project's pick only on $machine", async ({ allowed }) => {
-  setup();
-  const api = localProject("api", "/workspace/api");
-  const latest = makeThreadFixture({
-    environmentId: api.environmentId,
-    projectId: api.id,
-    id: ThreadId.make("api-latest"),
-  });
-  scopes.projects = [api];
-  scopes.threads = [latest];
-  const { draftId, threadId, markForMission } = writeHomeDraft();
-  markForMission();
-  const mark = missionDraftOf(draftId)!;
-  if (allowed) allowMissionsOn([api.environmentId]);
+  { machine: "a machine its mission cannot use", allowed: false, linksHidden: false },
+  { machine: "a machine its mission can start on", allowed: true, linksHidden: false },
+  {
+    machine: "its mission's machine when the mission hides its links",
+    allowed: true,
+    linksHidden: true,
+  },
+])(
+  "moves a mission draft to Add project's pick only on $machine",
+  async ({ allowed, linksHidden }) => {
+    setup();
+    const api = localProject("api", "/workspace/api");
+    const latest = makeThreadFixture({
+      environmentId: api.environmentId,
+      projectId: api.id,
+      id: ThreadId.make("api-latest"),
+    });
+    scopes.projects = [api];
+    scopes.threads = [latest];
+    const { draftId, threadId, markForMission } = writeHomeDraft();
+    if (linksHidden) {
+      vi.mocked(useMissionHosts).mockReturnValue([
+        {
+          environmentId: api.environmentId,
+          snapshot: { missions: [], links: [], claims: [], linksHidden: true },
+        },
+      ]);
+      onTestFinished(() => vi.mocked(useMissionHosts).mockRestore());
+      markForMission({
+        kind: "member",
+        host: api.environmentId,
+        missionId: "0123456789ab",
+        name: "Ship v2",
+      });
+    } else {
+      markForMission();
+      if (allowed) allowMissionsOn([api.environmentId]);
+    }
+    const mark = missionDraftOf(draftId)!;
 
-  await using screen = await render(<CommandPalette>{null}</CommandPalette>);
-  await act(() => openCommandPalette({ open: "add-project", draftId }));
-  await page.getByText("Local folder", { exact: true }).click();
-  await page.getByRole("combobox").fill(api.workspaceRoot);
-  await userEvent.keyboard("{Enter}");
-  await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+    await using screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project", draftId }));
+    await page.getByText("Local folder", { exact: true }).click();
+    await page.getByRole("combobox").fill(api.workspaceRoot);
+    await userEvent.keyboard("{Enter}");
+    await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
 
-  const target = allowed ? scopeProjectRef(api.environmentId, api.id) : homeProject;
-  expect(useComposerDraftStore.getState().getDraftSession(draftId)).toMatchObject(target);
-  expect(missionDraftOf(draftId)).toEqual({
-    ...mark,
-    thread: { environmentId: target.environmentId, threadId },
-  });
-  expect(screen.router!.state.location.pathname).toBe(
-    allowed ? `/draft/${draftId}` : `/${latest.environmentId}/${latest.id}`,
-  );
-});
+    const target = allowed ? scopeProjectRef(api.environmentId, api.id) : homeProject;
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)).toMatchObject(target);
+    expect(missionDraftOf(draftId)).toEqual({
+      ...mark,
+      thread: { environmentId: target.environmentId, threadId },
+    });
+    expect(screen.router!.state.location.pathname).toBe(
+      allowed ? `/draft/${draftId}` : `/${latest.environmentId}/${latest.id}`,
+    );
+  },
+);
 
 it.each([
-  { change: "the draft joins a mission" },
-  { change: "the draft's mission loses the clone's machine" },
-])("leaves the draft where it is when $change while the clone starts", async ({ change }) => {
-  setup();
-  const cloned = localProject("project-cloned", "/workspace/cloned");
-  const cloneReady = Promise.withResolvers<EnvironmentProject>();
-  scopes.waitForProject = () => cloneReady.promise;
-  const { draftId, threadId, markForMission } = writeHomeDraft();
-  const joins = change === "the draft joins a mission";
-  if (!joins) {
-    markForMission();
-    allowMissionsOn([cloned.environmentId]);
-  }
+  { change: "the draft joins a mission", markedAtStart: false },
+  { change: "the draft's mission loses the clone's machine", markedAtStart: true },
+  { change: "the draft leaves its mission", markedAtStart: true },
+])(
+  "leaves the draft where it is when $change while the clone starts",
+  async ({ change, markedAtStart }) => {
+    setup();
+    const cloned = localProject("project-cloned", "/workspace/cloned");
+    const cloneReady = Promise.withResolvers<EnvironmentProject>();
+    scopes.waitForProject = () => cloneReady.promise;
+    const { draftId, threadId, markForMission } = writeHomeDraft();
+    if (markedAtStart) {
+      markForMission();
+      allowMissionsOn([cloned.environmentId]);
+    }
 
-  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
-  await act(() => openCommandPalette({ open: "add-project", draftId }));
-  await page.getByText("Git URL", { exact: true }).click();
-  await page.getByRole("combobox").fill("https://example.com/team/cloned.git");
-  await userEvent.keyboard("{Enter}");
-  await page.getByRole("combobox").fill(cloned.workspaceRoot);
-  await userEvent.keyboard("{Enter}");
-  await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
-  if (joins) markForMission();
-  else allowMissionsOn([]);
-  const mark = missionDraftOf(draftId);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project", draftId }));
+    await page.getByText("Git URL", { exact: true }).click();
+    await page.getByRole("combobox").fill("https://example.com/team/cloned.git");
+    await userEvent.keyboard("{Enter}");
+    await page.getByRole("combobox").fill(cloned.workspaceRoot);
+    await userEvent.keyboard("{Enter}");
+    await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+    if (change === "the draft joins a mission") markForMission();
+    else if (change === "the draft leaves its mission") clearMissionDraft(draftId);
+    else allowMissionsOn([]);
+    const mark = missionDraftOf(draftId);
 
-  await act(async () => cloneReady.resolve(cloned));
-  const draft = () => useComposerDraftStore.getState().getDraftSession(draftId);
-  await vi.waitFor(() =>
-    expect(
-      scopes.handleNewThread.mock.calls.length > 0 ||
-        draft()?.environmentId === cloned.environmentId,
-    ).toBe(true),
-  );
-  expect(draft()).toMatchObject(homeProject);
-  expect(missionDraftOf(draftId)).toEqual(mark);
-  expect(mark?.thread).toEqual({ environmentId: homeProject.environmentId, threadId });
-});
+    await act(async () => cloneReady.resolve(cloned));
+    const draft = () => useComposerDraftStore.getState().getDraftSession(draftId);
+    await vi.waitFor(() =>
+      expect(
+        scopes.handleNewThread.mock.calls.length > 0 ||
+          draft()?.environmentId === cloned.environmentId,
+      ).toBe(true),
+    );
+    expect(draft()).toMatchObject(homeProject);
+    expect(missionDraftOf(draftId)).toEqual(mark);
+    if (mark !== undefined) {
+      expect(mark.thread).toEqual({ environmentId: homeProject.environmentId, threadId });
+    }
+  },
+);
