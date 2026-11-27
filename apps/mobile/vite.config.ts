@@ -27,6 +27,7 @@ const reactTests = [
   "src/features/diffs/nativeReviewDiffSurface.test.tsx",
   "src/features/review/ReviewFileNavigator.test.tsx",
   "src/features/review/useReviewFind.test.tsx",
+  "src/features/review/ReviewFindBar.test.tsx",
   "src/features/pull-requests/usePullRequestDiff.test.tsx",
   "src/components/ProjectFavicon.test.tsx",
   "src/components/ui/Dialog.android.test.tsx",

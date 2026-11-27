@@ -1,5 +1,5 @@
 import { T, useGT } from "gt-react-native";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { type TextInputInstance, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -20,7 +20,7 @@ export function ReviewFindBar(props: {
   readonly query: string;
   readonly result: ReviewFindResult;
   readonly activeIndex: number | null;
-  readonly autoFocus: boolean;
+  readonly focusRequestId: number;
   readonly resultIsStale: boolean;
   readonly partial: boolean;
   readonly onChangeQuery: (query: string) => void;
@@ -29,7 +29,11 @@ export function ReviewFindBar(props: {
 }) {
   const gt = useGT();
   const inputRef = useRef<TextInputInstance>(null);
-  const total = props.result.matches.length;
+  const total = props.result.matchCount;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the native input on each header Find press, including while it is already shown
+  useEffect(() => {
+    if (props.focusRequestId > 0) inputRef.current?.focus();
+  }, [props.focusRequestId]);
   const counter =
     props.query.length === 0
       ? null
@@ -44,7 +48,7 @@ export function ReviewFindBar(props: {
       <View className="flex-row items-center gap-1">
         <SearchField
           inputRef={inputRef}
-          autoFocus={props.autoFocus}
+          autoFocus={false}
           accessibilityLabel={gt("Find in diff")}
           clearAccessibilityLabel={gt("Clear search")}
           placeholder={gt("Find in diff")}

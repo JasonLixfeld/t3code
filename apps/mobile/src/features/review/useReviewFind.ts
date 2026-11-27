@@ -2,6 +2,7 @@ import { useDeferredValue, useEffect, useEffectEvent, useMemo, useRef, useState 
 
 import type { NativeReviewDiffRow } from "../diffs/nativeReviewDiffSurface";
 import {
+  EMPTY_REVIEW_FIND_RESULT,
   findInReviewRows,
   resolveReviewFindActiveIndex,
   reviewFindHighlightsJson,
@@ -15,48 +16,63 @@ export function useReviewFind(input: {
 }) {
   const [state, setState] = useState<{
     readonly open: boolean;
-    readonly autoFocus: boolean;
+    readonly contentsSearchOpen: boolean;
+    readonly focusRequestId: number;
     readonly query: string;
     readonly chosenMatch: ReviewFindMatch | null;
     readonly revealRequestId: number;
-  }>({ open: false, autoFocus: false, query: "", chosenMatch: null, revealRequestId: 0 });
+  }>({
+    open: false,
+    contentsSearchOpen: false,
+    focusRequestId: 0,
+    query: "",
+    chosenMatch: null,
+    revealRequestId: 0,
+  });
   const searchedQuery = useDeferredValue(state.query);
+  const searching = state.open || state.contentsSearchOpen;
   const result = useMemo(
-    () => findInReviewRows(input.rows, searchedQuery),
-    [input.rows, searchedQuery],
+    () => (searching ? findInReviewRows(input.rows, searchedQuery) : EMPTY_REVIEW_FIND_RESULT),
+    [searching, input.rows, searchedQuery],
   );
   const resultIsStale = searchedQuery !== state.query;
-  const activeIndex = resolveReviewFindActiveIndex(result.matches, state.chosenMatch);
-  const revealTarget =
-    state.chosenMatch ?? (resultIsStale || activeIndex === null ? undefined : result.matches[0]);
+  const activeIndex = resolveReviewFindActiveIndex(result, state.chosenMatch);
+  const revealTarget = state.chosenMatch ?? (resultIsStale ? undefined : result.matchAt(0));
   const highlightsJson = useMemo(
-    () => (state.open ? reviewFindHighlightsJson(result.matches, activeIndex) : ""),
-    [state.open, result.matches, activeIndex],
+    () => (state.open ? reviewFindHighlightsJson(result, activeIndex) : ""),
+    [state.open, result, activeIndex],
   );
 
   const selectMatch = (match: ReviewFindMatch) =>
     setState((current) => ({
       ...current,
       open: true,
-      autoFocus: current.open && current.autoFocus,
+      focusRequestId: current.open ? current.focusRequestId : 0,
       chosenMatch: match,
       revealRequestId: current.revealRequestId + 1,
     }));
   const changeQuery = (query: string) =>
     setState((current) => ({
+      ...current,
       open: true,
-      autoFocus: current.open && current.autoFocus,
+      focusRequestId: current.open ? current.focusRequestId : 0,
       query,
       chosenMatch: null,
       revealRequestId: current.revealRequestId + 1,
     }));
   const step = (direction: 1 | -1) => {
     if (resultIsStale || activeIndex === null) return;
-    const match =
-      result.matches[stepReviewFindIndex(activeIndex, direction, result.matches.length)];
+    const match = result.matchAt(stepReviewFindIndex(activeIndex, direction, result.matchCount));
     if (match) selectMatch(match);
   };
-  const openFromHeader = () => setState((current) => ({ ...current, open: true, autoFocus: true }));
+  const openFromHeader = () =>
+    setState((current) => ({
+      ...current,
+      open: true,
+      focusRequestId: current.focusRequestId + 1,
+    }));
+  const setContentsSearchOpen = (contentsSearchOpen: boolean) =>
+    setState((current) => ({ ...current, contentsSearchOpen }));
   const close = () => setState((current) => ({ ...current, open: false }));
 
   const lastRevealedRequestId = useRef(-1);
@@ -80,7 +96,7 @@ export function useReviewFind(input: {
 
   return {
     open: state.open,
-    autoFocus: state.autoFocus,
+    focusRequestId: state.focusRequestId,
     query: state.query,
     result,
     resultIsStale,
@@ -90,6 +106,7 @@ export function useReviewFind(input: {
     selectMatch,
     step,
     openFromHeader,
+    setContentsSearchOpen,
     close,
   };
 }
