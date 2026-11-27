@@ -148,6 +148,10 @@ const commandFor = (label: string) => {
   commands.set(label, command);
   return command;
 };
+const working = (thread: ReturnType<typeof shell>) => ({
+  ...thread,
+  runtime: { ...thread.runtime!, status: "running" as const },
+});
 const shells = (options: { leadSettled?: boolean; docsSnoozed?: boolean } = {}) => [
   shell("lead", "Plan the v2 release", { settled: options.leadSettled === true }),
   shell("docs", "Update the release notes", { snoozed: options.docsSnoozed === true }),
@@ -238,6 +242,7 @@ async function renderSidebar(
   settings: Partial<typeof DEFAULT_CLIENT_SETTINGS> = {},
   options: {
     leadSettled?: boolean;
+    unconfigured?: ReadonlyArray<EnvironmentId>;
     docsSnoozed?: boolean;
     scope?: Project;
     later?: ReadonlyArray<ReturnType<typeof shell>>;
@@ -283,7 +288,7 @@ async function renderSidebar(
   );
   vi.mocked(useServerConfigs).mockReturnValue(
     new Map(
-      CONNECTED.map((environmentId) => [
+      CONNECTED.filter((id) => !(options.unconfigured ?? []).includes(id)).map((environmentId) => [
         environmentId,
         {
           scratchWorkspaceRoot: null,
@@ -567,20 +572,39 @@ describe("missions in the sidebar", () => {
     }
   });
 
-  it("keeps a lead's status on hover when its machine offers no row actions", async () => {
-    await using screen = await renderSidebar();
-    await expect.element(screen.getByText("Update the release notes")).toBeInTheDocument();
-    const status = (row: HTMLElement) =>
-      row.querySelector<HTMLElement>(".group\\/sidebar-status-slot > span")!;
+  it("keeps a working lead's status on hover when its machine offers no row actions", async () => {
+    listedMissions.push({
+      missionId: "eeeeeeeeeeee",
+      name: "Laptop work",
+      createdAt: "2026-11-23T00:00:00.000Z",
+      members: [{ ref: ref(LAPTOP, "far-lead"), role: "lead", state: "active" }],
+    });
+    onTestFinished(() => {
+      listedMissions.pop();
+    });
+    const farLead = working({ ...shell("far-lead", "Far lead"), environmentId: LAPTOP });
+    await using screen = await renderSidebar({}, { extra: [farLead], unconfigured: [LAPTOP] });
+    await expect.element(screen.getByText("Far lead", { exact: true })).toBeInTheDocument();
     const lead = () =>
-      screen.container.querySelector<HTMLElement>('[data-sidebar-row="local:lead"]')!;
+      screen.container.querySelector<HTMLElement>(`[data-sidebar-row="${LAPTOP}:far-lead"]`)!;
+    const label = () =>
+      [...lead().querySelectorAll<HTMLElement>("span")].find((span) =>
+        [...span.childNodes].some(
+          (node) => node.nodeType === Node.TEXT_NODE && node.textContent === "Working",
+        ),
+      )!;
+    const shown = (element: HTMLElement) => {
+      for (let node = element; node !== lead(); node = node.parentElement!) {
+        if (getComputedStyle(node).opacity === "0") return false;
+      }
+      return true;
+    };
     await userEvent.hover(lead());
-    await vi.waitFor(() => expect(getComputedStyle(status(lead())).opacity).toBe("0"));
-    vi.mocked(useServerConfigs).mockReturnValue(new Map());
-    await screen.arrive();
-    await userEvent.hover(lead());
+    expect(lead().matches(":hover")).toBe(true);
+    expect(lead().dataset.testid).toBe("sidebar-row-card");
+    expect(lead().querySelector('[aria-label^="Collapse mission"]')).not.toBeNull();
     expect(lead().querySelector('[aria-label="Settle thread"]')).toBeNull();
-    expect(getComputedStyle(status(lead())).opacity).toBe("1");
+    expect(shown(label())).toBe(true);
   });
 
   it("sweeps Settle from the lead over its members in the same state only", async () => {

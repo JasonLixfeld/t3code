@@ -625,7 +625,9 @@ export const ThreadListV2MissionMemberRow = memo(function ThreadListV2MissionMem
         "min-h-[44px] flex-row items-center gap-2 py-2",
         props.pane === "sidebar" && "px-3",
       )}
-      style={
+      style={[
+        // Matches a card's container margin, so the next mission's gap is the same after either.
+        { marginVertical: THREAD_LIST_V2_ROW_OUTER_GAP },
         lead
           ? missionLeadSpacing(props.place)
           : {
@@ -633,8 +635,8 @@ export const ThreadListV2MissionMemberRow = memo(function ThreadListV2MissionMem
                 THREAD_LIST_V2_ROW_OUTER_INSET +
                 missionRowInset(props.pane) +
                 MISSION_MEMBER_INDENT,
-            }
-      }
+            },
+      ]}
     >
       {lead ? null : (
         <MissionMemberRail pane={props.pane} outerInset={THREAD_LIST_V2_ROW_OUTER_INSET} />
@@ -858,53 +860,56 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
               separated={Boolean(branch || props.environmentLabel)}
             />
           ) : null}
-          {props.environmentLabel && props.environmentMachine ? (
-            <EnvironmentMachineSymbol
-              kind={props.environmentMachine}
-              size={machineIconSize}
-              tintColorClassName={
-                selected
-                  ? selectedThreadRowColors.mutedIconTintClassName
-                  : rowAppearance.tertiaryIconTintClassName
-              }
-            />
+          {props.environmentLabel ? (
+            <>
+              {props.environmentMachine ? (
+                <EnvironmentMachineSymbol
+                  kind={props.environmentMachine}
+                  size={machineIconSize}
+                  tintColorClassName={
+                    selected
+                      ? selectedThreadRowColors.mutedIconTintClassName
+                      : rowAppearance.tertiaryIconTintClassName
+                  }
+                />
+              ) : null}
+              <Text
+                className={cn(
+                  "shrink-0 text-xs",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : rowAppearance.tertiaryForegroundClassName,
+                )}
+                numberOfLines={1}
+              >
+                {props.environmentLabel}
+              </Text>
+            </>
           ) : null}
-          {branch || props.environmentLabel ? (
+          {branch && props.environmentLabel ? (
             <Text
               className={cn(
-                "shrink text-xs text-foreground-muted",
+                "text-xs",
+                selected
+                  ? selectedThreadRowColors.mutedForegroundClassName
+                  : rowAppearance.tertiaryForegroundClassName,
+              )}
+            >
+              ·
+            </Text>
+          ) : null}
+          {branch ? (
+            <Text
+              className={cn(
+                "shrink text-xs",
                 selected
                   ? selectedThreadRowColors.mutedForegroundClassName
                   : rowAppearance.mutedForegroundClassName,
               )}
               numberOfLines={1}
+              style={{ fontFamily: MONO_FONT }}
             >
-              {branch ? (
-                <Text
-                  className={cn(
-                    "text-xs",
-                    selected
-                      ? selectedThreadRowColors.mutedForegroundClassName
-                      : rowAppearance.mutedForegroundClassName,
-                  )}
-                  style={{ fontFamily: MONO_FONT }}
-                >
-                  {branch}
-                </Text>
-              ) : null}
-              {branch && props.environmentLabel ? "  ·  " : null}
-              {props.environmentLabel ? (
-                <Text
-                  className={cn(
-                    "text-xs",
-                    selected
-                      ? selectedThreadRowColors.mutedForegroundClassName
-                      : rowAppearance.tertiaryForegroundClassName,
-                  )}
-                >
-                  {props.environmentLabel}
-                </Text>
-              ) : null}
+              {branch}
             </Text>
           ) : null}
         </View>
@@ -1796,7 +1801,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       </View>
       <View className="mt-1 flex-row items-center gap-2" style={{ paddingLeft: titleTextInset }}>
         <View className="min-w-0 flex-1 flex-row items-center gap-1">
-          {props.project && !lastError && !missionState ? (
+          {props.project ? (
             <ThreadListV2ProjectPrefix
               environmentId={thread.environmentId}
               project={props.project}
@@ -1805,25 +1810,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               separated={Boolean(props.environmentLabel)}
             />
           ) : null}
-          {lastError ? (
-            <Text
-              className={cn(
-                "flex-1 text-xs",
-                selected
-                  ? selectedThreadRowColors.mutedForegroundClassName
-                  : status === "limited"
-                    ? "text-warning-foreground"
-                    : "text-danger-foreground",
-              )}
-              numberOfLines={1}
-            >
-              {lastError}
-            </Text>
-          ) : missionState ? (
-            <Text className={cn("flex-1 text-xs", metaTextClassName)} numberOfLines={1}>
-              {missionState}
-            </Text>
-          ) : props.environmentLabel ? (
+          {props.environmentLabel ? (
             <View className="min-w-0 flex-1 flex-row items-center gap-1">
               {props.environmentMachine ? (
                 <EnvironmentMachineSymbol
@@ -1921,6 +1908,24 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           </View>
         ) : null}
       </View>
+      {lastError || missionState ? (
+        <Text
+          className={cn(
+            "mt-1 text-xs",
+            lastError
+              ? selected
+                ? selectedThreadRowColors.mutedForegroundClassName
+                : status === "limited"
+                  ? "text-warning-foreground"
+                  : "text-danger-foreground"
+              : metaTextClassName,
+          )}
+          numberOfLines={1}
+          style={{ paddingLeft: titleTextInset }}
+        >
+          {lastError || missionState}
+        </Text>
+      ) : null}
       {props.searchMatch ? (
         <View className="mt-1" style={{ paddingLeft: titleTextInset }}>
           <ThreadSearchMatchExcerpt
