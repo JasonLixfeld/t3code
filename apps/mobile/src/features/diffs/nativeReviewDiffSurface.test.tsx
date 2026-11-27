@@ -375,7 +375,7 @@ it("passes find highlights to the native view and forwards match jumps", async (
   const highlights = '{"ranges":{"r1":[[2,5]]},"active":{"rowId":"r1","start":2,"end":5}}';
 
   await screen.renderSurface({ nativeViewRef: handle, searchHighlightsJson: highlights });
-  await handle.current!.scrollToMatch("r1", 2, 5);
+  await handle.current!.requestScrollToMatch("r1", 2, 5);
 
   expect(
     screen.container

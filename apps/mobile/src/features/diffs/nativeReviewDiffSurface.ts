@@ -170,8 +170,7 @@ export interface NativeReviewDiffViewProps extends ViewProps {
 export interface NativeReviewDiffViewHandle {
   readonly scrollToFile: (fileId: string, animated?: boolean) => Promise<void>;
   readonly scrollToTop: (animated?: boolean) => Promise<void>;
-  /** Reveals a character range of a row once its file is open and laid out. */
-  readonly scrollToMatch: (
+  readonly requestScrollToMatch: (
     rowId: string,
     start: number,
     end: number,
@@ -412,7 +411,7 @@ function NativeReviewDiffContent(
       scrollToTop: async (animated = true) => {
         await nativeRef.current?.scrollToTop(animated);
       },
-      scrollToMatch: async (rowId, start, end, animated = true) => {
+      requestScrollToMatch: async (rowId, start, end, animated = true) => {
         await nativeRef.current?.scrollToMatch(rowId, start, end, animated);
       },
     }),

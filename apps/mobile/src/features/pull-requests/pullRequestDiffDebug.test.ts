@@ -54,7 +54,7 @@ it.each([true, false])(
           current: {
             scrollToFile,
             scrollToTop: vi.fn(async () => {}),
-            scrollToMatch: vi.fn(async () => {}),
+            requestScrollToMatch: vi.fn(async () => {}),
           },
         },
         jumpStarted: () => true,

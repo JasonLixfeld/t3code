@@ -512,7 +512,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     const nativeView = nativeReviewDiffViewRef.current;
     if (!nativeView) return;
     const result = await settlePromise(() =>
-      nativeView.scrollToMatch(
+      nativeView.requestScrollToMatch(
         activeMatch.rowId,
         activeMatch.start,
         activeMatch.end,

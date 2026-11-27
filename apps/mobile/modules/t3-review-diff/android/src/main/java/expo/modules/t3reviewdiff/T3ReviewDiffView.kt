@@ -1382,8 +1382,7 @@ private class DiffCanvasView(context: Context) : View(context) {
       drawing.configureCodePaint(theme.text, 0, style)
       val baseline = lines.baseline(top, firstLineBottom, textPaint)
       val tokens = tokensByRowId[row.id]
-      drawing.drawWordDiffRanges(canvas, row, tokens, codeX, top, firstLineBottom, lines, style)
-      drawing.search.draw(canvas, row, tokens, codeX, top, firstLineBottom, baseline, lines, style)
+      drawing.drawCodeBackgrounds(canvas, row, tokens, codeX, top, firstLineBottom, lines, style)
       drawing.drawCode(canvas, row, tokens, codeX, baseline, style, lines)
     }
 

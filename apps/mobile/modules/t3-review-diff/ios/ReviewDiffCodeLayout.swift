@@ -134,8 +134,7 @@ final class ReviewDiffCodeLayout: NSObject {
     layout.decorationVersion = version
   }
 
-  /// Where `range` is drawn, relative to the origin passed to `draw`.
-  func rect(for range: NSRange) -> CGRect? {
+  func textContainerRect(for range: NSRange) -> CGRect? {
     guard usesNativeLayout else { return nil }
     let layout = nativeLayout()
     let glyphs = layout.manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)

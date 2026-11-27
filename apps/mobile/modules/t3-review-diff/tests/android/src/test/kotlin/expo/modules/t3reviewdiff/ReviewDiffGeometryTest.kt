@@ -253,7 +253,7 @@ class ReviewDiffGeometryTest {
         texts.clear()
         paints.clear()
         drawing.configureCodePaint(Color.BLACK, 0, style)
-        drawing.drawWordDiffRanges(canvas, row, tokens, 10f, 0, 40, lines, style)
+        drawing.drawUnspannedWordDiffRanges(canvas, row, tokens, 10f, 0, 40, lines, style)
         drawing.drawCode(canvas, row, tokens, 10f, 28f, style, lines)
         assertEquals(3, boxes.size)
         val (box, kernedBox, crossingBox) = boxes
