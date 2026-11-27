@@ -19,14 +19,12 @@ internal data class SearchHighlights(
   val dark: Boolean = false
 )
 
-/** A match's top and bottom in content coordinates, and the horizontal offset that shows it. */
 internal data class SearchReveal(
-  val top: Int,
-  val bottom: Int,
-  val horizontalOffset: Int
+  val contentTop: Int,
+  val contentBottom: Int,
+  val targetHorizontalOffset: Int
 )
 
-// The web diff's find colors: a translucent orange match and its modified blue at 45%.
 internal fun searchMatchColor(dark: Boolean): Int =
   if (dark) Color.argb(0x66, 0xff, 0x96, 0x32) else Color.argb(0x88, 0xff, 0x96, 0x32)
 
@@ -54,17 +52,14 @@ internal fun parseSearchHighlights(value: String, dark: Boolean): SearchHighligh
   }
   SearchHighlights(ranges, active, dark)
 } catch (_: Exception) {
-  // An empty or malformed payload clears highlights.
   SearchHighlights(dark = dark)
 }
 
-/** Paints search matches without touching the cached code layouts, so geometry stays as it is. */
 internal class ReviewDiffSearchPainter(private val drawing: ReviewDiffCanvasDrawing) {
   var highlights = SearchHighlights()
   private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
   private val selectionPath = Path()
 
-  /** The current match replaces its match color, as on web, instead of stacking on it. */
   @Suppress("LongParameterList")
   fun draw(
     canvas: Canvas,
@@ -109,12 +104,8 @@ internal class ReviewDiffSearchPainter(private val drawing: ReviewDiffCanvasDraw
     }
   }
 
-  /**
-   * Where a match sits in content coordinates, and the horizontal offset that shows it; null
-   * while its row is not laid out, as when its file is folded.
-   */
   @Suppress("LongParameterList")
-  fun reveal(
+  fun findLaidOutMatch(
     match: SearchMatch,
     rows: List<DiffRow>,
     rowOffsets: IntArray,
@@ -127,13 +118,12 @@ internal class ReviewDiffSearchPainter(private val drawing: ReviewDiffCanvasDraw
     val row = rows[index]
     val lines = wrap.lines(row)
     val line = lines.lineForOffset(match.start)
-    val top = rowOffsets[index] + lines.lineTop(line)
+    val top = rowOffsets[index] + lines.lineTopInRow(line)
     val height = if (line == 0) lines.firstHeight(style.rowHeightPx.toInt()) else lines.height
     val left = codeOffsetX(row, lines, match.start, style).toInt()
     val right = codeOffsetX(row, lines, match.end, style).toInt()
     val codeWidth =
       width - (style.changeBarWidthPx + style.gutterWidthPx + style.codePaddingPx * 2f).toInt()
-    // Keep the offset while the match is in view, else show it a third of the way in.
     val inView = wrap.enabled || (left >= offset && right <= offset + codeWidth)
     return SearchReveal(top, top + height, if (inView) offset else left - codeWidth / 3)
   }

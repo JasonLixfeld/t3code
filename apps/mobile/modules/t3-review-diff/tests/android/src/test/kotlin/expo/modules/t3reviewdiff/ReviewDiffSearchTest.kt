@@ -25,8 +25,6 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
-// Search highlights paint the web diff's find colors without new geometry; a match jump waits
-// for its fold to open.
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], manifest = Config.NONE)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -78,7 +76,7 @@ class ReviewDiffSearchTest {
       view.setCollapsedFileIdsJson("[]")
       val offset = verticalOffset(canvas)
       val style = canvas.javaClass.getMethod("getStyle").invoke(canvas) as DiffStyle
-      val top = rowTop(canvas, TARGET_INDEX)
+      val top = rowTop(canvas, rowIndex(TARGET_ROW))
       assertTrue(
         "the match row shows below the sticky header once its fold opens",
         top >= offset + style.fileHeaderHeightPx &&
@@ -134,6 +132,11 @@ class ReviewDiffSearchTest {
         (0 until 100).map { line -> codeRow(file, line) }
     },
   ).toString()
+
+  private fun rowIndex(id: String): Int {
+    val rows = JSONArray(rows())
+    return (0 until rows.length()).indexOfFirst { rows.getJSONObject(it).getString("id") == id }
+  }
 
   private fun codeRow(file: String, line: Int): JSONObject {
     val content = if (line == 80) "x".repeat(300) + "needle" else "plain code $line"
@@ -198,8 +201,5 @@ class ReviewDiffSearchTest {
   private companion object {
     const val MATCH_ROW = "a.ts:line:1"
     const val TARGET_ROW = "b.ts:line:80"
-
-    // a.ts header and 100 lines, b.ts header, then line 80.
-    const val TARGET_INDEX = 182
   }
 }

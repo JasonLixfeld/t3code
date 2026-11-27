@@ -152,7 +152,6 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     canvasView.invalidate()
   }
 
-  /** Waits for the row to be decoded and its file open, since JS opens a fold just before this. */
   fun scrollToMatch(rowId: String, start: Int, end: Int, animated: Boolean) {
     if (start < 0 || end <= start) return
     pendingScrollFileId = null
@@ -165,7 +164,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   private fun applyPendingMatch() {
     val match = pendingMatch ?: return
     if (canvasView.width <= 0 || canvasView.height <= 0) return
-    val (top, bottom) = canvasView.revealMatch(match) ?: return
+    val (top, bottom) = canvasView.scrollMatchIntoViewHorizontally(match) ?: return
     pendingMatch = null
     val header = canvasView.style.fileHeaderHeightPx.toInt()
     val viewportTop = canvasView.verticalOffset()
@@ -315,7 +314,6 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
     when (event.actionMasked) {
       MotionEvent.ACTION_DOWN -> {
-        // A touch takes over from a match jump still waiting for its row.
         pendingMatch = null
         verticalScroller.forceFinished(true)
         horizontalScroller.forceFinished(true)
@@ -892,13 +890,9 @@ private class DiffCanvasView(context: Context) : View(context) {
       invalidate()
     }
 
-  /**
-   * Scrolls the match horizontally into view and returns its top and bottom in content
-   * coordinates, or null while its row is not laid out, as when its file is folded.
-   */
-  fun revealMatch(match: SearchMatch) =
-    drawing.search.reveal(match, rows, rowOffsets, codeWrap, style, width, horizontalOffset)
-      ?.also { setHorizontalOffset(it.horizontalOffset) }
+  fun scrollMatchIntoViewHorizontally(match: SearchMatch) = drawing.search
+    .findLaidOutMatch(match, rows, rowOffsets, codeWrap, style, width, horizontalOffset)
+    ?.also { setHorizontalOffset(it.targetHorizontalOffset) }
 
   var theme: DiffTheme = DiffTheme.fallback("light")
     set(value) {
