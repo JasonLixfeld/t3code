@@ -1,4 +1,3 @@
-// Search highlights paint without new geometry; a match jump waits for its fold to open.
 private extension T3ReviewDiffView {
   func checkSearch() throws {
     frame = CGRect(x: 0, y: 0, width: 390, height: 600)
@@ -28,12 +27,15 @@ private extension T3ReviewDiffView {
     check(contentView.searchHighlights(rowId: target) == ["active"],
           "The current match replaces its match color")
 
-    // #ff963288 and #009fff at 45% on light, #ff963266 and #69b1ff at 45% on dark.
-    let lightColors: [Int] = [255, 150, 50, 136, 0, 159, 255, 115]
-    let darkColors: [Int] = [255, 150, 50, 102, 105, 177, 255, 115]
-    check(contentView.searchColorBytes == lightColors, "Light uses the web diff's find colors")
+    let lightMatch: [Int] = [0xff, 0x96, 0x32, 0x88]
+    let lightActive: [Int] = [0x00, 0x9f, 0xff, 115]
+    check(contentView.searchColorBytes.match == lightMatch, "Light matches use the web diff's color")
+    check(contentView.searchColorBytes.active == lightActive, "Light current match uses the web diff's color")
     setAppearanceScheme("dark")
-    check(contentView.searchColorBytes == darkColors, "Dark uses the web diff's find colors")
+    let darkMatch: [Int] = [0xff, 0x96, 0x32, 0x66]
+    let darkActive: [Int] = [0x69, 0xb1, 0xff, 115]
+    check(contentView.searchColorBytes.match == darkMatch, "Dark matches use the web diff's color")
+    check(contentView.searchColorBytes.active == darkActive, "Dark current match uses the web diff's color")
     check(contentView.searchHighlights(rowId: target) == ["active"], "Dark keeps the current match")
 
     let before = scrollView.contentOffset.y
@@ -67,17 +69,13 @@ private extension ReviewDiffContentView {
     }
   }
 
-  /// Match then current-match RGBA as bytes.
-  var searchColorBytes: [Int] {
-    var bytes: [Int] = []
-    for color in [searchMatchColor, activeSearchMatchColor] {
+  var searchColorBytes: (match: [Int], active: [Int]) {
+    func rgbaBytes(_ color: UIColor) -> [Int] {
       var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
       color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-      for channel in [red, green, blue, alpha] {
-        bytes.append(Int((channel * 255).rounded()))
-      }
+      return [red, green, blue, alpha].map { Int(($0 * 255).rounded()) }
     }
-    return bytes
+    return (match: rgbaBytes(searchMatchColor), active: rgbaBytes(activeSearchMatchColor))
   }
 
   func horizontalCodeOffset(fileId: String) -> CGFloat { horizontalOffset(for: fileId) }

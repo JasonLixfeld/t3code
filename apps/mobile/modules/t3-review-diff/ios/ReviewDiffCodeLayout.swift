@@ -23,7 +23,6 @@ struct ReviewDiffCodeNote {
   let background: UIColor
 }
 
-/** A background behind code, such as a word diff or a search match. Later ones paint over earlier. */
 struct ReviewDiffCodeHighlight {
   let range: NSRange
   let color: UIColor
