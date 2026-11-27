@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { assert, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -249,45 +250,77 @@ it.effect("upgrades a database an earlier build left, keeping a given-up add's m
   ),
 );
 
-it.effect("upgrades a version-6 database: its missions get an empty prompt that can be set", () =>
-  withDatabase((filename) =>
-    Effect.gen(function* () {
-      yield* Effect.provide(
-        Effect.gen(function* () {
-          const earlier = Object.fromEntries(
-            Object.entries(MissionStore.MIGRATIONS).filter(([id]) => Number(id.split("_")[0]) <= 6),
-          );
-          yield* Migrator.make({})({ loader: Migrator.fromRecord(earlier) });
-          const sql = yield* SqlClient.SqlClient;
-          yield* sql`
+it.effect(
+  "upgrades a version-6 database: its missions get an empty prompt that can be set, led since they began, as are missions an older build adds",
+  () =>
+    withDatabase((filename) =>
+      Effect.gen(function* () {
+        yield* Effect.provide(
+          Effect.gen(function* () {
+            const earlier = Object.fromEntries(
+              Object.entries(MissionStore.MIGRATIONS).filter(
+                ([id]) => Number(id.split("_")[0]) <= 6,
+              ),
+            );
+            yield* Migrator.make({})({ loader: Migrator.fromRecord(earlier) });
+            const sql = yield* SqlClient.SqlClient;
+            yield* sql`
             INSERT INTO missions (mission_id, name, lead_thread_id, created_at)
             VALUES ('m1', 'M1', ${lead}, '2026-01-01T00:00:00.000Z')
           `;
-        }),
-        NodeSqliteClient.layer({ filename }),
-      );
-      yield* usingStore(filename, (store) =>
-        Effect.gen(function* () {
-          assert.deepEqual(
-            (yield* store.missions).map((mission) => mission.prompt),
-            [""],
+          }),
+          NodeSqliteClient.layer({ filename }),
+        );
+        yield* usingStore(filename, (store) =>
+          Effect.gen(function* () {
+            assert.deepEqual(
+              (yield* store.missions).map((mission) => mission.prompt),
+              [""],
+            );
+            yield* store.setPrompt({ missionId: "m1", prompt: "Ship the release." });
+            assert.isTrue(yield* store.ledBefore(lead));
+            assert.isFalse(yield* store.ledBefore(member));
+            const missing = yield* store
+              .setPrompt({ missionId: "gone", prompt: "x" })
+              .pipe(Effect.flip);
+            assert.equal(missing.message, "That mission was not found.");
+          }),
+        );
+        const reopened = yield* usingStore(filename, (store) => store.missions);
+        assert.deepEqual(
+          reopened.map((mission) => mission.prompt),
+          ["Ship the release."],
+        );
+        const endSettledAt = (missionId: string, at: string) =>
+          usingStore(filename, (store) =>
+            store.deleteMission({
+              missionId,
+              lead,
+              machines: [],
+              owner: "env-a",
+              checkedLocalMembers: [],
+              leadSettledAt: DateTime.makeUnsafe(at),
+            }),
           );
-          yield* store.setPrompt({ missionId: "m1", prompt: "Ship the release." });
-          assert.isTrue(yield* store.ledBefore(lead));
-          assert.isFalse(yield* store.ledBefore(member));
-          const missing = yield* store
-            .setPrompt({ missionId: "gone", prompt: "x" })
-            .pipe(Effect.flip);
-          assert.equal(missing.message, "That mission was not found.");
-        }),
-      );
-      const reopened = yield* usingStore(filename, (store) => store.missions);
-      assert.deepEqual(
-        reopened.map((mission) => mission.prompt),
-        ["Ship the release."],
-      );
-    }),
-  ),
+        const refused = yield* endSettledAt("m1", "2026-01-01T00:00:00.000Z").pipe(Effect.flip);
+        assert.equal(refused.message, "This mission already has a new lead.");
+        yield* endSettledAt("m1", "2026-01-01T00:00:00.001Z");
+        yield* Effect.provide(
+          Effect.flatMap(
+            SqlClient.SqlClient,
+            (sql) => sql`
+              INSERT INTO missions (mission_id, name, lead_thread_id, created_at)
+              VALUES ('m2', 'M2', ${lead}, '2026-02-01T00:00:00.000Z')
+            `,
+          ),
+          NodeSqliteClient.layer({ filename }),
+        ).pipe(Effect.orDie);
+        const early = yield* endSettledAt("m2", "2026-01-31T23:59:59.999Z").pipe(Effect.flip);
+        assert.equal(early.message, "This mission already has a new lead.");
+        yield* endSettledAt("m2", "2026-02-01T00:00:00.001Z");
+        assert.deepEqual(yield* usingStore(filename, (store) => store.missions), []);
+      }),
+    ),
 );
 
 it.effect(
@@ -304,6 +337,7 @@ it.effect(
         });
         const first = yield* usingStore(filename, (store) =>
           Effect.gen(function* () {
+            yield* store.createMission(claimFor(lead, "m1", "g1"));
             yield* store.addMissionUpdate(of("run:r1"));
             yield* store.addMissionUpdate(of("run:r1"));
             yield* store.addMissionUpdate(of("request:q1", "awaiting-input"));
@@ -343,6 +377,7 @@ it.effect(
             event: "completed" as const,
           });
           const next = ThreadId.make("next-lead");
+          yield* store.createMission(claimFor(lead, "m1", "g1"));
           yield* store.addMissionUpdate(of("run:r1"));
           const old = yield* store.takeMissionUpdates("m1", lead);
           yield* store.addMissionUpdate(of("run:r2"));
@@ -487,52 +522,55 @@ it.effect("upgrades a version-7 database: its waiting adds keep, and say no draf
   ),
 );
 
-it.effect("updates a lead heard another way stay out of its wakes, and go with its mission", () =>
-  withDatabase((filename) =>
-    Effect.gen(function* () {
-      yield* usingStore(filename, (store) =>
-        Effect.gen(function* () {
-          yield* store.createMission(claimFor(lead, "m1", "g1"));
-          const update = (source: string, event: "completed" | "failed", threadId = member) => ({
-            missionId: "m1",
-            environmentId: EnvironmentId.make("env-a"),
-            threadId,
-            source,
-            event,
-          });
-          yield* store.addMissionUpdate(update("run:r1", "completed"));
-          yield* store.addMissionUpdate(update("run:r2", "failed"));
-          yield* store.addMissionUpdate(update("run:r7", "completed", ThreadId.make("other")));
-          yield* store.markMissionUpdateHeard(update("run:r1", "completed"));
-          yield* store.markMissionUpdateHeard(update("run:r2", "completed"));
-          yield* store.markMissionUpdateHeard(update("run:r7", "completed"));
-          yield* store.markMissionUpdateHeard(update("run:r9", "completed"));
-          yield* store.addMissionUpdate(update("run:r9", "completed"));
-          yield* store.addMissionUpdate(update("run:r4", "completed"));
-          const takeWakeBatchSources = Effect.map(
-            store.takeMissionUpdates("m1", lead),
-            ({ updates }) => updates.map((row) => `${row.threadId} ${row.source}`),
-          );
-          const left = ["member run:r2", "other run:r7", "member run:r4"];
-          assert.deepEqual(yield* takeWakeBatchSources, left);
-          yield* store.markMissionUpdateHeard(update("run:r4", "completed"));
-          assert.deepEqual(yield* takeWakeBatchSources, left);
-          yield* store.deleteMission({
-            missionId: "m1",
-            lead,
-            machines: [],
-            owner: "env-a",
-            checkedLocalMembers: [],
-          });
-        }),
-      );
-      const rows = yield* Effect.provide(
-        Effect.flatMap(SqlClient.SqlClient, (sql) => sql`SELECT source FROM mission_updates`),
-        NodeSqliteClient.layer({ filename }),
-      ).pipe(Effect.orDie);
-      assert.deepEqual(rows, []);
-    }),
-  ),
+it.effect(
+  "updates a lead heard another way stay out of its wakes, go with its mission, and none are kept once it is gone",
+  () =>
+    withDatabase((filename) =>
+      Effect.gen(function* () {
+        yield* usingStore(filename, (store) =>
+          Effect.gen(function* () {
+            yield* store.createMission(claimFor(lead, "m1", "g1"));
+            const update = (source: string, event: "completed" | "failed", threadId = member) => ({
+              missionId: "m1",
+              environmentId: EnvironmentId.make("env-a"),
+              threadId,
+              source,
+              event,
+            });
+            yield* store.addMissionUpdate(update("run:r1", "completed"));
+            yield* store.addMissionUpdate(update("run:r2", "failed"));
+            yield* store.addMissionUpdate(update("run:r7", "completed", ThreadId.make("other")));
+            yield* store.markMissionUpdateHeard(update("run:r1", "completed"));
+            yield* store.markMissionUpdateHeard(update("run:r2", "completed"));
+            yield* store.markMissionUpdateHeard(update("run:r7", "completed"));
+            yield* store.markMissionUpdateHeard(update("run:r9", "completed"));
+            yield* store.addMissionUpdate(update("run:r9", "completed"));
+            yield* store.addMissionUpdate(update("run:r4", "completed"));
+            const takeWakeBatchSources = Effect.map(
+              store.takeMissionUpdates("m1", lead),
+              ({ updates }) => updates.map((row) => `${row.threadId} ${row.source}`),
+            );
+            const left = ["member run:r2", "other run:r7", "member run:r4"];
+            assert.deepEqual(yield* takeWakeBatchSources, left);
+            yield* store.markMissionUpdateHeard(update("run:r4", "completed"));
+            assert.deepEqual(yield* takeWakeBatchSources, left);
+            yield* store.deleteMission({
+              missionId: "m1",
+              lead,
+              machines: [],
+              owner: "env-a",
+              checkedLocalMembers: [],
+            });
+            yield* store.addMissionUpdate(update("run:r5", "completed"));
+          }),
+        );
+        const rows = yield* Effect.provide(
+          Effect.flatMap(SqlClient.SqlClient, (sql) => sql`SELECT source FROM mission_updates`),
+          NodeSqliteClient.layer({ filename }),
+        ).pipe(Effect.orDie);
+        assert.deepEqual(rows, []);
+      }),
+    ),
 );
 
 it.effect("ends a mission only with each member claim checked and no release waiting", () =>

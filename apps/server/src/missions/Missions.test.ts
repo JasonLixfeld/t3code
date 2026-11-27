@@ -419,6 +419,7 @@ const makeWorld = (threads: ReadonlyArray<ScopedThreadRef>) => {
     beforeShellRead: (_threadId: ThreadId): Effect.Effect<void> => Effect.void,
     beforeThreadLock: (_threadId: ThreadId): Effect.Effect<void> => Effect.void,
     beforeMissionsRead: Effect.void as Effect.Effect<void>,
+    beforeClaimRead: Effect.void as Effect.Effect<void>,
     failing,
     beforeReleasesRead: Effect.void as Effect.Effect<void>,
     lineageReads: 0,
@@ -543,6 +544,10 @@ const withMissions = <A, E>(
                   Effect.andThen(real.missions),
                 ),
                 knownClaims: real.knownClaims.pipe(Effect.tap(() => world.afterKnownClaimsRead)),
+                claim: (threadId) =>
+                  Effect.suspend(() => world.beforeClaimRead).pipe(
+                    Effect.andThen(real.claim(threadId)),
+                  ),
                 allClaims: pausedAfter("allClaims", real.allClaims),
                 claimsOf: (owner) => pausedAfter("claimsOf", real.claimsOf(owner)),
                 pendingReleases: Effect.suspend(() => world.beforeReleasesRead).pipe(
@@ -1000,6 +1005,14 @@ const deleteRefusal = (missionId: string) =>
 const otherMember = ref(HERE, "other");
 const settle = (world: ReturnType<typeof makeWorld>, thread: ScopedThreadRef) =>
   world.shell(thread, { settledOverride: "settled" });
+const EVENT_AT = DateTime.makeUnsafe(Duration.toMillis(Duration.seconds(1)));
+const threadEvent = (type: string, thread: ScopedThreadRef, occurredAt = EVENT_AT) => ({
+  type,
+  threadId: thread.threadId,
+  occurredAt,
+});
+const settledEvent = (thread: ScopedThreadRef, at = EVENT_AT) =>
+  threadEvent("thread.settled", thread, at);
 const settledOf = (snapshot: MissionsSnapshot) =>
   snapshot.missions[0]?.members.flatMap((member) =>
     member.settled === true ? [keyOf(member.ref)] : [],
@@ -1033,7 +1046,7 @@ it.effect("each settled or archived member here is marked settled, and none else
 
       world.shell(localMember, { settledOverride: null });
       yield* followMemberThreads(
-        Stream.make({ type: "thread.unsettled", threadId: localMember.threadId }),
+        Stream.make(threadEvent("thread.unsettled", localMember)),
         HERE,
         missions.listStale,
       );
@@ -1057,7 +1070,7 @@ it.effect("each change that can settle or wake a member here refreshes only the 
           let stale = 0;
           yield* PubSub.takeUpTo(changes, 100);
           yield* followMemberThreads(
-            Stream.make({ type, threadId }),
+            Stream.make({ type, threadId, occurredAt: EVENT_AT }),
             HERE,
             Effect.sync(() => void stale++),
           );
@@ -1779,8 +1792,8 @@ it.effect(
         yield* store.startJoin(started, "intent-1");
         yield* followMemberThreads(
           Stream.make(
-            { type: "thread.deleted", threadId: localMember.threadId },
-            { type: "thread.deleted", threadId: lead.threadId },
+            threadEvent("thread.deleted", localMember),
+            threadEvent("thread.deleted", lead),
           ),
           HERE,
           missions.listStale,
@@ -1795,6 +1808,312 @@ it.effect(
     );
   },
 );
+
+const follow = (...events: ReadonlyArray<ReturnType<typeof threadEvent>>) =>
+  Effect.flatMap(Missions.Missions, (missions) =>
+    followMemberThreads(Stream.fromIterable(events), HERE, missions.listStale),
+  );
+const followSettled = (thread: ScopedThreadRef) => follow(settledEvent(thread));
+
+it.effect.each([
+  { when: "every member here is settled or archived", settles: lead, members: 2, ends: true },
+  { when: "it has no members", settles: lead, members: 0, ends: true },
+  { when: "a member here is still active", settles: lead, members: 1, ends: false },
+  { when: "only a member settles", settles: localMember, members: 2, ends: false },
+  { when: "the lead is active again", settles: lead, members: 0, ends: false, active: lead },
+])("settling a thread when $when ends its mission: $ends", (row) => {
+  const { settles, members, ends } = row;
+  const world = makeWorld([lead, localMember, otherMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      for (const member of [localMember, otherMember].slice(0, members)) {
+        yield* missions.addMember({ missionId, member });
+      }
+      if (!("active" in row)) settle(world, lead);
+      if (members === 2) {
+        settle(world, localMember);
+        world.archive(otherMember);
+      }
+      yield* followSettled(settles);
+      assert.deepEqual(
+        (yield* listed).missions.map((mission) => mission.missionId),
+        ends ? [] : [missionId],
+      );
+      assert.deepEqual(world.tags(lead), [ends ? "mission-was:0123456789ab:One" : TAG]);
+    }),
+  );
+});
+
+it.effect("settling the lead keeps a mission with a settled member on another machine", () => {
+  const world = makeWorld([lead, laptopMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      assert.equal(yield* missions.addMember({ missionId, member: laptopMember }), "joined");
+      settle(world, laptopMember);
+      settle(world, lead);
+      yield* followSettled(lead);
+      assert.deepEqual(
+        (yield* listed).missions.map((mission) => mission.missionId),
+        [missionId],
+      );
+    }),
+  );
+});
+
+it.effect("a lead replaced while its settling is followed leaves the mission open", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: localMember });
+      settle(world, lead);
+      settle(world, localMember);
+      const pause = {
+        read: "allClaims" as const,
+        at: 1,
+        reads: 0,
+        paused: yield* Deferred.make<void>(),
+        go: yield* Deferred.make<void>(),
+      };
+      const following = yield* Effect.forkChild(
+        followSettled(lead).pipe(Effect.provideService(PauseAfterClaimsRead, pause)),
+      );
+      yield* Deferred.await(pause.paused);
+      yield* missions.setLead({ missionId, lead: localMember, expectedLead: lead.threadId });
+      yield* missions.addMember({ missionId, member: lead });
+      yield* Deferred.succeed(pause.go, undefined);
+      yield* Fiber.join(following);
+      const { missions: open } = yield* listed;
+      assert.deepEqual(
+        open.map((mission) => [mission.missionId, mission.members[0]?.ref.threadId]),
+        [[missionId, localMember.threadId]],
+      );
+      yield* followSettled(lead);
+      assert.equal((yield* listed).missions.length, 1);
+    }),
+  );
+});
+
+it.effect("later thread events are followed while settling the lead waits on a busy member", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: localMember });
+      settle(world, lead);
+      settle(world, localMember);
+      const holding = yield* Deferred.make<void>();
+      const free = yield* Deferred.make<void>();
+      const holder = yield* Effect.forkChild(
+        threadCommands.withLock(
+          localMember.threadId,
+          Deferred.succeed(holding, undefined).pipe(Effect.andThen(Deferred.await(free))),
+        ),
+      );
+      yield* Deferred.await(holding);
+      const waits = yield* Deferred.make<void>();
+      world.beforeThreadLock = (threadId) =>
+        threadId === localMember.threadId ? Deferred.succeed(waits, undefined) : Effect.void;
+      const refreshed = yield* Queue.unbounded<void>();
+      const following = yield* Effect.forkChild(
+        followMemberThreads(
+          Stream.make(settledEvent(lead), settledEvent(lead), threadEvent("thread.pinned", lead)),
+          HERE,
+          Queue.offer(refreshed, undefined).pipe(Effect.asVoid),
+        ),
+      );
+      yield* Deferred.await(waits);
+      assert.lengthOf(yield* Queue.takeN(refreshed, 3), 3);
+      assert.equal((yield* listed).missions.length, 1);
+      world.beforeThreadLock = () => Effect.void;
+      yield* Deferred.succeed(free, undefined);
+      yield* Fiber.join(holder);
+      yield* Fiber.join(following);
+      assert.deepEqual((yield* listed).missions, []);
+      assert.deepEqual(world.tags(lead), ["mission-was:0123456789ab:One"]);
+    }),
+  );
+});
+
+it.effect("a member that settles and is then made lead leaves the mission open", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: localMember });
+      settle(world, lead);
+      settle(world, localMember);
+      const refreshing = yield* Deferred.make<void>();
+      const refreshed = yield* Deferred.make<void>();
+      const following = yield* Effect.forkChild(
+        followMemberThreads(
+          Stream.make(settledEvent(localMember)),
+          HERE,
+          Deferred.succeed(refreshing, undefined).pipe(Effect.andThen(Deferred.await(refreshed))),
+        ),
+      );
+      yield* Deferred.await(refreshing);
+      yield* missions.setLead({ missionId, lead: localMember, expectedLead: lead.threadId });
+      yield* missions.addMember({ missionId, member: lead });
+      yield* Deferred.succeed(refreshed, undefined);
+      yield* Fiber.join(following);
+      assert.deepEqual(
+        (yield* listed).missions.map((mission) => mission.members[0]?.ref.threadId),
+        [localMember.threadId],
+      );
+    }),
+  );
+});
+
+it.effect(
+  "a member made lead after it settled, before that settle is followed, leaves the mission open",
+  () => {
+    const world = makeWorld([lead, localMember]);
+    return withMissions(
+      world,
+      Effect.gen(function* () {
+        const missions = yield* Missions.Missions;
+        const { missionId } = yield* createOne;
+        yield* missions.addMember({ missionId, member: localMember });
+        settle(world, lead);
+        settle(world, localMember);
+        const events = yield* Queue.unbounded<ReturnType<typeof threadEvent>, Cause.Done>();
+        const following = yield* Effect.forkChild(
+          followMemberThreads(Stream.fromQueue(events), HERE, missions.listStale),
+        );
+        const settled = settledEvent(localMember);
+        yield* TestClock.adjust(Duration.seconds(2));
+        yield* missions.setLead({ missionId, lead: localMember, expectedLead: lead.threadId });
+        yield* missions.addMember({ missionId, member: lead });
+        yield* Queue.offer(events, settled);
+        yield* Queue.end(events);
+        yield* Fiber.join(following);
+        assert.deepEqual(
+          (yield* listed).missions.map((mission) => mission.members[0]?.ref.threadId),
+          [localMember.threadId],
+        );
+      }),
+    );
+  },
+);
+
+it.effect("a mission created after its lead's settle committed stays open", () => {
+  const world = makeWorld([lead]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      settle(world, lead);
+      const settling = yield* Deferred.make<void>();
+      const committed = yield* Deferred.make<void>();
+      const settler = yield* Effect.forkChild(
+        threadCommands.withLock(
+          lead.threadId,
+          Deferred.succeed(settling, undefined).pipe(Effect.andThen(Deferred.await(committed))),
+        ),
+      );
+      yield* Deferred.await(settling);
+      const creating = yield* Deferred.make<void>();
+      world.beforeThreadLock = (threadId) =>
+        threadId === lead.threadId ? Deferred.succeed(creating, undefined) : Effect.void;
+      const create = yield* Effect.forkChild(createOne);
+      yield* Effect.raceFirst(Deferred.await(creating), Fiber.await(create));
+      world.beforeThreadLock = () => Effect.void;
+      yield* TestClock.adjust(Duration.seconds(1));
+      yield* Deferred.succeed(committed, undefined);
+      yield* Fiber.join(settler);
+      yield* Fiber.join(create);
+      yield* follow(settledEvent(lead));
+      assert.equal((yield* listed).missions.length, 1);
+    }),
+  );
+});
+
+it.effect("settling the lead again once its blocking member settled ends the mission", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: localMember });
+      settle(world, lead);
+      const holding = yield* Deferred.make<void>();
+      const free = yield* Deferred.make<void>();
+      const holder = yield* Effect.forkChild(
+        threadCommands.withLock(
+          localMember.threadId,
+          Deferred.succeed(holding, undefined).pipe(Effect.andThen(Deferred.await(free))),
+        ),
+      );
+      yield* Deferred.await(holding);
+      const waits = yield* Deferred.make<void>();
+      world.beforeThreadLock = (threadId) =>
+        threadId === localMember.threadId ? Deferred.succeed(waits, undefined) : Effect.void;
+      const events = yield* Queue.unbounded<ReturnType<typeof settledEvent>, Cause.Done>();
+      const refreshed = yield* Queue.unbounded<void>();
+      const following = yield* Effect.forkChild(
+        followMemberThreads(
+          Stream.fromQueue(events),
+          HERE,
+          missions.listStale.pipe(Effect.andThen(Queue.offer(refreshed, undefined))),
+        ),
+      );
+      yield* Queue.offer(events, settledEvent(lead));
+      yield* Queue.take(refreshed);
+      yield* Deferred.await(waits);
+      world.beforeThreadLock = () => Effect.void;
+      const refused = yield* Effect.forkChild(missions.withLead(missionId, () => Effect.void));
+      yield* Deferred.succeed(free, undefined);
+      yield* Fiber.join(holder);
+      yield* Fiber.join(refused);
+      assert.equal((yield* listed).missions.length, 1);
+      settle(world, localMember);
+      const later = DateTime.makeUnsafe(Duration.toMillis(Duration.seconds(30)));
+      yield* Queue.offer(events, settledEvent(localMember, later));
+      yield* Queue.take(refreshed);
+      assert.equal((yield* listed).missions.length, 1);
+      yield* Queue.offer(events, settledEvent(lead, later));
+      yield* Queue.end(events);
+      yield* Fiber.join(following);
+      assert.deepEqual((yield* listed).missions, []);
+    }),
+  );
+});
+
+it.effect("a claim read that fails on one thread event leaves later lead settles followed", () => {
+  const world = makeWorld([lead, localMember]);
+  return withMissions(
+    world,
+    Effect.gen(function* () {
+      const missions = yield* Missions.Missions;
+      const { missionId } = yield* createOne;
+      yield* missions.addMember({ missionId, member: localMember });
+      settle(world, lead);
+      settle(world, localMember);
+      world.beforeClaimRead = Effect.suspend(() => {
+        world.beforeClaimRead = Effect.void;
+        return Effect.die("The mission store is unreadable.");
+      });
+      yield* follow(settledEvent(localMember), settledEvent(lead));
+      assert.deepEqual((yield* listed).missions, []);
+    }),
+  );
+});
 
 it.effect(
   "a deleted lead's mission stays, its members can go, and a thread here replaces the lead",

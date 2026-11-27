@@ -1,5 +1,8 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
@@ -18,31 +21,53 @@ const MISSION_SETTLEMENT_INVALIDATION_EVENTS: ReadonlySet<string> = new Set([
   "thread.unarchived",
 ]);
 
+interface ThreadEvent {
+  readonly type: string;
+  readonly threadId: ThreadId;
+  readonly occurredAt: DateTime.Utc;
+}
+
 export const followMemberThreads = Effect.fn("MissionThreadDeletions.followMemberThreads")(
   function* <E>(
-    events: Stream.Stream<{ readonly type: string; readonly threadId: ThreadId }, E>,
+    events: Stream.Stream<ThreadEvent, E>,
     here: EnvironmentId,
     listStale: Effect.Effect<void>,
   ) {
     const claims = yield* MissionClaims.MissionClaims;
     const store = yield* MissionStore;
-    yield* Stream.runForEach(events, (event) => {
+    const missions = yield* Missions.Missions;
+    const endAttempts = yield* FiberSet.make<void>();
+    const follow = Effect.fnUntraced(function* (event: ThreadEvent) {
       if (event.type === "thread.deleted") {
-        return claims
+        yield* claims
           .leaveHere(event.threadId)
-          .pipe(
-            Effect.catchTags({ MissionError: () => Effect.void }),
-            Effect.andThen(
-              store.forgetStartedJoin({ environmentId: here, threadId: event.threadId }),
-            ),
-          );
+          .pipe(Effect.catchTags({ MissionError: () => Effect.void }));
+        return yield* store.forgetStartedJoin({ environmentId: here, threadId: event.threadId });
       }
-      if (!MISSION_SETTLEMENT_INVALIDATION_EVENTS.has(event.type)) return Effect.void;
-      return store
-        .claim(event.threadId)
-        .pipe(Effect.flatMap((claim) => (claim === undefined ? Effect.void : listStale)));
+      if (!MISSION_SETTLEMENT_INVALIDATION_EVENTS.has(event.type)) return;
+      const claim = yield* store.claim(event.threadId);
+      if (claim === undefined) return;
+      yield* listStale;
+      if (event.type !== "thread.settled" || claim.role !== "lead") return;
+      yield* FiberSet.run(
+        endAttempts,
+        missions.endIfLeadSettled(
+          { missionId: claim.missionId, leadThreadId: event.threadId },
+          event.occurredAt,
+        ),
+      );
     });
+    yield* Stream.runForEach(events, (event) =>
+      follow(event).pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) => Effect.logWarning("A mission did not follow a thread change", cause),
+        ),
+      ),
+    );
+    yield* FiberSet.awaitEmpty(endAttempts);
   },
+  Effect.scoped,
 );
 
 export const layer = Layer.effectDiscard(
