@@ -10,7 +10,7 @@ Use a separate thread for each task. Choose **New worktree** when a task needs i
 
 ### Start without a project
 
-Threads don't require a project. Pick **No project** from a new thread's **Project** picker, from **New thread in...** in the command palette, or press `mod+alt+n` on web/desktop. A scratch thread works in `~/.t3/scratch/<date>-<slug>-<id>` and starts on your current machine. Before sending, pick another machine from the machine menu to move it, or pick a project in the **Project** picker to move the draft into that project.
+Threads don't require a project. On web and desktop, pick **No project** from a new thread's **Project** picker or from **New thread in...** in the command palette, or press `mod+alt+n`. On mobile, pick **No project** in the new thread's project list. A scratch thread works in `~/.t3/scratch/<date>-<slug>-<id>` and starts on your current machine. Before sending, pick another machine from the machine menu to move it, or pick a project in the **Project** picker to move the draft into that project.
 
 - Deleting a scratch thread leaves its folder on disk.
 - Git branch, worktree, and diff controls are hidden (and scratch threads are unavailable if your T3 data directory itself is inside a Git repo).
@@ -18,10 +18,10 @@ Threads don't require a project. Pick **No project** from a new thread's **Proje
 
 ### Pick a project and a mission
 
-On web and desktop, a new thread shows a **Project** picker and a **Mission** picker under its heading. The mobile app has no **Mission** picker, and it is hidden when Missions is off in Settings.
+On web and desktop, a new thread shows a **Project** picker and a **Mission** picker under its heading. On mobile, the new thread's draft shows a mission control beside its other composer controls, labeled **Add to a mission** until you pick one. The mission choice appears when Missions is on in Settings and you can start missions on the thread's machine, or when the draft already belongs to a mission.
 
-- **Mission** shows **None** by default and lists the missions on the thread's machine. The thread joins the picked mission when you send it.
-- **New mission (this thread leads)** starts a new mission with this thread as its lead. The picker then shows that mission and cannot change it. To undo it, choose **Send as a plain thread** in the note above the message box.
+- The mission choice starts at **None** and lists the missions on the thread's machine. The thread joins the picked mission when you send it.
+- **New mission (this thread leads)** starts a new mission with this thread as its lead. The mission choice then shows that mission and cannot change it. To undo it, choose **Send as a plain thread** in the note above the message box.
 - A thread that starts, joins, or leads a mission can only use projects on the machines where it can do that.
 
 ### Start in the background and multi-model runs

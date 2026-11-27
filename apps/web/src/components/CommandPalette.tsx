@@ -245,7 +245,9 @@ import {
   useProjectLookups,
   useSortedProjectGroups,
 } from "./CommandPaletteLookups";
-import { markMissionDraft } from "./sidebar/missionDraftStore";
+import { markMissionDraft, missionDraftOf, moveMissionDraft } from "./sidebar/missionDraftStore";
+import { useDraftProjectMachines } from "./chat/DraftMissionSelect";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { useMissionHosts, useMissionStartMachines } from "./sidebar/MissionsSection";
 import { missionDraftMachines, missionScratchHome } from "@t3tools/client-runtime/missions";
 import {
@@ -641,9 +643,22 @@ function OpenCommandPaletteDialog(props: {
   const [addProjectDraftId] = useState(() =>
     props.openIntent?.kind === "add-project" ? (props.openIntent.draftId ?? null) : null,
   );
+  const addProjectDraftMachines = useDraftProjectMachines(addProjectDraftId);
+  const readAddProjectDraftMachines = useStableCallback(() => addProjectDraftMachines);
   const moveDraftToAddedProject = async (project: EnvironmentProject): Promise<boolean> => {
-    if (addProjectDraftId === null || !moveDraftToProject(addProjectDraftId, project)) {
-      return false;
+    if (addProjectDraftId === null) return false;
+    // A mission draft moves only to a machine its mission allows, and its mark follows it.
+    const machines = readAddProjectDraftMachines();
+    if (machines !== null && !machines.has(project.environmentId)) return false;
+    const mark = missionDraftOf(addProjectDraftId);
+    if (!moveDraftToProject(addProjectDraftId, project)) return false;
+    const threadId = useComposerDraftStore.getState().getDraftSession(addProjectDraftId)?.threadId;
+    if (mark !== undefined && threadId !== undefined) {
+      moveMissionDraft(
+        addProjectDraftId,
+        addProjectDraftId,
+        scopeThreadRef(project.environmentId, threadId),
+      );
     }
     await navigate({ to: "/draft/$draftId", params: { draftId: addProjectDraftId } });
     return true;

@@ -1,19 +1,30 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+  EnvironmentId,
+  ProjectId,
+} from "@t3tools/contracts";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { act, render } from "../../test/render";
 import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { AsyncResult } from "effect/reactivity";
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
+import { clearMissionDraft, markMissionDraft, missionDraftOf } from "./sidebar/missionDraftStore";
+import { useMissionStartMachines } from "./sidebar/MissionsSection";
 
 const scopes = vi.hoisted(() => ({
   denied: undefined as string | undefined,
   sourceControl: undefined as unknown,
   lookupRepository: vi.fn(),
+  projects: [] as ReadonlyArray<EnvironmentProject>,
 }));
 const setup = (deniedScope?: string, sourceControl?: unknown) => {
   scopes.denied = deniedScope;
@@ -56,7 +67,10 @@ vi.mock("../hooks/useSettings", async (original) => ({
   useUpdateEnvironmentSettings: () => () => undefined,
 }));
 vi.mock("../hooks/useScratchProject", () => ({
-  useScratchProject: () => ({ scratchEnvironmentId: () => null }),
+  useScratchProject: () => ({
+    scratchEnvironmentId: () => null,
+    scratchWorkspaceRootFor: () => null,
+  }),
 }));
 vi.mock("../hooks/useNewProject", () => ({ useNewProject: () => async () => undefined }));
 vi.mock("../hooks/useHandleNewThread", () => ({
@@ -103,7 +117,7 @@ vi.mock("../state/environments", async (original) => ({
 }));
 vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
-  useProjects: () => [],
+  useProjects: () => scopes.projects,
   useThreadShells: () => [],
   useVisibleThreadShells: () => [],
   useHiddenThreadKeys: () => new Set(),
@@ -133,6 +147,7 @@ vi.mock("../state/query", async (original) => ({
   ...(await original<typeof import("../state/query")>()),
   useEnvironmentQuery: () => ({ data: scopes.sourceControl, isLoading: false }),
 }));
+vi.mock("./sidebar/MissionsSection", { spy: true });
 vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [],
 }));
@@ -277,4 +292,58 @@ it("keeps the source list visible after a dismissed repository lookup succeeds",
     await lookup.promise;
   });
   expect(sources.element()).toBeVisible();
+});
+
+it.each([
+  { machine: "a machine its mission cannot use", allowed: false },
+  { machine: "a machine its mission can start on", allowed: true },
+])("moves a mission draft to Add project's pick only on $machine", async ({ allowed }) => {
+  setup();
+  const home = scopeProjectRef(EnvironmentId.make("home"), ProjectId.make("web"));
+  const api: EnvironmentProject = {
+    id: ProjectId.make("api"),
+    environmentId: EnvironmentId.make("local"),
+    title: "api",
+    workspaceRoot: "/workspace/api",
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    createdAt: "2026-03-01T00:00:00.000Z",
+    updatedAt: "2026-03-01T00:00:00.000Z",
+    scripts: [],
+  };
+  scopes.projects = [api];
+  onTestFinished(() => {
+    scopes.projects = [];
+  });
+  const draftId = DraftId.make("mission-draft");
+  const store = useComposerDraftStore.getState();
+  store.setProjectDraftThreadId(home, draftId);
+  store.setPrompt(draftId, "Plan the release");
+  onTestFinished(() => useComposerDraftStore.getState().clearDraftThread(draftId));
+  const threadId = store.getDraftSession(draftId)!.threadId;
+  markMissionDraft(draftId, {
+    intent: { kind: "new" },
+    thread: { environmentId: home.environmentId, threadId },
+  });
+  onTestFinished(() => clearMissionDraft(draftId));
+  const mark = missionDraftOf(draftId)!;
+  if (allowed) {
+    vi.mocked(useMissionStartMachines).mockReturnValue(new Set([api.environmentId]));
+    onTestFinished(() => vi.mocked(useMissionStartMachines).mockRestore());
+  }
+
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project", draftId }));
+  await page.getByText("Local folder", { exact: true }).click();
+  await page.getByRole("combobox").fill(api.workspaceRoot);
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+
+  const target = allowed ? scopeProjectRef(api.environmentId, api.id) : home;
+  expect(useComposerDraftStore.getState().getDraftSession(draftId)).toMatchObject(target);
+  // The send check compares this mark with the draft's machine.
+  expect(missionDraftOf(draftId)).toEqual({
+    ...mark,
+    thread: { environmentId: target.environmentId, threadId },
+  });
 });
