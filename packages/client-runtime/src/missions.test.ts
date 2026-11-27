@@ -576,27 +576,22 @@ describe("groupSidebarMissions", () => {
     ).toEqual([]);
   });
 
-  it("hides a settled member the list trimmed, once its machine is done syncing", () => {
-    const settled = (
-      threadId: string,
-      state: MissionMember["state"] = "active",
-      role: MissionMember["role"] = "member",
-    ): MissionMember => ({ ...member(threadId, state, role), settled: true });
+  it("hides an active member the list trimmed, once its machine is done syncing", () => {
     const trimmed = mission("dddddddddddd", [
-      settled("lead", "active", "lead"),
-      settled("trimmed"),
-      member("loading", "active"),
-      settled("leaving", "release-pending"),
-      settled("joining", "add-pending"),
-      settled("refused", "add-refused"),
-      settled("stuck", "release-refused"),
-      { ...member("away", "offline", "member", laptop), settled: true },
+      member("lead", "active", "lead"),
+      member("trimmed", "active"),
+      { ...member("flagged", "active"), settled: true },
+      member("leaving", "release-pending"),
+      member("joining", "add-pending"),
+      member("refused", "add-refused"),
+      member("stuck", "release-refused"),
+      member("away", "offline", "member", laptop),
     ]);
     const shown = (synced: ReadonlySet<EnvironmentId>) =>
       rowsOf(groupSidebarMissions(hostOf(trimmed), [], null, new Set(), synced))[0]![2];
-    const kept = ["loading", "leaving", "joining", "refused", "stuck", "away"];
+    const kept = ["leaving", "joining", "refused", "stuck", "away"];
     expect(shown(new Set([environmentId, laptop]))).toEqual(kept);
-    expect(shown(new Set())).toEqual(["trimmed", ...kept]);
+    expect(shown(new Set())).toEqual(["trimmed", "flagged", ...kept]);
     const result = groupSidebarMissions(
       hostOf(trimmed),
       [],
@@ -610,10 +605,21 @@ describe("groupSidebarMissions", () => {
   it("waits for the member's own machine to finish syncing, not any machine", () => {
     const trimmed = mission("dddddddddddd", [
       member("lead", "active", "lead"),
-      { ...member("trimmed", "active"), settled: true },
+      member("trimmed", "active"),
     ]);
     const shown = groupSidebarMissions(hostOf(trimmed), [], null, new Set(), new Set([laptop]));
     expect(rowsOf(shown)[0]![2]).toEqual(["trimmed"]);
+  });
+
+  it("hides an active member whose thread the tag filter left out of the list", () => {
+    const tagged = mission("cdcdcdcdcdcd", [
+      member("lead", "active", "lead"),
+      member("tagged", "active"),
+      member("untagged", "active"),
+    ]);
+    const shells = [shell("lead"), shell("tagged")];
+    const result = groupSidebarMissions(hostOf(tagged), shells, null, new Set(), live);
+    expect(rowsOf(result)[0]![2]).toEqual(["tagged"]);
   });
 
   it("keeps a member whose loaded thread is settled while its machine still syncs", () => {
@@ -649,30 +655,13 @@ describe("groupSidebarMissions", () => {
     expect(rowsOf(result)[0]![2]).toEqual(["away", "stuck"]);
   });
 
-  it("hides a trimmed member another machine marks settled, while it still blocks ending", () => {
+  it("hides an unlisted member on another machine once that machine syncs, while it still blocks ending", () => {
     const remote = member("remote", "active", "member", laptop);
     const led = mission("ffffffffffff", [member("lead", "active", "lead"), remote]);
-    const hosts = (claim: { readonly missionId: string; readonly settled?: true }) => [
-      ...hostOf(led),
-      {
-        environmentId: laptop,
-        snapshot: {
-          links: [],
-          missions: [],
-          claims: [{ threadId: ThreadId.make("remote"), name: "x", ...claim }],
-        },
-      },
-    ];
-    const members = (
-      claim: Parameters<typeof hosts>[0],
-      synced: ReadonlySet<EnvironmentId> = new Set([environmentId, laptop]),
-    ) => rowsOf(groupSidebarMissions(hosts(claim), [], null, new Set(), synced))[0]![2];
-    expect(members({ missionId: "ffffffffffff", settled: true })).toEqual([]);
-    expect(members({ missionId: "ffffffffffff" })).toEqual(["remote"]);
-    expect(members({ missionId: "aaaaaaaaaaaa", settled: true })).toEqual(["remote"]);
-    expect(members({ missionId: "ffffffffffff", settled: true }, new Set([environmentId]))).toEqual(
-      ["remote"],
-    );
+    const members = (synced: ReadonlySet<EnvironmentId>) =>
+      rowsOf(groupSidebarMissions(hostOf(led), [], null, new Set(), synced))[0]![2];
+    expect(members(new Set([environmentId, laptop]))).toEqual([]);
+    expect(members(new Set([environmentId]))).toEqual(["remote"]);
     const end = missionRowItems({
       host: environmentId,
       mission: led,
