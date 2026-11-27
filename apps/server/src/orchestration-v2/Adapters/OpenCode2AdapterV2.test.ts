@@ -2102,6 +2102,38 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  it.effect.each(["dispatched", "abandoned"] as const)(
+    "lists a woken report as background work until its follow-up is %s",
+    (end) =>
+      Effect.gen(function* () {
+        const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+        const { runtime, thread } = yield* resumed([
+          ...launchedAndRunning,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          childReport("msg_report", "CHILD_OK"),
+          event("session.execution.started", { sessionID: SESSION }),
+        ]).pipe(
+          Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+            offer: (request) => Effect.sync(() => void offers.push(request)),
+            take: Effect.never,
+          }),
+        );
+        const watch = yield* watchCalls(runtime, thread);
+        yield* runtime.startTurn(withLineage(thread));
+        yield* watch.until(() => offers.length === 1 && watch.state.roster?.length === 1);
+        assert.deepEqual(
+          watch.state.roster?.map((task) => [task.kind, task.taskId, task.description]),
+          [["background_task", `wake:${offers[0]!.messageId}`, "Sleep"]],
+        );
+        assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+        if (end === "abandoned") yield* offers[0]!.clearIfCurrent!();
+        else yield* offers[0]!.dispatchIfCurrent!(Effect.void);
+        yield* watch.until(() => watch.state.roster?.length === 0);
+        assert.deepEqual(watch.state.roster, []);
+      }),
+  );
+
   it.effect("keeps a call to a finished subagent for its own run's report", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
