@@ -1901,12 +1901,19 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             yield* until(check);
           });
         });
-      // A report that waits for its continuation run is still owed work.
-      const settled = () =>
+      const rosterIsEmptyOrOnlyQueuedReports = () =>
         state.roster?.every(
           (task) => task.kind === "background_task" && task.taskId.startsWith("report:"),
         ) === true;
-      return { calls, callsById, callsAtChildTurnStart, childTurns, state, until, settled };
+      return {
+        calls,
+        callsById,
+        callsAtChildTurnStart,
+        childTurns,
+        state,
+        until,
+        rosterIsEmptyOrOnlyQueuedReports,
+      };
     });
   const launchedAndRunning = [
     ...backgroundLaunch(CHILD),
@@ -2086,7 +2093,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         () =>
           watch.calls.get("Again")?.status === "completed" &&
           watch.calls.get("Sleep")?.status === "completed" &&
-          watch.settled(),
+          watch.rosterIsEmptyOrOnlyQueuedReports(),
       );
       assert.deepEqual(Object.fromEntries(watch.calls), {
         Sleep: { status: "completed", result: "CHILD_OK" },
@@ -2225,7 +2232,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* runtime.startTurn(withLineage(thread));
       yield* watch.until(
         () =>
-          watch.settled() &&
+          watch.rosterIsEmptyOrOnlyQueuedReports() &&
           Object.keys(expected).every((id) => watch.callsById.get(id)?.status === "completed"),
       );
       assert.deepEqual(Object.fromEntries(watch.callsById), expected);

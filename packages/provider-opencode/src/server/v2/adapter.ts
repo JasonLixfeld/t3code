@@ -318,8 +318,7 @@ interface Wake {
   readonly reports: Array<BackgroundWorkReport>;
   readonly detail: string | null;
   dropped: boolean;
-  /** T3 has dispatched its continuation run, or gave up on it. */
-  dispatched: boolean;
+  continuationPending: boolean;
   readonly after: string | undefined;
   readonly first: string | undefined;
   readonly children: Set<string>;
@@ -1886,8 +1885,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             : [],
         ),
       );
-      // A subagent's report reaches T3 only as the continuation run of its wake, so until that run
-      // is dispatched the report is still owed work.
       const owedWakes =
         state.subagent !== undefined
           ? []
@@ -1899,7 +1896,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               ),
               ...state.wakes.flatMap((wake) => {
                 const report = wake.reports.find((each) => each.kind === "subagent");
-                return report === undefined || wake.dispatched || wake.messageId === undefined
+                return report === undefined ||
+                  !wake.continuationPending ||
+                  wake.messageId === undefined
                   ? []
                   : [{ taskId: `wake:${wake.messageId}`, report }];
               }),
@@ -2417,8 +2416,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const notification = backgroundWorkNotification(wake.reports);
       const release = lock.withPermit(
         Effect.suspend(() => {
-          if (wake.dispatched) return Effect.void;
-          wake.dispatched = true;
+          if (!wake.continuationPending) return Effect.void;
+          wake.continuationPending = false;
           return syncRoster(state);
         }),
       );
@@ -3168,7 +3167,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         reports: delivered.map((entry) => entry.report),
         detail: delivered.length === 0 ? null : delivered.map((entry) => entry.text).join("\n\n"),
         dropped: false,
-        dispatched: false,
+        continuationPending: true,
         after: delivered.at(-1)?.inboxId,
         first: leading ?? delivered[0]?.inboxId,
         children: new Set(),
