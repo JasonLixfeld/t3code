@@ -57,6 +57,7 @@ internal fun parseSearchHighlights(value: String, dark: Boolean): SearchHighligh
 
 internal class ReviewDiffSearchPainter(private val drawing: ReviewDiffCanvasDrawing) {
   var highlights = SearchHighlights()
+  var tokensByRowId: Map<String, List<DiffToken>> = emptyMap()
   private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
   private val selectionPath = Path()
 
@@ -130,12 +131,6 @@ internal class ReviewDiffSearchPainter(private val drawing: ReviewDiffCanvasDraw
 
   private fun codeOffsetX(row: DiffRow, lines: CodeLines, offset: Int, style: DiffStyle): Float {
     lines.nativeLayout?.let { return it.getPrimaryHorizontal(offset.coerceIn(0, it.text.length)) }
-    val start = lines.starts[lines.lineForOffset(offset)].coerceIn(0, row.content.length)
-    drawing.configureCodePaint(drawing.theme.text, 0, style)
-    return drawing.textPaint.measureText(
-      row.content,
-      start,
-      offset.coerceIn(start, row.content.length)
-    )
+    return drawing.paintedCodeOffsetX(row, tokensByRowId[row.id], lines, offset, style)
   }
 }
