@@ -1,20 +1,45 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+  EnvironmentId,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { act, render } from "../../test/render";
 import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../state/server";
+import { sourceControlEnvironment } from "../state/sourceControl";
+import { AsyncResult } from "effect/reactivity";
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
+import { clearMissionDraft, markMissionDraft, missionDraftOf } from "./sidebar/missionDraftStore";
+import { useMissionHosts, useMissionStartMachines } from "./sidebar/MissionsSection";
+import { makeThreadFixture } from "../test-fixtures";
+import type { Thread } from "../types";
+import type { MissionDraftIntent } from "@t3tools/client-runtime/missions";
 
 const scopes = vi.hoisted(() => ({
   denied: undefined as string | undefined,
   sourceControl: undefined as unknown,
+  lookupRepository: vi.fn(),
+  projects: [] as ReadonlyArray<EnvironmentProject>,
+  threads: [] as ReadonlyArray<Thread>,
+  waitForProject: async (): Promise<EnvironmentProject | undefined> => undefined,
+  handleNewThread: vi.fn(async () => undefined),
 }));
 const setup = (deniedScope?: string, sourceControl?: unknown) => {
   scopes.denied = deniedScope;
   scopes.sourceControl = sourceControl;
+  scopes.projects = [];
+  scopes.threads = [];
+  scopes.waitForProject = async () => undefined;
+  scopes.handleNewThread.mockClear();
 };
 const githubAvailable = {
   versionControlSystems: [],
@@ -53,7 +78,10 @@ vi.mock("../hooks/useSettings", async (original) => ({
   useUpdateEnvironmentSettings: () => () => undefined,
 }));
 vi.mock("../hooks/useScratchProject", () => ({
-  useScratchProject: () => ({ scratchEnvironmentId: () => null }),
+  useScratchProject: () => ({
+    scratchEnvironmentId: () => null,
+    scratchWorkspaceRootFor: () => null,
+  }),
 }));
 vi.mock("../hooks/useNewProject", () => ({ useNewProject: () => async () => undefined }));
 vi.mock("../hooks/useHandleNewThread", () => ({
@@ -61,7 +89,7 @@ vi.mock("../hooks/useHandleNewThread", () => ({
     activeDraftThread: null,
     activeThread: null,
     defaultProjectRef: null,
-    handleNewThread: async () => undefined,
+    handleNewThread: scopes.handleNewThread,
   }),
   useNewThreadHandler: () => async () => undefined,
 }));
@@ -73,7 +101,10 @@ vi.mock("../state/use-atom-command", () => ({
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
   // Doubles as the add-project folder scan, which finds nothing to track.
-  useAtomQueryRunner: () => async () => ({ _tag: "Success", value: { folders: [] } }),
+  useAtomQueryRunner: (family: unknown) =>
+    family === sourceControlEnvironment.repository
+      ? scopes.lookupRepository
+      : async () => ({ _tag: "Success", value: { folders: [] } }),
 }));
 vi.mock("../state/environments", async (original) => ({
   ...(await original<typeof import("../state/environments")>()),
@@ -97,14 +128,15 @@ vi.mock("../state/environments", async (original) => ({
 }));
 vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
-  useProjects: () => [],
+  useProjects: () => scopes.projects,
   useThreadShells: () => [],
-  useVisibleThreadShells: () => [],
+  useVisibleThreadShells: () => scopes.threads,
+  useDelegatedUnderParent: () => new Set(),
   useHiddenThreadKeys: () => new Set(),
   useAnyEnvironmentHiding: () => false,
   useEnvironmentThreadRefs: () => [],
   useServerConfigs: () => new Map(),
-  waitForProject: async () => undefined,
+  waitForProject: () => scopes.waitForProject(),
 }));
 vi.mock("../state/queries", async (original) => ({
   ...(await original<typeof import("../state/queries")>()),
@@ -127,6 +159,7 @@ vi.mock("../state/query", async (original) => ({
   ...(await original<typeof import("../state/query")>()),
   useEnvironmentQuery: () => ({ data: scopes.sourceControl, isLoading: false }),
 }));
+vi.mock("./sidebar/MissionsSection", { spy: true });
 vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [],
 }));
@@ -244,3 +277,171 @@ it("tells screen readers whether a new project will be published", async () => {
   await option.click();
   await expect.element(option).toHaveAttribute("aria-checked", "true");
 });
+
+it("keeps the source list visible after a dismissed repository lookup succeeds", async () => {
+  setup(undefined, githubAvailable);
+  const repository = AsyncResult.success({
+    provider: "github",
+    nameWithOwner: "example/slow",
+    url: "https://github.com/example/slow",
+    sshUrl: "git@github.com:example/slow.git",
+  });
+  const lookup = Promise.withResolvers<typeof repository>();
+  scopes.lookupRepository.mockReset().mockReturnValue(lookup.promise);
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByRole("option", { name: /^GitHub repository/ }).click();
+  await page.getByRole("combobox").fill("example/slow");
+  await userEvent.keyboard("{Enter}");
+  expect(scopes.lookupRepository).toHaveBeenCalledOnce();
+  await page.getByRole("combobox").fill("");
+  await userEvent.keyboard("{Backspace}");
+  const sources = page.getByText("Git URL", { exact: true });
+  await expect.element(sources).toBeVisible();
+
+  await act(async () => {
+    lookup.resolve(repository);
+    await lookup.promise;
+  });
+  expect(sources.element()).toBeVisible();
+});
+
+const homeProject = scopeProjectRef(EnvironmentId.make("home"), ProjectId.make("web"));
+const localProject = (id: string, workspaceRoot: string): EnvironmentProject => ({
+  id: ProjectId.make(id),
+  environmentId: EnvironmentId.make("local"),
+  title: id,
+  workspaceRoot,
+  repositoryIdentity: null,
+  defaultModelSelection: null,
+  createdAt: "2026-03-01T00:00:00.000Z",
+  updatedAt: "2026-03-01T00:00:00.000Z",
+  scripts: [],
+});
+const writeHomeDraft = () => {
+  const draftId = DraftId.make("mission-draft");
+  const store = useComposerDraftStore.getState();
+  store.setProjectDraftThreadId(homeProject, draftId);
+  store.setPrompt(draftId, "Plan the release");
+  onTestFinished(() => {
+    useComposerDraftStore.getState().clearDraftThread(draftId);
+    clearMissionDraft(draftId);
+  });
+  const threadId = store.getDraftSession(draftId)!.threadId;
+  const markForMission = (intent: MissionDraftIntent = { kind: "new" }) =>
+    markMissionDraft(draftId, {
+      intent,
+      thread: { environmentId: homeProject.environmentId, threadId },
+    });
+  return { draftId, threadId, markForMission };
+};
+const allowMissionsOn = (machines: ReadonlyArray<EnvironmentId>) => {
+  vi.mocked(useMissionStartMachines).mockReturnValue(new Set(machines));
+  onTestFinished(() => vi.mocked(useMissionStartMachines).mockRestore());
+};
+
+it.each([
+  { machine: "a machine its mission cannot use", allowed: false, linksHidden: false },
+  { machine: "a machine its mission can start on", allowed: true, linksHidden: false },
+  {
+    machine: "its mission's machine when the mission hides its links",
+    allowed: true,
+    linksHidden: true,
+  },
+])(
+  "moves a mission draft to Add project's pick only on $machine",
+  async ({ allowed, linksHidden }) => {
+    setup();
+    const api = localProject("api", "/workspace/api");
+    const latest = makeThreadFixture({
+      environmentId: api.environmentId,
+      projectId: api.id,
+      id: ThreadId.make("api-latest"),
+    });
+    scopes.projects = [api];
+    scopes.threads = [latest];
+    const { draftId, threadId, markForMission } = writeHomeDraft();
+    if (linksHidden) {
+      vi.mocked(useMissionHosts).mockReturnValue([
+        {
+          environmentId: api.environmentId,
+          snapshot: { missions: [], links: [], claims: [], linksHidden: true },
+        },
+      ]);
+      onTestFinished(() => vi.mocked(useMissionHosts).mockRestore());
+      markForMission({
+        kind: "member",
+        host: api.environmentId,
+        missionId: "0123456789ab",
+        name: "Ship v2",
+      });
+    } else {
+      markForMission();
+      if (allowed) allowMissionsOn([api.environmentId]);
+    }
+    const mark = missionDraftOf(draftId)!;
+
+    await using screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project", draftId }));
+    await page.getByText("Local folder", { exact: true }).click();
+    await page.getByRole("combobox").fill(api.workspaceRoot);
+    await userEvent.keyboard("{Enter}");
+    await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+
+    const target = allowed ? scopeProjectRef(api.environmentId, api.id) : homeProject;
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)).toMatchObject(target);
+    expect(missionDraftOf(draftId)).toEqual({
+      ...mark,
+      thread: { environmentId: target.environmentId, threadId },
+    });
+    expect(screen.router!.state.location.pathname).toBe(
+      allowed ? `/draft/${draftId}` : `/${latest.environmentId}/${latest.id}`,
+    );
+  },
+);
+
+it.each([
+  { change: "the draft joins a mission", markedAtStart: false },
+  { change: "the draft's mission loses the clone's machine", markedAtStart: true },
+  { change: "the draft leaves its mission", markedAtStart: true },
+])(
+  "leaves the draft where it is when $change while the clone starts",
+  async ({ change, markedAtStart }) => {
+    setup();
+    const cloned = localProject("project-cloned", "/workspace/cloned");
+    const cloneReady = Promise.withResolvers<EnvironmentProject>();
+    scopes.waitForProject = () => cloneReady.promise;
+    const { draftId, threadId, markForMission } = writeHomeDraft();
+    if (markedAtStart) {
+      markForMission();
+      allowMissionsOn([cloned.environmentId]);
+    }
+
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project", draftId }));
+    await page.getByText("Git URL", { exact: true }).click();
+    await page.getByRole("combobox").fill("https://example.com/team/cloned.git");
+    await userEvent.keyboard("{Enter}");
+    await page.getByRole("combobox").fill(cloned.workspaceRoot);
+    await userEvent.keyboard("{Enter}");
+    await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+    if (change === "the draft joins a mission") markForMission();
+    else if (change === "the draft leaves its mission") clearMissionDraft(draftId);
+    else allowMissionsOn([]);
+    const mark = missionDraftOf(draftId);
+
+    await act(async () => cloneReady.resolve(cloned));
+    const draft = () => useComposerDraftStore.getState().getDraftSession(draftId);
+    await vi.waitFor(() =>
+      expect(
+        scopes.handleNewThread.mock.calls.length > 0 ||
+          draft()?.environmentId === cloned.environmentId,
+      ).toBe(true),
+    );
+    expect(draft()).toMatchObject(homeProject);
+    expect(missionDraftOf(draftId)).toEqual(mark);
+    if (mark !== undefined) {
+      expect(mark.thread).toEqual({ environmentId: homeProject.environmentId, threadId });
+    }
+  },
+);

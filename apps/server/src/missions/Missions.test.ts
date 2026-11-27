@@ -3044,6 +3044,9 @@ it.effect("a lead agent adds and releases with its own modes, here and on the la
         yield* leadTool(world, "t3_mission_add", { threadRef: laptopMember }),
         '"pending"',
       );
+      // The unreachable add retries at once; let that retry miss the laptop too.
+      yield* world.untilStarted("join");
+      yield* world.untilStarted("join");
       world.laptop.mode = "up";
       yield* TestClock.adjust(Missions.REFRESH_INTERVAL);
       yield* world.untilAnswered("join");
@@ -3052,7 +3055,7 @@ it.effect("a lead agent adds and releases with its own modes, here and on the la
         "released",
       );
       const leadModes = { runtimeMode: "auto-accept-edits", interactionMode: "default" };
-      assert.deepEqual(world.laptop.limits, [leadModes, leadModes, leadModes]);
+      assert.deepEqual(world.laptop.limits, [leadModes, leadModes, leadModes, leadModes]);
     }),
   );
 });
