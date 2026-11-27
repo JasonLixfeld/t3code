@@ -1,4 +1,5 @@
 import type { MissionHost } from "@t3tools/client-runtime/missions";
+import { MISSION_SLOT, PROJECT_SLOT } from "@t3tools/client-runtime/draft-hero-sentence";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -53,7 +54,19 @@ describe("draftHeroTokens", () => {
     ],
     [{ scratch: true, mission: "lead" }, [["mission", "?"]]],
   ] as const)("splits %o into whole words, keeping the glue on its choice", (input, choices) => {
-    const tokens = draftHeroTokens(input, m);
+    const resolved: Array<ReturnType<typeof m>> = [];
+    const resolve = ((...args: Parameters<typeof m>) => {
+      const sentence = m(...args);
+      resolved.push(sentence);
+      return sentence;
+    }) as typeof m;
+    const tokens = draftHeroTokens(input, resolve);
+    const slot = { project: PROJECT_SLOT, mission: MISSION_SLOT };
+    expect(
+      tokens
+        .map((token) => (token.kind === "text" ? token.text : slot[token.kind] + token.glue))
+        .join(""),
+    ).toBe(resolved.at(-1));
     expect(tokens.at(-1)?.kind).toBe("mission");
     expect(
       tokens.flatMap((token) => (token.kind === "text" ? [] : [[token.kind, token.glue]])),

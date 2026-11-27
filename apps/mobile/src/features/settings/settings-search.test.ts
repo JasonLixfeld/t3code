@@ -37,33 +37,35 @@ function visible(query: string, missionsAdvertised = false) {
 }
 
 describe("filterSettingsSections", () => {
-  it.each([
-    {
-      query: "",
-      expected: SECTIONS.map((section) => [
-        section.title ?? null,
-        section.rows.map((row) => row.label),
-      ]),
-    },
-    { query: "   ", expected: visible("") },
-    { query: "appear", expected: [["Interface", ["Appearance"]]] },
-    { query: "KEYBOARD", expected: [["Interface", ["Keyboard"]]] },
-    { query: "dark mode", expected: [["Interface", ["Appearance"]]] },
-    { query: "microphone", expected: [["Interface", ["Voice"]]] },
-    { query: "agent credits", expected: [["Server settings", ["Source control & issues"]]] },
-    {
-      query: "server settings",
-      expected: [["Server settings", ["Provider accounts", "Source control & issues"]]],
-    },
-    {
-      query: "accounts",
-      expected: [["Server settings", ["Provider accounts"]]],
-    },
-    { query: "usage", expected: [[null, ["Usage"]]] },
-    { query: "zzzz", expected: [] },
-    { query: "mission prompt", missions: true, expected: [[null, ["General"]]] },
-    { query: "mission prompt", missions: false, expected: [] },
-  ])("$query", ({ query, missions, expected }) => {
+  it.each(
+    [
+      {
+        query: "",
+        expected: SECTIONS.map((section) => [
+          section.title ?? null,
+          section.rows.map((row) => row.label),
+        ]),
+      },
+      { query: "   ", expected: visible("") },
+      { query: "appear", expected: [["Interface", ["Appearance"]]] },
+      { query: "KEYBOARD", expected: [["Interface", ["Keyboard"]]] },
+      { query: "dark mode", expected: [["Interface", ["Appearance"]]] },
+      { query: "microphone", expected: [["Interface", ["Voice"]]] },
+      { query: "agent credits", expected: [["Server settings", ["Source control & issues"]]] },
+      {
+        query: "server settings",
+        expected: [["Server settings", ["Provider accounts", "Source control & issues"]]],
+      },
+      {
+        query: "accounts",
+        expected: [["Server settings", ["Provider accounts"]]],
+      },
+      { query: "usage", expected: [[null, ["Usage"]]] },
+      { query: "zzzz", expected: [] },
+      { query: "mission prompt", missions: true, expected: [[null, ["General"]]] },
+      { query: "mission prompt", missions: false, expected: [] },
+    ].map((row) => ({ missions: false, ...row })),
+  )("$query (Missions advertised: $missions)", ({ query, missions, expected }) => {
     expect(visible(query, missions)).toEqual(expected);
   });
 

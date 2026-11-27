@@ -68,6 +68,7 @@ private extension ReviewDiffContentView {
   func searchHighlights(rowId: String) -> [String] {
     let row = rows.first { $0.id == rowId }!
     return codeHighlights(for: row).compactMap { highlight in
+      if highlight.color.cgColor.alpha == 0 { return nil }
       if highlight.color == searchMatchColor { return "match" }
       if highlight.color == activeSearchMatchColor { return "active" }
       return nil
