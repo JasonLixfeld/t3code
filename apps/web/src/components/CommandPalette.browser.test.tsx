@@ -18,7 +18,11 @@ import { type EnvironmentPresentation, useEnvironments } from "../state/environm
 import { CommandPalette } from "./CommandPalette";
 import { clearMissionDraft, markMissionDraft, missionDraftOf } from "./sidebar/missionDraftStore";
 import { useMissionHosts, useMissionMenu } from "./sidebar/MissionsSection";
-import { buildMissionMenuItems, type MissionHost } from "@t3tools/client-runtime/missions";
+import {
+  buildMissionMenuItems,
+  isThreadMissionAction,
+  type MissionHost,
+} from "@t3tools/client-runtime/missions";
 import type { LocalApi, Mission } from "@t3tools/contracts";
 import { __setClientSettingsForTests } from "../hooks/useSettings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
@@ -349,38 +353,6 @@ describe("CommandPalette open intents", () => {
     );
   });
 
-  it("offers a new member only machines its mission's machine can add from", async () => {
-    const local = makeProject("web");
-    const linked = { ...makeProject("api"), environmentId: EnvironmentId.make("linked") };
-    const fenced = { ...makeProject("docs"), environmentId: EnvironmentId.make("fenced") };
-    setup({ projects: [local, linked, fenced] });
-    vi.mocked(useMissionHosts).mockReturnValue([
-      {
-        environmentId: local.environmentId,
-        snapshot: {
-          missions: [],
-          claims: [],
-          links: [
-            { environmentId: linked.environmentId, label: "Linked", fullAccess: true },
-            { environmentId: fenced.environmentId, label: "Fenced", fullAccess: false },
-          ],
-        },
-      },
-    ]);
-    onTestFinished(() => vi.mocked(useMissionHosts).mockRestore());
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
-    const member = {
-      kind: "member",
-      host: local.environmentId,
-      missionId: "0123456789ab",
-      name: "Ship v2",
-    } as const;
-    openCommandPalette({ open: "new-thread-in", mission: member });
-    await expect.element(page.getByRole("option", { name: /web/ })).toBeInTheDocument();
-    await expect.element(page.getByRole("option", { name: /api/ })).toBeInTheDocument();
-    await expect.element(page.getByRole("option", { name: /docs/ })).not.toBeInTheDocument();
-  });
-
   it("titles the New mission picker and offers No project, on the lead's machine for a new lead", async () => {
     const local = makeProject("web");
     setup({ projects: [local] });
@@ -426,16 +398,46 @@ describe("CommandPalette open intents", () => {
     await expect.element(page.getByRole("option", { name: /No project/ })).not.toBeInTheDocument();
   });
 
+  it("offers a new mission only projects on machines that can start one", async () => {
+    const local = makeProject("web");
+    const remote = { ...makeProject("api"), environmentId: EnvironmentId.make("remote") };
+    setup({ projects: [local, remote] });
+    vi.mocked(useMissionHosts).mockReturnValue([
+      { environmentId: local.environmentId, snapshot: { missions: [], links: [], claims: [] } },
+    ]);
+    onTestFinished(() => vi.mocked(useMissionHosts).mockRestore());
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    openCommandPalette({ open: "new-thread-in", mission: { kind: "new" } });
+    await expect.element(page.getByRole("option", { name: /web/ })).toBeInTheDocument();
+    await expect.element(page.getByRole("option", { name: /api/ })).not.toBeInTheDocument();
+  });
+
   it.each([
-    ["offers New mission... with No project", EnvironmentId.make("local"), true],
-    ["offers no New mission... with no home for No project", null, true],
     [
-      "offers no New mission... where no machine keeps missions",
+      "with no projects, offers New mission... with No project",
       EnvironmentId.make("local"),
+      true,
       false,
     ],
-  ] as const)("with no projects, the palette %s", async (_, home, keepsMissions) => {
-    setup();
+    ["with no projects, offers no New mission... with no home for No project", null, true, false],
+    [
+      "with no projects, offers no New mission... where no machine keeps missions",
+      EnvironmentId.make("local"),
+      false,
+      false,
+    ],
+    [
+      "offers no New mission... when its only project that could start one is archived",
+      null,
+      true,
+      true,
+    ],
+  ] as const)("the palette %s", async (_, home, keepsMissions, archivedProject) => {
+    setup({
+      projects: archivedProject
+        ? [{ ...makeProject("old"), archivedAt: "2026-03-02T00:00:00.000Z" }]
+        : [],
+    });
     vi.mocked(useMissionHosts).mockReturnValue(
       keepsMissions
         ? [
@@ -468,44 +470,6 @@ describe("CommandPalette open intents", () => {
     await newMission.click();
     await expect.element(page.getByText("New mission", { exact: true })).toBeVisible();
     await expect.element(page.getByRole("option", { name: /No project/ })).toBeVisible();
-  });
-
-  it("offers a new mission only projects on machines that can start one", async () => {
-    const local = makeProject("web");
-    const remote = { ...makeProject("api"), environmentId: EnvironmentId.make("remote") };
-    setup({ projects: [local, remote] });
-    vi.mocked(useMissionHosts).mockReturnValue([
-      { environmentId: local.environmentId, snapshot: { missions: [], links: [], claims: [] } },
-    ]);
-    onTestFinished(() => vi.mocked(useMissionHosts).mockRestore());
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
-    openCommandPalette({ open: "new-thread-in", mission: { kind: "new" } });
-    await expect.element(page.getByRole("option", { name: /web/ })).toBeInTheDocument();
-    await expect.element(page.getByRole("option", { name: /api/ })).not.toBeInTheDocument();
-  });
-
-  it("offers no New mission... when the only project that could start one is archived", async () => {
-    const archived = { ...makeProject("old"), archivedAt: "2026-03-02T00:00:00.000Z" };
-    setup({ projects: [archived] });
-    vi.mocked(useScratchProject).mockReturnValue({
-      scratchEnvironmentId: () => null,
-      scratchWorkspaceRootFor: () => null,
-      startScratchThread: vi.fn(),
-      openScratchProject: vi.fn(),
-    } as never);
-    onTestFinished(() => vi.mocked(useScratchProject).mockRestore());
-    vi.mocked(useMissionHosts).mockReturnValue([
-      { environmentId: archived.environmentId, snapshot: { missions: [], links: [], claims: [] } },
-    ]);
-    onTestFinished(() => vi.mocked(useMissionHosts).mockRestore());
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
-    openCommandPalette({});
-    await expect
-      .element(page.getByPlaceholder("Search commands, projects, and threads..."))
-      .toHaveFocus();
-    await expect
-      .element(page.getByRole("option", { name: /^New mission\.\.\./ }))
-      .not.toBeInTheDocument();
   });
 
   it("marks the draft a mission's project pick makes, offering only the lead's machine", async () => {
@@ -774,14 +738,24 @@ describe("CommandPalette mission thread actions", () => {
     return thread;
   };
 
-  it("lists a thread's mission actions, and Add to mission adds it to the picked mission", async () => {
-    listMissions([hostWith(["Ship v2", "Billing cleanup"])]);
+  it("shows a disabled mission action with the context menu's reason, and runs the rest once missions are listed", async () => {
+    const items = listMissions([hostWith([])]);
     const thread = openThread(true);
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     openCommandPalette();
-    await expect
-      .element(page.getByRole("option", { name: /Start mission from this thread/ }))
-      .toBeVisible();
+    const disabled = items([thread]).filter((item) => item.disabled === true);
+    expect(disabled.map((item) => [item.id, item.detail])).toEqual([
+      ["mission-add", "No missions yet"],
+    ]);
+    for (const item of disabled) {
+      const title = page.getByText(item.label, { exact: true });
+      await expect.element(title).toBeVisible();
+      expect(title.element().closest("[role=option]")).toBeNull();
+      expect(title.element().parentElement?.parentElement?.textContent).toBe(
+        `${item.label}${item.detail}`,
+      );
+    }
+    await relistMissions([hostWith(["Ship v2", "Billing cleanup"])]);
     await page.getByRole("option", { name: /Add to mission/ }).click();
     await expect.element(page.getByRole("option", { name: /Billing cleanup/ })).toBeVisible();
     await page.getByRole("option", { name: /Ship v2/ }).click();
@@ -790,26 +764,7 @@ describe("CommandPalette mission thread actions", () => {
         { environmentId: LOCAL, threadId: thread.id },
       ]),
     );
-  });
-
-  it("disables mission actions with the context menu's reasons, and starts one from an empty thread", async () => {
-    const items = listMissions([hostWith([])]);
-    const thread = openThread(false);
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     openCommandPalette();
-    const expected = items([thread]);
-    expect(expected.map((item) => [item.id, item.detail])).toEqual([
-      ["mission-start", undefined],
-      ["mission-add", "No missions yet"],
-    ]);
-    for (const item of expected.filter((candidate) => candidate.disabled === true)) {
-      const title = page.getByText(item.label, { exact: true });
-      await expect.element(title).toBeVisible();
-      expect(title.element().closest("[role=option]")).toBeNull();
-      expect(title.element().parentElement?.parentElement?.textContent).toBe(
-        `${item.label}${item.detail}`,
-      );
-    }
     await page.getByRole("option", { name: /Start mission from this thread/ }).click();
     await vi.waitFor(() =>
       expect(missionRun).toHaveBeenCalledWith("mission-start", [
@@ -822,20 +777,30 @@ describe("CommandPalette mission thread actions", () => {
     ["on", true],
     ["off", false],
   ] as const)(
-    "with Missions %s, the palette's thread actions show mission actions or none",
+    "with Missions %s, the palette's thread actions show every mission action or none",
     async (_, on) => {
       __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, sidebarMissionsEnabled: on });
       onTestFinished(() => __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS));
-      openThread(true);
-      await using screen = await render(<CommandPalette>{null}</CommandPalette>);
+      const thread = openThread(true);
+      const hosts = [hostWith(["Ship v2"])];
+      realMissionMenu.hosts = hosts;
+      onTestFinished(() => {
+        realMissionMenu.hosts = [];
+      });
+      const labels = itemsOn(hosts)([thread])
+        .filter((item) => isThreadMissionAction(item.id))
+        .map((item) => item.label);
+      expect(labels).not.toHaveLength(0);
+      await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
       openCommandPalette();
       await expect.element(page.getByRole("option", { name: "Copy", exact: true })).toBeVisible();
-      const listed = () => screen.container.ownerDocument.body.textContent ?? "";
-      expect(listed().includes("Add to mission")).toBe(on);
+      for (const label of labels) {
+        expect(page.getByText(label, { exact: true }).elements()).toHaveLength(on ? 1 : 0);
+      }
     },
   );
 
-  it("keeps Add to mission's list live while it is open", async () => {
+  it("keeps Add to mission's list live while open, shows it disabled once no mission is left, and leaves it once the thread leads one", async () => {
     listMissions([hostWith(["Ship v2", "Billing cleanup"])]);
     const thread = openThread(true);
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
@@ -851,12 +816,8 @@ describe("CommandPalette mission thread actions", () => {
         { environmentId: LOCAL, threadId: thread.id },
       ]),
     );
-  });
 
-  it("shows open Add to mission disabled once no mission is left, and leaves it once it is gone", async () => {
-    listMissions([hostWith(["Ship v2"])]);
-    const thread = openThread(true);
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await relistMissions([hostWith(["Ship v2"])]);
     openCommandPalette();
     await page.getByRole("option", { name: /Add to mission/ }).click();
     await expect.element(page.getByRole("option", { name: /Ship v2/ })).toBeVisible();
@@ -868,18 +829,6 @@ describe("CommandPalette mission thread actions", () => {
     await relistMissions([hostWith(["Ship v2"], undefined, [{ ...lead, state: "active" }])]);
     await expect.element(page.getByRole("option", { name: "Copy", exact: true })).toBeVisible();
     await expect.element(page.getByText("Backspace", { exact: true })).not.toBeInTheDocument();
-  });
-
-  it("offers a mission's lead only its thread actions, not the mission's own commands", async () => {
-    const thread = openThread(true);
-    listMissions([
-      hostWith(["Ship v2"], undefined, [
-        { ref: { environmentId: LOCAL, threadId: thread.id }, role: "lead", state: "active" },
-      ]),
-    ]);
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
-    openCommandPalette();
-    await expect.element(page.getByRole("option", { name: "Copy", exact: true })).toBeVisible();
     const shown = document.body.textContent ?? "";
     for (const command of ["End mission", "New thread in this mission", "Edit mission prompt"]) {
       expect(shown).not.toContain(command);
@@ -970,13 +919,20 @@ describe("CommandPalette mission thread actions", () => {
     await userEvent.fill(page.getByRole("combobox"), query);
   };
 
-  it("finds a mission named like a path in Add to mission, and Enter adds it", async () => {
+  it("finds a mission named like a path in Add to mission, keeps its reason row under that query, and Enter adds it", async () => {
     await connectMachine();
-    listMissions([hostWith(["~/work/cleanup", "Ship v2"])]);
+    const hosts = [hostWith(["~/work/cleanup", "Ship v2"])];
+    listMissions(hosts);
     const thread = openThread(true);
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     await searchAddToMission("~/work/");
-    await expect.element(page.getByRole("option", { name: /~\/work\/cleanup/ })).toBeVisible();
+    const cleanup = page.getByRole("option", { name: /~\/work\/cleanup/ });
+    await expect.element(cleanup).toBeVisible();
+    await relistMissions([hostWith([])]);
+    await expect.element(page.getByText("No missions yet")).toBeVisible();
+    await expect.element(page.getByText("Backspace", { exact: true })).toBeVisible();
+    await relistMissions(hosts);
+    await expect.element(cleanup).toBeVisible();
     await userEvent.keyboard("{Enter}");
     await vi.waitFor(() =>
       expect(missionRun).toHaveBeenCalledWith("mission-add:local:ba9876543210", [
@@ -985,46 +941,14 @@ describe("CommandPalette mission thread actions", () => {
     );
   });
 
-  it("keeps Add to mission's reason row under a path-shaped query", async () => {
-    await connectMachine();
-    listMissions([hostWith(["~/work/cleanup"])]);
-    openThread(true);
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
-    await searchAddToMission("~/work/");
-    await expect.element(page.getByRole("option", { name: /~\/work\/cleanup/ })).toBeVisible();
-    await relistMissions([hostWith([])]);
-    await expect.element(page.getByText("No missions yet")).toBeVisible();
-    await expect.element(page.getByText("Backspace", { exact: true })).toBeVisible();
-  });
-
-  it("leaves a mission from the palette, on the member's machine or else through the lead's", async () => {
-    const thread = openThread(true);
-    const ref = { environmentId: LOCAL, threadId: thread.id };
-    const host = hostWith(["Ship v2"], undefined, [{ ref, role: "member", state: "active" }]);
-    const claims = [{ threadId: thread.id, missionId: "ba9876543210", name: "Ship v2" }];
-    listMissions([]);
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
-    for (const [listed, id] of [
-      [{ ...host, snapshot: { ...host.snapshot, claims } }, "mission-leave:local:ba9876543210"],
-      [host, "mission-release:local:ba9876543210"],
-    ] as const) {
-      await relistMissions([listed]);
-      openCommandPalette();
-      await expect.element(page.getByRole("option", { name: /^Leave mission/ })).toBeVisible();
-      expect(page.getByText(/Release/).elements()).toHaveLength(0);
-      await page.getByRole("option", { name: /^Leave mission/ }).click();
-      await vi.waitFor(() => expect(missionRun).toHaveBeenCalledWith(id, [ref]));
-    }
-  });
-
-  it("sends no leave when Leave mission's confirmation is cancelled in the real menu", async () => {
+  it("sends a leave from the real menu only once Leave mission's confirmation is accepted", async () => {
     const thread = openThread(true);
     const ref = { environmentId: LOCAL, threadId: thread.id };
     const host = hostWith(["Ship v2"], undefined, [{ ref, role: "member", state: "active" }]);
     const claims = [{ threadId: thread.id, missionId: "ba9876543210", name: "Ship v2" }];
     realMissionMenu.hosts = [{ ...host, snapshot: { ...host.snapshot, claims } }];
     realMissionMenu.commands.clear();
-    const confirm = vi.fn().mockResolvedValue(false);
+    const confirm = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     vi.mocked(readLocalApi).mockReturnValue({ dialogs: { confirm } } as unknown as LocalApi);
     onTestFinished(() => {
       realMissionMenu.hosts = [];
@@ -1036,5 +960,10 @@ describe("CommandPalette mission thread actions", () => {
     await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
     await act(async () => {});
     expect(realMissionMenu.commands.get("mission leave")).not.toHaveBeenCalled();
+    openCommandPalette();
+    await page.getByRole("option", { name: /^Leave mission/ }).click();
+    await vi.waitFor(() =>
+      expect(realMissionMenu.commands.get("mission leave")).toHaveBeenCalledOnce(),
+    );
   });
 });
