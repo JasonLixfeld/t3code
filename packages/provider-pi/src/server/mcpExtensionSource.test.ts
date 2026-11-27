@@ -409,15 +409,22 @@ describe("Pi MCP tool exposure", () => {
     assert.notInclude(bridge.getActiveTools(), audit);
   });
 
-  it.each([true, false])(
-    "keeps another extension's tool under T3's alias prefix active: %s through discovery",
-    async (active) => {
+  it.each([
+    { name: "an active one on", active: true, collides: false },
+    {
+      name: "an inactive one beside a T3 tool of the same name off",
+      active: false,
+      collides: true,
+    },
+  ])(
+    "keeps another extension's tool under T3's alias prefix through discovery: $name",
+    async ({ active, collides }) => {
       const { bridge, nextAgentStart } = await startGatewaySession();
       const alias = "mcp__t3_code__audit";
-      bridge.registerUserTool("mcp__t3-code__audit", { active });
+      if (collides) bridge.registerUserTool("mcp__t3-code__audit", { active });
       bridge.registerUserTool(alias, { active });
 
-      bridge.catalog.push({ ...rosterTool, name: "audit" });
+      if (collides) bridge.catalog.push({ ...rosterTool, name: "audit" });
       await nextAgentStart();
       await nextAgentStart();
       assert.equal(bridge.getActiveTools().includes(alias), active);

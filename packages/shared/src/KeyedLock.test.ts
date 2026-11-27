@@ -73,7 +73,7 @@ describe("KeyedLock", () => {
       const tryLock = (key: string) =>
         lock.withLockIfAvailable(
           key,
-          Ref.update(tried, (current) => [...current, key]),
+          Ref.update(tried, (current) => [...current, key]).pipe(Effect.as(key)),
         );
 
       const holder = yield* lock
@@ -84,7 +84,7 @@ describe("KeyedLock", () => {
         .pipe(Effect.forkChild);
       yield* Deferred.await(entered);
       assert.isTrue(Option.isNone(yield* tryLock("key")));
-      assert.isTrue(Option.isSome(yield* tryLock("other")));
+      assert.deepStrictEqual(yield* tryLock("other"), Option.some("other"));
       const abandoned = yield* lock.withLock("key", Effect.void).pipe(Effect.forkChild);
       const waiting = yield* lock.withLock("key", Effect.void).pipe(Effect.forkChild);
       yield* Effect.yieldNow;
@@ -94,7 +94,7 @@ describe("KeyedLock", () => {
       assert.deepStrictEqual(yield* lock.activeKeys, ["key"]);
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.joinAll([holder, waiting]);
-      assert.isTrue(Option.isSome(yield* tryLock("key")));
+      assert.deepStrictEqual(yield* tryLock("key"), Option.some("key"));
       assert.deepStrictEqual(yield* Ref.get(tried), ["other", "key"]);
       assert.strictEqual(
         yield* lock.withLock("other", Effect.fail("boom")).pipe(Effect.flip),

@@ -332,7 +332,7 @@ describe("ClientSettings defaults", () => {
       sidebarMissionsHeaderVisible: true,
       sidebarThreadsHeaderVisible: true,
     });
-    expect(decodeClientSettingsPatch({})).toEqual({});
+    expect(decodeClientSettingsPatch({})).toStrictEqual({});
   });
 });
 

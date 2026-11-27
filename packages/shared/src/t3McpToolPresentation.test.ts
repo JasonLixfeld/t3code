@@ -9,8 +9,10 @@ import {
 
 describe("resolveT3McpToolPresentation", () => {
   it("recognizes every T3 tool across provider prefixes and completion suffixes", () => {
-    for (const tool of T3_MCP_TOOL_NAMES) {
+    const missionTools = ["t3_mission_add", "t3_mission_release", "t3_mission_tag"];
+    for (const tool of new Set([...T3_MCP_TOOL_NAMES, ...missionTools])) {
       const presentation = resolveT3McpToolPresentation(tool);
+      expect(presentation, tool).not.toBeNull();
       for (const prefix of [
         "mcp__t3-code__",
         "mcp__t3_code__",
