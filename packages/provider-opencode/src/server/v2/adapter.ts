@@ -3436,7 +3436,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const holderOf = (sessionId: string) => {
       const own = threads.get(sessionId);
       if (own !== undefined) return own.wakes.at(-1)?.running === true ? own : undefined;
-      const parent = announced.get(sessionId)?.parentID;
+      let parent = announced.get(sessionId)?.parentID;
+      while (parent !== undefined && !threads.has(parent)) parent = announced.get(parent)?.parentID;
       const holder = parent === undefined ? undefined : threads.get(parent);
       return holder !== undefined && holder.active === undefined && holder.wakes.length > 0
         ? holder

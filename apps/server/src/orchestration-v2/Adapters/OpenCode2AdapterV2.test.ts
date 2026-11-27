@@ -2218,57 +2218,108 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect("settles a subagent deleted before the held wake that launched it is taken", () =>
-    Effect.gen(function* () {
-      const LATE = "ses_late0000000000000000000000";
-      const late = { sessionID: SESSION, assistantMessageID: "msg_wake", id: "call-late" };
-      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
-      const { runtime, thread } = yield* resumed([
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        promptAccepted,
-        event("session.execution.started", { sessionID: SESSION }),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        event("session.execution.started", { sessionID: SESSION }),
-        event("session.tool.input.started", { ...late, name: "subagent" }),
-        event("session.tool.called", {
-          ...late,
-          name: "subagent",
-          input: { description: "Late", prompt: "sleep", background: true },
-          executed: false,
-        }),
-        event("session.created", { ...childCreated(LATE), title: "Late" }),
-        event("session.tool.progress", {
-          ...late,
-          metadata: { sessionID: LATE, status: "running" },
-        }),
-        event("session.tool.success", {
-          ...late,
-          content: [{ type: "text", text: "The subagent is working in the background." }],
-          metadata: { sessionID: LATE, status: "running", truncated: false },
-          executed: false,
-        }),
-        event("session.execution.started", { sessionID: LATE }),
-        event("session.execution.interrupted", { sessionID: LATE }),
-        event("session.deleted", { sessionID: LATE }, undefined, 2),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        routedAfterHeldWake,
-      ]).pipe(
-        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
-          offer: (request) => Effect.sync(() => void offers.push(request)),
-          take: Effect.never,
-        }),
-      );
-      const watch = yield* watchCalls(runtime, thread);
-      yield* runtime.startTurn(withLineage(thread));
-      yield* watch.until(
-        () => offers.length === 1 && watch.state.variant === ROUTED_AFTER_HELD_WAKE,
-      );
-      yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
-      yield* watch.until(
-        () => watch.calls.get("Late")?.status === "interrupted" && watch.state.roster?.length === 0,
-      );
-      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-    }),
+  it.effect.each(["its own child", "its child's child"] as const)(
+    "settles a subagent deleted before the held wake that launched it is taken, %s",
+    (depth) =>
+      Effect.gen(function* () {
+        const LATE = "ses_late0000000000000000000000";
+        const DEEPER = "ses_deeper00000000000000000000";
+        const late = { sessionID: SESSION, assistantMessageID: "msg_wake", id: "call-late" };
+        const deeper = { sessionID: LATE, assistantMessageID: "msg_late", id: "call-deeper" };
+        const nested = depth === "its child's child";
+        const deleted = nested ? DEEPER : LATE;
+        const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+        const { runtime, thread } = yield* resumed([
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.tool.input.started", { ...late, name: "subagent" }),
+          event("session.tool.called", {
+            ...late,
+            name: "subagent",
+            input: {
+              description: "Late",
+              prompt: "sleep",
+              ...(nested ? {} : { background: true }),
+            },
+            executed: false,
+          }),
+          event("session.created", { ...childCreated(LATE), title: "Late" }),
+          event("session.tool.progress", {
+            ...late,
+            metadata: { sessionID: LATE, status: "running" },
+          }),
+          ...(nested
+            ? [
+                event("session.execution.started", { sessionID: LATE }),
+                event("session.tool.input.started", { ...deeper, name: "subagent" }),
+                event("session.tool.called", {
+                  ...deeper,
+                  name: "subagent",
+                  input: { description: "Deeper", prompt: "sleep", background: true },
+                  executed: false,
+                }),
+                event("session.created", {
+                  ...childCreated(DEEPER),
+                  parentID: LATE,
+                  title: "Deeper",
+                }),
+                event("session.tool.progress", {
+                  ...deeper,
+                  metadata: { sessionID: DEEPER, status: "running" },
+                }),
+                event("session.tool.success", {
+                  ...deeper,
+                  content: [{ type: "text", text: "The subagent is working in the background." }],
+                  metadata: { sessionID: DEEPER, status: "running", truncated: false },
+                  executed: false,
+                }),
+              ]
+            : [
+                event("session.tool.success", {
+                  ...late,
+                  content: [{ type: "text", text: "The subagent is working in the background." }],
+                  metadata: { sessionID: LATE, status: "running", truncated: false },
+                  executed: false,
+                }),
+              ]),
+          event("session.execution.started", { sessionID: deleted }),
+          event("session.execution.interrupted", { sessionID: deleted }),
+          event("session.deleted", { sessionID: deleted }, undefined, 2),
+          ...(nested
+            ? [
+                event("session.execution.succeeded", { sessionID: LATE }),
+                event("session.tool.success", {
+                  ...late,
+                  content: [{ type: "text", text: "LATE_OK" }],
+                  metadata: { sessionID: LATE, status: "completed", truncated: false },
+                  executed: false,
+                }),
+              ]
+            : []),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          routedAfterHeldWake,
+        ]).pipe(
+          Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+            offer: (request) => Effect.sync(() => void offers.push(request)),
+            take: Effect.never,
+          }),
+        );
+        const watch = yield* watchCalls(runtime, thread);
+        yield* runtime.startTurn(withLineage(thread));
+        yield* watch.until(
+          () => offers.length === 1 && watch.state.variant === ROUTED_AFTER_HELD_WAKE,
+        );
+        yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
+        yield* watch.until(
+          () =>
+            watch.calls.get(nested ? "Deeper" : "Late")?.status === "interrupted" &&
+            watch.state.roster?.length === 0,
+        );
+        assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+      }),
   );
 
   it.effect("keeps a call to a finished subagent for its own run's report", () =>
