@@ -8660,9 +8660,37 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect.each(["before the older wake", "during the older wake"] as const)(
-    "replays only its own background reply into a continuation turn, second report %s",
-    (when) =>
+  it.effect.each([
+    {
+      name: "the second report comes between the wakes, and only the newer runs",
+      second: "between",
+      taken: ["wake-b"],
+      shown: { "wake-b": ["reply:REPLY_B"] },
+    },
+    {
+      name: "the older wake holds the second report the newer delivers, and only the newer runs",
+      second: "held, delivered later",
+      taken: ["wake-b"],
+      shown: { "wake-b": ["notice:msg_report_b", "reply:REPLY_B"] },
+    },
+    {
+      name: "the older wake holds the second report the newer delivers, and both run",
+      second: "held, delivered later",
+      taken: ["wake-a", "wake-b"],
+      shown: {
+        "wake-a": ["reply:REPLY_A"],
+        "wake-b": ["notice:msg_report_b", "reply:REPLY_B"],
+      },
+    },
+    {
+      name: "the older wake delivers the second report, and only the newer runs",
+      second: "held, delivered then",
+      taken: ["wake-b"],
+      shown: { "wake-b": ["reply:REPLY_B"] },
+    },
+  ] as const)(
+    "replays each delivered report on the turn that consumed it when $name",
+    ({ second, taken, shown }) =>
       Effect.gen(function* () {
         const CHILD_B = "ses_f1485c529ffeBBBBBBBBBBBBBB";
         const toolB = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-b" };
@@ -8687,8 +8715,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           });
         const reply = (assistantMessageID: string, text: string) =>
           event("session.text.ended", { sessionID: SESSION, assistantMessageID, ordinal: 0, text });
+        const delivered = (inboxID: string) =>
+          event("session.inbox.delivered", { sessionID: SESSION, inboxID });
+        const rootEnded = event("session.execution.succeeded", { sessionID: SESSION });
         const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
-        const bothOffered = yield* Deferred.make<void>();
+        const allRouted = yield* Deferred.make<void>();
         const { runtime, thread } = yield* resumed([
           ...backgroundLaunch(CHILD),
           event("session.tool.input.started", { ...toolB, name: "subagent" }),
@@ -8703,43 +8734,45 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             ...toolB,
             metadata: { sessionID: CHILD_B, status: "running" },
           }),
-          event("session.execution.succeeded", { sessionID: SESSION }),
+          rootEnded,
           event("session.execution.succeeded", { sessionID: CHILD }),
           report("msg_report_a", CHILD, "A_OK"),
           event("session.execution.started", { sessionID: SESSION }),
-          event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report_a" }),
+          delivered("msg_report_a"),
           reply("msg_reply_a", "REPLY_A"),
-          ...(when === "before the older wake"
-            ? [event("session.execution.succeeded", { sessionID: SESSION })]
-            : []),
+          ...(second === "between" ? [rootEnded] : []),
           event("session.execution.succeeded", { sessionID: CHILD_B }),
           report("msg_report_b", CHILD_B, "B_OK"),
-          ...(when === "during the older wake"
-            ? [event("session.execution.succeeded", { sessionID: SESSION })]
-            : []),
+          ...(second === "held, delivered then" ? [delivered("msg_report_b")] : []),
+          ...(second === "between" ? [] : [rootEnded]),
           event("session.execution.started", { sessionID: SESSION }),
-          event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report_b" }),
+          ...(second === "held, delivered then" ? [] : [delivered("msg_report_b")]),
           reply("msg_reply_b", "REPLY_B"),
-          event("session.execution.succeeded", { sessionID: SESSION }),
+          rootEnded,
+          routedAfterHeldWake,
         ]).pipe(
           Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
-            offer: (request) =>
-              Effect.suspend(() =>
-                offers.push(request) === 2
-                  ? Deferred.succeed(bothOffered, undefined).pipe(Effect.asVoid)
-                  : Effect.void,
-              ),
+            offer: (request) => Effect.sync(() => void offers.push(request)),
             take: Effect.never,
           }),
         );
         const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
-        const ended = yield* Deferred.make<void>();
+        let terminals = 0;
+        let turnEnded = yield* Deferred.make<void>();
         yield* runtime.events.pipe(
           Stream.tap((event) =>
             Effect.gen(function* () {
               collected.push(event);
-              if (collected.filter((entry) => entry.type === "turn.terminal").length === 2) {
-                yield* Deferred.succeed(ended, undefined);
+              if (
+                event.type === "provider_thread.updated" &&
+                event.providerThread.nativeMetadata?.modelSelection?.options?.[0]?.value ===
+                  ROUTED_AFTER_HELD_WAKE
+              ) {
+                yield* Deferred.succeed(allRouted, undefined);
+              }
+              if (event.type === "turn.terminal") {
+                terminals += 1;
+                yield* Deferred.succeed(turnEnded, undefined);
               }
             }),
           ),
@@ -8747,23 +8780,41 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           Effect.forkScoped,
         );
         yield* runtime.startTurn(withLineage(thread));
-        yield* Deferred.await(bothOffered);
-        yield* runtime.startTurn(continuationTurn(thread, offers[1]!, "wake-b"));
-        yield* Deferred.await(ended);
-        const continuationId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
-          driver: OPENCODE_PROVIDER,
-          nativeTurnId: `${SESSION}:attempt:attempt:opencode2-adapter:wake-b`,
-        });
-        assert.deepEqual(
-          collected.flatMap((event) =>
-            event.type === "turn_item.updated" &&
-            event.turnItem.type === "assistant_message" &&
-            event.turnItem.providerTurnId === continuationId
-              ? [event.turnItem.text]
-              : [],
-          ),
-          ["REPLY_B"],
+        yield* Deferred.await(allRouted);
+        assert.lengthOf(offers, 2);
+        for (const wake of taken) {
+          while (terminals < 1) yield* Deferred.await(turnEnded);
+          turnEnded = yield* Deferred.make<void>();
+          const before = terminals;
+          yield* runtime.startTurn(
+            continuationTurn(thread, offers[wake === "wake-a" ? 0 : 1]!, wake),
+          );
+          while (terminals === before) yield* Deferred.await(turnEnded);
+        }
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const turnOf = new Map<string, string>(
+          ["wake-a", "wake-b"].map((wake) => [
+            ids.derive.providerTurn({
+              driver: OPENCODE_PROVIDER,
+              nativeTurnId: `${SESSION}:attempt:attempt:opencode2-adapter:${wake}`,
+            }),
+            wake,
+          ]),
         );
+        const seen: Record<string, Array<string>> = {};
+        for (const event of collected) {
+          if (event.type !== "turn_item.updated") continue;
+          const wake = turnOf.get(event.turnItem.providerTurnId ?? "");
+          if (wake === undefined) continue;
+          const line =
+            event.turnItem.type === "notification"
+              ? `notice:${event.turnItem.nativeItemRef?.nativeId}`
+              : event.turnItem.type === "assistant_message"
+                ? `reply:${event.turnItem.text}`
+                : undefined;
+          if (line !== undefined && !(seen[wake] ??= []).includes(line)) seen[wake]!.push(line);
+        }
+        assert.deepEqual<Readonly<Record<string, ReadonlyArray<string>>>>(seen, shown);
         assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
       }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
   );

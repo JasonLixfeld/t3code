@@ -3619,7 +3619,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
         return;
       }
-      if (bufferInboxSettlementBehindEnqueue(event)) return;
       const holder = sessionId === undefined ? undefined : holderOf(sessionId);
       const held = holder?.wakes.at(-1);
       if (holder !== undefined && held !== undefined) {
@@ -3632,6 +3631,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
         return;
       }
+      if (bufferInboxSettlementBehindEnqueue(event)) return;
       return yield* route(event, sessionId);
     });
 
@@ -4865,12 +4865,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           Effect.ignore({ log: true }),
         );
       }
+      const isTaken = (held: Wake) => held.messageId === turnInput.message.messageId;
+      yield* lock.withPermit(
+        Effect.suspend(() => {
+          const index = state.wakes.findIndex(isTaken);
+          return index > 0 ? retireWakes(state, state.wakes.splice(0, index)) : Effect.void;
+        }),
+      );
       yield* beginTurn(state, turnInput, false);
       yield* lock.withPermit(
         Effect.gen(function* () {
-          const index = state.wakes.findIndex(
-            (held) => held.messageId === turnInput.message.messageId,
-          );
+          const index = state.wakes.findIndex(isTaken);
           if (index < 0) return yield* finishTurn(state, { status: "completed" });
           // Continuations cannot reorder; earlier wakes stranded by cancel or failed dispatch would pin the session.
           yield* retireWakes(state, state.wakes.splice(0, index));
