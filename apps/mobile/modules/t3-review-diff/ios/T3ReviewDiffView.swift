@@ -1303,7 +1303,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     }
     let row = rows[index]
     let rect: CGRect
-    if let layout = codeLayoutsByRowId[row.id], let textRect = layout.rect(for: match.range) {
+    if let layout = codeLayoutsByRowId[row.id], let textRect = layout.textContainerRect(for: match.range) {
       rect = textRect.offsetBy(dx: 0, dy: rowFrame.minY)
     } else {
       let lineStarts = ReviewDiffCodeLineStarts(

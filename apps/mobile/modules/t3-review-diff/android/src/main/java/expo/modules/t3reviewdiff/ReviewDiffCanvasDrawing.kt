@@ -415,9 +415,26 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     }
   }
 
+  @Suppress("LongParameterList")
+  fun drawCodeBackgrounds(
+    canvas: Canvas,
+    row: DiffRow,
+    tokens: List<DiffToken>?,
+    codeX: Float,
+    top: Int,
+    bottom: Int,
+    lines: CodeLines,
+    style: DiffStyle
+  ) {
+    configureCodePaint(theme.text, 0, style)
+    val baseline = lines.baseline(top, bottom, textPaint)
+    drawUnspannedWordDiffRanges(canvas, row, tokens, codeX, top, bottom, lines, style)
+    search.draw(canvas, row, tokens, codeX, top, bottom, baseline, lines, style)
+  }
+
   /** Highlights word diffs; [top]..[bottom] is the row's first visual line. */
   @Suppress("LongParameterList")
-  fun drawWordDiffRanges(
+  fun drawUnspannedWordDiffRanges(
     canvas: Canvas,
     row: DiffRow,
     tokens: List<DiffToken>?,
@@ -428,7 +445,6 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     style: DiffStyle
   ) {
     val changed = row.change == "add" || row.change == "delete"
-    // Native layouts carry word diffs as spans.
     if (lines.nativeLayout != null || row.wordDiffRanges.isEmpty() || !changed) return
     val color = if (row.change == "add") theme.addBar else theme.deleteBar
     fillRanges(
