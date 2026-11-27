@@ -5,7 +5,6 @@ import {
   findInReviewRows,
   REVIEW_FIND_HIGHLIGHT_LIMIT,
   REVIEW_FIND_LINES_PER_FILE,
-  REVIEW_FIND_MAX_MATCHES,
   resolveReviewFindActiveIndex,
   reviewFindHighlightsJson,
   stepReviewFindIndex,
@@ -90,13 +89,29 @@ describe("findInReviewRows", () => {
     expect(file!.matchCount).toBe(REVIEW_FIND_LINES_PER_FILE + 5);
   });
 
-  it("stops at the match limit and says so", () => {
-    const rows = [line("a", 0, "x".repeat(REVIEW_FIND_MAX_MATCHES + 3))];
+  it("counts every match and keeps files past ten thousand hits", () => {
+    const rows = [line("a", 0, "x".repeat(12_000)), line("b", 0, "x x")];
 
     const result = findInReviewRows(rows, "x");
 
-    expect(result.matches).toHaveLength(REVIEW_FIND_MAX_MATCHES);
-    expect(result.matchesTruncated).toBe(true);
+    expect(result.matches).toHaveLength(12_002);
+    expect(result.files.map((file) => [file.fileId, file.matchCount])).toEqual([
+      ["a", 12_000],
+      ["b", 2],
+    ]);
+  });
+
+  it("folds case like the web diff, including final sigma", () => {
+    const rows = [line("a", 0, "ΟΔΟΣ οδος")];
+
+    expect(findInReviewRows(rows, "Σ").matches.map((match) => match.start)).toEqual([3, 8]);
+  });
+
+  it("matches regular expression characters literally", () => {
+    const rows = [line("a", 0, "axb a.b (a|b)")];
+
+    expect(findInReviewRows(rows, "a.b").matches.map((match) => match.start)).toEqual([4]);
+    expect(findInReviewRows(rows, "(a|b)").matches.map((match) => match.start)).toEqual([8]);
   });
 
   it("trims a long line preview around its first match and shifts the highlight", () => {

@@ -2,7 +2,6 @@ import type { SearchRange } from "@t3tools/shared/paletteSearch";
 
 import type { NativeReviewDiffRow } from "../diffs/nativeReviewDiffSurface";
 
-export const REVIEW_FIND_MAX_MATCHES = 10_000;
 export const REVIEW_FIND_LINES_PER_FILE = 20;
 export const REVIEW_FIND_MAX_LINES = 500;
 export const REVIEW_FIND_HIGHLIGHT_LIMIT = 1_000;
@@ -38,22 +37,16 @@ export interface ReviewFindFile {
 export interface ReviewFindResult {
   readonly matches: ReadonlyArray<ReviewFindMatch>;
   readonly files: ReadonlyArray<ReviewFindFile>;
-  readonly matchesTruncated: boolean;
 }
 
 export const EMPTY_REVIEW_FIND_RESULT: ReviewFindResult = {
   matches: [],
   files: [],
-  matchesTruncated: false,
 };
 
-function foldCasePreservingUtf16Offsets(text: string): string {
-  const lower = text.toLowerCase();
-  if (lower.length === text.length) return lower;
-  return text.replace(/[\s\S]/g, (unit) => {
-    const folded = unit.toLowerCase();
-    return folded.length === 1 ? folded : unit;
-  });
+// Pierre's web find: an escaped literal with the "gi" flags, so both surfaces fold case alike.
+function literalCaseInsensitivePattern(query: string): RegExp {
+  return new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
 }
 
 function presentLine(
@@ -96,7 +89,7 @@ export function findInReviewRows(
   query: string,
 ): ReviewFindResult {
   if (query.length === 0) return EMPTY_REVIEW_FIND_RESULT;
-  const needle = foldCasePreservingUtf16Offsets(query);
+  const pattern = literalCaseInsensitivePattern(query);
   const matches: ReviewFindMatch[] = [];
   const files: Array<{
     fileId: string;
@@ -106,22 +99,18 @@ export function findInReviewRows(
     previewLines: ReviewFindLine[];
   }> = [];
   let shownLines = 0;
-  let matchesTruncated = false;
   for (const row of rows) {
     if (row.kind !== "line" || !row.content) continue;
     const code = row.noteStart === undefined ? row.content : row.content.slice(0, row.noteStart);
-    const haystack = foldCasePreservingUtf16Offsets(code);
     const rowStart = matches.length;
-    for (
-      let at = haystack.indexOf(needle);
-      at >= 0;
-      at = haystack.indexOf(needle, at + needle.length)
-    ) {
-      if (matches.length === REVIEW_FIND_MAX_MATCHES) {
-        matchesTruncated = true;
-        break;
-      }
-      matches.push({ rowId: row.id, fileId: row.fileId ?? "", start: at, end: at + needle.length });
+    for (const found of code.matchAll(pattern)) {
+      const start = found.index;
+      matches.push({
+        rowId: row.id,
+        fileId: row.fileId ?? "",
+        start,
+        end: start + found[0].length,
+      });
     }
     if (matches.length > rowStart) {
       const fileId = row.fileId ?? "";
@@ -140,9 +129,8 @@ export function findInReviewRows(
         shownLines += 1;
       }
     }
-    if (matchesTruncated) break;
   }
-  return { matches, files, matchesTruncated };
+  return { matches, files };
 }
 
 export function resolveReviewFindActiveIndex(
