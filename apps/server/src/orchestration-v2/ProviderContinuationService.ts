@@ -6,8 +6,8 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -18,6 +18,7 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 
 const CONTINUATION_MESSAGE_TEXT = "Background task completed.";
+const RUN_WATCH_RETRY = "1 second";
 
 function delegatedCompletionText(taskIds: ReadonlyArray<string>): string {
   const taskList = taskIds.join(", ");
@@ -98,40 +99,40 @@ export const layer = Layer.effectDiscard(
             : [],
         )[0];
         if (runId === undefined) return;
-        yield* threads
-          .streamStoredEventsFrom({
+        yield* Stream.suspend(() =>
+          threads.streamStoredEventsFrom({
             threadId: request.threadId,
             afterSequence: dispatched.sequence,
             eventType: "run.updated",
-          })
-          .pipe(
-            Stream.filter(
-              ({ event }) =>
-                event.type === "run.updated" &&
-                event.payload.id === runId &&
-                ThreadManagementService.isTerminalRunStatus(event.payload.status),
-            ),
-            Stream.runHead,
-            Effect.flatMap((ended) => {
-              if (Option.isNone(ended) || ended.value.event.type !== "run.updated") {
-                return Effect.void;
-              }
-              const unstarted =
-                ended.value.event.payload.startedAt === null &&
-                onRunEndedWithoutStarting !== undefined
-                  ? onRunEndedWithoutStarting()
-                  : Effect.void;
-              return Effect.andThen(unstarted, onRunEnded?.() ?? Effect.void);
+          }),
+        ).pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "run.updated" &&
+              event.payload.id === runId &&
+              ThreadManagementService.isTerminalRunStatus(event.payload.status),
+          ),
+          Stream.runHead,
+          Effect.flatMap(Effect.fromOption),
+          // The run may still take its wake, so a failed watch reads again from the same cursor.
+          Effect.tapCause((cause) =>
+            Effect.logWarning("orchestration-v2.provider-continuation.run-watch-failed", {
+              threadId: request.threadId,
+              providerThreadId: request.providerThreadId,
+              cause,
             }),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("orchestration-v2.provider-continuation.run-watch-failed", {
-                threadId: request.threadId,
-                providerThreadId: request.providerThreadId,
-                cause,
-              }),
-            ),
-            Effect.forkScoped,
-          );
+          ),
+          Effect.retry({ schedule: Schedule.spaced(RUN_WATCH_RETRY) }),
+          Effect.flatMap(({ event }) => {
+            if (event.type !== "run.updated") return Effect.void;
+            const unstarted =
+              event.payload.startedAt === null && onRunEndedWithoutStarting !== undefined
+                ? onRunEndedWithoutStarting()
+                : Effect.void;
+            return Effect.andThen(unstarted, onRunEnded?.() ?? Effect.void);
+          }),
+          Effect.forkScoped,
+        );
       },
     );
 

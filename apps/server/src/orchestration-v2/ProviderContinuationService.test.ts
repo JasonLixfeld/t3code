@@ -537,53 +537,78 @@ describe("ProviderContinuationService", () => {
     });
   });
 
-  it.effect("tells a request its run ended, also after T3 marked the run started", () =>
-    Effect.gen(function* () {
-      const runId = RunId.make("run-provider-continuation-wake");
-      const messageId = MessageId.make("message-provider-continuation-wake");
-      const ended = yield* Deferred.make<void>();
-      let unstarted = 0;
-      const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
-        getThreadRecords: () => Effect.succeed(projection),
-        dispatch: () =>
-          Effect.succeed({
-            sequence: 1,
-            storedEvents: [
-              { event: { type: "run.created", payload: { id: runId, userMessageId: messageId } } },
-            ],
-          } as never),
-        streamStoredEventsFrom: () =>
-          Stream.make({
-            event: {
-              type: "run.updated",
-              payload: { id: runId, status: "failed", startedAt: "2026-01-01T00:00:00.000Z" },
-            },
-          } as never),
-      });
-      yield* Effect.gen(function* () {
-        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-        yield* requests.offer({
-          ...request(),
-          messageId,
-          onRunEndedWithoutStarting: () => Effect.sync(() => void (unstarted += 1)),
-          onRunEnded: () => Deferred.succeed(ended, undefined).pipe(Effect.asVoid),
+  it.effect.each(["reads", "fails its first read"] as const)(
+    "tells a request its run ended, also after T3 marked the run started, when its watch %s",
+    (watch) =>
+      Effect.gen(function* () {
+        const runId = RunId.make("run-provider-continuation-wake");
+        const messageId = MessageId.make("message-provider-continuation-wake");
+        const ended = yield* Deferred.make<void>();
+        const firstRead = yield* Deferred.make<void>();
+        let reads = 0;
+        let unstarted = 0;
+        const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(projection),
+          dispatch: () =>
+            Effect.succeed({
+              sequence: 1,
+              storedEvents: [
+                {
+                  event: { type: "run.created", payload: { id: runId, userMessageId: messageId } },
+                },
+              ],
+            } as never),
+          streamStoredEventsFrom: () => {
+            reads += 1;
+            const terminal = Stream.make({
+              event: {
+                type: "run.updated",
+                payload: { id: runId, status: "failed", startedAt: "2026-01-01T00:00:00.000Z" },
+              },
+            } as never);
+            return (
+              watch === "fails its first read" && reads === 1
+                ? Stream.fromEffect(Deferred.succeed(firstRead, undefined)).pipe(
+                    Stream.flatMap(() => Stream.fail(new Error("event store read failed"))),
+                  )
+                : terminal
+            ) as never;
+          },
         });
-        yield* Deferred.await(ended);
-        assert.equal(unstarted, 0);
-      }).pipe(
-        Effect.provide(
-          Layer.merge(
-            ProviderContinuationRequests.layer,
-            ProviderContinuationService.layer.pipe(
-              Layer.provide(
-                Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          yield* requests.offer({
+            ...request(),
+            messageId,
+            onRunEndedWithoutStarting: () => Effect.sync(() => void (unstarted += 1)),
+            onRunEnded: () => Deferred.succeed(ended, undefined).pipe(Effect.asVoid),
+          });
+          if (watch === "fails its first read") {
+            yield* Deferred.await(firstRead);
+            assert.isFalse(yield* Deferred.isDone(ended));
+            yield* TestClock.adjust("1 second");
+          }
+          yield* Deferred.await(ended);
+          assert.equal(unstarted, 0);
+          assert.equal(reads, watch === "reads" ? 1 : 2);
+        }).pipe(
+          Effect.provide(
+            Layer.merge(
+              ProviderContinuationRequests.layer,
+              ProviderContinuationService.layer.pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    IdAllocator.layer,
+                    ProviderContinuationRequests.layer,
+                    layerThreads,
+                  ),
+                ),
               ),
             ),
           ),
-        ),
-        Effect.scoped,
-      );
-    }),
+          Effect.scoped,
+        );
+      }),
   );
 
   it.effect("dispatches a current request exactly once", () => {
