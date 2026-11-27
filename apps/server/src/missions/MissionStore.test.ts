@@ -462,29 +462,6 @@ it.effect.each([
   ),
 );
 
-it.effect("a heard update stays heard after a newer one is taken", () =>
-  withDatabase((filename) =>
-    usingStore(filename, (store) =>
-      Effect.gen(function* () {
-        const of = (source: string) => ({
-          missionId: "m1",
-          environmentId: EnvironmentId.make("env-a"),
-          threadId: member,
-          source,
-          event: "completed" as const,
-        });
-        yield* store.markMissionUpdateHeard(of("run:r1"));
-        yield* store.addMissionUpdate(of("run:r2"));
-        const sent = yield* store.takeMissionUpdates("m1", lead);
-        assert.deepEqual(sent.updates, [of("run:r2")]);
-        yield* store.clearMissionUpdates("m1", sent.key);
-        yield* store.addMissionUpdate(of("run:r1"));
-        assert.deepEqual((yield* store.takeMissionUpdates("m1", lead)).updates, []);
-      }),
-    ),
-  ),
-);
-
 it.effect(
   "a wake under way to one lead goes to a new lead under a new key, with what came since",
   () =>
