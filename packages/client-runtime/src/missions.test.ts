@@ -77,6 +77,7 @@ describe("buildMissionMenuItems", () => {
   it("offers a mission to threads on its machine and behind a full-access link, and says why others cannot join", () => {
     expect(addChild([thread(DESK), thread(LAPTOP)])).toMatchObject({
       id: "mission-add:env-desk:0123456789ab",
+      label: "Ship v2",
       disabled: false,
       detail: "Desk",
     });
