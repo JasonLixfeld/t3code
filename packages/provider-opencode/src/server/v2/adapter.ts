@@ -702,6 +702,7 @@ class OpenCode2ServerExitedError extends Schema.TaggedError<OpenCode2ServerExite
 ) {}
 const LOST_BACKGROUND =
   "T3 Code lost its connection to OpenCode while this subagent ran, so its result is not shown.";
+const DELETED_SUBAGENT = "OpenCode deleted this subagent's session, so its result is not shown.";
 const INVENTORY_TIMEOUT = "5 seconds";
 const MCP_TOOL_RELOAD_SETTLE = "250 millis";
 const ACTIVE_CHECK_TIMEOUT = "5 seconds";
@@ -2422,9 +2423,22 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
     });
 
+    // Reports from children attached before this wake outlive it; its own children are retired with it.
+    const outlivesWake = (
+      state: ThreadState,
+      wake: Wake,
+      event: OpenCode2Client.OpenCode2StreamEvent,
+    ) =>
+      sessionOfEvent(event) === state.sessionId &&
+      (event.type === "session.inbox.delivered" ||
+        event.type === "session.inbox.cancelled" ||
+        (event.type === "session.inbox.enqueued" &&
+          event.data.item.type === "synthetic" &&
+          !wake.children.has(stringField(event.data.item.payload.metadata, "childID") ?? "")));
+
     const offerWake = Effect.fnUntraced(function* (state: ThreadState, wake: Wake) {
-      const route = state.providerThread.appThreadId;
-      if (route === null || wake.messageId === undefined) return;
+      const appThreadId = state.providerThread.appThreadId;
+      if (appThreadId === null || wake.messageId === undefined) return;
       const notification = backgroundWorkNotification(wake.reports);
       const release = lock.withPermit(
         Effect.suspend(() => {
@@ -2433,18 +2447,31 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return syncRoster(rootOf(state));
         }),
       );
-      const retire = lock
+      const retire: Effect.Effect<void> = lock
         .withPermit(
-          Effect.suspend(() => {
-            wake.continuationPending = false;
+          Effect.gen(function* () {
             const index = state.wakes.indexOf(wake);
-            if (index >= 0) discardWakes(state, state.wakes.splice(index, 1));
-            return syncRoster(rootOf(state));
+            if (index < 0 && !wake.continuationPending) return false;
+            wake.continuationPending = false;
+            if (index >= 0) {
+              discardWakes(state, state.wakes.splice(index, 1));
+              for (const event of wake.events) {
+                if (!outlivesWake(state, wake, event)) continue;
+                yield* route(event, state.sessionId, true).pipe(Effect.ignore({ log: true }));
+              }
+            }
+            yield* syncRoster(rootOf(state));
+            return index >= 0;
           }),
         )
-        .pipe(Effect.andThen(Effect.forkIn(stopStrays(state), sessionScope)), Effect.asVoid);
+        .pipe(
+          Effect.flatMap((retired) =>
+            retired ? Effect.forkIn(stopStrays(state), sessionScope) : Effect.void,
+          ),
+          Effect.asVoid,
+        );
       yield* continuationRequests.offer({
-        threadId: route,
+        threadId: appThreadId,
         providerThreadId: state.providerThread.id,
         driver,
         detail: wake.detail,
@@ -2455,7 +2482,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             Effect.ensuring(release),
           ),
         clearIfCurrent: () => retire,
-        onRunEndedWithoutStarting: () => retire,
+        onRunEnded: () => retire,
       });
     });
 
@@ -3457,6 +3484,24 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
     });
 
+    const onSessionDeleted = Effect.fnUntraced(function* (sessionId: string) {
+      busy.delete(sessionId);
+      const deleted = threads.get(sessionId);
+      if (deleted?.subagent === undefined) return;
+      for (const session of sessionsOf(deleted)) {
+        for (const call of Array.from(session.calls.values())) {
+          yield* settleCall(call, "interrupted", DELETED_SUBAGENT);
+        }
+        if (session.active !== undefined) yield* finishTurn(session, { status: "interrupted" });
+        session.reports.clear();
+        discardWakes(session, session.wakes.splice(0));
+      }
+      for (const call of callsAttachedTo(deleted)) {
+        yield* settleCall(call, "interrupted", DELETED_SUBAGENT);
+      }
+      yield* syncRosterAncestors(deleted);
+    });
+
     const handleEvent = Effect.fnUntraced(function* (event: OpenCode2Client.OpenCode2StreamEvent) {
       if (event.type === "shell.created") {
         const sessionId = stringField(event.data.info.metadata, "sessionID");
@@ -3493,6 +3538,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         yield* syncRosterAncestors(shell.state);
         return;
       }
+      if (event.type === "session.deleted") return yield* onSessionDeleted(event.data.sessionID);
       const sessionId = sessionOfEvent(event);
       const cleared = sessionId === undefined ? undefined : clearing.get(sessionId);
       if (cleared !== undefined) {
