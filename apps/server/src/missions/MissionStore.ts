@@ -1157,6 +1157,20 @@ const make = Effect.gen(function* () {
     event: row.event,
   });
 
+  const keepLatestWaitingPerMemberPreferringJoins = (missionId: string) => sql`
+    DELETE FROM mission_updates
+    WHERE mission_id = ${missionId} AND delivery_key IS NULL AND EXISTS (
+      SELECT 1 FROM mission_updates AS newer
+      WHERE newer.mission_id = mission_updates.mission_id
+        AND newer.environment_id = mission_updates.environment_id
+        AND newer.thread_id = mission_updates.thread_id
+        AND newer.delivery_key IS NULL
+        AND ((newer.event = 'joined') > (mission_updates.event = 'joined')
+          OR ((newer.event = 'joined') = (mission_updates.event = 'joined')
+            AND newer.rowid > mission_updates.rowid))
+    )
+  `;
+
   const addMissionUpdate = (update: MissionUpdate) =>
     sql`
       INSERT OR IGNORE INTO mission_updates (mission_id, environment_id, thread_id, source, event)
@@ -1196,7 +1210,16 @@ const make = Effect.gen(function* () {
                 .map(toUpdate),
             };
           }
-          const updates = rows.map((row) => ({ ...toUpdate(row), attempt: row.attempt }));
+          yield* sql`
+            UPDATE mission_updates SET delivery_key = NULL, delivery_lead = NULL
+            WHERE mission_id = ${missionId} AND delivery_key IS NOT NULL
+              AND delivery_key IS NOT ${HEARD}
+          `;
+          yield* keepLatestWaitingPerMemberPreferringJoins(missionId);
+          const updates = (yield* updateRows(missionId)).map((row) => ({
+            ...toUpdate(row),
+            attempt: row.attempt,
+          }));
           const key = deliveryKey(lead, updates);
           if (updates.length > 0) {
             yield* sql`

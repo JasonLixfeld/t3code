@@ -27,6 +27,7 @@ import { runOrchestratorV2ProviderReplayScenario } from "./testkit/ProviderRepla
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { readProviderReplayTranscript } from "@t3tools/provider-testing/replayTranscript";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
 
@@ -845,6 +846,94 @@ describe("OpenCode 2 through the orchestrator", () => {
           ),
         );
         const shell = result.shellSnapshot.threads.find((row) => row.id === projection.thread.id);
+        assert.deepEqual(shell?.pendingBackgroundTasks ?? [], []);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
+  );
+
+  it.effect(
+    "holds a run's completion while its background subagent runs and its report waits",
+    () =>
+      Effect.gen(function* () {
+        const name = "opencode2-background-pending";
+        const cwd = yield* checkpointWorkspace(name);
+        const recorded = yield* readProviderReplayTranscript(
+          new URL(
+            "./testkit/fixtures/opencode2_background/opencode_transcript.ndjson",
+            import.meta.url,
+          ),
+        );
+        const transcript = yield* OpenCode2OrchestratorReplayHarness.decodeTranscript({
+          ...recorded,
+          scenario: name,
+          entries: recorded.entries.map((entry) =>
+            entry.type !== "runtime_exit" && entry.label === "session.execution.started.3"
+              ? labelled(entry, BACKGROUND_HOLD)
+              : entry,
+          ),
+        });
+        const thread = threadCommands({ name, worktreePath: cwd });
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const run = (ordinal: number) => ids.derive.run({ threadId: thread.threadId, ordinal });
+        const start = thread.message("start", bigPickle, BACKGROUND_PROMPT);
+        const result = yield* runOrchestratorV2ProviderReplayScenario(
+          {
+            name,
+            transcript,
+            commands: [thread.create, start],
+            steps: [
+              { type: "dispatch", command: thread.create },
+              { type: "advance_clock", duration: "1 millis" },
+              { type: "dispatch", command: start, await: false, key: "start" },
+              { type: "advance_clock", duration: "1 millis" },
+              {
+                type: "await_run_turn_item",
+                threadId: thread.threadId,
+                runId: run(1),
+                itemType: "subagent",
+                itemStatus: "completed",
+              },
+              { type: "release_replay_gate", label: BACKGROUND_HOLD },
+              {
+                type: "await_run_status",
+                threadId: thread.threadId,
+                runId: run(2),
+                status: "completed",
+              },
+              { type: "await", key: "start" },
+              { type: "await_thread_idle", threadId: thread.threadId },
+            ],
+          },
+          OpenCode2OrchestratorReplayHarness,
+          { runContinuationWorker: true },
+        ).pipe(provideDeterministicTestRuntime);
+        const events = result.domainEvents;
+        const firstEnded = events.findIndex(
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.id === run(1) &&
+            event.payload.status === "completed",
+        );
+        const wakeCreated = events.findIndex(
+          (event) =>
+            (event.type === "run.created" || event.type === "run.updated") &&
+            event.payload.id === run(2),
+        );
+        assert.isAbove(wakeCreated, firstEnded);
+        const rosters = events.flatMap((event, index) =>
+          event.type === "provider-thread.updated" && event.threadId === thread.threadId
+            ? [{ index, tasks: event.payload.pendingBackgroundTasks ?? [] }]
+            : [],
+        );
+        const between = rosters.filter(
+          (roster) => roster.index > firstEnded && roster.index < wakeCreated,
+        );
+        assert.isNotEmpty(between);
+        assert.deepEqual(
+          between.filter((roster) => !backgroundWorkHoldsCompletion(roster.tasks)),
+          [],
+        );
+        assert.isFalse(backgroundWorkHoldsCompletion(rosters.at(-1)?.tasks ?? []));
+        const shell = result.shellSnapshot.threads.find((row) => row.id === thread.threadId);
         assert.deepEqual(shell?.pendingBackgroundTasks ?? [], []);
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
   );

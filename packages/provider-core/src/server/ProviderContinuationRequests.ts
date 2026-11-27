@@ -32,6 +32,8 @@ export interface ProviderContinuationRequest {
   readonly clearIfCurrent?: () => Effect.Effect<void>;
   /** Called when the run this request dispatched ends without starting, such as a cancelled queued run. */
   readonly onRunEndedWithoutStarting?: () => Effect.Effect<void>;
+  /** Called when the run this request dispatched ends, even after T3 marked it started, since the adapter may never have taken it. */
+  readonly onRunEnded?: () => Effect.Effect<void>;
 }
 
 /** The default drops requests; share the live layer with the worker that drains them. */

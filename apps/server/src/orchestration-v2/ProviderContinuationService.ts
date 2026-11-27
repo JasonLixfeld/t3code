@@ -8,6 +8,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -16,8 +19,11 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import type * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
+import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
 
 const CONTINUATION_MESSAGE_TEXT = "Background task completed.";
+const RUN_WATCH_RETRY = "1 second";
+const isThreadNotFound = Schema.is(ProjectionStoreThreadNotFoundError);
 
 function delegatedCompletionText(taskIds: ReadonlyArray<string>): string {
   const taskList = taskIds.join(", ");
@@ -90,44 +96,78 @@ export const layer = Layer.effectDiscard(
         messageId: MessageId,
         dispatched: Orchestrator.OrchestratorV2DispatchResult,
       ) {
-        const onRunEndedWithoutStarting = request.onRunEndedWithoutStarting;
-        if (onRunEndedWithoutStarting === undefined) return;
+        const { onRunEndedWithoutStarting, onRunEnded } = request;
+        if (onRunEndedWithoutStarting === undefined && onRunEnded === undefined) return;
         const runId = dispatched.storedEvents.flatMap(({ event }) =>
           event.type === "run.created" && event.payload.userMessageId === messageId
             ? [event.payload.id]
             : [],
         )[0];
         if (runId === undefined) return;
-        yield* threads
-          .streamStoredEventsFrom({
-            threadId: request.threadId,
-            afterSequence: dispatched.sequence,
-            eventType: "run.updated",
-          })
-          .pipe(
-            Stream.filter(
-              ({ event }) =>
-                event.type === "run.updated" &&
-                event.payload.id === runId &&
-                ThreadManagementService.isTerminalRunStatus(event.payload.status),
+        const tail = (eventType: "run.updated" | "thread.deleted") =>
+          Stream.suspend(() =>
+            threads.streamStoredEventsFrom({
+              threadId: request.threadId,
+              afterSequence: dispatched.sequence,
+              eventType,
+            }),
+          );
+        const runOf = Effect.suspend(() =>
+          threads.getThreadRecords(request.threadId, ["runs"]),
+        ).pipe(
+          Effect.map((records) => ({
+            deleted: records.thread.deletedAt !== null,
+            run: (records.runs ?? []).find((each) => each.id === runId),
+          })),
+          Effect.catchIf(
+            (error) => isThreadNotFound(error.cause),
+            () => Effect.succeed({ deleted: true, run: undefined }),
+          ),
+        );
+        const startedOf = (run: { readonly startedAt: unknown } | undefined) =>
+          run === undefined ? undefined : run.startedAt !== null;
+        const stored = runOf.pipe(
+          Effect.map(({ deleted, run }) =>
+            deleted ||
+            (run !== undefined && ThreadManagementService.isTerminalRunStatus(run.status))
+              ? Option.some({ started: startedOf(run) })
+              : Option.none(),
+          ),
+        );
+        const live = Stream.merge(
+          tail("run.updated").pipe(
+            Stream.filterMap(({ event }) =>
+              event.type === "run.updated" &&
+              event.payload.id === runId &&
+              ThreadManagementService.isTerminalRunStatus(event.payload.status)
+                ? Result.succeed(Effect.succeed({ started: event.payload.startedAt !== null }))
+                : Result.failVoid,
             ),
-            Stream.runHead,
-            Effect.flatMap((ended) =>
-              Option.isSome(ended) &&
-              ended.value.event.type === "run.updated" &&
-              ended.value.event.payload.startedAt === null
+          ),
+          tail("thread.deleted").pipe(
+            Stream.map(() => Effect.map(runOf, ({ run }) => ({ started: startedOf(run) }))),
+          ),
+        ).pipe(Stream.runHead, Effect.flatMap(Effect.fromOption), Effect.flatten);
+        yield* stored.pipe(
+          Effect.flatMap((ended) => (Option.isSome(ended) ? Effect.succeed(ended.value) : live)),
+          Effect.tapCause((cause) =>
+            Effect.logWarning("orchestration-v2.provider-continuation.run-watch-failed", {
+              threadId: request.threadId,
+              providerThreadId: request.providerThreadId,
+              cause,
+            }),
+          ),
+          Effect.retry({ schedule: Schedule.spaced(RUN_WATCH_RETRY) }),
+          Effect.flatMap(({ started }) =>
+            Effect.andThen(
+              started === false && onRunEndedWithoutStarting !== undefined
                 ? onRunEndedWithoutStarting()
                 : Effect.void,
+              onRunEnded?.() ?? Effect.void,
             ),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("orchestration-v2.provider-continuation.run-watch-failed", {
-                threadId: request.threadId,
-                providerThreadId: request.providerThreadId,
-                cause,
-              }),
-            ),
-            Effect.forkScoped,
-          );
+          ),
+          Effect.forkScoped,
+        );
       },
     );
 

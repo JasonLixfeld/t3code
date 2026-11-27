@@ -15,17 +15,20 @@ import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
+import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 const threadId = ThreadId.make("thread-provider-continuation");
@@ -535,6 +538,126 @@ describe("ProviderContinuationService", () => {
       );
     });
   });
+
+  it.effect.each([
+    "reads",
+    "fails its first read",
+    "loses its thread before it reads again",
+    "sees its thread deleted before its run started",
+    "sees its thread deleted after its run started",
+  ] as const)(
+    "tells a request its run ended, also after T3 marked the run started, when its watch %s",
+    (watch) =>
+      Effect.gen(function* () {
+        const runId = RunId.make("run-provider-continuation-wake");
+        const messageId = MessageId.make("message-provider-continuation-wake");
+        const ended = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
+        const firstRead = yield* Deferred.make<void>();
+        const dispatchSequence = 7;
+        const cursors: Array<number | undefined> = [];
+        let unstarted = 0;
+        let runEnded = 0;
+        let threadGone = false;
+        const deletedLive = watch.startsWith("sees its thread deleted");
+        const runState =
+          watch === "sees its thread deleted after its run started"
+            ? { status: "running", startedAt: "2026-01-01T00:00:00.000Z" }
+            : { status: "queued", startedAt: null };
+        const failsFirstRead =
+          watch === "fails its first read" || watch === "loses its thread before it reads again";
+        const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () =>
+            threadGone
+              ? Effect.fail(
+                  new Orchestrator.OrchestratorProjectionError({
+                    threadId,
+                    cause: new ProjectionStoreThreadNotFoundError({ threadId }),
+                  }),
+                )
+              : Effect.succeed({ ...projection, runs: [{ id: runId, ...runState }] } as never),
+          dispatch: () =>
+            Effect.succeed({
+              sequence: dispatchSequence,
+              storedEvents: [
+                {
+                  event: { type: "run.created", payload: { id: runId, userMessageId: messageId } },
+                },
+              ],
+            } as never),
+          streamStoredEventsFrom: (input) => {
+            if (input?.eventType === "thread.deleted") {
+              return (
+                deletedLive
+                  ? Stream.make({ event: { type: "thread.deleted", payload: {} } })
+                  : Stream.never
+              ) as never;
+            }
+            cursors.push(input?.afterSequence);
+            const terminal = Stream.make({
+              event: {
+                type: "run.updated",
+                payload: { id: runId, status: "failed", startedAt: "2026-01-01T00:00:00.000Z" },
+              },
+            } as never);
+            if (failsFirstRead && cursors.length === 1) {
+              return Stream.fromEffect(Deferred.succeed(firstRead, undefined)).pipe(
+                Stream.flatMap(() => Stream.fail(new Error("event store read failed"))),
+              ) as never;
+            }
+            return (
+              watch === "reads" || watch === "fails its first read" ? terminal : Stream.never
+            ) as never;
+          },
+        });
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          yield* requests.offer({
+            ...request(),
+            messageId,
+            onRunEndedWithoutStarting: () => Effect.sync(() => void (unstarted += 1)),
+            onRunEnded: () =>
+              Effect.withFiber((watcher) => {
+                runEnded += 1;
+                return Deferred.succeed(ended, watcher).pipe(Effect.asVoid);
+              }),
+          });
+          if (failsFirstRead) {
+            yield* Deferred.await(firstRead);
+            assert.isFalse(yield* Deferred.isDone(ended));
+            threadGone = watch === "loses its thread before it reads again";
+            yield* TestClock.adjust("1 second");
+          }
+          yield* Fiber.await(yield* Deferred.await(ended));
+          assert.equal(runEnded, 1);
+          assert.equal(
+            unstarted,
+            watch === "sees its thread deleted before its run started" ? 1 : 0,
+          );
+          assert.deepEqual(
+            cursors,
+            watch === "fails its first read"
+              ? [dispatchSequence, dispatchSequence]
+              : [dispatchSequence],
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.merge(
+              ProviderContinuationRequests.layer,
+              ProviderContinuationService.layer.pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    IdAllocator.layer,
+                    ProviderContinuationRequests.layer,
+                    layerThreads,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Effect.scoped,
+        );
+      }),
+  );
 
   it.effect("dispatches a current request exactly once", () => {
     return Effect.gen(function* () {
