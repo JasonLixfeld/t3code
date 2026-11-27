@@ -44,7 +44,7 @@ export const EMPTY_REVIEW_FIND_RESULT: ReviewFindResult = {
   files: [],
 };
 
-// Pierre's web find: an escaped literal with the "gi" flags, so both surfaces fold case alike.
+// Match the default case folding in @pierre/diffs, which omits the `u` flag.
 function literalCaseInsensitivePattern(query: string): RegExp {
   return new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
 }

@@ -130,7 +130,7 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   readonly viewedFileIdsJson?: string;
   readonly selectedRowIdsJson?: string;
   readonly collapsedCommentIdsJson?: string;
-  /** `{ ranges: { [rowId]: [start, end][] }, active: { rowId, start, end } }` in UTF-16 offsets, or "". */
+  /** TextKit and Android Layout use UTF-16 code unit offsets. */
   readonly searchHighlightsJson?: string;
   readonly appearanceScheme: "light" | "dark";
   readonly themeJson: string;
