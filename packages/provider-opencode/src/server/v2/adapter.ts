@@ -1888,25 +1888,37 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const owedWakes =
         state.subagent !== undefined
           ? []
-          : [
-              ...[...state.reports.values()].flatMap(({ inboxId, childId, report }) =>
-                report.kind === "subagent" && !state.stoppedChildren.has(childId)
-                  ? [{ taskId: `report:${inboxId}`, report }]
-                  : [],
-              ),
-              ...state.wakes.flatMap((wake) => {
-                const report = wake.reports.find((each) => each.kind === "subagent");
-                return report === undefined ||
-                  !wake.continuationPending ||
-                  wake.messageId === undefined
-                  ? []
-                  : [{ taskId: `wake:${wake.messageId}`, report }];
-              }),
-            ].map(({ taskId, report }) => ({
-              taskId,
-              kind: "background_task" as const,
-              ...(report.label?.trim() ? { description: report.label.trim() } : {}),
-            }));
+          : sessionsOf(state)
+              .flatMap((session) => [
+                ...[...session.reports.values()].flatMap(({ inboxId, childId, report }) =>
+                  report.kind === "subagent" && !session.stoppedChildren.has(childId)
+                    ? [{ taskId: `report:${inboxId}`, label: report.label }]
+                    : [],
+                ),
+                ...session.wakes.flatMap((wake) => {
+                  const report = wake.reports.find((each) => each.kind === "subagent");
+                  return report === undefined ||
+                    !wake.continuationPending ||
+                    wake.messageId === undefined
+                    ? []
+                    : [{ taskId: `wake:${wake.messageId}`, label: report.label }];
+                }),
+                ...(session.subagent !== undefined &&
+                session.active !== undefined &&
+                !isOrchestrationV2WorkActive(session.subagent.call.status)
+                  ? [
+                      {
+                        taskId: `answer:${session.sessionId}`,
+                        label: session.subagent.call.title ?? undefined,
+                      },
+                    ]
+                  : []),
+              ])
+              .map(({ taskId, label }) => ({
+                taskId,
+                kind: "background_task" as const,
+                ...(label?.trim() ? { description: label.trim() } : {}),
+              }));
       const allTasks = roster.concat(imageTasks, owedWakes);
       const current = state.providerThread.pendingBackgroundTasks ?? [];
       if (
@@ -2418,9 +2430,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         Effect.suspend(() => {
           if (!wake.continuationPending) return Effect.void;
           wake.continuationPending = false;
-          return syncRoster(state);
+          return syncRoster(rootOf(state));
         }),
       );
+      const retire = lock
+        .withPermit(
+          Effect.suspend(() => {
+            wake.continuationPending = false;
+            const index = state.wakes.indexOf(wake);
+            if (index >= 0) discardWakes(state, state.wakes.splice(index, 1));
+            return syncRoster(rootOf(state));
+          }),
+        )
+        .pipe(Effect.andThen(Effect.forkIn(stopStrays(state), sessionScope)), Effect.asVoid);
       yield* continuationRequests.offer({
         threadId: route,
         providerThreadId: state.providerThread.id,
@@ -2432,7 +2454,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           (wake.dropped ? Effect.succeedNone : Effect.asSome(dispatch)).pipe(
             Effect.ensuring(release),
           ),
-        clearIfCurrent: () => release,
+        clearIfCurrent: () => retire,
+        onRunEndedWithoutStarting: () => retire,
       });
     });
 
@@ -2544,7 +2567,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             yield* settleCall(attached, terminal.status, terminal.failure.message);
           }
         }
-        return;
+        return yield* syncRoster(rootOf(state));
       }
       state.providerThread = {
         ...state.providerThread,
@@ -3151,7 +3174,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     const onWake = Effect.fnUntraced(function* (state: ThreadState) {
       const { delivered, stopped } = yield* takeReports(state);
-      if (stopped) return yield* syncRoster(state);
+      if (stopped) return yield* syncRoster(rootOf(state));
       const route = state.providerThread.appThreadId;
       // History begins at whichever OpenCode queued first: a report or another client's prompt.
       // A prompt leads only this wake, so one dropped undelivered cannot move a later boundary.
@@ -3175,7 +3198,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ended: new Map(),
       };
       state.wakes.push(wake);
-      yield* syncRoster(state);
+      yield* syncRoster(rootOf(state));
       yield* Effect.logInfo("OpenCode started a turn on its own; asking for a continuation.", {
         providerThreadId: state.providerThread.id,
       });
@@ -3644,7 +3667,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ) {
           yield* emitDeliveredReport(state, turn, event.data.inboxID, report.report);
         }
-        if (report !== undefined) yield* syncRoster(state);
+        if (report !== undefined) yield* syncRoster(rootOf(state));
         return;
       }
       // No T3 turn existed while a wake held these, so its user items came from another client.
@@ -3669,9 +3692,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (state.subagent !== undefined && state.active === undefined && started) {
         if ((yield* takeReports(state)).stopped) {
           state.subagent.queued = undefined;
-          return;
+          return yield* syncRoster(rootOf(state));
         }
-        return yield* startChildTurn(state);
+        yield* startChildTurn(state);
+        return yield* syncRoster(rootOf(state));
       }
       const turn = state.active;
       if (turn === undefined) {

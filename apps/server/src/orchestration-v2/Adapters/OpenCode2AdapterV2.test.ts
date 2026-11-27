@@ -2102,7 +2102,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect.each(["dispatched", "abandoned"] as const)(
+  it.effect.each(["dispatched", "abandoned", "ended unstarted"] as const)(
     "lists a woken report as background work until its follow-up is %s",
     (end) =>
       Effect.gen(function* () {
@@ -2121,7 +2121,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         );
         const watch = yield* watchCalls(runtime, thread);
         yield* runtime.startTurn(withLineage(thread));
-        yield* watch.until(() => offers.length === 1 && watch.state.roster?.length === 1);
+        yield* watch.until(
+          () =>
+            offers.length === 1 &&
+            watch.state.roster?.some((task) => task.taskId === `wake:${offers[0]!.messageId}`) ===
+              true,
+        );
         assert.deepEqual(
           watch.state.roster?.map((task) => [task.kind, task.taskId, task.description]),
           [["background_task", `wake:${offers[0]!.messageId}`, "Sleep"]],
@@ -2129,8 +2134,13 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
         if (end === "abandoned") yield* offers[0]!.clearIfCurrent!();
         else yield* offers[0]!.dispatchIfCurrent!(Effect.void);
+        if (end === "ended unstarted") yield* offers[0]!.onRunEndedWithoutStarting!();
         yield* watch.until(() => watch.state.roster?.length === 0);
         assert.deepEqual(watch.state.roster, []);
+        assert.strictEqual(
+          yield* runtime.hasPendingBackgroundWorkForThread!(thread),
+          end === "dispatched",
+        );
       }),
   );
 
@@ -2345,6 +2355,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const variants = new Map<string, unknown>();
       let rootVariant: unknown;
       const terminals: Array<string> = [];
+      const log: Array<string> = [];
       const changed = yield* Deferred.make<void>();
       let wake = changed;
       yield* runtime.events.pipe(
@@ -2360,14 +2371,19 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                 event.providerThread.nativeMetadata?.modelSelection?.options?.[0]?.value;
               if (nativeId != null) variants.set(nativeId, variant);
               if (nativeId === SESSION) rootVariant = variant;
+              if (nativeId === SESSION) {
+                log.push(`root:${event.providerThread.pendingBackgroundTasks?.length ?? 0}`);
+              }
             }
             if (event.type === "subagent.updated" && event.subagent.title === "Deep") {
               deep.push(event.subagent.status);
+              log.push(`deep:${event.subagent.status}`);
             }
             const native = event.type === "provider_turn.updated" ? event.providerTurn : undefined;
             const id = native?.nativeTurnRef?.nativeId;
             if (native !== undefined && id?.startsWith(`${MIDDLE}:turn:`) === true) {
               middleTurns.set(id, native.status);
+              log.push(`${id}:${native.status}`);
             }
             yield* Deferred.succeed(wake, undefined);
           }),
@@ -2389,6 +2405,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         deep,
         middleTurns,
         terminals,
+        log,
         pendingSnapshots,
         variants,
         get rootVariant() {
@@ -2725,36 +2742,48 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect("stops the turn a foreground subagent runs to answer its background subagent", () =>
-    Effect.gen(function* () {
-      const { runtime, thread } = yield* resumed([
-        ...nestedLaunch,
-        event("session.execution.succeeded", { sessionID: DEEP }),
-        deepReport("completed"),
-        event("session.execution.started", { sessionID: MIDDLE }),
-        event("session.text.ended", {
-          sessionID: MIDDLE,
-          assistantMessageID: "msg_assistant_answer",
-          ordinal: 0,
-          text: "Noted.",
-        }),
-        out("session.interrupt", { sessionID: MIDDLE }),
-        reply("session.interrupt", { interrupted: true }),
-        event("session.execution.interrupted", { sessionID: MIDDLE }),
-      ]);
-      const watch = yield* watchNested(runtime);
-      yield* runtime.startTurn(withLineage(thread));
-      yield* watch.until(() => watch.middleTurns.get(`${MIDDLE}:turn:2`) === "running");
-      assert.equal(watch.deep.at(-1), "completed");
-      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-      yield* runtime.interruptTurn({
-        providerThread: thread,
-        providerTurnId: yield* providerTurnId,
-        requestRuntimeRestart: true,
-      });
-      yield* watch.until(() => watch.middleTurns.get(`${MIDDLE}:turn:2`) === "interrupted");
-      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-    }),
+  it.effect.each(["stopped", "finished"] as const)(
+    "holds the root while a foreground subagent answers its background subagent, until it is %s",
+    (end) =>
+      Effect.gen(function* () {
+        const { runtime, thread } = yield* resumed([
+          ...nestedLaunch,
+          event("session.execution.succeeded", { sessionID: DEEP }),
+          deepReport("completed"),
+          event("session.execution.started", { sessionID: MIDDLE }),
+          event("session.text.ended", {
+            sessionID: MIDDLE,
+            assistantMessageID: "msg_assistant_answer",
+            ordinal: 0,
+            text: "Noted.",
+          }),
+          ...(end === "stopped"
+            ? [
+                out("session.interrupt", { sessionID: MIDDLE }),
+                reply("session.interrupt", { interrupted: true }),
+                event("session.execution.interrupted", { sessionID: MIDDLE }),
+              ]
+            : [event("session.execution.succeeded", { sessionID: MIDDLE })]),
+        ]);
+        const watch = yield* watchNested(runtime);
+        const ended = `${MIDDLE}:turn:2:${end === "stopped" ? "interrupted" : "completed"}`;
+        yield* runtime.startTurn(withLineage(thread));
+        if (end === "stopped") {
+          yield* watch.until(() => watch.middleTurns.get(`${MIDDLE}:turn:2`) === "running");
+          assert.equal(watch.deep.at(-1), "completed");
+          assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+          yield* runtime.interruptTurn({
+            providerThread: thread,
+            providerTurnId: yield* providerTurnId,
+            requestRuntimeRestart: true,
+          });
+        }
+        yield* watch.until(() => watch.log.includes(ended) && watch.log.at(-1) === "root:0");
+        const held = watch.log.slice(watch.log.indexOf("deep:completed"), watch.log.indexOf(ended));
+        assert.isNotEmpty(held.filter((entry) => entry.startsWith("root:")));
+        assert.notInclude(held, "root:0");
+        assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+      }),
   );
 
   const stopTimedOut: ReadonlyArray<ProviderReplayEntry> = [
