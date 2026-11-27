@@ -20,6 +20,7 @@ export function useReviewFind(input: {
     readonly focusRequestId: number;
     readonly query: string;
     readonly chosenMatch: ReviewFindMatch | null;
+    readonly chosenQuery: string;
     readonly revealRequestId: number;
   }>({
     open: false,
@@ -27,6 +28,7 @@ export function useReviewFind(input: {
     focusRequestId: 0,
     query: "",
     chosenMatch: null,
+    chosenQuery: "",
     revealRequestId: 0,
   });
   const searchedQuery = useDeferredValue(state.query);
@@ -37,6 +39,21 @@ export function useReviewFind(input: {
   );
   const resultIsStale = searchedQuery !== state.query;
   const activeIndex = resolveReviewFindActiveIndex(result, state.chosenMatch);
+  const chosenMatchGone =
+    state.open &&
+    !resultIsStale &&
+    state.chosenMatch !== null &&
+    state.chosenQuery === searchedQuery &&
+    result.indexOf(state.chosenMatch.rowId, state.chosenMatch.start) === -1;
+  if (chosenMatchGone) {
+    const fallback = result.matchAt(0) ?? null;
+    setState({
+      ...state,
+      chosenMatch: fallback,
+      chosenQuery: searchedQuery,
+      revealRequestId: fallback ? state.revealRequestId + 1 : state.revealRequestId,
+    });
+  }
   const revealTarget = state.chosenMatch ?? (resultIsStale ? undefined : result.matchAt(0));
   const highlightsJson = useMemo(
     () => (state.open ? reviewFindHighlightsJson(result, activeIndex) : ""),
@@ -49,6 +66,7 @@ export function useReviewFind(input: {
       open: true,
       focusRequestId: current.open ? current.focusRequestId : 0,
       chosenMatch: match,
+      chosenQuery: searchedQuery,
       revealRequestId: current.revealRequestId + 1,
     }));
   const changeQuery = (query: string) =>
@@ -58,6 +76,7 @@ export function useReviewFind(input: {
       focusRequestId: current.open ? current.focusRequestId : 0,
       query,
       chosenMatch: null,
+      chosenQuery: query,
       revealRequestId: current.revealRequestId + 1,
     }));
   const step = (direction: 1 | -1) => {
@@ -80,6 +99,11 @@ export function useReviewFind(input: {
     if (!revealTarget) return;
     lastRevealedRequestId.current = state.revealRequestId;
     input.onReveal(revealTarget);
+    setState((current) =>
+      current.chosenMatch === null
+        ? { ...current, chosenMatch: revealTarget, chosenQuery: searchedQuery }
+        : current,
+    );
   });
   const hasRevealTarget = revealTarget !== undefined;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the native diff once a requested match is known
